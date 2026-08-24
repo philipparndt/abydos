@@ -60,6 +60,18 @@ public final class Settings {
 
 		defaults.register(defaults: [
 			Key.autoSaveEnabled: true,
+			// Rebase, because the alternative writes a merge commit into
+			// somebody's history for the crime of having worked while offline —
+			// and because a repository that has decided otherwise overrules
+			// this anyway.
+			Key.pullRebases: true,
+			// On, because the pull that stops to tell you about your working
+			// copy is the one everybody has learnt to answer by stashing by
+			// hand.
+			Key.pullStashes: true,
+			// Thirty days. A ref keeps its commits from being collected, which
+			// is the point of a backup and also its cost in disk.
+			Key.backupsKeptDays: 30,
 			Key.autoSaveDelay: 15.0,
 			Key.saveOnFocusLoss: true,
 			Key.editorFontSize: 12.5,
@@ -107,6 +119,10 @@ public final class Settings {
 
 	private enum Key {
 		static let autoSaveEnabled = "autoSaveEnabled"
+		static let pullRebases = "pullRebases"
+		static let pullStashes = "pullStashes"
+		static let backupsKeptDays = "backupsKeptDays"
+		static let draftingAgreed = "draftingAgreed"
 		static let autoSaveDelay = "autoSaveDelay"
 		static let saveOnFocusLoss = "saveOnFocusLoss"
 		static let editorFontSize = "editorFontSize"
@@ -281,6 +297,55 @@ public final class Settings {
 	public var saveOnFocusLoss: Bool {
 		get { defaults.bool(forKey: Key.saveOnFocusLoss) }
 		set { set(newValue, Key.saveOnFocusLoss) }
+	}
+
+	// MARK: - Git
+
+	/// Whether a pull replays local commits rather than merging.
+	///
+	/// **What the dialog opens on when the repository has not said.** A project
+	/// with `pull.rebase` in its own config outranks this — see
+	/// `GitPull.preference` — because a project that has decided how it pulls
+	/// should not be quietly overridden by somebody's preference in another
+	/// program.
+	public var pullRebases: Bool {
+		get { defaults.bool(forKey: Key.pullRebases) }
+		set { set(newValue, Key.pullRebases) }
+	}
+
+	/// Whether a pull gets a dirty working copy out of the way and puts it back.
+	public var pullStashes: Bool {
+		get { defaults.bool(forKey: Key.pullStashes) }
+		set { set(newValue, Key.pullStashes) }
+	}
+
+	/// How long a backup ref is kept before a sweep may take it.
+	///
+	/// Zero means forever, which is a choice somebody may want and is not the
+	/// default: refs pile up, and each one holds its commits against `gc`.
+	public var backupsKeptDays: Int {
+		get { max(0, min(3650, defaults.integer(forKey: Key.backupsKeptDays))) }
+		set { set(newValue, Key.backupsKeptDays) }
+	}
+
+	/// Projects whose staged diff may be sent for a drafted commit message.
+	///
+	/// **Per project, and asked before the first time rather than after.**
+	/// Sending somebody's diff off the machine is not something to discover in
+	/// a release note — and it is per project because consent for a scratch
+	/// repository is not consent for a client's.
+	public func maySendDiffs(from root: URL) -> Bool {
+		agreedProjects.contains(root.standardizedFileURL.path)
+	}
+
+	public func agreeToSendDiffs(from root: URL) {
+		var agreed = agreedProjects
+		agreed.insert(root.standardizedFileURL.path)
+		set(Array(agreed).sorted(), Key.draftingAgreed)
+	}
+
+	private var agreedProjects: Set<String> {
+		Set(defaults.stringArray(forKey: Key.draftingAgreed) ?? [])
 	}
 
 	// MARK: - Editor

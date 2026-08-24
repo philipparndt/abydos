@@ -14,11 +14,32 @@ import AbydosKit
 /// under it by hand. `GitChangeTree` decides the shape; this decides what the
 /// rows look like and what happens to them.
 final class ChangesPane: NSView {
-	/// A change was selected, to show its diff.
+	/// How much room this has, and therefore what it can draw.
+	///
+	/// **One pane and not two**, the rule `HistoryPane` already keeps: the
+	/// tree, folder staging, the discard question and what a folder says about
+	/// being half-staged are the same questions at either size, and two classes
+	/// asking them would be two answers that drift.
+	enum Layout {
+		/// A 300 pt column: the two trees, a one-line summary and Commit. The
+		/// diff opens as an editor tab because there is nowhere else, and a
+		/// description is written on the page.
+		case sidebar
+		/// A tab of its own: the two trees with the diff beside them and a
+		/// message with room for a body.
+		case page
+	}
+
+	/// A change was selected, to show its diff. Only in `.sidebar`.
 	var onSelectChange: ((GitChange) -> Void)?
+	/// Somebody wants the page, carrying whatever summary they have typed.
+	var onOpenPage: ((String) -> Void)?
 	/// Something was staged, unstaged or committed.
 	var onWorkingCopyChanged: (() -> Void)?
 
+	/// Not `layout`: that is `NSView`'s, and shadowing it means an override
+	/// silently is not one — which cost an afternoon in `HistoryPane`.
+	private let arrangement: Layout
 	private let root: URL
 
 	/// The work tree this pane is showing, so the window can tell whether the
@@ -60,6 +81,11 @@ final class ChangesPane: NSView {
 	private var isRestoring = false
 
 	private var subjectField: NSTextField!
+	/// The diff of the selected change, in `.page` only.
+	private var diffView: DiffView?
+	private var pageSplit: NSSplitView?
+	private var hasPlacedDivider = false
+	private var draftButton: NSButton?
 	private var bodyView: NSTextView!
 	private var amendCheckbox: NSButton!
 	private var commitButton: NSButton!
@@ -71,8 +97,9 @@ final class ChangesPane: NSView {
 	/// showing a half-applied state.
 	private var isBusy = false
 
-	init(root: URL) {
+	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
+		self.arrangement = layout
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
@@ -194,21 +221,38 @@ final class ChangesPane: NSView {
 		commitRow.orientation = .horizontal
 		commitRow.distribution = .fill
 
+		if arrangement == .page {
+			arrangePage(
+				unstaged: unstagedScroll, staged: stagedScroll,
+				body: bodyScroll, commitRow: commitRow
+			)
+			return
+		}
+
+		// **The description leaves the column.** Seventy points of text view is
+		// where a commit message goes to be one line long; the page is where a
+		// message somebody will read in a year gets written, and `…` is how you
+		// get there with what you have already typed.
+		let more = NSButton(title: "…", target: self, action: #selector(openPage))
+		more.bezelStyle = .rounded
+		more.controlSize = .small
+		more.toolTip = "Write the message on a page, with room for a description"
+		commitRow.addArrangedSubview(more)
+
 		let stack = NSStackView(views: [
 			unstagedHeader, unstagedScroll,
 			stagedHeader, stagedScroll,
-			subjectField, bodyScroll, commitRow,
+			subjectField, commitRow,
 		])
 		stack.orientation = .vertical
 		stack.spacing = 0
 		stack.setCustomSpacing(Theme.current.scaled(8), after: stagedScroll)
-		stack.setCustomSpacing(Theme.current.scaled(4), after: subjectField)
-		stack.setCustomSpacing(Theme.current.scaled(6), after: bodyScroll)
+		stack.setCustomSpacing(Theme.current.scaled(6), after: subjectField)
 		stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: Theme.current.scaled(8), right: 0)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 
-		for view in [subjectField, bodyScroll, commitRow] as [NSView] {
+		for view in [subjectField, commitRow] as [NSView] {
 			stack.setCustomSpacing(stack.customSpacing(after: view), after: view)
 		}
 
@@ -221,13 +265,12 @@ final class ChangesPane: NSView {
 			// The two lists share the space that is left after the commit box,
 			// so neither can squeeze the other out.
 			unstagedScroll.heightAnchor.constraint(equalTo: stagedScroll.heightAnchor),
-			bodyScroll.heightAnchor.constraint(equalToConstant: Theme.current.scaled(70)),
 			subjectField.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24)),
 		])
 
 		// Inset the message box from the edges without inseting the lists, which
 		// read better running the full width.
-		for view in [subjectField, bodyScroll, commitRow] as [NSView] {
+		for view in [subjectField, commitRow] as [NSView] {
 			stack.setHuggingPriority(.defaultLow, for: .horizontal)
 			view.translatesAutoresizingMaskIntoConstraints = false
 			NSLayoutConstraint.activate([
@@ -235,6 +278,108 @@ final class ChangesPane: NSView {
 				view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.current.scaled(8)),
 			])
 		}
+	}
+
+	/// The trees, the diff beside them, and the message under both.
+	///
+	/// The same shape the log page takes, because it is the same thing in
+	/// another tense: a list of changes on the left, the diff of the selected
+	/// one on the right, and what to do with the set along the bottom. The
+	/// working copy is the commit that has not happened yet.
+	private func arrangePage(
+		unstaged: NSScrollView, staged: NSScrollView,
+		body: NSScrollView, commitRow: NSStackView
+	) {
+		diffView = DiffView()
+		let diffScroll = NSScrollView()
+		diffScroll.documentView = diffView
+		diffScroll.hasVerticalScroller = true
+		diffScroll.drawsBackground = true
+		diffScroll.backgroundColor = Theme.current.editorBackground
+
+		// **The document view has to be told its width.** A custom view handed
+		// to a scroll view keeps whatever frame it was born with — zero — so
+		// there was nothing to scroll and nothing to click: the diff was drawn
+		// by a view the size of a point. Pinned to the clip view's width, with
+		// the height coming from `intrinsicContentSize`, which is what it is
+		// for.
+		diffView?.translatesAutoresizingMaskIntoConstraints = false
+		if let diffView {
+			NSLayoutConstraint.activate([
+				diffView.leadingAnchor.constraint(equalTo: diffScroll.contentView.leadingAnchor),
+				diffView.trailingAnchor.constraint(equalTo: diffScroll.contentView.trailingAnchor),
+				diffView.topAnchor.constraint(equalTo: diffScroll.contentView.topAnchor),
+			])
+		}
+
+		let lists = NSStackView(views: [unstagedHeader, unstaged, stagedHeader, staged])
+		lists.orientation = .vertical
+		lists.spacing = 0
+		unstaged.heightAnchor.constraint(equalTo: staged.heightAnchor).isActive = true
+
+		let split = NSSplitView()
+		split.isVertical = true
+		split.dividerStyle = .thin
+		split.addArrangedSubview(lists)
+		split.addArrangedSubview(diffScroll)
+		// The list gives way first: a diff with its right-hand columns cut off
+		// is unreadable, where a path that has lost a folder or two is not.
+		split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+		split.translatesAutoresizingMaskIntoConstraints = false
+		pageSplit = split
+
+		// **The draft sits beside the summary**, because that is the field it
+		// fills and the one that is hardest to start. Absent rather than
+		// disabled when there is no `claude` to run: a control that fails when
+		// pressed is worse than one that is not there.
+		var summaryRow: [NSView] = [subjectField]
+		if ClaudeDraft.isAvailable {
+			draftButton = NSButton(title: "Draft", target: self, action: #selector(draftMessage))
+			draftButton?.bezelStyle = .rounded
+			draftButton?.controlSize = .small
+			draftButton?.toolTip = "Write a summary and description from what is staged"
+			summaryRow.append(draftButton!)
+		}
+		let summary = NSStackView(views: summaryRow)
+		summary.orientation = .horizontal
+		summary.spacing = Theme.current.scaled(6)
+
+		let message = NSStackView(views: [summary, body, commitRow])
+		message.orientation = .vertical
+		message.spacing = Theme.current.scaled(6)
+
+		for view in [split, message] as [NSView] {
+			addSubview(view)
+			view.translatesAutoresizingMaskIntoConstraints = false
+		}
+
+		let inset = Theme.current.scaled(8)
+		NSLayoutConstraint.activate([
+			split.topAnchor.constraint(equalTo: topAnchor),
+			split.leadingAnchor.constraint(equalTo: leadingAnchor),
+			split.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+			message.topAnchor.constraint(equalTo: split.bottomAnchor, constant: inset),
+			message.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+			message.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+			message.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+
+			subjectField.heightAnchor.constraint(equalToConstant: Theme.current.scaled(26)),
+			// Room for a paragraph, which is the whole reason this page exists.
+			body.heightAnchor.constraint(equalToConstant: Theme.current.scaled(150)),
+			lists.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(280)),
+			diffScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(320)),
+		])
+	}
+
+	/// Puts the divider somewhere sensible the first time there is a width for
+	/// it, and never again — a split that reset itself on every layout would
+	/// undo the drag somebody had just made.
+	override func layout() {
+		super.layout()
+		guard !hasPlacedDivider, let pageSplit, bounds.width > 1 else { return }
+		hasPlacedDivider = true
+		pageSplit.setPosition(bounds.width * 0.42, ofDividerAt: 0)
 	}
 
 	private func makeTable() -> ChangesOutlineView {
@@ -788,7 +933,16 @@ final class ChangesPane: NSView {
 		// Discarding empties rows out of the tree exactly as staging does, so
 		// the selection is given somewhere to land first.
 		rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
-		run { await GitWorkingCopy.discard(paths: target.paths, in: self.root) }
+
+		// **The most-used destructive verb in the app, now insured.** The
+		// question above is `GitDiscard`'s and stays that way — it names the
+		// folder and counts what git has never seen, which no general dialog
+		// could — so what is borrowed from the safety net is the ref, made
+		// before anything is restored, and the toast that says where it went.
+		run {
+			await DestructiveAsk.insureWorkingCopy(in: self.root)
+			return await GitWorkingCopy.discard(paths: target.paths, in: self.root)
+		}
 	}
 
 	/// Return, or a double-click.
@@ -856,6 +1010,82 @@ final class ChangesPane: NSView {
 		let name = hit.map { String(describing: type(of: $0)) } ?? "nothing"
 		return "hit=\(landed ? "body" : name) frame=\(NSStringFromRect(bodyView.frame))"
 			+ " body=\(bodyView.string.debugDescription)"
+	}
+
+	/// Hands what has been typed to whoever opens the page.
+	@objc private func openPage() {
+		onOpenPage?(subjectField.stringValue)
+	}
+
+	/// Fills the two fields from what is staged.
+	///
+	/// **A draft, and never a commit.** Nothing is staged, nothing is
+	/// committed, both fields stay editable, and `Commit` is not disabled while
+	/// this is thinking — a slow answer must not become a blocked one.
+	@objc private func draftMessage() {
+		guard let button = draftButton else { return }
+		let root = self.root
+
+		// **Said once, before it happens.** The staged diff leaves this machine
+		// when this button is pressed, and that is not something to find out
+		// from a release note afterwards. Per project, because agreeing for a
+		// scratch repository is not agreeing for a client's.
+		guard Settings.shared.maySendDiffs(from: root) else {
+			askBeforeSending(from: root)
+			return
+		}
+
+		button.isEnabled = false
+		button.title = "Drafting…"
+
+		Task { @MainActor [weak self] in
+			let answer = await ClaudeDraft.draft(in: root)
+			button.isEnabled = true
+			button.title = "Draft"
+
+			switch answer {
+			case let .success(draft):
+				// Put in rather than typed over: somebody who started writing
+				// while it was thinking has not lost it — the draft goes where
+				// the field is empty and is offered where it is not.
+				guard let self else { return }
+				if self.subjectField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty {
+					self.subjectField.stringValue = draft.summary
+				}
+				if self.bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
+					self.bodyView.string = draft.description
+				}
+				self.updateCommitButton()
+			case .failure(.nothingStaged):
+				Toast.post("Nothing is staged", detail: "There is no commit to describe yet.")
+			case .failure(.notInstalled):
+				Toast.post("claude is not on the PATH")
+			case let .failure(.said(what)):
+				Toast.post("The draft did not come back", detail: what)
+			}
+		}
+	}
+
+	/// Says what drafting will do, once per project, before it does it.
+	private func askBeforeSending(from root: URL) {
+		let alert = NSAlert()
+		alert.messageText = "Send this project's staged diff to Anthropic?"
+		alert.informativeText = "Drafting a message runs the claude command with what is staged, "
+			+ "and the last twenty commit subjects from this repository, so the summary matches "
+			+ "how this project is written.\n\nAsked once for this project."
+		alert.addButton(withTitle: "Draft Messages Here")
+		alert.addButton(withTitle: "Cancel")
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn else { return }
+			Settings.shared.agreeToSendDiffs(from: root)
+			self?.draftMessage()
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: act)
+		} else {
+			act(alert.runModal())
+		}
 	}
 
 	@objc private func amendToggled() {
@@ -935,6 +1165,35 @@ final class ChangesPane: NSView {
 
 	/// What the two trees are showing, as lines, for driving the pane from the
 	/// command line. Indented by depth, with a folder's tally after its name.
+	/// Puts a summary in, as `…` does when it carries one across.
+	func carrySummaryForTesting(_ text: String) {
+		subjectField.stringValue = text
+		updateCommitButton()
+	}
+
+	/// Selects a change by path, in whichever list holds it.
+	func selectChangeForTesting(_ path: String) {
+		for table in [unstagedTable, stagedTable].compactMap({ $0 }) {
+			for row in 0..<table.numberOfRows {
+				guard let node = table.item(atRow: row) as? GitChangeNode,
+				      node.path == path else { continue }
+				table.selectRowIndexes([row], byExtendingSelection: false)
+				return
+			}
+		}
+	}
+
+	/// What the page is showing on both sides, and in its message.
+	func pageReportForTesting() -> String {
+		var said = ["layout=\(arrangement == .page ? "page" : "sidebar")"]
+		said.append("unstaged=\(status.unstaged.count) staged=\(status.staged.count)")
+		said.append("summary=\(subjectField.stringValue)")
+		said.append("body=\(bodyView.string.isEmpty ? "empty" : "\(bodyView.string.count) characters")")
+		said.append("draft=\(draftButton == nil ? "absent" : "offered")")
+		said.append("diff=\(diffView?.reportForTesting ?? "none")")
+		return said.joined(separator: "\n")
+	}
+
 	func changesTreeForTesting() -> String {
 		var lines: [String] = []
 		for (title, outline) in [("Unstaged", unstagedTable!), ("Staged", stagedTable!)] {
@@ -1163,7 +1422,24 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			(outline.item(atRow: $0) as? GitChangeNode)?.change
 		}
 		guard let change = changes.first else { return }
-		onSelectChange?(change)
+
+		// A column hands the diff to the editor area; a page keeps it, which is
+		// the whole difference between staging with a trip out to a tab per
+		// file and staging in one place.
+		guard arrangement == .page, let diffView else {
+			onSelectChange?(change)
+			return
+		}
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let text = await GitWorkingCopy.diff(
+				for: change.path, staged: change.isStaged, in: self.root
+			)
+			diffView.setDiff(
+				text, staged: change.isStaged,
+				url: self.root.appendingPathComponent(change.path)
+			)
+		}
 	}
 }
 

@@ -1,0 +1,85 @@
+## ADDED Requirements
+
+### Requirement: A commit message can be drafted from what is staged
+
+The commit page SHALL offer to draft a summary and a description from the staged
+diff, and SHALL fill both fields with what comes back.
+
+The staged diff and not the working copy: the draft describes the commit being
+made, not everything on disk. A page with room for a description is exactly where
+a blank field is hardest to start.
+
+#### Scenario: drafting from a staged change
+
+- **GIVEN** two staged files and an empty message
+- **WHEN** a draft is asked for
+- **THEN** the summary and description fields hold a draft of what those two
+  files changed
+
+#### Scenario: nothing staged
+
+- **GIVEN** no staged changes
+- **THEN** drafting is not offered
+
+### Requirement: The draft is seeded with this project's own subjects
+
+The request SHALL carry the recent commit subjects of this repository along with
+the diff.
+
+This repository does not write `fix: update handler`; it writes "A Java edit
+reaches the JVM that is already running." A draft in a house style nobody uses
+has to be rewritten, and reading the last subjects costs one `git log`.
+
+#### Scenario: a repository with a distinctive style
+
+- **GIVEN** a repository whose recent subjects are sentences
+- **WHEN** a draft is asked for
+- **THEN** the recent subjects were part of what was asked
+
+### Requirement: A draft is never a commit
+
+Drafting SHALL fill fields only. It SHALL NOT stage, commit, or disable the
+commit button while it is running.
+
+It fills two fields somebody was going to type into anyway, and both stay
+editable. A slow answer must not become a blocked one.
+
+#### Scenario: committing while a draft is in flight
+
+- **GIVEN** a draft that has been asked for and has not come back
+- **WHEN** a message is typed and commit pressed
+- **THEN** the commit is made from what was typed
+
+### Requirement: The draft is offered only when it can be made, and its cost is said
+
+Drafting SHALL be absent when the `claude` command is not on the `PATH`, and the
+first use in a project SHALL say that the staged diff is sent to Anthropic.
+
+A control that fails when pressed is worse than one that is not there. Sending
+somebody's diff off the machine is said plainly, once, before it happens rather
+than after.
+
+#### Scenario: the command is not installed
+
+- **GIVEN** a machine with no `claude` on the `PATH`
+- **THEN** the commit page shows no drafting control
+
+#### Scenario: the first draft in a project
+
+- **GIVEN** a project in which drafting has not been used
+- **WHEN** a draft is asked for
+- **THEN** it is said that the staged diff will be sent, and it is asked for once
+
+### Requirement: A diff too large to send says what it left out
+
+When the staged diff is larger than what will be sent, the draft SHALL name the
+files it did not read.
+
+Quietly summarising half a commit produces a message that is wrong about the
+other half, and nothing on screen would say so.
+
+#### Scenario: a very large staged change
+
+- **GIVEN** a staged diff over the size that is sent
+- **WHEN** a draft is asked for
+- **THEN** the draft says which files were not read

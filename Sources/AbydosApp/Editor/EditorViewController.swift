@@ -622,6 +622,9 @@ final class EditorViewController: NSViewController {
 	/// Stage or unstage the lines selected in a diff tab.
 	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
+	/// Nil where stashing a hunk is not possible — an old git — so the menu
+	/// item is absent rather than failing when pressed.
+	var onStashDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 
 	func openDiff(for change: GitChange, root: URL, text: String) {
 		let url = root.appendingPathComponent(change.path)
@@ -635,6 +638,9 @@ final class EditorViewController: NSViewController {
 			existing?.onDiscardSelection = { [weak self] selected in
 				self?.onDiscardDiffSelection?(change, text, selected)
 			}
+			existing?.onStashSelection = onStashDiffSelection == nil ? nil : { [weak self] selected in
+				self?.onStashDiffSelection?(change, text, selected)
+			}
 			activeIndex = nil
 			activate(index: index, focusEditor: false)
 			return
@@ -647,6 +653,9 @@ final class EditorViewController: NSViewController {
 		}
 		view.onDiscardSelection = { [weak self] selected in
 			self?.onDiscardDiffSelection?(change, text, selected)
+		}
+		view.onStashSelection = onStashDiffSelection == nil ? nil : { [weak self] selected in
+			self?.onStashDiffSelection?(change, text, selected)
 		}
 
 		let scrollView = NSScrollView()

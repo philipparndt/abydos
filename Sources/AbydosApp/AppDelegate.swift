@@ -1427,6 +1427,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.branchRowSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.branchRowsForTesting(steps)
+			}
+		}
+
+		if let row = options.commitMenuRow {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.commitMenuForTesting(row: row)
+			}
+		}
+
+		if let steps = options.logPageSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.logPageForTesting(steps)
+			}
+		}
+
+		if let steps = options.commitPageSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.commitPageForTesting(steps)
+			}
+		}
+
 		if let steps = options.searchSteps {
 			// A fixed moment rather than one measured back from the screenshot,
 			// unlike the tree's: a script that ticks rows, presses ⌘Z and looks
@@ -2976,11 +3000,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		let viewMenuItem = NSMenuItem()
 		let viewMenu = NSMenu(title: "View")
 		viewMenu.addItem(withTitle: "Project", action: #selector(MainWindowController.showProjectView(_:)), keyEquivalent: "1")
-		viewMenu.addItem(withTitle: "Commit", action: #selector(MainWindowController.toggleChanges(_:)), keyEquivalent: "2")
-		viewMenu.addItem(withTitle: "Branches", action: #selector(MainWindowController.toggleBranchesView(_:)), keyEquivalent: "3")
-		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "4")
-		viewMenu.addItem(withTitle: "Scratches", action: #selector(MainWindowController.toggleScratchesView(_:)), keyEquivalent: "5")
-		viewMenu.addItem(withTitle: "History", action: #selector(MainWindowController.toggleHistoryView(_:)), keyEquivalent: "6")
+		// **⌘2 is the whole repository now.** Commit and History were ⌘2 and
+		// ⌘6; the commit view and the log are pages, and what the sidebar holds
+		// is one tree. Structure and Scratches move up into the gap.
+		viewMenu.addItem(withTitle: "Git", action: #selector(MainWindowController.toggleBranchesView(_:)), keyEquivalent: "2")
+		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "3")
+		viewMenu.addItem(withTitle: "Scratches", action: #selector(MainWindowController.toggleScratchesView(_:)), keyEquivalent: "4")
+		// The keys that moved, for one release: they open the tool and say
+		// which key now opens what they used to, rather than doing nothing to
+		// fingers that have been typing them for months.
+		viewMenu.addItem(withTitle: "Commit (moved)", action: #selector(MainWindowController.movedShortcut(_:)), keyEquivalent: "5")
+			.isHidden = true
+		viewMenu.addItem(withTitle: "History (moved)", action: #selector(MainWindowController.movedShortcut(_:)), keyEquivalent: "6")
+			.isHidden = true
+		// The log at the size a graph needs, which is not a 300 pt column.
+		let logItem = viewMenu.addItem(
+			withTitle: "Log", action: #selector(MainWindowController.showLogPage(_:)), keyEquivalent: "l"
+		)
+		logItem.keyEquivalentModifierMask = [.command, .shift]
+		// The commit view at the size a message worth reading needs.
+		let commitItem = viewMenu.addItem(
+			withTitle: "Commit Page", action: #selector(MainWindowController.showCommitPage(_:)),
+			keyEquivalent: "k"
+		)
+		commitItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(.separator())
 		// How a file with a rendered form is shown. In a submenu of their own
 		// because "Split Right" is also what a second editor pane is called:

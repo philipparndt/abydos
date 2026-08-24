@@ -227,7 +227,47 @@ struct Theme {
 
 	/// A UI font at a design-time size, scaled.
 	func uiFont(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
-		.systemFont(ofSize: size * scale, weight: weight)
+		Theme.font(size: size * scale, weight: weight, monospaced: false)
+	}
+
+	/// The same for the places that want fixed pitch — a status letter beside a
+	/// path, a hash — so those go through the same guard.
+	func monoFont(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+		Theme.font(size: size * scale, weight: weight, monospaced: true)
+	}
+
+	/// A font CoreText will accept, whatever it was asked for.
+	///
+	/// **This is the abort `LastDrawn` was written to catch.** Three crash
+	/// reports, months apart, all of them inside CoreText measuring an
+	/// attributed string, all of them on "a nil that no line of this app's
+	/// source can be seen to have produced". The third one named the frame:
+	/// `TAttributes::ApplyFont`, copying the attributes dictionary and finding
+	/// `nil` at objects[0] — the font.
+	///
+	/// It can be nil because `+[NSFont systemFontOfSize:weight:]` is *nullable*
+	/// in Objective-C and imported into Swift as non-optional. When the font
+	/// system refuses — a size that is zero, negative, or not a number — what
+	/// comes back is a nil wearing a type that says it cannot be one, and
+	/// nothing goes wrong until CoreText puts it in a dictionary and aborts,
+	/// several frames and one run loop turn away from the mistake.
+	///
+	/// So the size is made sane before it is asked for, and what comes back is
+	/// checked before it is handed on. Neither is expensive and both are needed:
+	/// the clamp removes the cause anybody can name, and the check removes the
+	/// ones nobody has yet.
+	static func font(size: CGFloat, weight: NSFont.Weight, monospaced: Bool) -> NSFont {
+		let asked = size.isFinite && size > 0 ? min(max(size, 1), 200) : 12
+		let made = monospaced
+			? NSFont.monospacedSystemFont(ofSize: asked, weight: weight)
+			: NSFont.systemFont(ofSize: asked, weight: weight)
+
+		// A class reference, so a bit pattern of zero is exactly the nil that
+		// the type is claiming cannot happen.
+		guard unsafeBitCast(made, to: UnsafeRawPointer?.self) != nil else {
+			return NSFont.systemFont(ofSize: 12)
+		}
+		return made
 	}
 
 	/// The two shapes a selection comes in: a band across a row, or a run

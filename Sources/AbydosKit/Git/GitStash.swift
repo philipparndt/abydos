@@ -121,6 +121,188 @@ public enum GitStash {
 		return await GitRepository.run(arguments, in: root)
 	}
 
+	/// Stashes only what is in the index.
+	///
+	/// **The hunk-level stash, and it needs no new patch machinery.**
+	/// `GitPatch.patch(selecting:)` already builds a partial patch from chosen
+	/// lines and `GitWorkingCopy.applyToIndex` already applies one — so
+	/// "stash these hunks" is staging them and then stashing what is staged.
+	///
+	/// - Parameter keepingIndex: whether what was staged stays staged
+	///   afterwards. Off, because the point of stashing a hunk is to get it out
+	///   of the way.
+	public static func pushStaged(
+		in root: URL,
+		message: String,
+		keepingIndex: Bool = false
+	) async -> GitRepository.ProcessResult {
+		var arguments = ["stash", "push", "--staged"]
+		if keepingIndex { arguments.append("--keep-index") }
+		if !message.isEmpty { arguments += ["--message", message] }
+		return await GitRepository.run(arguments, in: root)
+	}
+
+	/// Whether this git can stash the index on its own.
+	///
+	/// `--staged` arrived in 2.35. Asked rather than assumed: the offer is
+	/// absent on an older git rather than being a menu item that fails.
+	public static func canPushStaged(in root: URL) async -> Bool {
+		let read = await GitRepository.run(["--version"], in: root)
+		guard read.exitCode == 0 else { return false }
+		return version(from: read.stdout).map { $0 >= (2, 35) } ?? false
+	}
+
+	/// `git version 2.54.0 (Apple Git-157)` into the two numbers that matter.
+	static func version(from said: String) -> (Int, Int)? {
+		let numbers = said
+			.split(separator: " ")
+			.first { $0.first?.isNumber == true }?
+			.split(separator: ".")
+			.compactMap { Int($0.prefix { $0.isNumber }) }
+		guard let numbers, numbers.count >= 2 else { return nil }
+		return (numbers[0], numbers[1])
+	}
+
+	// MARK: - Looking inside one
+
+	/// What a stash holds.
+	///
+	/// **Untracked files come from a parent of their own.** `stash push
+	/// --include-untracked` is the default here, and git stores what it picked
+	/// up in a third parent rather than in the diff — so a stash listed only as
+	/// `^1..stash` is missing exactly the files somebody is most likely to have
+	/// forgotten they had. They are listed as added, because at the moment the
+	/// stash was made that is what they were.
+	public static func files(_ entry: Entry, in root: URL) async -> [GitCommitFile] {
+		let tracked = await GitRepository.run(
+			["diff", "--name-status", "--find-renames", "\(entry.commit)^1", entry.commit],
+			in: root
+		)
+		var found = tracked.exitCode == 0 ? GitHistory.parseNameStatus(tracked.stdout) : []
+
+		for path in await untrackedPaths(of: entry, in: root) where !found.contains(where: { $0.path == path }) {
+			found.append(GitCommitFile(path: path, kind: .added))
+		}
+		return found.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+	}
+
+	/// The diff a stash holds for one of its files.
+	public static func diff(_ entry: Entry, path: String, in root: URL) async -> String {
+		// An untracked file is not in the commit's own tree, so the diff that
+		// shows it is against the parent that picked it up.
+		let untracked = await untrackedPaths(of: entry, in: root)
+		let against = untracked.contains(path) ? "\(entry.commit)^3" : entry.commit
+
+		let result = await GitRepository.run(
+			["diff", "\(entry.commit)^1", against, "--", path], in: root
+		)
+		return result.exitCode == 0 ? result.stdout : ""
+	}
+
+	/// The files this stash picked up that git was not tracking.
+	private static func untrackedPaths(of entry: Entry, in root: URL) async -> [String] {
+		// A stash made without `--include-untracked` has two parents and no
+		// third, and asking for one that is not there is an error rather than
+		// an empty answer.
+		let third = await GitRepository.run(
+			["rev-parse", "--verify", "--quiet", "\(entry.commit)^3"], in: root
+		)
+		guard third.exitCode == 0 else { return [] }
+
+		let listed = await GitRepository.run(
+			["ls-tree", "-r", "--name-only", "\(entry.commit)^3"], in: root
+		)
+		guard listed.exitCode == 0 else { return [] }
+		return listed.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+	}
+
+	// MARK: - Whether it would still go back
+
+	/// Whether a stash would apply over the working copy as it stands.
+	public enum Applicability: Sendable, Equatable {
+		/// It would go back without a fight.
+		case clean
+		/// It would stop in these paths.
+		case conflicts([String])
+		/// git here cannot say, and the caller should not pretend otherwise.
+		case unknown
+	}
+
+	/// Asks whether a stash would apply, without applying it.
+	///
+	/// **The whole point is that it touches nothing.** Applying a stash into a
+	/// mess that then has to be untangled is the failure worth engineering
+	/// away, and a check that had to write to the work tree to answer would be
+	/// the same failure with an extra step.
+	///
+	/// `merge-tree --write-tree` is what answers it: a three-way merge done
+	/// entirely in the object database, against the commit the stash was made
+	/// on. The side being merged into is the *working copy* and not `HEAD` —
+	/// the question is whether it goes back over what is there now — which is
+	/// why `GitBackup.captureWorkingCopy` is used to give the working copy a
+	/// commit to stand for it. That capture already exists for the safety net,
+	/// writes nothing to the index or the work tree, and is nil exactly when
+	/// the tree is clean and `HEAD` is the right answer anyway.
+	///
+	/// Older git has no `--write-tree`, and `.unknown` is the honest answer
+	/// there: a check that guessed "clean" would be worse than no check.
+	public static func wouldApply(_ entry: Entry, in root: URL) async -> Applicability {
+		let ours = await GitBackup.captureWorkingCopy(in: root) ?? "HEAD"
+		let merged = await GitRepository.run(
+			[
+				"merge-tree",
+				"--write-tree",
+				"--merge-base=\(entry.commit)^1",
+				ours,
+				entry.commit,
+			],
+			in: root
+		)
+
+		if merged.exitCode == 0 { return .clean }
+		// One means it merged with conflicts. Anything else is git refusing the
+		// question — an option it does not have, a ref it cannot resolve — and
+		// is not an answer about this stash.
+		guard merged.exitCode == 1 else { return .unknown }
+
+		let paths = conflictedPaths(in: merged.stdout)
+		return paths.isEmpty ? .unknown : .conflicts(paths)
+	}
+
+	/// The paths out of `merge-tree`'s conflicted-file section.
+	///
+	/// Its lines are `<mode> <object> <stage>\t<path>`, one per stage, so the
+	/// same file appears up to three times and the order has to be kept: the
+	/// first mention is the one to report.
+	static func conflictedPaths(in output: String) -> [String] {
+		var seen = Set<String>()
+		var found: [String] = []
+		for line in output.split(separator: "\n") {
+			let parts = line.split(separator: "\t", maxSplits: 1)
+			guard parts.count == 2 else { continue }
+			guard parts[0].split(separator: " ").count == 3 else { continue }
+			let path = String(parts[1])
+			if seen.insert(path).inserted { found.append(path) }
+		}
+		return found
+	}
+
+	// MARK: - Taking it back somewhere else
+
+	/// Makes a branch at the commit the stash was made on, applies it there,
+	/// and drops the entry when that works.
+	///
+	/// The right answer for a stash that has gone stale, and the one to offer
+	/// when `wouldApply` says it would conflict: applied on the commit it came
+	/// from, it cannot.
+	public static func branch(
+		_ entry: Entry,
+		named name: String,
+		in root: URL
+	) async -> GitRepository.ProcessResult {
+		await GitRepository.run(["stash", "branch", name, entry.reference], in: root)
+	}
+
 	// MARK: - Taking it back
 
 	/// Puts an entry back into the working copy.

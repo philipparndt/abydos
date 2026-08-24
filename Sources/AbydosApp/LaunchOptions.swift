@@ -301,6 +301,14 @@ struct LaunchOptions {
 	/// A comma-separated script for the changes tree: `report`, `stage:<path>`,
 	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`.
 	var changesSteps: String?
+	/// Drive the refs tree and print what it holds. See `branchRowsForTesting`.
+	var branchRowSteps: String?
+	/// Print what the menu over a commit in the log offers.
+	var commitMenuRow: Int?
+	/// Drive the log page and print what it holds.
+	var logPageSteps: String?
+	/// Drive the commit page and print what it holds.
+	var commitPageSteps: String?
 	/// How many keystrokes to time in the terminal.
 	var typingPresses: Int?
 	/// Print what opening this project cost, at each of these many seconds in.
@@ -843,6 +851,10 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
 			case "--changes-tree": options.changesSteps = next()
+			case "--branch-rows": options.branchRowSteps = next()
+			case "--commit-menu": options.commitMenuRow = next().flatMap(Int.init)
+			case "--log-page": options.logPageSteps = next()
+			case "--commit-page": options.commitPageSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--report-open":
 				options.openReportsAt = (next() ?? "10")

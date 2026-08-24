@@ -1049,7 +1049,7 @@ private final class SwitcherBranchCell: NSView {
 
 		guard isCurrent else { return }
 		let marker = NSAttributedString(string: "current", attributes: [
-			.font: NSFont.monospacedSystemFont(ofSize: Theme.current.scaled(11), weight: .regular),
+			.font: Theme.current.monoFont(11),
 			.foregroundColor: Theme.current.gitIgnored,
 		])
 		let markerSize = marker.size()
@@ -1117,7 +1117,7 @@ private final class SwitcherProjectCell: NSView {
 		paragraph.lineBreakMode = .byTruncatingHead
 
 		let path = NSAttributedString(string: entry.displayPath, attributes: [
-			.font: NSFont.monospacedSystemFont(ofSize: Theme.current.scaled(11), weight: .regular),
+			.font: Theme.current.monoFont(11),
 			.foregroundColor: Theme.current.gitIgnored,
 			.paragraphStyle: paragraph,
 		])

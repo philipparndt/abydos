@@ -49,9 +49,10 @@ final class ToolWindowBar: NSView {
 	var isGoProject: (() -> Bool)?
 
 	private var projectButton: StripButton!
+	/// One button for the whole repository.
+	private var gitButton: StripButton!
 	private var terminalButton: StripButton!
 	private var reviewButton: StripButton!
-	private var commitButton: StripButton!
 
 	/// How many files are waiting to be committed, and how many commits are
 	/// waiting to be pushed.
@@ -77,7 +78,7 @@ final class ToolWindowBar: NSView {
 	/// committing is what comes first, so it is what the button should be
 	/// asking for while there is any of it to do.
 	private func updateCommitButton() {
-		commitButton?.accent = uncommittedCount > 0
+		gitButton?.accent = uncommittedCount > 0
 			? Theme.current.gitModified
 			: (unpushedCount > 0 ? Theme.current.gitAdded : nil)
 
@@ -88,14 +89,12 @@ final class ToolWindowBar: NSView {
 		if unpushedCount > 0 {
 			parts.append("\(unpushedCount) commit\(unpushedCount == 1 ? "" : "s") to push")
 		}
-		commitButton?.toolTip = parts.isEmpty
-			? "Commit (⌘2)"
-			: "Commit (⌘2) — " + parts.joined(separator: ", ")
+		gitButton?.toolTip = parts.isEmpty
+			? "Git (⌘2)"
+			: "Git (⌘2) — " + parts.joined(separator: ", ")
 	}
-	private var branchesButton: StripButton!
 	private var structureButton: StripButton!
 	private var scratchesButton: StripButton!
-	private var historyButton: StripButton!
 	private var backlogButton: StripButton!
 	private var debugButton: StripButton!
 
@@ -120,22 +119,21 @@ final class ToolWindowBar: NSView {
 	/// what is on screen rather than what was last picked.
 	func setSidebarSelection(visible: Bool, tool: SidebarToolKind) {
 		projectButton.isSelected = visible && tool == .project
-		commitButton.isSelected = visible && tool == .changes
-		branchesButton.isSelected = visible && tool == .branches
+		// Three tool kinds still exist behind one button — the commit view and
+		// the log are pages now, and the panes remain for what the driver and
+		// the popover reach for — so the button is lit for any of them.
+		gitButton.isSelected = visible && [.changes, .branches, .history].contains(tool)
 		structureButton.isSelected = visible && tool == .structure
 		scratchesButton.isSelected = visible && tool == .scratches
-		historyButton.isSelected = visible && tool == .history
 	}
 
 	/// The button a tool lives on, for hanging a popover off.
 	func button(for tool: SidebarToolKind) -> NSView? {
 		switch tool {
 		case .project: return projectButton
-		case .changes: return commitButton
-		case .branches: return branchesButton
+		case .changes, .branches, .history: return gitButton
 		case .structure: return structureButton
 		case .scratches: return scratchesButton
-		case .history: return historyButton
 		}
 	}
 
@@ -204,33 +202,32 @@ final class ToolWindowBar: NSView {
 		projectButton.isSelected = true
 		projectButton.onClick = { [weak self] in self?.onToggleNavigator?() }
 
-		commitButton = StripButton(symbol: "arrow.up.circle", tooltip: "Commit (⌘2)", enabled: true)
-		commitButton.onClick = { [weak self] in self?.onToggleChanges?() }
-		branchesButton = StripButton(symbol: "arrow.trianglehead.branch", tooltip: "Branches (⌘3)", enabled: true)
-		branchesButton.onClick = { [weak self] in self?.onToggleBranches?() }
-		structureButton = StripButton(symbol: "list.bullet.indent", tooltip: "Structure (⌘4)", enabled: true)
+		// **One button, not three.** The strip used to carry Commit, Branches
+		// and History with a rule drawn round them, and a comment explaining
+		// that the rule was there so it "reads as three things rather than
+		// six". A group that needs a fence to be understood is one button, and
+		// what is behind it is one tree: the working copy, the stashes and the
+		// refs are all things this repository holds.
+		gitButton = StripButton(
+			symbol: "arrow.trianglehead.branch", tooltip: "Git (⌘2)", enabled: true
+		)
+		gitButton.onClick = { [weak self] in self?.onToggleBranches?() }
+		structureButton = StripButton(symbol: "list.bullet.indent", tooltip: "Structure (⌘3)", enabled: true)
 		structureButton.onClick = { [weak self] in self?.onToggleStructure?() }
 
 		// Notes are not part of the project, so the icon is a page rather than
 		// anything filed: what it opens is the pile you keep beside the work.
-		scratchesButton = StripButton(symbol: "note.text", tooltip: "Scratches (⌘5)", enabled: true)
+		scratchesButton = StripButton(symbol: "note.text", tooltip: "Scratches (⌘4)", enabled: true)
 		scratchesButton.onClick = { [weak self] in self?.onToggleScratches?() }
 
-		historyButton = StripButton(symbol: "clock.arrow.circlepath", tooltip: "History (⌘6)", enabled: true)
-		historyButton.onClick = { [weak self] in self?.onToggleHistory?() }
-
-		// Commit, branches and history are three views of one repository, and
-		// they were scattered between the file tree and the notes. Grouped and
-		// fenced off, the strip reads as three things rather than six.
-		let gitSeparator = StripSeparator()
-		let toolSeparator = StripSeparator()
-
+		// **The fence comes out with the buttons it fenced.** There is nothing
+		// left to separate: four buttons, each a different kind of thing to
+		// look at, which is what the rule was there to say about three.
 		let stack = NSStackView(views: [
 			projectButton,
-			gitSeparator,
-			commitButton, branchesButton, historyButton,
-			toolSeparator,
-			structureButton, scratchesButton,
+			gitButton,
+			structureButton,
+			scratchesButton,
 		])
 		stack.orientation = .vertical
 		stack.spacing = 4
@@ -238,9 +235,7 @@ final class ToolWindowBar: NSView {
 		// A little more air around the rules than between the icons they
 		// separate, or the grouping reads as an accident.
 		stack.setCustomSpacing(7, after: projectButton)
-		stack.setCustomSpacing(7, after: gitSeparator)
-		stack.setCustomSpacing(7, after: historyButton)
-		stack.setCustomSpacing(7, after: toolSeparator)
+		stack.setCustomSpacing(7, after: gitButton)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 

@@ -9,6 +9,38 @@ import AbydosKit
 enum RowMetrics {
 	static var trailingInset: CGFloat { Theme.current.scaled(12) }
 
+	/// Where a row's leading glyph goes: the tick on the current branch, the
+	/// status letter on a change, the tray on a stash.
+	///
+	/// **One column for all of them, and one for the text beside it.** These
+	/// were five different numbers in five row views, and an outline view that
+	/// indents by depth turned that into a tree whose names did not line up
+	/// with each other at any level.
+	static var glyphInset: CGFloat { Theme.current.scaled(2) }
+
+	/// How big the glyph is drawn.
+	///
+	/// **The project tree's numbers, because it is the tree beside this one.**
+	/// A thirteen-point symbol in a sixteen-point box, six points of air, and
+	/// the text after that — `FileIcon` and the navigator's row have drawn it
+	/// that way for as long as there has been one, and a git tree whose icons
+	/// were three points smaller read as a different application.
+	static var glyphSize: CGFloat { Theme.current.scaled(16) }
+
+	/// Where a row's text goes, leaving the glyph column to its left.
+	static var textInset: CGFloat { glyphInset + glyphSize + Theme.current.scaled(6) }
+
+	/// Draws a row's leading glyph in its column.
+	static func glyph(_ name: String, colour: NSColor, in bounds: NSRect) {
+		guard let image = Theme.symbol(name, size: 13 * Theme.current.scale, color: colour) else {
+			return
+		}
+		image.drawFitted(in: NSRect(
+			x: glyphInset, y: bounds.midY - glyphSize / 2,
+			width: glyphSize, height: glyphSize
+		))
+	}
+
 	/// Draws one line, cut short with an ellipsis rather than run past, and
 	/// says where it ended.
 	@discardableResult

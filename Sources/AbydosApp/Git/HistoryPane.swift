@@ -9,9 +9,30 @@ import AbydosKit
 /// which is the question a log is nearly always being asked: not "what
 /// happened" but "what happened to this".
 final class HistoryPane: NSView {
+	/// How much room this has, and therefore what it can draw.
+	///
+	/// **One pane and not two.** A graph needs width for its lanes and its
+	/// refs, and a commit needs its diff beside it rather than beneath it — but
+	/// the loader, the collapse rule, the graph and the menu are the same
+	/// questions at either size, and two classes asking them would be two
+	/// answers that drift. What differs is the arrangement, which is this.
+	enum Layout {
+		/// A 300 pt column: the log above, the files of one commit below, and
+		/// the diff opened as an editor tab because there is nowhere else.
+		case sidebar
+		/// A tab of its own: the graph at full width with the selected
+		/// commit's files and diff beside it.
+		case page
+	}
+
 	/// Show a commit's diff for one of its files.
+	///
+	/// Only in `.sidebar`. A page has somewhere to put it.
 	var onSelectFile: ((GitCommit, GitCommitFile) -> Void)?
 
+	/// Not `layout`: that is `NSView`'s, and shadowing it means the override
+	/// below silently is not one.
+	private let arrangement: Layout
 	private let root: URL
 
 	private var commits: [GitCommit] = []
@@ -33,6 +54,12 @@ final class HistoryPane: NSView {
 	private var query = ""
 	/// When set, the history of that file rather than of the repository.
 	private var scopedPath: String?
+	/// When set, the history of that ref rather than of the branch checked out.
+	///
+	/// `GitHistory.log` has taken a revision from the day it was written and
+	/// nothing has ever passed one: a branch row could say "take me there" and
+	/// could not say "show me where it has been".
+	private var scopedRef: String?
 	/// Whether there may be more behind what has been loaded.
 	private var hasMore = false
 	private var isLoading = false
@@ -44,9 +71,22 @@ final class HistoryPane: NSView {
 	private var commitTable: HistoryTableView!
 	private var fileTable: HistoryTableView!
 	private var detailLabel: NSTextField!
+	/// The diff of the selected file, in `.page` only.
+	private var diffView: DiffView?
+	/// The page's splits, and whether their dividers have been put yet.
+	private var pageSplit: NSSplitView?
+	private var detailSplit: NSSplitView?
+	private var hasPlacedDivider = false
+	/// The commit message, on the page.
+	private var messageView: NSTextView?
+	/// How tall the message strip is, and whether it is open.
+	/// The two tabs on the right, and what they show.
+	private var detailTabs: NSSegmentedControl?
+	private var detailMessage: NSScrollView?
 
-	init(root: URL) {
+	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
+		self.arrangement = layout
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
@@ -108,11 +148,25 @@ final class HistoryPane: NSView {
 		commitTable.onGraphClick = { [weak self] point, row in
 			self?.handleGraphClick(at: point, row: row) ?? false
 		}
+		commitTable.onFold = { [weak self] expanding, row in
+			guard let self, self.visible.indices.contains(row) else { return }
+			let hash = self.visible[row].commit.hash
+			// Folded already and asked to fold again, or open and asked to
+			// open: nothing to do rather than a redraw that looks like a
+			// keypress being ignored for a different reason.
+			guard expanding == self.collapsedMerges.contains(hash) else { return }
+			guard (self.visible[row].graph?.collapsible ?? 0) > 0 else { return }
+			self.toggleCollapse(at: row)
+		}
 
 		fileTable = makeTable(rowHeight: Theme.current.scaled(22))
 		fileTable.onSelectionChange = { [weak self] in self?.fileSelected() }
 
 		detailLabel = NSTextField(labelWithString: "")
+		// Left, like everything else it sits above. A wrapping label defaults
+		// to centred, which reads as a heading rather than as the commit's own
+		// words.
+		detailLabel.alignment = .left
 		detailLabel.font = Theme.current.uiFont(11)
 		detailLabel.textColor = Theme.current.gitIgnored
 		detailLabel.lineBreakMode = .byTruncatingTail
@@ -126,6 +180,11 @@ final class HistoryPane: NSView {
 
 		let commitScroll = scrollView(around: commitTable)
 		let fileScroll = scrollView(around: fileTable)
+
+		if arrangement == .page {
+			buildPage(commits: commitScroll, files: fileScroll)
+			return
+		}
 
 		for view in [searchField, scopeControl, commitScroll, detailLabel, fileScroll] as [NSView] {
 			addSubview(view)
@@ -163,6 +222,182 @@ final class HistoryPane: NSView {
 		])
 	}
 
+	/// The graph on one side and what the selected commit did on the other.
+	///
+	/// A split rather than a fixed fraction: how much room a diff wants depends
+	/// entirely on the diff, and a log is read by moving between the two.
+	private func buildPage(commits: NSScrollView, files: NSScrollView) {
+		diffView = DiffView()
+		let diffScroll = NSScrollView()
+		diffScroll.documentView = diffView
+		diffScroll.hasVerticalScroller = true
+		diffScroll.drawsBackground = true
+		diffScroll.backgroundColor = Theme.current.editorBackground
+
+		// **The document view has to be told its width.** A custom view handed
+		// to a scroll view keeps whatever frame it was born with — zero — so
+		// there was nothing to scroll and nothing to click: the diff was drawn
+		// by a view the size of a point. Pinned to the clip view's width, with
+		// the height coming from `intrinsicContentSize`, which is what it is
+		// for.
+		diffView?.translatesAutoresizingMaskIntoConstraints = false
+		if let diffView {
+			NSLayoutConstraint.activate([
+				diffView.leadingAnchor.constraint(equalTo: diffScroll.contentView.leadingAnchor),
+				diffView.trailingAnchor.constraint(equalTo: diffScroll.contentView.trailingAnchor),
+				diffView.topAnchor.constraint(equalTo: diffScroll.contentView.topAnchor),
+			])
+		}
+
+		// **A text view rather than a label.** A commit message is prose with
+		// paragraphs in it, and the column's label had the newlines replaced
+		// with spaces to fit on one line — which on a page is exactly the half
+		// of the message nobody can then read.
+		let message = NSTextView()
+		message.isEditable = false
+		message.isSelectable = true
+		message.drawsBackground = false
+		message.textContainerInset = NSSize(width: 8, height: 8)
+		message.font = Theme.current.uiFont(11.5)
+		message.textColor = Theme.current.sidebarText
+		message.isVerticallyResizable = true
+		message.isHorizontallyResizable = false
+		message.autoresizingMask = [.width]
+		message.textContainer?.widthTracksTextView = true
+		messageView = message
+
+		let messageScroll = NSScrollView()
+		messageScroll.documentView = message
+		messageScroll.hasVerticalScroller = true
+		messageScroll.drawsBackground = true
+		messageScroll.backgroundColor = Theme.current.sidebarBackground
+
+		// **Every pane of a split is a scroll view, and nothing else.**
+		// This was a stack view holding a split, inside another split. A stack
+		// has an intrinsic height, a split has none, and one inside the other
+		// gives autolayout a size it can satisfy two ways — so the page
+		// negotiated with the terminal panel below it once per frame and
+		// neither settled: the panel flickered, the divider would not drag, and
+		// the contents moved while it was being dragged.
+		//
+		// A scroll view has no intrinsic content size, which is exactly what a
+		// split view wants of its children. Minimums come from the delegate
+		// rather than from constraints, for the same reason: a height
+		// constraint on a pane is a second opinion about where the divider is.
+		// **Two panes, not three.** The message, the files and the diff each
+		// took a third, and the diff is what somebody opened the log to read.
+		// The message is a strip above them instead — one line of subject,
+		// which is all most commits have to say, and a click for the rest.
+		// **Two tabs, not three panes.** The message, the files and the diff
+		// each took a third and none of them had enough: a commit worth reading
+		// the log for has a message worth reading whole, and a diff worth
+		// reading whole, and they are not read at the same moment. So each gets
+		// the height when it is the one being looked at.
+		//
+		// It also sidesteps the thing that has gone wrong three times here: a
+		// split inside a split needs its panes frame-positioned by the parent,
+		// and every arrangement that put something else in between argued with
+		// the window once per frame. The tabs are a plain container.
+		let changes = NSSplitView()
+		changes.isVertical = false
+		changes.dividerStyle = .thin
+		changes.addArrangedSubview(files)
+		changes.addArrangedSubview(diffScroll)
+		changes.delegate = self
+		changes.translatesAutoresizingMaskIntoConstraints = false
+		detailSplit = changes
+
+		let tabs = NSSegmentedControl(
+			labels: ["Changes", "Message"],
+			trackingMode: .selectOne,
+			target: self,
+			action: #selector(detailTabChanged)
+		)
+		tabs.controlSize = .small
+		tabs.font = Theme.current.uiFont(11)
+		// Changes first and selected: it is what somebody opened the log for.
+		tabs.selectedSegment = 0
+		tabs.translatesAutoresizingMaskIntoConstraints = false
+		detailTabs = tabs
+
+		messageScroll.translatesAutoresizingMaskIntoConstraints = false
+		messageScroll.isHidden = true
+		detailMessage = messageScroll
+
+		// Frame-positioned, because it is a pane of the split above it.
+		let right = NSView()
+		right.addSubview(tabs)
+		right.addSubview(changes)
+		right.addSubview(messageScroll)
+
+		let gap = Theme.current.scaled(8)
+		NSLayoutConstraint.activate([
+			tabs.topAnchor.constraint(equalTo: right.topAnchor, constant: gap / 2),
+			tabs.leadingAnchor.constraint(equalTo: right.leadingAnchor, constant: gap),
+
+			changes.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: gap / 2),
+			changes.leadingAnchor.constraint(equalTo: right.leadingAnchor),
+			changes.trailingAnchor.constraint(equalTo: right.trailingAnchor),
+			changes.bottomAnchor.constraint(equalTo: right.bottomAnchor),
+
+			messageScroll.topAnchor.constraint(equalTo: changes.topAnchor),
+			messageScroll.leadingAnchor.constraint(equalTo: changes.leadingAnchor),
+			messageScroll.trailingAnchor.constraint(equalTo: changes.trailingAnchor),
+			messageScroll.bottomAnchor.constraint(equalTo: changes.bottomAnchor),
+		])
+
+		let split = NSSplitView()
+		split.isVertical = true
+		split.dividerStyle = .thin
+		split.addArrangedSubview(commits)
+		split.addArrangedSubview(right)
+		split.delegate = self
+		split.translatesAutoresizingMaskIntoConstraints = false
+		pageSplit = split
+
+		let head = NSStackView(views: [searchField, scopeControl])
+		head.orientation = .horizontal
+		head.spacing = Theme.current.scaled(8)
+		head.translatesAutoresizingMaskIntoConstraints = false
+
+		addSubview(head)
+		addSubview(split)
+
+		let inset = Theme.current.scaled(8)
+		NSLayoutConstraint.activate([
+			head.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+			head.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+			head.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+
+			split.topAnchor.constraint(equalTo: head.bottomAnchor, constant: inset),
+			split.leadingAnchor.constraint(equalTo: leadingAnchor),
+			split.trailingAnchor.constraint(equalTo: trailingAnchor),
+			split.bottomAnchor.constraint(equalTo: bottomAnchor),
+		])
+	}
+
+	/// Puts the divider somewhere sensible the first time there is a width to
+	/// put it at.
+	///
+	/// **Once, and never again.** A split that reset itself on every layout
+	/// would undo the drag somebody had just made — and constraints alone
+	/// cannot do this, because "three fifths of whatever this turns out to be"
+	/// is not a constraint an `NSSplitView` takes.
+	override func layout() {
+		super.layout()
+		// **Waited for, not assumed.** A divider set while the split is still a
+		// point wide lands at nothing and stays there, which is how the file
+		// list came to be a sliver above the diff.
+		guard !hasPlacedDivider, let pageSplit,
+		      bounds.width > 1, (detailSplit?.bounds.height ?? 0) > Theme.current.scaled(120)
+		else { return }
+		hasPlacedDivider = true
+		pageSplit.setPosition(bounds.width * 0.58, ofDividerAt: 0)
+		// A short list of files and the rest for the diff, which is what
+		// somebody opened the log to read, and a drag away from anything else.
+		detailSplit?.setPosition(bounds.height * 0.3, ofDividerAt: 0)
+	}
+
 	private func makeTable(rowHeight: CGFloat) -> HistoryTableView {
 		let table = HistoryTableView()
 		table.headerView = nil
@@ -198,16 +433,34 @@ final class HistoryPane: NSView {
 
 	// MARK: - Loading
 
+	/// Narrows the log to one ref, or widens it back to what is checked out.
+	func setRef(_ ref: String?) {
+		guard ref != scopedRef else { return }
+		scopedRef = ref
+		reload()
+	}
+
+	/// Which ref the log is showing, for a tab title and for a driver.
+	var scopeName: String? { scopedRef }
+
 	@objc func reload() {
 		let scope = scopedPath
 		let search = query
+		let ref = scopedRef
 		Task { @MainActor in
 			isLoading = true
 			let loaded = await GitHistory.log(
-				in: root, path: scope, limit: Self.pageSize, search: search.isEmpty ? nil : search
+				in: root, path: scope, revision: ref,
+				limit: Self.pageSize, search: search.isEmpty ? nil : search
 			)
 			// Another scope or query landed while this was in flight.
-			guard scope == self.scopedPath, search == self.query else { return }
+			guard scope == self.scopedPath, search == self.query, ref == self.scopedRef else { return }
+
+			// **Remembered by hash, because a reload moves every row.** The log
+			// re-reads on every filesystem event, and a reload drops the
+			// selection — so the commit somebody was reading came unselected
+			// under them and the diff beside it went with it.
+			let wasSelected = selectedCommit?.hash
 
 			commits = loaded
 			unpushed = await GitHistory.unpushed(in: root)
@@ -218,14 +471,22 @@ final class HistoryPane: NSView {
 			rebuildGraph()
 			commitTable.reloadData()
 
-			// Selecting the newest commit means the pane opens showing
-			// something rather than an empty half.
+			// Whatever was being read, if it is still here; the newest commit
+			// otherwise, so the pane opens showing something rather than an
+			// empty half.
 			if !commits.isEmpty {
-				commitTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+				let landing = wasSelected
+					.flatMap { hash in visible.firstIndex { $0.commit.hash == hash } } ?? 0
+				commitTable.selectRowIndexes(
+					IndexSet(integer: landing), byExtendingSelection: false
+				)
+				commitTable.scrollRowToVisible(landing)
 			} else {
 				files = []
 				selectedCommit = nil
-				detailLabel.stringValue = search.isEmpty ? "No commits." : "Nothing matches “\(search)”."
+				let nothing = search.isEmpty ? "No commits." : "Nothing matches “\(search)”."
+				messageView?.string = nothing
+				detailLabel.stringValue = nothing
 				fileTable.reloadData()
 			}
 		}
@@ -291,18 +552,38 @@ final class HistoryPane: NSView {
 	}
 
 	/// Folds a merge's branch away, or brings it back.
+	/// Folds a merge's branch away, or shows it again.
+	///
+	/// **The selection is kept by hash.** Rebuilding what is visible reloads
+	/// the table, which drops it — so folding the row you were reading left
+	/// nothing selected and took the diff beside it away. The refs tree keeps
+	/// its selection across a rebuild for the same reason and by the same
+	/// means; that they are two lists of different kinds is why it is written
+	/// twice rather than shared, and it is worth saying so out loud.
+	private func keepingSelection(_ change: () -> Void) {
+		let wasSelected = selectedCommit?.hash
+		change()
+		guard let wasSelected,
+		      let landing = visible.firstIndex(where: { $0.commit.hash == wasSelected })
+		else { return }
+		commitTable.selectRowIndexes(IndexSet(integer: landing), byExtendingSelection: false)
+		commitTable.scrollRowToVisible(landing)
+	}
+
 	private func toggleCollapse(at row: Int) {
 		guard visible.indices.contains(row) else { return }
 		let commit = visible[row].commit
 		guard visible[row].graph?.collapsible ?? 0 > 0 else { return }
 
-		if collapsedMerges.contains(commit.hash) {
-			collapsedMerges.remove(commit.hash)
-		} else {
-			collapsedMerges.insert(commit.hash)
+		keepingSelection {
+			if collapsedMerges.contains(commit.hash) {
+				collapsedMerges.remove(commit.hash)
+			} else {
+				collapsedMerges.insert(commit.hash)
+			}
+			rebuildGraph()
+			commitTable.reloadData()
 		}
-		rebuildGraph()
-		commitTable.reloadData()
 	}
 
 	private func commitSelected() {
@@ -311,9 +592,30 @@ final class HistoryPane: NSView {
 		let commit = visible[row].commit
 		selectedCommit = commit
 
-		let message = [commit.subject, commit.body].filter { !$0.isEmpty }.joined(separator: " — ")
-		detailLabel.stringValue = message.replacingOccurrences(of: "\n", with: " ")
-		detailLabel.toolTip = message
+		// **The message as it was written, where there is room for it.** A
+		// column has one line, so it gets the newlines flattened into it; a
+		// page has a text view, and a commit message with its paragraphs taken
+		// out is exactly the half of it nobody can read.
+		let flat = [commit.subject, commit.body]
+			.filter { !$0.isEmpty }
+			.joined(separator: " — ")
+		let whole = [commit.subject, commit.body]
+			.filter { !$0.isEmpty }
+			.joined(separator: "\n\n")
+
+		if let messageView {
+			// **Rendered, because commit messages here are markdown.** This
+			// repository writes them with `**emphasis**`, backticked
+			// identifiers and paragraphs, and a page with room for the whole
+			// message is exactly where the asterisks stop being punctuation and
+			// start being noise. The renderer is the app's own — the same one
+			// the editor previews with.
+			let rendered = MarkdownRenderer.render(whole, baseURL: root)
+			messageView.textStorage?.setAttributedString(rendered)
+		} else {
+			detailLabel.stringValue = flat.replacingOccurrences(of: "\n", with: " ")
+			detailLabel.toolTip = whole
+		}
 
 		Task { @MainActor in
 			let loaded = await GitHistory.files(of: commit.hash, in: root)
@@ -326,10 +628,32 @@ final class HistoryPane: NSView {
 	private func fileSelected() {
 		let row = fileTable.selectedRow
 		guard files.indices.contains(row), let commit = selectedCommit else { return }
-		onSelectFile?(commit, files[row])
+		let file = files[row]
+
+		// A column has nowhere to put a diff, so it hands it to the editor
+		// area — which is the journey this whole change is finishing. A page
+		// has the room, so it keeps it: that is the difference between reading
+		// a log and leaving it every time you want to see anything.
+		guard arrangement == .page, let diffView else {
+			onSelectFile?(commit, file)
+			return
+		}
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let text = await GitHistory.diff(of: commit.hash, path: file.path, in: self.root)
+			guard self.selectedCommit?.hash == commit.hash else { return }
+			diffView.setDiff(text, staged: false, url: self.root.appendingPathComponent(file.path))
+		}
 	}
 
 	// MARK: - Actions
+
+	/// Shows the diff of the selected file, or the whole commit message.
+	@objc private func detailTabChanged() {
+		let showingMessage = detailTabs?.selectedSegment == 1
+		detailMessage?.isHidden = !showingMessage
+		detailSplit?.isHidden = showingMessage
+	}
 
 	@objc private func scopeChanged() {
 		setScope(path: scopeControl.selectedSegment == 1 ? offeredPath : nil)
@@ -352,10 +676,21 @@ final class HistoryPane: NSView {
 		guard visible.indices.contains(row), let place = visible[row].graph else { return false }
 		guard place.collapsible > 0 else { return false }
 
-		// The dot, and the marker beside it.
-		let lane = Theme.current.scaled(13)
-		let centre = Theme.current.scaled(8) + CGFloat(place.lane) * lane
-		let target = centre - lane / 2 ... centre + lane
+		// **The dot and the box beside it, measured the way they are drawn.**
+		// The two were computed in two places and disagreed by three points:
+		// the box is drawn from `own + radius + 3` and is nine wide, and the
+		// target stopped at `centre + 13` — so the right-hand third of the very
+		// thing somebody was aiming at did nothing.
+		let centre = GraphMetrics.laneCentre(place.lane)
+		let box = GraphMetrics.foldBox(lane: place.lane, isMerge: true, centreY: 0)
+		// **Generous on purpose.** This was the drawn box exactly, then the box
+		// plus two points, and it was reported unclickable both times — a
+		// nine-point square is a hard thing to hit and an easy thing to be
+		// three points wrong about. Anything from the lane's left edge to half
+		// a lane past the box counts, which is a target somebody can hit and is
+		// still nowhere near the text.
+		let target = centre - GraphMetrics.laneWidth / 2
+			... box.maxX + GraphMetrics.laneWidth / 2
 		guard target.contains(point.x) else { return false }
 
 		toggleCollapse(at: row)
@@ -387,7 +722,198 @@ final class HistoryPane: NSView {
 		NSPasteboard.general.setString(commit.subject, forType: .string)
 	}
 
+	// MARK: - What can be done to a commit
+
+	/// Runs something over the repository and tells the window it moved.
+	private func run(_ operation: @escaping () async -> GitRepository.ProcessResult) {
+		Task { @MainActor in
+			let result = await operation()
+			if result.exitCode != 0 {
+				Toast.post(
+					"That did not work",
+					detail: result.stderr.isEmpty ? result.stdout : result.stderr
+				)
+			}
+			NotificationCenter.default.post(name: .abydosRepositoryChanged, object: nil)
+			reload()
+		}
+	}
+
+	/// Reports an outcome that has three answers rather than two.
+	///
+	/// A revert or a cherry-pick that stops in a conflict has *already* changed
+	/// the work tree, so "that did not work" would be false about it — the
+	/// files are there, half-merged, and somebody has to be told which ones.
+	private func report(_ outcome: GitCommits.Outcome, verb: String) {
+		switch outcome {
+		case .done:
+			Toast.post("\(verb) done", kind: .information)
+		case let .conflicted(paths):
+			Toast.post(Toast(
+				kind: .warning,
+				title: "\(verb) stopped in \(paths.count) file\(paths.count == 1 ? "" : "s")",
+				detail: paths.joined(separator: "\n"),
+				actionTitle: "Abort",
+				action: { [weak self] in
+					guard let self else { return }
+					Task { @MainActor in
+						let undone = await GitCommits.abort(in: self.root)
+						self.report(undone, verb: "Abort")
+					}
+				}
+			))
+		case let .failed(said):
+			Toast.post("\(verb) did not happen", detail: said)
+		}
+		NotificationCenter.default.post(name: .abydosRepositoryChanged, object: nil)
+		reload()
+	}
+
+	@objc private func checkoutCommit() {
+		guard let commit = clickedCommit else { return }
+		// Detaching HEAD is not destructive — nothing is lost by standing
+		// somewhere else — so it asks nothing and keeps nothing.
+		run { await GitRepository.run(["checkout", commit.hash], in: self.root) }
+	}
+
+	@objc private func branchFromHere() {
+		guard let commit = clickedCommit else { return }
+		promptForName(
+			title: "New branch from \(commit.shortHash)",
+			message: commit.subject,
+			defaultValue: ""
+		) { [weak self] name in
+			guard let self, !name.isEmpty else { return }
+			self.run { await GitRepository.run(["checkout", "-b", name, commit.hash], in: self.root) }
+		}
+	}
+
+	@objc private func tagHere() {
+		guard let commit = clickedCommit else { return }
+		promptForName(
+			title: "Tag \(commit.shortHash)",
+			message: commit.subject,
+			defaultValue: ""
+		) { [weak self] name in
+			guard let self, !name.isEmpty else { return }
+			self.run { await GitTags.create(name, at: commit.hash, in: self.root) }
+		}
+	}
+
+	@objc private func revertCommit() {
+		guard let commit = clickedCommit else { return }
+		Task { @MainActor in
+			let outcome = await GitCommits.revert(commit.hash, in: root)
+			report(outcome, verb: "Revert")
+		}
+	}
+
+	@objc private func cherryPickCommit() {
+		guard let commit = clickedCommit else { return }
+		Task { @MainActor in
+			let outcome = await GitCommits.cherryPick(commit.hash, in: root)
+			report(outcome, verb: "Cherry-pick")
+		}
+	}
+
+	/// The one on this menu that can lose work, and the only one that asks.
+	@objc private func resetToCommit() {
+		guard let commit = clickedCommit else { return }
+		// The work tree, taken now rather than through `self` later: the sheet
+		// is answered minutes afterwards and the pane may be gone by then,
+		// while the repository it was reset against certainly is not.
+		let root = self.root
+
+		// Weak from the top and nowhere else. A weak capture inside a scope
+		// that already holds a strong one reads as care that is not being
+		// taken — the compiler says so, and `BranchesPane.recreateTag` learnt
+		// it first.
+		Task { @MainActor [weak self] in
+			let leaving = await GitCommits.count(of: "HEAD", notIn: commit.hash, in: root)
+			DestructiveAsk.run(
+				.reset(to: commit.shortHash, commits: leaving, mode: .hard),
+				in: root,
+				over: self?.window
+			) { _, _ in
+				let outcome = await GitCommits.reset(to: commit.hash, mode: .hard, in: root)
+				NotificationCenter.default.post(name: .abydosRepositoryChanged, object: nil)
+				self?.reload()
+				if case let .failed(said) = outcome { return said }
+				return nil
+			}
+		}
+	}
+
+	/// Asks for a name, the way the branches pane does.
+	private func promptForName(
+		title: String,
+		message: String,
+		defaultValue: String,
+		then act: @escaping (String) -> Void
+	) {
+		let alert = NSAlert()
+		alert.messageText = title
+		alert.informativeText = message
+		alert.addButton(withTitle: "Create")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+		field.stringValue = defaultValue
+		alert.accessoryView = field
+
+		let handle: (NSApplication.ModalResponse) -> Void = { response in
+			guard response == .alertFirstButtonReturn else { return }
+			act(field.stringValue.trimmingCharacters(in: .whitespaces))
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: handle)
+			window.makeFirstResponder(field)
+		} else {
+			handle(alert.runModal())
+		}
+	}
+
 	// MARK: - Testing
+
+	/// What the page is showing, on both sides of its split.
+	///
+	/// The claim is that a page holds what a column cannot: the graph with
+	/// lanes and refs on one side, and the selected commit's files *and its
+	/// diff* on the other rather than in a tab somewhere else.
+	func pageReportForTesting() -> String {
+		var said = ["layout=\(arrangement == .page ? "page" : "sidebar")"]
+		said.append("commits=\(visible.count)")
+		said += visible.prefix(6).map { row in
+			let lanes = row.graph.map { "lane \($0.lane)" } ?? "no graph"
+			let refs = row.commit.refs.isEmpty
+				? ""
+				: " [" + row.commit.refs.joined(separator: ", ") + "]"
+			return "  \(row.commit.shortHash) \(lanes) \(row.commit.authorName)\(refs) \(row.commit.subject)"
+		}
+		said.append("files=\(files.count)")
+		said += files.prefix(6).map { "  \($0.path)" }
+		said.append("diff=\(diffView?.reportForTesting ?? "none")")
+		return said.joined(separator: "\n")
+	}
+
+	/// Whether the log has anything in it yet.
+	var hasRowsForTesting: Bool { !visible.isEmpty }
+
+	/// What the menu over a commit offers, one item per line.
+	///
+	/// The list is the claim — that a commit has verbs at all, and that the one
+	/// which can lose work is fenced off from the ones that cannot — and a list
+	/// diffs where a photograph of an open menu does not.
+	func commitMenuForTesting(row: Int) -> String {
+		guard visible.indices.contains(row) else { return "no such row" }
+		commitTable.selectRowIndexes([row], byExtendingSelection: false)
+		let menu = NSMenu()
+		menu.delegate = self
+		menuNeedsUpdate(menu)
+		return menu.items
+			.map { $0.isSeparatorItem ? "--" : $0.title }
+			.joined(separator: "\n")
+	}
 
 	func setQueryForTesting(_ text: String) {
 		searchField.stringValue = text
@@ -424,15 +950,42 @@ extension HistoryPane: NSTableViewDataSource, NSTableViewDelegate {
 		if tableView === commitTable {
 			guard commits.indices.contains(row) else { return nil }
 			let commit = visible[row].commit
-			return CommitRowView(
+			let view = CommitRowView(
 				commit: commit,
 				isUnpushed: unpushed.contains(commit.hash),
 				graph: visible[row].graph,
-				isCollapsed: collapsedMerges.contains(commit.hash)
+				isCollapsed: collapsedMerges.contains(commit.hash),
+				// Who and when, which a 300 pt column has no room for and a
+				// page does. They are the two questions a log is asked that the
+				// subject cannot answer.
+				showsAuthor: arrangement == .page
 			)
+			// **By hash, and selecting first.** The row index captured here is
+			// the one the view was made at, and folding moves every row below
+			// it — so a reused view folded whatever had since arrived at that
+			// index. And a click on the button is not a click on the row, so
+			// nothing was selected for `keepingSelection` to put back: the
+			// keyboard path kept its selection because pressing ← requires
+			// having one.
+			view.onFold = { [weak self] in
+				guard let self,
+				      let now = self.visible.firstIndex(where: { $0.commit.hash == commit.hash })
+				else { return }
+				self.commitTable.selectRowIndexes(
+					IndexSet(integer: now), byExtendingSelection: false
+				)
+				self.toggleCollapse(at: now)
+			}
+			return view
 		}
 		guard files.indices.contains(row) else { return nil }
 		return CommitFileRowView(file: files[row])
+	}
+
+	/// The theme's selection colour rather than the system's blue, in both of
+	/// the log's tables — the same reason `ThemedRowView` was written.
+	func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+		ThemedRowView()
 	}
 
 	func tableViewSelectionDidChange(_ notification: Notification) {
@@ -450,8 +1003,51 @@ extension HistoryPane: NSMenuDelegate {
 			item.target = self
 			return item
 		}
+		// Where you can stand, and what you can make from here.
+		menu.addItem(item("Checkout", #selector(checkoutCommit)))
+		menu.addItem(item("Branch from Here\u{2026}", #selector(branchFromHere)))
+		menu.addItem(item("Tag Here\u{2026}", #selector(tagHere)))
+		menu.addItem(.separator())
+
+		// What this commit's change can do to the branch you are on. Revert and
+		// cherry-pick add a commit; reset takes them away, which is why it is
+		// fenced off below and is the only one here that asks first.
+		menu.addItem(item("Revert\u{2026}", #selector(revertCommit)))
+		menu.addItem(item("Cherry-pick", #selector(cherryPickCommit)))
+		menu.addItem(.separator())
+		menu.addItem(item("Reset to Here\u{2026}", #selector(resetToCommit)))
+		menu.addItem(.separator())
+
 		menu.addItem(item("Copy Commit Hash", #selector(copyHash)))
 		menu.addItem(item("Copy Subject", #selector(copySubject)))
+	}
+}
+
+extension HistoryPane: NSSplitViewDelegate {
+	/// How small a pane may be dragged.
+	///
+	/// **Through the delegate rather than through constraints.** A height
+	/// constraint on a pane is a second opinion about where the divider is, and
+	/// two opinions is what made the page argue with the panel below it once
+	/// per frame.
+	func splitView(
+		_ splitView: NSSplitView,
+		constrainMinCoordinate minimum: CGFloat,
+		ofSubviewAt divider: Int
+	) -> CGFloat {
+		// Two rows of files, or a third of the graph: below either there is
+		// nothing to read, and a pane dragged to nothing cannot be found again.
+		guard splitView === pageSplit else { return minimum + Theme.current.scaled(48) }
+		return minimum + Theme.current.scaled(320)
+	}
+
+	func splitView(
+		_ splitView: NSSplitView,
+		constrainMaxCoordinate maximum: CGFloat,
+		ofSubviewAt divider: Int
+	) -> CGFloat {
+		guard splitView === pageSplit else { return maximum - Theme.current.scaled(80) }
+		return maximum - Theme.current.scaled(300)
 	}
 }
 
@@ -464,11 +1060,27 @@ extension HistoryPane: NSSearchFieldDelegate {
 
 /// A table that says when its selection changed and when it ran out of rows.
 private final class HistoryTableView: NSTableView {
+	/// A click from an inactive window lands on the row, rather than being
+	/// spent activating the app.
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
 	var onSelectionChange: (() -> Void)?
 	var onScrolledToEnd: (() -> Void)?
 	var rowHeightOverride: CGFloat?
 	/// A click in the graph column, which the pane may take for a fold.
 	var onGraphClick: ((NSPoint, Int) -> Bool)?
+	/// Left and right on a commit: fold the branch it brought in, or show it.
+	var onFold: ((_ expanding: Bool, _ row: Int) -> Void)?
+
+	override func keyDown(with event: NSEvent) {
+		// A merge folds with ← and opens with →, as a tree does everywhere
+		// else. It could only ever be done by hitting a nine-point box.
+		if event.keyCode == 123 || event.keyCode == 124, selectedRow >= 0 {
+			onFold?(event.keyCode == 124, selectedRow)
+			return
+		}
+		super.keyDown(with: event)
+	}
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
@@ -500,30 +1112,75 @@ private final class CommitRowView: NSView {
 	private let graph: GitGraph.Row?
 	/// Whether the branch this merge brought in is folded away.
 	private let isCollapsed: Bool
+	/// Whether there is room for who made it and when.
+	private let showsAuthor: Bool
 	override var isFlipped: Bool { true }
+
+	/// Pressed to fold the branch this merge brought in.
+	var onFold: (() -> Void)?
 
 	init(
 		commit: GitCommit,
 		isUnpushed: Bool = false,
 		graph: GitGraph.Row? = nil,
-		isCollapsed: Bool = false
+		isCollapsed: Bool = false,
+		showsAuthor: Bool = false
 	) {
 		self.commit = commit
 		self.isUnpushed = isUnpushed
 		self.graph = graph
 		self.isCollapsed = isCollapsed
+		self.showsAuthor = showsAuthor
 		super.init(frame: .zero)
 		var lines = [commit.shortHash, commit.subject, commit.body]
 		if isUnpushed { lines.append("Not pushed yet") }
 		toolTip = lines
 			.filter { !$0.isEmpty }
 			.joined(separator: "\n\n")
+
+		addFoldButton()
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// Puts a real button where the fold marker is drawn.
+	///
+	/// **Three attempts at hit-testing the drawing were three attempts too
+	/// many.** The box was measured in one place and clicked in another, then
+	/// in one place with slack, then with more slack, and it was reported dead
+	/// every time. A button cannot be three points out and cannot be argued
+	/// with: AppKit routes the click, and the drawing is only a drawing.
+	private func addFoldButton() {
+		guard let graph, graph.collapsible > 0 else { return }
+
+		let button = NSButton(frame: .zero)
+		button.isBordered = false
+		button.bezelStyle = .inline
+		button.title = ""
+		button.target = self
+		button.action = #selector(foldPressed)
+		button.translatesAutoresizingMaskIntoConstraints = false
+		button.toolTip = isCollapsed
+			? "Show the \(graph.collapsible) commits this merge brought in"
+			: "Fold away the \(graph.collapsible) commits this merge brought in"
+		addSubview(button)
+
+		// Bigger than the drawing, because a nine-point square is a hard thing
+		// to hit; centred on it, so it still looks like what it is.
+		let box = GraphMetrics.foldBox(lane: graph.lane, isMerge: commit.isMerge, centreY: 0)
+		let size = Theme.current.scaled(18)
+		NSLayoutConstraint.activate([
+			button.centerXAnchor.constraint(equalTo: leadingAnchor, constant: box.midX),
+			button.centerYAnchor.constraint(equalTo: centerYAnchor),
+			button.widthAnchor.constraint(equalToConstant: size),
+			button.heightAnchor.constraint(equalToConstant: size),
+		])
+	}
+
+	@objc private func foldPressed() { onFold?() }
+
 	/// How wide one lane is, and how far the text starts from the graph.
-	private var laneWidth: CGFloat { Theme.current.scaled(13) }
+	private var laneWidth: CGFloat { GraphMetrics.laneWidth }
 
 	/// The colours lines of descent are drawn in, in order.
 	///
@@ -581,6 +1238,11 @@ private final class CommitRowView: NSView {
 			])
 			let size = label.size()
 			let pill = NSRect(x: x, y: top, width: size.width + 8, height: size.height + 2)
+			// A row is drawn to its own bounds and nothing clips it, so a
+			// commit at the tip of four refs used to draw its last pill over
+			// whatever was beside the list. Stop instead: the subject is worth
+			// more than a fifth label, and the tooltip has them all.
+			guard pill.maxX < bounds.maxX - Theme.current.scaled(60) else { break }
 			tint.withAlphaComponent(0.18).setFill()
 			NSBezierPath(roundedRect: pill, xRadius: 3, yRadius: 3).fill()
 			label.draw(at: NSPoint(x: x + 4, y: top + 1))
@@ -599,19 +1261,40 @@ private final class CommitRowView: NSView {
 			x += size + Theme.current.scaled(4)
 		}
 
+		// **On a page, who and when are columns.** In a column they have to be a
+		// second line under the subject, which is the only place they fit; with
+		// room they belong at the right-hand edge, aligned down the list, where
+		// the eye can run past them rather than through them.
+		var subjectLimit = max(0, bounds.width - x - Theme.current.scaled(10))
+		if showsAuthor {
+			let columns = NSAttributedString(
+				string: "\(commit.authorName)   \(Self.age(of: commit.date))",
+				attributes: [
+					.font: Theme.current.uiFont(10.5),
+					.foregroundColor: Theme.current.gitIgnored,
+				]
+			)
+			let width = columns.size().width
+			let right = bounds.maxX - Theme.current.scaled(12) - width
+			columns.draw(at: NSPoint(x: right, y: top + Theme.current.scaled(1)))
+			subjectLimit = max(0, right - x - Theme.current.scaled(12))
+		}
+
 		let subject = NSAttributedString(string: commit.subject, attributes: [
 			.font: Theme.current.uiFont(12),
 			.foregroundColor: Theme.current.sidebarText,
 		])
 		subject.draw(in: NSRect(
 			x: x, y: top,
-			width: max(0, bounds.width - x - Theme.current.scaled(10)),
+			width: subjectLimit,
 			height: subject.size().height
 		))
 
 		// Merges are worth telling apart at a glance: their diff is against the
 		// first parent and reads differently from an ordinary commit's.
-		var meta = "\(commit.shortHash)  ·  \(commit.authorName)  ·  \(Self.age(of: commit.date))"
+		var meta = showsAuthor
+			? commit.shortHash
+			: "\(commit.shortHash)  ·  \(commit.authorName)  ·  \(Self.age(of: commit.date))"
 		if commit.isMerge { meta = "merge  ·  " + meta }
 
 		let detail = NSAttributedString(string: meta, attributes: [
@@ -634,9 +1317,7 @@ private final class CommitRowView: NSView {
 	private func drawGraph() {
 		guard let graph else { return }
 		let centreY = bounds.midY
-		func centre(_ lane: Int) -> CGFloat {
-			Theme.current.scaled(8) + CGFloat(lane) * laneWidth
-		}
+		func centre(_ lane: Int) -> CGFloat { GraphMetrics.laneCentre(lane) }
 
 		let width = Theme.current.scaled(1.6)
 		for edge in graph.edges {
@@ -715,11 +1396,10 @@ private final class CommitRowView: NSView {
 		// are: a plus for a branch that is folded, a minus for one that is not,
 		// which is how a tree says the same thing everywhere else.
 		guard graph.collapsible > 0 else { return }
-		let box = NSRect(
-			x: own + radius + Theme.current.scaled(3),
-			y: centreY - Theme.current.scaled(4.5),
-			width: Theme.current.scaled(9),
-			height: Theme.current.scaled(9)
+		// Through the same measurements the click is tested against, so the two
+		// cannot drift apart again.
+		let box = GraphMetrics.foldBox(
+			lane: graph.lane, isMerge: commit.isMerge, centreY: centreY
 		)
 		colour.withAlphaComponent(0.18).setFill()
 		NSBezierPath(roundedRect: box, xRadius: 2, yRadius: 2).fill()
@@ -752,6 +1432,33 @@ private final class CommitRowView: NSView {
 	}
 }
 
+/// Where the graph puts things.
+///
+/// **One set of numbers for drawing and for hit-testing.** They were written
+/// out twice and disagreed by three points, which is how a fold marker came to
+/// be drawn where a click on it did nothing.
+enum GraphMetrics {
+	static var laneWidth: CGFloat { Theme.current.scaled(13) }
+
+	static func laneCentre(_ lane: Int) -> CGFloat {
+		Theme.current.scaled(8) + CGFloat(lane) * laneWidth
+	}
+
+	static func dotRadius(isMerge: Bool) -> CGFloat {
+		Theme.current.scaled(isMerge ? 4 : 3.5)
+	}
+
+	/// The box holding the plus or minus, beside the dot.
+	static func foldBox(lane: Int, isMerge: Bool, centreY: CGFloat) -> NSRect {
+		NSRect(
+			x: laneCentre(lane) + dotRadius(isMerge: isMerge) + Theme.current.scaled(3),
+			y: centreY - Theme.current.scaled(4.5),
+			width: Theme.current.scaled(9),
+			height: Theme.current.scaled(9)
+		)
+	}
+}
+
 /// A file a commit touched, marked by what happened to it.
 private final class CommitFileRowView: NSView {
 	private let file: GitCommitFile
@@ -775,7 +1482,10 @@ private final class CommitFileRowView: NSView {
 		LastDrawn.note("commit file row \(file.path)", font: Theme.current.uiFont(11.5))
 
 		let letter = NSAttributedString(string: Self.letter(for: file.kind), attributes: [
-			.font: NSFont.monospacedSystemFont(ofSize: Theme.current.scaled(10), weight: .bold),
+			// Through the guard, not straight to `NSFont`: this is the row the
+			// abort has been raised in three times, and a nullable font is what
+			// it was.
+			.font: Theme.current.monoFont(10, weight: .bold),
 			.foregroundColor: colour,
 		])
 		letter.draw(at: NSPoint(x: left, y: bounds.midY - letter.size().height / 2))

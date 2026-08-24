@@ -13,6 +13,9 @@ final class DiffView: NSView {
 	var onApplySelection: ((Set<Int>) -> Void)?
 	/// Throw away the selected work-tree lines.
 	var onDiscardSelection: ((Set<Int>) -> Void)?
+	/// Put just these lines aside. Nil where the caller cannot do it — an old
+	/// git, or a staged hunk, which is already where a stash would take it.
+	var onStashSelection: ((Set<Int>) -> Void)?
 
 	private var patch = GitPatch()
 	private(set) var isStaged = false
@@ -31,7 +34,13 @@ final class DiffView: NSView {
 	private enum Row {
 		case header(String)
 		case hunkHeader(index: Int, text: String)
-		case line(index: Int, line: GitPatch.Line)
+		/// A line, and where it sits in each side of the file.
+		///
+		/// **Both numbers, because a diff has two files in it.** A removed line
+		/// has a place in the old one and none in the new; an added line the
+		/// other way round; and a line somebody wants to go and look at is
+		/// nearly always identified by one of the two.
+		case line(index: Int, line: GitPatch.Line, old: Int?, new: Int?)
 	}
 
 	private var font: NSFont = Theme.terminalFont(size: Theme.current.fontSize)
@@ -39,6 +48,13 @@ final class DiffView: NSView {
 	private static let horizontalInset: CGFloat = 12
 	/// Room for the selection marker down the left edge.
 	private static let gutterWidth: CGFloat = 14
+	/// Room for the two line numbers beside it.
+	private var numberWidth: CGFloat {
+		// Measured from the font rather than guessed: a diff of a four-figure
+		// file and one of a hundred lines should not indent differently, so it
+		// is a fixed five columns either side.
+		("0" as NSString).size(withAttributes: [.font: font]).width * 5
+	}
 
 	override var isFlipped: Bool { true }
 	override var acceptsFirstResponder: Bool { true }
@@ -65,6 +81,11 @@ final class DiffView: NSView {
 	}
 
 	// MARK: - Content
+
+	/// How much of a diff is on screen, for a driver that cannot photograph it.
+	var reportForTesting: String {
+		rows.isEmpty ? "empty" : "\(rows.count) rows"
+	}
 
 	func setDiff(_ text: String, staged: Bool, url: URL? = nil) {
 		// A parse of the patch and two whole tree-sitter parses behind
@@ -103,8 +124,23 @@ final class DiffView: NSView {
 		for (position, hunk) in patch.hunks.enumerated() {
 			let heading = hunk.heading.isEmpty ? "" : " \(hunk.heading)"
 			rows.append(.hunkHeader(index: position, text: "@@ hunk \(position + 1)\(heading)"))
+			// Counted off the hunk header, which is where git puts the only
+			// statement of where a hunk begins.
+			var old = hunk.oldStart
+			var new = hunk.newStart
 			for line in hunk.lines {
-				rows.append(.line(index: index, line: line))
+				switch line.kind {
+				case .added:
+					rows.append(.line(index: index, line: line, old: nil, new: new))
+					new += 1
+				case .removed:
+					rows.append(.line(index: index, line: line, old: old, new: nil))
+					old += 1
+				default:
+					rows.append(.line(index: index, line: line, old: old, new: new))
+					old += 1
+					new += 1
+				}
 				index += 1
 			}
 		}
@@ -144,7 +180,7 @@ final class DiffView: NSView {
 	}
 
 	private func lineIndex(atRow row: Int) -> Int? {
-		guard rows.indices.contains(row), case let .line(index, line) = rows[row], line.isSelectable else {
+		guard rows.indices.contains(row), case let .line(index, line, _, _) = rows[row], line.isSelectable else {
 			return nil
 		}
 		return index
@@ -234,6 +270,17 @@ final class DiffView: NSView {
 		apply.target = self
 		menu.addItem(apply)
 
+		if !isStaged, onStashSelection != nil {
+			menu.addItem(.separator())
+			let stash = NSMenuItem(
+				title: "Stash Selected Lines" + suffix,
+				action: #selector(stashSelection),
+				keyEquivalent: ""
+			)
+			stash.target = self
+			menu.addItem(stash)
+		}
+
 		if !isStaged {
 			menu.addItem(.separator())
 			let discard = NSMenuItem(
@@ -249,6 +296,7 @@ final class DiffView: NSView {
 
 	@objc private func applySelection() { onApplySelection?(selection) }
 	@objc private func discardSelection() { onDiscardSelection?(selection) }
+	@objc private func stashSelection() { onStashSelection?(selection) }
 
 	// MARK: - Drawing
 
@@ -276,7 +324,7 @@ final class DiffView: NSView {
 	}
 
 	private func draw(row: Row, at y: CGFloat) {
-		let textX = Self.horizontalInset + Self.gutterWidth
+		let textX = Self.horizontalInset + Self.gutterWidth + numberWidth * 2
 
 		switch row {
 		case .header(let text):
@@ -292,7 +340,7 @@ final class DiffView: NSView {
 				color: Theme.current.gitModified
 			)
 
-		case .line(let index, let line):
+		case .line(let index, let line, let old, let new):
 			let isSelected = selection.contains(index)
 
 			if let background = background(for: line.kind) {
@@ -308,6 +356,24 @@ final class DiffView: NSView {
 				Theme.current.gitModified.setFill()
 				NSRect(x: 0, y: y, width: Theme.current.scaled(3), height: lineHeight).fill()
 			}
+
+			// The two numbers, right-aligned in their own columns and dimmer
+			// than the code: they are there to be read off when you want one,
+			// not to be read past on every line.
+			let numbers = Theme.current.gitIgnored.withAlphaComponent(0.7)
+			let numberFont = font
+			func column(_ value: Int?, at x: CGFloat) {
+				guard let value else { return }
+				let text = "\(value)" as NSString
+				let width = text.size(withAttributes: [.font: numberFont]).width
+				text.draw(
+					at: NSPoint(x: x + numberWidth - width - Theme.current.scaled(4), y: y),
+					withAttributes: [.font: numberFont, .foregroundColor: numbers]
+				)
+			}
+			let numbersX = Self.horizontalInset + Self.gutterWidth
+			column(old, at: numbersX)
+			column(new, at: numbersX + numberWidth)
 
 			guard !line.marker.isEmpty || !line.text.isEmpty else { return }
 

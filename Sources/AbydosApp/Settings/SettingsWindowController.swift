@@ -807,6 +807,36 @@ final class SettingsPaneController: NSViewController {
 		]
 	}
 
+	static func gitRows() -> [Row] {
+		[
+			.toggle(
+				title: "Rebase when pulling",
+				help: "Your commits are replayed on top rather than merged, so the history stays "
+					+ "a line. A repository with pull.rebase in its own config overrules this and "
+					+ "says so in the dialog.",
+				get: { Settings.shared.pullRebases },
+				set: { Settings.shared.pullRebases = $0 }
+			),
+			.toggle(
+				title: "Stash and reapply when pulling",
+				help: "Puts the working copy aside for the pull and back afterwards, rather than "
+					+ "stopping to tell you it is in the way.",
+				get: { Settings.shared.pullStashes },
+				set: { Settings.shared.pullStashes = $0 }
+			),
+			.slider(
+				title: "Keep backups for",
+				help: "Anything that could lose work leaves a branch under backup/ first. A ref "
+					+ "holds its commits against gc, which is the point of it and the cost. Zero "
+					+ "keeps them for ever.",
+				range: 0...180, step: 1,
+				format: { $0 < 1 ? "for ever" : String(format: "%.0f days", $0) },
+				get: { Double(Settings.shared.backupsKeptDays) },
+				set: { Settings.shared.backupsKeptDays = Int($0) }
+			),
+		]
+	}
+
 	static func navigatorRows() -> [Row] {
 		[
 			.toggle(
@@ -944,6 +974,7 @@ enum SettingsSections {
 		Section(title: "Editor", symbol: "textformat", rows: SettingsPaneController.editorRows),
 		Section(title: "Saving", symbol: "square.and.arrow.down", rows: SettingsPaneController.savingRows),
 		Section(title: "Navigator", symbol: "folder", rows: SettingsPaneController.navigatorRows),
+		Section(title: "Git", symbol: "arrow.trianglehead.branch", rows: SettingsPaneController.gitRows),
 		Section(title: "Agent", symbol: "sparkles", rows: SettingsPaneController.agentRows),
 		Section(
 			title: "Tools",

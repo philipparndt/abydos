@@ -254,6 +254,72 @@ struct GitTagsLiveTests {
 		#expect(await GitTags.likelySource(for: "stable", in: root) == "HEAD")
 	}
 
+	/// The half that was missing: a tag that does not exist yet.
+	///
+	/// The app could always *move* one, because a tag it could move had a row
+	/// to open a menu on. A tag that did not exist had no row, so there was
+	/// nowhere for the verb to live and the feature was simply absent.
+	@Test func aTagCanBeMadeAtACommit() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		#expect(await GitTags.create("v0.1.0", in: root).exitCode == 0)
+		#expect(commit(at: "v0.1.0", in: root) == commit(at: "HEAD", in: root))
+	}
+
+	/// A release tag people read carries a message, and git makes that a tag
+	/// object rather than a name pointing straight at the commit.
+	@Test func aTagWithAMessageIsAnnotated() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		#expect(await GitTags.create("v0.1.0", message: "the first one", in: root).exitCode == 0)
+
+		let kind = await GitRepository.run(["cat-file", "-t", "v0.1.0"], in: root)
+		#expect(kind.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "tag")
+	}
+
+	/// And a marker somebody drops for their own use does not, because forcing
+	/// a message on them would put an editor in the way of a one-second job.
+	@Test func aTagWithNoMessageIsLightweight() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		#expect(await GitTags.create("v0.1.0", in: root).exitCode == 0)
+
+		let kind = await GitRepository.run(["cat-file", "-t", "v0.1.0"], in: root)
+		#expect(kind.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "commit")
+	}
+
+	/// What the picker in front of `recreate` depends on: a branch is a source
+	/// like any other, and always was.
+	@Test func aMovingTagCanBePointedAtABranch() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		#expect(await GitTags.create("v1", in: root).exitCode == 0)
+
+		#expect(Process.git(["checkout", "-q", "-b", "release"], in: root) == 0)
+		try commit("two", in: root)
+
+		#expect(await GitTags.recreate("v1", at: "release", in: root).exitCode == 0)
+		#expect(commit(at: "v1", in: root) == commit(at: "release", in: root))
+	}
+
+	@Test func aTagCanBeTakenAwayAgain() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		#expect(await GitTags.create("v0.1.0", in: root).exitCode == 0)
+		#expect(await GitTags.delete("v0.1.0", in: root).exitCode == 0)
+		#expect(await GitTags.describe("v0.1.0", in: root) == nil)
+	}
+
 	/// And the half that actually matters to a workflow: the remote moves too.
 	@Test func theTagIsForcedOntoTheRemote() async throws {
 		let origin = try repository()

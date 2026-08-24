@@ -12,6 +12,14 @@ final class BranchesPane: NSView {
 	var onRepositoryChanged: (() -> Void)?
 	/// Open a worktree as a project, which is the point of having one.
 	var onOpenWorktree: ((URL) -> Void)?
+	/// Somebody wants the commit page.
+	var onOpenCommitPage: (() -> Void)?
+	/// Open these paths in the editor.
+	var onOpenFiles: (([String]) -> Void)?
+	/// Somebody wants the log, for a ref or for the repository.
+	var onShowLog: ((String?) -> Void)?
+	/// A change was selected, to show its diff.
+	var onSelectChange: ((GitChange) -> Void)?
 
 	private let root: URL
 
@@ -31,24 +39,117 @@ final class BranchesPane: NSView {
 	/// and a list that looks exactly as it did is indistinguishable from a
 	/// click that never landed.
 	private var pushingBranch: String?
+	/// Kept alive while the recreate sheet is up: it is the combo's delegate,
+	/// and a delegate nobody holds is one nobody hears from.
+	private var tagSourceWatcher: TagSourceWatcher?
 	private var worktrees: [GitWorktree] = []
 	private var stashes: [GitStash.Entry] = []
-	private var rows: [Row] = []
+	/// The tree as it stands, and what somebody has folded shut.
+	private var roots: [GitNode] = []
+	/// **The working copy arrives shut.** Every change unrolled under the first
+	/// row pushes the branches off the bottom of a column, and the question the
+	/// tree is usually asked is "where am I" rather than "what have I changed"
+	/// — which is what the commit page is for. The count on the row answers the
+	/// other one without spending forty rows on it.
+	private var collapsedKeys: Set<String> = ["working"]
+	/// Set while expansion is being put back after a rebuild, so the pane's own
+	/// work is not mistaken for somebody's — the rule `ChangesPane` keeps.
+	private var isRestoring = false
 	private var filterText = ""
 
-	private var filterField: NSSearchField!
-	private var tableView: BranchesTableView!
+	/// What has changed in the working copy, and the trees drawn from it.
+	///
+	/// **The first row of the tree, and a thing of the same kind as the rest.**
+	/// The working copy is the commit that has not happened yet, which is why
+	/// it sits above the stashes and the branches rather than in a pane of its
+	/// own with a button of its own.
+	private var working = GitWorkingCopyStatus()
+	private var unstagedRoots: [GitChangeNode] = []
+	private var stagedRoots: [GitChangeNode] = []
+	/// **Shut to begin with.** Every change in the repository unrolled under
+	/// the first row pushes the branches off the bottom of a 300 pt column, and
+	/// the question the tree is usually asked is not "what have I changed" —
+	/// that is what the commit page is for — but "where am I". The count on the
+	/// row answers the other question without spending forty rows on it.
+	/// Sections somebody has folded away, by title.
+	/// Change folders somebody has folded, by side and path.
+	/// Which of the two sides is open. Both, until somebody says otherwise.
 
-	private enum Row {
+	/// Stashes somebody has opened, by the commit each one is.
+	///
+	/// By commit and not by `stash@{n}`, because dropping one renumbers every
+	/// entry after it and a set of positions would open the wrong rows.
+	/// What each opened stash holds, and whether it would still go back.
+	///
+	/// Read when a stash is opened rather than on every refresh: `wouldApply`
+	/// captures the working copy and merges three trees, which is nothing to do
+	/// once and too much to do for every entry on every filesystem event.
+	private var stashFiles: [String: [GitCommitFile]] = [:]
+	private var stashApplies: [String: GitStash.Applicability] = [:]
+
+	/// Folders somebody has folded shut, by section and prefix.
+	///
+	/// Keyed by both because `feature/` exists under Local and under every
+	/// remote that has one, and folding the local one should not fold theirs.
+	/// Held the positive way round — the negative of `ChangesPane`'s rule, and
+	/// for the opposite reason: a refs tree that opened everything would put
+	/// forty branches on screen to show you the one you are on, where a changes
+	/// tree that folded anything would hide work that has just appeared.
+
+	/// Said when a merge has stopped, and nothing else on screen says it.
+	private var conflictBanner: ConflictBanner!
+	private var conflictHeight: NSLayoutConstraint!
+	private var conflictPaths: [String] = []
+	private var filterField: NSSearchField!
+	private var trafficButton: NSButton!
+	private var tableView: BranchesOutlineView!
+	/// Where this branch stands against its remote, for what the counter says.
+	private var trafficState: GitPush.State?
+
+	enum Row {
 		case header(String)
-		case branch(GitBranch)
+		/// The working copy, and how much has changed in it.
+		case workingCopy(changed: Int)
+		/// Staged or unstaged, and how many are on that side.
+		case side(String, staged: Bool, count: Int)
+		/// One changed file, or a folder of them.
+		case change(GitChangeNode, staged: Bool, depth: Int)
+		/// A prefix several branches share. `key` is the section and the prefix
+		/// together, which is what folding is remembered by; `display` is what
+		/// the row says, which for a folded chain is more than one component.
+		case folder(key: String, display: String, count: Int, depth: Int)
+		/// A branch, how far it is indented, and what it says — which is not
+		/// `branch.name`: under `feature/`, the row reads `tags`.
+		case branch(GitBranch, depth: Int, display: String)
 		case worktree(GitWorktree)
 		case stash(GitStash.Entry)
+		/// One file inside an opened stash.
+		case stashFile(GitStash.Entry, GitCommitFile)
 
-		var isSelectable: Bool {
-			if case .header = self { return false }
-			return true
+	}
+
+	/// One row of the tree, and what hangs off it.
+	///
+	/// **A real tree, drawn by `NSOutlineView`.** This was a flat table with
+	/// indentation, chevrons, arrow keys, page keys and expansion state all
+	/// written out by hand — and every one of them was reported broken, because
+	/// each was a re-implementation of something AppKit already does correctly
+	/// and the project tree and the changes tree both already use. The rows are
+	/// the same; what draws them is not.
+	final class GitNode {
+		/// Stable across a rebuild, which is how expansion survives one: the
+		/// tree is thrown away and built again on every filesystem event, and
+		/// identity is the only thing that does not survive that.
+		let key: String
+		fileprivate let row: Row
+		fileprivate(set) var children: [GitNode] = []
+
+		fileprivate init(key: String, row: Row) {
+			self.key = key
+			self.row = row
 		}
+
+		fileprivate func add(_ child: GitNode) { children.append(child) }
 	}
 
 	init(root: URL) {
@@ -85,7 +186,16 @@ final class BranchesPane: NSView {
 		newButton.controlSize = .small
 		newButton.font = Theme.current.uiFont(11)
 
-		tableView = BranchesTableView()
+		// **The repository, as a control.** It reads `↓3 ↑1` and it is also the
+		// button: fetch when level, pull when behind, push when ahead. That is
+		// where fetch and pull have been missing from — a verb here hangs off
+		// the row that draws its object, and nothing drew the repository.
+		trafficButton = NSButton(title: "Fetch", target: self, action: #selector(trafficPressed))
+		trafficButton.bezelStyle = .rounded
+		trafficButton.controlSize = .small
+		trafficButton.font = Theme.current.uiFont(11)
+
+		tableView = BranchesOutlineView()
 		tableView.headerView = nil
 		tableView.backgroundColor = Theme.current.sidebarBackground
 		tableView.selectionHighlightStyle = .regular
@@ -95,11 +205,44 @@ final class BranchesPane: NSView {
 		tableView.rowSizeStyle = .custom
 		tableView.intercellSpacing = .zero
 		tableView.gridStyleMask = []
-		tableView.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("branch")))
+		let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("branch"))
+		tableView.addTableColumn(column)
+		// The column the disclosure triangles sit in, which an outline view
+		// will not draw one without.
+		tableView.outlineTableColumn = column
+		tableView.indentationPerLevel = Theme.current.scaled(14)
+		tableView.autoresizesOutlineColumn = false
 		tableView.delegate = self
 		tableView.dataSource = self
 		tableView.menu = makeMenu()
 		tableView.onActivate = { [weak self] in self?.checkoutSelected() }
+
+		conflictBanner = ConflictBanner()
+		conflictBanner.onOpenFiles = { [weak self] in
+			guard let self else { return }
+			self.onOpenFiles?(self.conflictPaths)
+		}
+		conflictBanner.onOpenInFork = { [weak self] in
+			guard let self, let fork = ForkIntegration.applicationURL() else { return }
+			NSWorkspace.shared.open(
+				[self.root], withApplicationAt: fork,
+				configuration: NSWorkspace.OpenConfiguration()
+			)
+		}
+		conflictBanner.onCopyPrompt = { [weak self] in
+			guard let self else { return }
+			let root = self.root
+			Task { @MainActor in
+				guard let prompt = await GitConflicts.prompt(in: root) else { return }
+				NSPasteboard.general.clearContents()
+				NSPasteboard.general.setString(prompt, forType: .string)
+				Toast.post(
+					"The conflict is on the clipboard",
+					detail: "Paste it into a session in the terminal below.",
+					kind: .information
+				)
+			}
+		}
 
 		let scrollView = NSScrollView()
 		scrollView.documentView = tableView
@@ -108,19 +251,34 @@ final class BranchesPane: NSView {
 		scrollView.backgroundColor = Theme.current.sidebarBackground
 		scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
 
-		for view in [filterField, newButton, scrollView] as [NSView] {
+		for view in [conflictBanner, filterField, newButton, trafficButton, scrollView] as [NSView] {
 			addSubview(view)
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
 
 		let inset = Theme.current.scaled(8)
+		// Shut to nothing unless there is a conflict, so a clean repository
+		// pays nothing for it.
+		conflictHeight = conflictBanner.heightAnchor.constraint(equalToConstant: 0)
+		conflictHeight.isActive = true
+
 		NSLayoutConstraint.activate([
-			filterField.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+			conflictBanner.topAnchor.constraint(equalTo: topAnchor),
+			conflictBanner.leadingAnchor.constraint(equalTo: leadingAnchor),
+			conflictBanner.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+			filterField.topAnchor.constraint(equalTo: conflictBanner.bottomAnchor, constant: inset),
 			filterField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
 			filterField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
 
 			newButton.topAnchor.constraint(equalTo: filterField.bottomAnchor, constant: inset / 2),
 			newButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+
+			trafficButton.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
+			trafficButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+			trafficButton.leadingAnchor.constraint(
+				greaterThanOrEqualTo: newButton.trailingAnchor, constant: inset / 2
+			),
 
 			scrollView.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: inset / 2),
 			scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -134,18 +292,166 @@ final class BranchesPane: NSView {
 	@objc func refresh() {
 		Task { @MainActor in
 			let fresh = await GitBranches.list(in: root)
+			self.working = await GitWorkingCopy.status(in: root)
+			self.unstagedRoots = GitChangeTree.build(self.working.unstaged, against: self.working.staged)
+			self.stagedRoots = GitChangeTree.build(self.working.staged, against: self.working.unstaged)
 			// Only the repository's own checkouts, and only when there is more
 			// than one: a repository nobody has added a worktree to should not
 			// carry a section explaining that it has one.
 			let trees = await GitWorktrees.list(in: root)
 			let put = await GitStash.list(in: root)
 			remoteURL = await GitForge.remoteURL(in: root)
+			self.refreshTraffic()
+			self.refreshConflicts()
 			forge = remoteURL.flatMap { GitForge.repository(fromRemote: $0) }
-			guard fresh != branches || trees != worktrees || put != stashes else { return }
+			// The working copy is re-read every time and the rows rebuilt with it,
+		// so an edit in the editor shows here without anything else moving.
+		guard fresh != branches || trees != worktrees || put != stashes else {
+				rebuildRows()
+				return
+			}
 			branches = fresh
 			worktrees = trees
 			stashes = put
 			rebuildRows()
+		}
+	}
+
+	/// Says whether a merge has stopped, and what there is to do about it.
+	private func refreshConflicts() {
+		let root = self.root
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let paths = await GitConflicts.paths(in: root)
+			guard paths != self.conflictPaths else { return }
+			self.conflictPaths = paths
+
+			guard !paths.isEmpty else {
+				self.conflictHeight.constant = 0
+				self.conflictBanner.isHidden = true
+				return
+			}
+			let what = await GitConflicts.describe(in: root)
+			self.conflictBanner.isHidden = false
+			self.conflictBanner.show(count: paths.count, what: what)
+			self.conflictHeight.constant = Theme.current.scaled(56)
+		}
+	}
+
+	/// Reads where the branch stands, and says it on the button.
+	private func refreshTraffic() {
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let state = await GitPush.state(in: self.root)
+			self.trafficState = state
+
+			guard let state, state.hasRemote, state.hasCommits else {
+				self.trafficButton.title = "Fetch"
+				self.trafficButton.isEnabled = state?.hasRemote ?? false
+				self.trafficButton.toolTip = state?.hasRemote == true
+					? "Bring down what is on the remote"
+					: "This repository has no remote"
+				return
+			}
+
+			// Behind wins over ahead: what somebody else has done comes first,
+			// because pushing on top of it is what makes the mess this is meant
+			// to avoid.
+			var parts: [String] = []
+			if state.behind > 0 { parts.append("↓\(state.behind)") }
+			if state.ahead > 0 { parts.append("↑\(state.ahead)") }
+			self.trafficButton.isEnabled = true
+			self.trafficButton.title = parts.isEmpty ? "Fetch" : parts.joined(separator: " ")
+			self.trafficButton.toolTip = parts.isEmpty
+				? "Level with \(state.upstream ?? "the remote") — fetch"
+				: (state.behind > 0 ? "Pull \(state.behind)" : state.explanation)
+		}
+	}
+
+	/// Fetch, pull or push, whichever the counter is showing.
+	@objc private func trafficPressed() {
+		guard let state = trafficState, state.hasRemote else { return }
+
+		if state.behind > 0 {
+			pullWithDialog()
+			return
+		}
+		if state.canPush {
+			pushBranch()
+			return
+		}
+		run { await GitPull.fetch(in: self.root) }
+	}
+
+	/// Puts the pull dialog up and does what it says.
+	@objc func pullWithDialog() {
+		let root = self.root
+		Task { @MainActor [weak self] in
+			guard let situation = await PullSheet.situation(in: root) else {
+				Toast.post("There is no remote to pull from")
+				return
+			}
+			PullSheet.ask(situation, over: self?.window) { answer in
+				Task { @MainActor in
+					// **A rebase rewrites your commits, so the branch is kept
+					// first.** The one place a pull becomes destructive, and the
+					// safety net is the same one everything else here uses.
+					if answer.rebasing, situation.going > 0 {
+						_ = await GitBackup.keep(
+							ref: "HEAD", subject: situation.into, at: Date(), in: root
+						)
+					}
+
+					let result = await GitPull.pull(
+						in: root,
+						remote: answer.remote,
+						branch: answer.branch,
+						rebasing: answer.rebasing,
+						stashing: answer.stashing
+					)
+
+					if let refusal = GitPull.refusal(from: result) {
+						Self.say(refusal, result: result)
+					} else {
+						Toast.post(
+							"Pulled from \(answer.remote)/\(answer.branch)", kind: .information
+						)
+					}
+					self?.refresh()
+					self?.onRepositoryChanged?()
+				}
+			}
+		}
+	}
+
+	/// Says why a pull did not work, in words somebody can act on.
+	private static func say(_ refusal: GitPull.Refusal, result: GitRepository.ProcessResult) {
+		switch refusal {
+		case .needsCredential:
+			// **Otherwise this is silence.** `GIT_TERMINAL_PROMPT=0` and an
+			// askpass of `/usr/bin/false` are right — nothing should hang on a
+			// prompt nobody can see — and they turn "this needs a password"
+			// into an exit code with very little beside it.
+			Toast.post(
+				"git wanted a credential",
+				detail: "It cannot ask for one from here. Set up a credential helper or an "
+					+ "SSH key, or pull from a terminal once to store it."
+			)
+		case .noRemote:
+			Toast.post("There is no remote to pull from")
+		case .workingCopyInTheWay:
+			Toast.post(
+				"Your working copy is in the way",
+				detail: "Tick “Stash and reapply local changes” and try again."
+			)
+		case let .conflicted(paths):
+			Toast.post(
+				"The pull stopped in \(paths.count) file\(paths.count == 1 ? "" : "s")",
+				detail: paths.joined(separator: "\n"),
+				kind: .warning
+			)
+		case let .other(said):
+			Toast.post("The pull did not work", detail: said)
 		}
 	}
 
@@ -155,7 +461,18 @@ final class BranchesPane: NSView {
 			? branches
 			: branches.filter { $0.name.lowercased().contains(needle) }
 
-		rows = []
+		roots = []
+
+		// The working copy first: it is what you are doing, and everything
+		// below it is where that work might go or has been.
+		let changed = working.staged.count + working.unstaged.count
+		let copy = GitNode(key: "working", row: .workingCopy(changed: changed))
+		roots.append(copy)
+		if changed > 0 {
+			add(side: "Staged", stagedRoots, staged: true, to: copy)
+			add(side: "Unstaged", unstagedRoots, staged: false, to: copy)
+		}
+
 		// Local first: it is what you switch between. Remotes and tags are
 		// there to branch from, not to live on.
 		appendSection("Local", matching.filter { $0.kind == .local })
@@ -178,8 +495,11 @@ final class BranchesPane: NSView {
 				$0.name.lowercased().contains(needle) || ($0.branch ?? "").lowercased().contains(needle)
 			}
 		if matchingTrees.count > 1 || (matchingTrees.count == 1 && !matchingTrees[0].isPrimary) {
-			rows.append(.header("Worktrees"))
-			rows += matchingTrees.map { Row.worktree($0) }
+			let section = GitNode(key: "section:Worktrees", row: .header("Worktrees"))
+			roots.append(section)
+			for tree in matchingTrees {
+				section.add(GitNode(key: "worktree:\(tree.path.path)", row: .worktree(tree)))
+			}
 		}
 
 		// Stashes last, and only when there are any: work put aside belongs
@@ -191,29 +511,242 @@ final class BranchesPane: NSView {
 				$0.message.lowercased().contains(needle) || $0.branch.lowercased().contains(needle)
 			}
 		if !matchingStashes.isEmpty {
-			rows.append(.header("Stashes"))
-			rows += matchingStashes.map { Row.stash($0) }
+			let section = GitNode(key: "section:Stashes", row: .header("Stashes"))
+			roots.append(section)
+			for entry in matchingStashes {
+				let node = GitNode(key: "stash:\(entry.commit)", row: .stash(entry))
+				section.add(node)
+				for file in stashFiles[entry.commit] ?? [] {
+					node.add(GitNode(
+						key: "stashfile:\(entry.commit):\(file.path)",
+						row: .stashFile(entry, file)
+					))
+				}
+			}
 		}
 
+		// **A rebuild must not take the keyboard away.** `reloadData` drops the
+		// selection, and a list with nothing selected gives up first responder,
+		// so folding a row left the tree unfocused and the next keypress went
+		// to the window. Remembered by key rather than by row, because a
+		// rebuild moves every row.
+		let hadFocus = window?.firstResponder === tableView
+		let selectedKey = selectedNode?.key
+
+		// **The flag covers the selection too, and that is the whole of it.**
+		// Putting the selection back is a selection change as far as AppKit is
+		// concerned, and this pane answers one by opening the diff of what was
+		// picked. Cleared a line too early, every refresh — and a refresh is
+		// every filesystem event — opened an editor tab, which changed the
+		// window, which refreshed the pane.
+		isRestoring = true
 		tableView.reloadData()
+		restoreExpansion(roots)
+
+		if let selectedKey, let again = node(forKey: selectedKey) {
+			let row = tableView.row(forItem: again)
+			if row >= 0 { tableView.selectRowIndexes([row], byExtendingSelection: false) }
+		}
+		isRestoring = false
+
+		if hadFocus { window?.makeFirstResponder(tableView) }
+	}
+
+	/// Opens everything nobody has shut.
+	///
+	/// The positive way round, so a tree arrives open — with one exception the
+	/// working copy makes for itself: forty changed files unrolled under the
+	/// first row pushes the branches off the bottom of a column, and the count
+	/// on the row answers the usual question without spending forty rows on it.
+	private func restoreExpansion(_ nodes: [GitNode]) {
+		for node in nodes where !node.children.isEmpty {
+			if collapsedKeys.contains(node.key) {
+				tableView.collapseItem(node)
+			} else {
+				tableView.expandItem(node)
+				restoreExpansion(node.children)
+			}
+		}
+	}
+
+	/// Finds a node again after a rebuild has replaced every object.
+	private func node(forKey key: String) -> GitNode? {
+		var stack = roots
+		while let node = stack.popLast() {
+			if node.key == key { return node }
+			stack.append(contentsOf: node.children)
+		}
+		return nil
+	}
+
+	/// The node under the pointer, or the selected one.
+	private var selectedNode: GitNode? {
+		let clicked = tableView.clickedRow
+		let row = clicked >= 0 ? clicked : tableView.selectedRow
+		return tableView.item(atRow: row) as? GitNode
+	}
+
+	/// One side of the index, and the folders it changed.
+	private func add(
+		side title: String, _ trees: [GitChangeNode], staged: Bool, to parent: GitNode
+	) {
+		guard !trees.isEmpty else { return }
+		let count = staged ? working.staged.count : working.unstaged.count
+		let side = GitNode(key: "side:\(title)", row: .side(title, staged: staged, count: count))
+		parent.add(side)
+		add(changes: trees, staged: staged, to: side)
+	}
+
+	private func add(changes: [GitChangeNode], staged: Bool, to parent: GitNode) {
+		for change in changes {
+			let node = GitNode(
+				key: "change:\(staged):\(change.path)",
+				row: .change(change, staged: staged, depth: 0)
+			)
+			parent.add(node)
+			guard change.isFolder else { continue }
+			add(changes: change.children, staged: staged, to: node)
+		}
 	}
 
 	private func appendSection(_ title: String, _ entries: [GitBranch]) {
 		guard !entries.isEmpty else { return }
-		rows.append(.header(title))
-		// Current first, then alphabetically — the one you are on is the one
-		// you look for.
-		for branch in entries.sorted(by: {
-			$0.isCurrent != $1.isCurrent ? $0.isCurrent : $0.name < $1.name
-		}) {
-			rows.append(.branch(branch))
+		let section = GitNode(key: "section:\(title)", row: .header(title))
+		roots.append(section)
+
+		// **Filtering flattens.** A tree you have to expand to reach a name you
+		// have just typed is worse than no tree, so a filtered list is whole
+		// names and no folders at all.
+		guard filterText.isEmpty else {
+			for branch in entries.sorted(by: {
+				$0.isCurrent != $1.isCurrent ? $0.isCurrent : $0.name < $1.name
+			}) {
+				section.add(GitNode(
+					key: "\(title):\(branch.id)",
+					row: .branch(branch, depth: 0, display: branch.name)
+				))
+			}
+			return
+		}
+
+		// Current first is `promoting`: the branch you are on is the one you
+		// look for, and it should not be four rows down its own list.
+		let tree = PathTree.build(
+			entries.map { (path: $0.name, payload: $0) },
+			folding: true,
+			promoting: { $0.isCurrent }
+		)
+		add(refs: tree, under: title, to: section)
+	}
+
+	private func add(refs: [PathNode<GitBranch>], under section: String, to parent: GitNode) {
+		for ref in refs {
+			if let branch = ref.payload {
+				parent.add(GitNode(
+					key: "\(section):\(branch.id)",
+					row: .branch(branch, depth: 0, display: ref.name)
+				))
+				continue
+			}
+			let key = "\(section):\(ref.path)"
+			let folder = GitNode(
+				key: key,
+				row: .folder(key: key, display: ref.name, count: ref.count, depth: 0)
+			)
+			parent.add(folder)
+			add(refs: ref.children, under: section, to: folder)
 		}
 	}
 
+	/// The row under the pointer, or the selected one.
+	private var clickedRow: Row? { selectedNode?.row }
+
+	/// The change under the pointer, for staging and for showing its diff.
+	private var clickedChange: (node: GitChangeNode, staged: Bool)? {
+		guard case let .change(node, staged, _) = clickedRow else { return nil }
+		return (node, staged)
+	}
+
+	@objc private func stageClicked() {
+		guard let picked = clickedChange else { return }
+		run {
+			picked.staged
+				? await GitWorkingCopy.unstage(paths: [picked.node.path], in: self.root)
+				: await GitWorkingCopy.stage(paths: [picked.node.path], in: self.root)
+		}
+	}
+
+	/// The folder the pointer is on, or the selection when it is not on one.
+	private var selectedFolder: (key: String, display: String)? {
+		guard case let .folder(key, display, _, _) = selectedNode?.row else { return nil }
+		return (key, display)
+	}
+
+	/// Opens a stash to what is in it, or shuts it again.
+	///
+	/// **Reading it is the point.** Three entries called "wip" are a guessing
+	/// game, and `applyStash` restored blind — so what it holds and whether it
+	/// would still go back are read here, once, and kept until the repository
+	/// moves under them.
+	private func readInside(_ entry: GitStash.Entry) {
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let held = await GitStash.files(entry, in: self.root)
+			let applies = await GitStash.wouldApply(entry, in: self.root)
+			self.stashFiles[entry.commit] = held
+			self.stashApplies[entry.commit] = applies
+			self.rebuildRows()
+		}
+	}
+
+	/// The stash under the pointer, whether its own row or one of its files.
+	private var clickedStash: GitStash.Entry? {
+		switch selectedNode?.row {
+		case let .stash(entry):        return entry
+		case let .stashFile(entry, _): return entry
+		default:                       return nil
+		}
+	}
+
+	/// Makes a branch where the stash was made and puts the work there.
+	///
+	/// What to offer when the check says the apply would conflict: applied on
+	/// the commit it came from, it cannot.
+	@objc private func branchFromStash() {
+		guard let entry = selectedStashes.first ?? clickedStash else { return }
+		promptForName(
+			title: "Branch from “\(entry.message)”",
+			message: "A branch at the commit the stash was made on, with the work put back on it. "
+				+ "It cannot conflict, which is why it is the answer when applying would.",
+			defaultValue: ""
+		) { [weak self] name in
+			guard let self, !name.isEmpty else { return }
+			self.run { await GitStash.branch(entry, named: name, in: self.root) }
+		}
+	}
+
+	@objc private func expandFolder() {
+		guard let node = selectedNode else { return }
+		// Everything beneath it too, which is what "all" has to mean or the
+		// item is the disclosure triangle with extra steps.
+		tableView.expandItem(node, expandChildren: true)
+	}
+
+	@objc private func collapseFolder() {
+		guard let node = selectedNode else { return }
+		tableView.collapseItem(node, collapseChildren: true)
+	}
+
+	@objc private func copyFolderPrefix() {
+		guard let folder = selectedFolder else { return }
+		// The prefix as git knows it, without the section name in front of it.
+		let prefix = folder.key.split(separator: ":", maxSplits: 1).last.map(String.init) ?? folder.key
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(prefix + "/", forType: .string)
+	}
+
 	private var selectedBranch: GitBranch? {
-		let clicked = tableView.clickedRow
-		let row = clicked >= 0 ? clicked : tableView.selectedRow
-		guard rows.indices.contains(row), case let .branch(branch) = rows[row] else { return nil }
+		guard case let .branch(branch, _, _) = selectedNode?.row else { return nil }
 		return branch
 	}
 
@@ -241,15 +774,15 @@ final class BranchesPane: NSView {
 			? IndexSet(integer: clicked)
 			: (clicked >= 0 ? selected : selected)
 		return indexes.compactMap {
-			guard rows.indices.contains($0), case let .stash(entry) = rows[$0] else { return nil }
+			guard case let .stash(entry) = (tableView.item(atRow: $0) as? GitNode)?.row else {
+				return nil
+			}
 			return entry
 		}
 	}
 
 	private var selectedWorktree: GitWorktree? {
-		let clicked = tableView.clickedRow
-		let row = clicked >= 0 ? clicked : tableView.selectedRow
-		guard rows.indices.contains(row), case let .worktree(worktree) = rows[row] else { return nil }
+		guard case let .worktree(worktree) = selectedNode?.row else { return nil }
 		return worktree
 	}
 
@@ -295,6 +828,70 @@ final class BranchesPane: NSView {
 	}
 
 	/// Opens the branch's page in a browser.
+	/// Writes over what is on the remote, having said how much that is.
+	///
+	/// **The one destructive thing here that is not insured, and must not
+	/// pretend to be.** No ref on this machine can bring back somebody else's
+	/// commits from a remote — `GitDestructive` answers `nil` for the backup on
+	/// this one alone — so what is offered instead is the count, before the
+	/// fact, in a sentence somebody can act on.
+	@objc private func forcePushBranch() {
+		guard let branch = selectedBranch, case .local = branch.kind else { return }
+		let root = self.root
+		DestructiveAsk.run(
+			.forcePush(branch: branch.name, overwriting: branch.behind),
+			in: root,
+			over: window
+		) { [weak self] _, _ in
+			let result = await GitRepository.run(
+				["push", "--force-with-lease", "origin", branch.name],
+				in: root,
+				environment: [
+					"GIT_TERMINAL_PROMPT": "0",
+					"GIT_ASKPASS": "/usr/bin/false",
+					"SSH_ASKPASS": "/usr/bin/false",
+				]
+			)
+			await MainActor.run {
+				self?.refresh()
+				self?.onRepositoryChanged?()
+			}
+			// `--force-with-lease` rather than `--force`: it refuses if the
+			// remote has moved since this app last looked, which is exactly the
+			// case where the count somebody was shown is already out of date.
+			guard result.exitCode != 0 else { return nil }
+			return result.stderr.isEmpty ? result.stdout : result.stderr
+		}
+	}
+
+	/// Opens the commit page, where a message with a body gets written.
+	@objc private func openCommitPage() { onOpenCommitPage?() }
+
+	/// Makes a tag at a branch's tip.
+	///
+	/// The other half of `create`: a tag is nearly always cut at the tip of the
+	/// branch a release is on, and until now the only way to make one was on a
+	/// commit in the log.
+	@objc private func newTagOnBranch() {
+		guard let branch = selectedBranch else { return }
+		promptForName(
+			title: "New tag on “\(branch.name)”",
+			message: branch.subject.isEmpty
+				? "At the tip of \(branch.checkoutName)."
+				: "At \(branch.checkoutName) — \(branch.subject)",
+			defaultValue: ""
+		) { [weak self] name in
+			guard let self, !name.isEmpty else { return }
+			self.run { await GitTags.create(name, at: branch.checkoutName, in: self.root) }
+		}
+	}
+
+	/// Opens the log scoped to the branch under the pointer.
+	@objc private func showLogForBranch() {
+		guard let branch = selectedBranch else { return }
+		onShowLog?(branch.checkoutName)
+	}
+
 	@objc private func openBranchOnForge() {
 		guard let branch = selectedBranch, let forge else { return }
 		guard let url = forge.url(forBranch: branch.name) else { return }
@@ -303,17 +900,94 @@ final class BranchesPane: NSView {
 
 	/// Pushes a branch by name, so the spinner can be looked at.
 	func pushForTesting(branch name: String) {
-		guard let row = rows.firstIndex(where: {
-			if case let .branch(branch) = $0 { return branch.name == name }
+		guard let found = firstNode(where: {
+			if case let .branch(branch, _, _) = $0.row { return branch.name == name }
 			return false
 		}) else { return }
+		let row = tableView.row(forItem: found)
+		guard row >= 0 else { return }
 		tableView.selectRowIndexes([row], byExtendingSelection: false)
 		pushBranch()
 	}
 
 	/// Pops the context menu open on a row, as a right-click would.
+	/// The rows as they stand, one per line, indented by depth.
+	///
+	/// **A line of text rather than a picture.** What this pane turns on now is
+	/// whether a prefix folded, whether one branch under a prefix stayed flat,
+	/// and whether filtering flattened the lot — none of which a screenshot
+	/// settles without somebody counting pixels, and all of which diff.
+	func rowsForTesting() -> String {
+		(0..<tableView.numberOfRows).compactMap { index -> String? in
+			guard let node = tableView.item(atRow: index) as? GitNode else { return nil }
+			let depth = tableView.level(forRow: index)
+			let indent = String(repeating: "  ", count: depth)
+			let mark = node.children.isEmpty
+				? ""
+				: (tableView.isItemExpanded(node) ? "▾ " : "▸ ")
+
+			switch node.row {
+			case let .header(title):
+				return indent + mark + "# \(title)"
+			case let .folder(_, display, count, _):
+				return indent + mark + "\(display)/ (\(count))"
+			case let .branch(branch, _, display):
+				return indent + display + (branch.isCurrent ? " *" : "")
+			case let .worktree(worktree):
+				return indent + "= \(worktree.name)"
+			case let .stash(entry):
+				let applies: String
+				switch stashApplies[entry.commit] {
+				case .clean:                applies = " ✓"
+				case let .conflicts(paths): applies = " ⚠\(paths.count)"
+				case .unknown, .none:       applies = ""
+				}
+				return indent + mark + "~ \(entry.message)\(applies)"
+			case let .workingCopy(changed):
+				return indent + mark + "◆ Working copy · \(changed)"
+			case let .side(title, _, count):
+				return indent + mark + "\(title) (\(count))"
+			case let .change(change, _, _):
+				return indent + mark + change.name + (change.isFolder ? "/" : "")
+			case let .stashFile(_, file):
+				return indent + file.name
+			}
+		}.joined(separator: "\n")
+	}
+
+	/// The first node answering a question, for the driver.
+	private func firstNode(where matches: (GitNode) -> Bool) -> GitNode? {
+		var stack = roots
+		while let node = stack.popLast() {
+			if matches(node) { return node }
+			stack.append(contentsOf: node.children)
+		}
+		return nil
+	}
+
+	/// Opens the nth stash to what is in it, and waits for the reading.
+	func openStashForTesting(_ index: Int) {
+		let entries = stashes
+		guard entries.indices.contains(index),
+		      let node = node(forKey: "stash:\(entries[index].commit)") else { return }
+		tableView.expandItem(node)
+	}
+
+	/// Folds a node shut or opens it, by the key it was built with.
+	func setFolderForTesting(_ key: String, collapsed: Bool) {
+		guard let node = node(forKey: key) else { return }
+		if collapsed { tableView.collapseItem(node) } else { tableView.expandItem(node) }
+	}
+
+	/// Types into the filter, as somebody would.
+	func filterForTesting(_ text: String) {
+		filterField.stringValue = text
+		filterText = text.trimmingCharacters(in: .whitespaces)
+		rebuildRows()
+	}
+
 	func showMenuForTesting(row: Int) {
-		guard rows.indices.contains(row) else { return }
+		guard row >= 0, row < tableView.numberOfRows else { return }
 		tableView.selectRowIndexes([row], byExtendingSelection: false)
 		let rect = tableView.rect(ofRow: row)
 		tableView.menu?.popUp(
@@ -348,9 +1022,34 @@ final class BranchesPane: NSView {
 			alert.addButton(withTitle: "Recreate")
 			alert.addButton(withTitle: "Cancel")
 
-			let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+			// **A picker over the refs already loaded, not a bare field.**
+			// `recreate` has always taken anything git can resolve — its own
+			// parameter says "a commit, a branch, a tag" — so pointing `v1` at
+			// `main` worked from the first day and nobody could do it, because
+			// the only way in was typing a name into an empty box with no way
+			// to see where the tag was about to land.
+			//
+			// Editable, because sometimes the answer is a hash and no list can
+			// hold every one of those.
+			let field = NSComboBox(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+			field.addItems(withObjectValues: self.tagSources(excluding: tag.name))
+			field.completes = true
+			field.numberOfVisibleItems = 12
 			field.stringValue = suggestion
 			field.placeholderString = "HEAD"
+
+			// What the chosen source resolves to, under the field, before the
+			// button is pressed rather than after. `describe` takes any rev,
+			// which is why the tag's own reader can answer for a branch.
+			let resolved = NSTextField(labelWithString: " ")
+			resolved.font = Theme.current.uiFont(11)
+			resolved.textColor = Theme.current.gitAdded
+			resolved.lineBreakMode = .byTruncatingTail
+			resolved.frame = NSRect(x: 0, y: 0, width: 280, height: 16)
+
+			let follow = TagSourceWatcher(field: field, label: resolved, root: root)
+			self.tagSourceWatcher = follow
+			follow.refresh()
 
 			// The point of moving a tag is that something else reads it, and
 			// that something reads it from the remote.
@@ -358,11 +1057,11 @@ final class BranchesPane: NSView {
 			push.state = .on
 			push.frame = NSRect(x: 0, y: 0, width: 280, height: 20)
 
-			let stack = NSStackView(views: [field, push])
+			let stack = NSStackView(views: [field, resolved, push])
 			stack.orientation = .vertical
 			stack.alignment = .leading
 			stack.spacing = 8
-			stack.frame = NSRect(x: 0, y: 0, width: 280, height: 56)
+			stack.frame = NSRect(x: 0, y: 0, width: 280, height: 76)
 			alert.accessoryView = stack
 
 			let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
@@ -400,6 +1099,23 @@ final class BranchesPane: NSView {
 				act(alert.runModal())
 			}
 		}
+	}
+
+	/// Everything a tag could be pointed at, in the order somebody would look.
+	///
+	/// `HEAD` first because it is the other usual answer; then the branches,
+	/// which is what this whole control exists for; then the tags newest first,
+	/// which is the `v1` → newest `v1.x` case `likelySource` already knows.
+	func tagSources(excluding name: String) -> [String] {
+		var sources = ["HEAD"]
+		sources += branches.filter { $0.kind == .local }.map(\.name)
+		sources += branches.filter { $0.kind == .tag }.map(\.name).filter { $0 != name }
+		return sources
+	}
+
+	/// What the sheet would offer, for a driver to read.
+	func tagSourcesForTesting(excluding name: String) -> String {
+		tagSources(excluding: name).joined(separator: "\n")
 	}
 
 	// MARK: - The remote
@@ -524,10 +1240,27 @@ final class BranchesPane: NSView {
 	}
 
 	private func checkoutSelected() {
-		// A stash is applied rather than checked out: it is not a place to be,
-		// it is work waiting to come back.
-		if !selectedStashes.isEmpty {
-			applyStash()
+		// A file is staged or unstaged, which is what activating a change has
+		// always meant here.
+		if case let .change(node, staged, _) = clickedRow, !node.isFolder {
+			run {
+				staged
+					? await GitWorkingCopy.unstage(paths: [node.path], in: self.root)
+					: await GitWorkingCopy.stage(paths: [node.path], in: self.root)
+			}
+			return
+		}
+
+		// **Everything that holds something opens and shuts, through one
+		// door.** A branch folder is not a place to be, a stash is not a place
+		// to be, and neither is the working copy — so activating any of them
+		// shows what is inside rather than doing something to it.
+		if let node = selectedNode, !node.children.isEmpty {
+			if tableView.isItemExpanded(node) {
+				tableView.collapseItem(node)
+			} else {
+				tableView.expandItem(node)
+			}
 			return
 		}
 
@@ -546,10 +1279,107 @@ final class BranchesPane: NSView {
 		Task { @MainActor in
 			let result = await GitBranches.checkout(branch, in: self.root)
 			if result.exitCode != 0 {
-				await BranchMenu.explainRefusal(result, branch: branch.name, in: self.root)
+				// **The second refusal this app can act on.** `BranchInUse` set
+				// the rule for the first — where a refusal is one the app can do
+				// something about, offer the action rather than report the
+				// sentence — and a work tree in the way is the other one, and
+				// the place most stashes come from.
+				//
+				// Recognised through `GitPull.refusal`, which already knows the
+				// several spellings git has for it. Two lists of the same
+				// strings would drift, and the one that drifted would fail by
+				// showing git's raw refusal to somebody this could have helped.
+				if GitPull.refusal(from: result) == .workingCopyInTheWay {
+					await self.offerToStash(before: branch)
+				} else {
+					await BranchMenu.explainRefusal(result, branch: branch.name, in: self.root)
+				}
+			} else {
+				self.offerWhatWasLeftHere(on: branch.name)
 			}
 			self.refresh()
 			self.onRepositoryChanged?()
+		}
+	}
+
+	/// What a stash made on the way out of a branch is called.
+	///
+	/// Named rather than numbered, so coming back can find it: `stash@{0}` is a
+	/// position and every drop renumbers it, while this survives.
+	private static func leftBehindMessage(for branch: String) -> String {
+		"Abydos: left on \(branch)"
+	}
+
+	/// Offers to get the work out of the way, switch, and give it back later.
+	private func offerToStash(before branch: GitBranch) async {
+		let status = await GitWorkingCopy.status(in: root)
+		let changed = status.staged.count + status.unstaged.count
+		let from = await GitRepository.head(in: root).name ?? ""
+		let root = self.root
+
+		DestructiveAsk.run(
+			.switchBranch(to: branch.name, changedFiles: changed),
+			in: root,
+			over: window
+		) { [weak self] chosen, _ in
+			// Nought is stash and switch; one is switch and leave behind, whose
+			// backup ref `DestructiveAsk` has already made by the time this
+			// runs. The two are different operations rather than two ways of
+			// confirming one, which is why the choice is passed in.
+			if chosen == 0 {
+				let put = await GitStash.push(
+					in: root,
+					message: Self.leftBehindMessage(for: from),
+					includeUntracked: true
+				)
+				guard put.exitCode == 0 else { return put.stderr }
+			}
+
+			let again = await GitBranches.checkout(branch, in: root)
+			if again.exitCode != 0 {
+				// Forced only where somebody has just been told, in a count,
+				// exactly what it will cost — and never otherwise.
+				guard chosen == 1 else { return again.stderr }
+				let forced = await GitRepository.run(
+					["checkout", "--force", branch.checkoutName], in: root
+				)
+				guard forced.exitCode == 0 else { return forced.stderr }
+			}
+			await MainActor.run {
+				self?.refresh()
+				self?.onRepositoryChanged?()
+			}
+			return nil
+		}
+	}
+
+	/// Offers back whatever was put aside on the way out of this branch.
+	///
+	/// The other half of "and back again when you come back": a promise made in
+	/// a dialog and kept nowhere is worse than never having offered.
+	private func offerWhatWasLeftHere(on branch: String) {
+		let wanted = Self.leftBehindMessage(for: branch)
+		let root = self.root
+		Task { @MainActor [weak self] in
+			guard let entry = await GitStash.list(in: root)
+				.first(where: { $0.message == wanted }) else { return }
+
+			Toast.post(Toast(
+				kind: .information,
+				title: "You left work on \(branch)",
+				detail: "It was put aside when you switched away.",
+				actionTitle: "Put It Back",
+				action: {
+					Task { @MainActor in
+						let back = await GitStash.apply(entry, in: root, keeping: false)
+						if back.exitCode != 0 {
+							Toast.post("Could not put it back", detail: back.stderr)
+						}
+						self?.refresh()
+						self?.onRepositoryChanged?()
+					}
+				}
+			))
 		}
 	}
 
@@ -714,30 +1544,89 @@ final class BranchesPane: NSView {
 	}
 }
 
-// MARK: - Table
+// MARK: - The tree
 
-extension BranchesPane: NSTableViewDataSource, NSTableViewDelegate {
-	func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
+	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+		((item as? GitNode)?.children ?? roots).count
+	}
 
-	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-		guard rows.indices.contains(row) else { return 0 }
-		if case .header = rows[row] { return Theme.current.scaled(22) }
+	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+		((item as? GitNode)?.children ?? roots)[index]
+	}
+
+	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+		!((item as? GitNode)?.children.isEmpty ?? true)
+	}
+
+	func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+		guard let node = item as? GitNode else { return Theme.current.scaled(24) }
+		if case .header = node.row { return Theme.current.scaled(22) }
 		return Theme.current.scaled(24)
 	}
 
-	func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-		rows.indices.contains(row) && rows[row].isSelectable
+	/// The theme's selection colour rather than the system's blue.
+	///
+	/// `ThemedRowView` exists for exactly this, and was written the last time
+	/// two lists in one window disagreed about what "selected" looks like.
+	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+		ThemedRowView()
 	}
 
-	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-		guard rows.indices.contains(row) else { return nil }
-		switch rows[row] {
-		case .header(let title): return BranchSectionView(title: title)
-		case .branch(let branch):
-			return BranchRowView(branch: branch, isPushing: branch.name == pushingBranch)
-		case .worktree(let worktree): return WorktreeRowView(worktree: worktree)
-		case .stash(let entry): return StashRowView(entry: entry)
+	func outlineView(
+		_ outlineView: NSOutlineView, viewFor column: NSTableColumn?, item: Any
+	) -> NSView? {
+		guard let node = item as? GitNode else { return nil }
+		switch node.row {
+		case .header(let title):
+			return BranchSectionView(title: title)
+		case let .workingCopy(changed):
+			return WorkingCopyRowView(changed: changed)
+		case let .side(title, _, count):
+			return BranchFolderRowView(display: title, count: count)
+		case let .change(change, staged, _):
+			return WorkingCopyChangeRowView(node: change, staged: staged)
+		case let .folder(_, display, count, _):
+			return BranchFolderRowView(display: display, count: count)
+		case let .branch(branch, _, display):
+			return BranchRowView(
+				branch: branch, display: display, isPushing: branch.name == pushingBranch
+			)
+		case .worktree(let worktree):
+			return WorktreeRowView(worktree: worktree)
+		case .stash(let entry):
+			return StashRowView(entry: entry, applies: stashApplies[entry.commit])
+		case let .stashFile(_, file):
+			return StashFileRowView(file: file)
 		}
+	}
+
+	/// What somebody folds stays folded across a rebuild.
+	///
+	/// Recorded here rather than decided here: the outline is the thing that
+	/// knows what is open, and this only remembers what it was told so that a
+	/// tree rebuilt on the next filesystem event comes back the same shape.
+	func outlineViewItemDidExpand(_ notification: Notification) {
+		guard !isRestoring, let node = notification.userInfo?["NSObject"] as? GitNode else { return }
+		collapsedKeys.remove(node.key)
+
+		// A stash reads what is in it the first time it is opened: the check
+		// costs a three-way merge and the files cost a diff, which is nothing
+		// to do once and far too much to do for every entry on every event.
+		if case let .stash(entry) = node.row, stashFiles[entry.commit] == nil {
+			readInside(entry)
+		}
+	}
+
+	func outlineViewItemDidCollapse(_ notification: Notification) {
+		guard !isRestoring, let node = notification.userInfo?["NSObject"] as? GitNode else { return }
+		collapsedKeys.insert(node.key)
+	}
+
+	func outlineViewSelectionDidChange(_ notification: Notification) {
+		guard !isRestoring, case let .change(change, _, _) = selectedNode?.row,
+		      let picked = change.change else { return }
+		onSelectChange?(picked)
 	}
 }
 
@@ -752,10 +1641,30 @@ extension BranchesPane: NSMenuDelegate {
 			return item
 		}
 
-		let stashes = selectedStashes
+		if let picked = clickedChange {
+			let verb = picked.staged ? "Unstage" : "Stage"
+			let title = picked.node.isFolder
+				? "\(verb) “\(picked.node.name)” (\(picked.node.count) file"
+					+ "\(picked.node.count == 1 ? "" : "s"))"
+				: verb
+			menu.addItem(item(title, #selector(stageClicked)))
+			menu.addItem(.separator())
+			menu.addItem(item("Commit\u{2026} ⇧⌘K", #selector(openCommitPage)))
+			return
+		}
+
+		if case .workingCopy = clickedRow {
+			menu.addItem(item("Commit\u{2026} ⇧⌘K", #selector(openCommitPage)))
+			return
+		}
+
+		let stashes = selectedStashes.isEmpty ? [clickedStash].compactMap { $0 } : selectedStashes
 		if !stashes.isEmpty {
 			menu.addItem(item(
 				"Apply…", #selector(applyStash), enabled: stashes.count == 1
+			))
+			menu.addItem(item(
+				"Branch from Stash\u{2026}", #selector(branchFromStash), enabled: stashes.count == 1
 			))
 			menu.addItem(item(
 				"Rename…", #selector(renameStash), enabled: stashes.count == 1
@@ -777,6 +1686,17 @@ extension BranchesPane: NSMenuDelegate {
 			return
 		}
 
+		if selectedFolder != nil, let node = selectedNode {
+			let shut = !tableView.isItemExpanded(node)
+			menu.addItem(item(
+				shut ? "Expand All" : "Collapse All",
+				shut ? #selector(expandFolder) : #selector(collapseFolder)
+			))
+			menu.addItem(.separator())
+			menu.addItem(item("Copy Prefix", #selector(copyFolderPrefix)))
+			return
+		}
+
 		guard let branch = selectedBranch else {
 			menu.addItem(item("New Worktree…", #selector(addWorktree)))
 			menu.addItem(.separator())
@@ -785,12 +1705,22 @@ extension BranchesPane: NSMenuDelegate {
 		}
 
 		menu.addItem(item("Checkout", #selector(contextCheckout), enabled: !branch.isCurrent))
+		// **Where this branch has been**, which is the question a branch row is
+		// asked most often after "take me there". The log is a page now, so
+		// there is somewhere to put the answer.
+		menu.addItem(item("Show Log ⇧⌘L", #selector(showLogForBranch)))
 		menu.addItem(item("New Branch from Here…", #selector(newBranch)))
+		menu.addItem(item("New Tag Here\u{2026}", #selector(newTagOnBranch)))
 
 		// Sending a branch somewhere, and looking at it where it went.
 		if case .local = branch.kind, let title = pushTitle(for: branch) {
 			menu.addItem(.separator())
 			menu.addItem(item(title, #selector(pushBranch)))
+		}
+		// Diverged: an ordinary push will be refused, and the only thing that
+		// gets past that writes over commits somebody else may be standing on.
+		if case .local = branch.kind, branch.behind > 0, branch.ahead > 0 {
+			menu.addItem(item("Force-push\u{2026}", #selector(forcePushBranch)))
 		}
 		if let forge {
 			menu.addItem(item("Open on \(forge.displayName)", #selector(openBranchOnForge)))
@@ -825,21 +1755,191 @@ extension BranchesPane: NSSearchFieldDelegate {
 }
 
 /// Table that reports Return and double-click, for checkout.
-private final class BranchesTableView: NSTableView {
+/// Says what the chosen source resolves to, while it is being chosen.
+///
+/// Its own object rather than the pane, because the pane is already the
+/// delegate of a search field and a table: one `controlTextDidChange` cannot
+/// answer for three controls without asking which one it came from, and that
+/// question has a wrong answer.
+@MainActor
+private final class TagSourceWatcher: NSObject, NSComboBoxDelegate {
+	private let field: NSComboBox
+	private let label: NSTextField
+	private let root: URL
+
+	init(field: NSComboBox, label: NSTextField, root: URL) {
+		self.field = field
+		self.label = label
+		self.root = root
+		super.init()
+		field.delegate = self
+	}
+
+	func controlTextDidChange(_ notification: Notification) { refresh() }
+	func comboBoxSelectionDidChange(_ notification: Notification) {
+		// The field still holds the old text at this moment; the selection is
+		// what was just picked.
+		let index = field.indexOfSelectedItem
+		guard index >= 0, let value = field.itemObjectValue(at: index) as? String else { return }
+		describe(value)
+	}
+
+	func refresh() { describe(field.stringValue) }
+
+	private func describe(_ source: String) {
+		let asked = source.trimmingCharacters(in: .whitespaces)
+		guard !asked.isEmpty else {
+			label.stringValue = " "
+			return
+		}
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			guard let found = await GitTags.describe(asked, in: self.root) else {
+				// Said plainly rather than left blank: an empty line under a
+				// name somebody has mistyped looks exactly like one under a
+				// name that is fine.
+				self.label.textColor = Theme.current.gitConflict
+				self.label.stringValue = "git does not know “\(asked)”"
+				return
+			}
+			self.label.textColor = Theme.current.gitAdded
+			self.label.stringValue = "→ \(found)"
+		}
+	}
+}
+
+/// The tree, drawn by AppKit rather than by hand.
+///
+/// **What is left here is only what an outline view does not already do.**
+/// Indentation, disclosure triangles and the clicks on them, ← and →, and
+/// keeping the keyboard through an expansion are all AppKit's — and each one of
+/// them was written out by hand here first, and each was reported broken.
+private final class BranchesOutlineView: NSOutlineView {
 	var onActivate: (() -> Void)?
+
+	/// A click from an inactive window lands on the row rather than being spent
+	/// activating the app, which is what the project tree has always done.
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+	/// Redraw when focus moves, so the highlight dims with it.
+	override func becomeFirstResponder() -> Bool {
+		needsDisplay = true
+		return super.becomeFirstResponder()
+	}
+
+	override func resignFirstResponder() -> Bool {
+		needsDisplay = true
+		return super.resignFirstResponder()
+	}
 
 	override func keyDown(with event: NSEvent) {
 		if event.keyCode == 36 || event.keyCode == 76 {
 			onActivate?()
 			return
 		}
-		super.keyDown(with: event)
+
+		// Home, End, Page Up and Page Down. An outline view interprets the
+		// arrows and leaves these four to the scroll view, which moves the
+		// paper and not the selection — so the list scrolled and the highlight
+		// stayed where it was, which is not what any of them means in a list.
+		let last = numberOfRows - 1
+		guard last >= 0 else { return super.keyDown(with: event) }
+		let page = max(1, Int(visibleRect.height / max(1, rowHeight)) - 1)
+		let here = selectedRow < 0 ? 0 : selectedRow
+
+		switch event.keyCode {
+		case 115: select(row: 0)
+		case 119: select(row: last)
+		case 116: select(row: max(0, here - page))
+		case 121: select(row: min(last, here + page))
+		default:  super.keyDown(with: event)
+		}
+	}
+
+	private func select(row: Int) {
+		let found = min(max(0, row), numberOfRows - 1)
+		guard found >= 0 else { return }
+		selectRowIndexes([found], byExtendingSelection: false)
+		scrollRowToVisible(found)
 	}
 
 	override func mouseDown(with event: NSEvent) {
 		super.mouseDown(with: event)
 		if event.clickCount == 2 { onActivate?() }
 	}
+}
+
+/// A merge that has stopped, and the three things somebody does next.
+///
+/// **Three, and deliberately not four.** Opening the files is the work; Fork is
+/// where this change has already said a three-way merge editor belongs, so the
+/// handoff has a home rather than being a dead end; and a prompt on the
+/// clipboard hands the conflict to an agent in this app's own terminal, which
+/// is the thing this app is for. Aborting is not here — the banner is about
+/// resolving, and abandoning belongs on the operation that started the merge,
+/// where what would be lost can be counted.
+private final class ConflictBanner: NSView {
+	var onOpenFiles: (() -> Void)?
+	var onOpenInFork: (() -> Void)?
+	var onCopyPrompt: (() -> Void)?
+
+	private let label = NSTextField(labelWithString: "")
+	private var buttons: NSStackView!
+
+	override init(frame frameRect: NSRect) {
+		super.init(frame: frameRect)
+		wantsLayer = true
+		layer?.backgroundColor = Theme.current.gitConflict.withAlphaComponent(0.16).cgColor
+		isHidden = true
+
+		label.font = Theme.current.uiFont(11.5, weight: .semibold)
+		label.textColor = Theme.current.gitConflict
+		label.lineBreakMode = .byTruncatingTail
+
+		func button(_ title: String, _ action: Selector) -> NSButton {
+			let made = NSButton(title: title, target: self, action: action)
+			made.bezelStyle = .rounded
+			made.controlSize = .small
+			made.font = Theme.current.uiFont(10.5)
+			return made
+		}
+
+		var offered = [button("Open Files", #selector(openFiles))]
+		// Absent rather than present and failing: Fork is not on every machine.
+		if ForkIntegration.applicationURL() != nil {
+			offered.append(button("Open in Fork", #selector(openInFork)))
+		}
+		offered.append(button("Copy Prompt", #selector(copyPrompt)))
+
+		buttons = NSStackView(views: offered)
+		buttons.orientation = .horizontal
+		buttons.spacing = Theme.current.scaled(6)
+
+		for view in [label, buttons] as [NSView] {
+			addSubview(view)
+			view.translatesAutoresizingMaskIntoConstraints = false
+		}
+		let inset = Theme.current.scaled(8)
+		NSLayoutConstraint.activate([
+			label.topAnchor.constraint(equalTo: topAnchor, constant: inset / 2),
+			label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+			label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
+
+			buttons.topAnchor.constraint(equalTo: label.bottomAnchor, constant: inset / 4),
+			buttons.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+		])
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	func show(count: Int, what: String?) {
+		let files = "\(count) file\(count == 1 ? "" : "s") conflicted"
+		label.stringValue = what.map { "\($0) — \(files)" } ?? files
+	}
+
+	@objc private func openFiles() { onOpenFiles?() }
+	@objc private func openInFork() { onOpenInFork?() }
+	@objc private func copyPrompt() { onCopyPrompt?() }
 }
 
 private final class BranchSectionView: NSView {
@@ -853,13 +1953,33 @@ private final class BranchSectionView: NSView {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// What kind of thing a section holds.
+	///
+	/// **Icons at the root too.** Without one the indentation under a section
+	/// reads as text that has been pushed sideways for no reason: every row
+	/// below has a glyph, and the row above it had a gap where one should be.
+	private var symbol: String {
+		switch title {
+		case "Local":     return "arrow.trianglehead.branch"
+		case "Tags":      return "tag"
+		case "Stashes":   return "tray.full"
+		case "Worktrees": return "folder.badge.gearshape"
+		// Anything else is a remote, named after the remote.
+		default:          return "cloud"
+		}
+	}
+
 	override func draw(_ dirtyRect: NSRect) {
+		// **No triangle of its own.** The outline view draws one, and a second
+		// drawn here put two side by side on every section.
+		RowMetrics.glyph(symbol, colour: Theme.current.gitIgnored, in: bounds)
+
 		let label = NSAttributedString(string: title.uppercased(), attributes: [
-			.font: NSFont.systemFont(ofSize: Theme.current.scaled(10), weight: .semibold),
+			.font: Theme.current.uiFont(10, weight: .semibold),
 			.foregroundColor: Theme.current.gitIgnored,
 		])
 		label.draw(at: NSPoint(
-			x: Theme.current.scaled(10),
+			x: RowMetrics.textInset,
 			y: bounds.midY - label.size().height / 2
 		))
 	}
@@ -867,12 +1987,18 @@ private final class BranchSectionView: NSView {
 
 private final class BranchRowView: NSView {
 	private let branch: GitBranch
+	/// What the row says, which under a folder is one component of the name
+	/// rather than all of it.
+	private let display: String
+	private let depth: Int
 	private let isPushing: Bool
 	private var spinner: NSProgressIndicator?
 	override var isFlipped: Bool { true }
 
-	init(branch: GitBranch, isPushing: Bool = false) {
+	init(branch: GitBranch, display: String? = nil, depth: Int = 0, isPushing: Bool = false) {
 		self.branch = branch
+		self.display = display ?? branch.name
+		self.depth = depth
 		self.isPushing = isPushing
 		super.init(frame: .zero)
 		toolTip = isPushing
@@ -904,14 +2030,23 @@ private final class BranchRowView: NSView {
 	required init?(coder: NSCoder) { fatalError("not used") }
 
 	override func draw(_ dirtyRect: NSRect) {
-		var x = Theme.current.scaled(18)
+		// **One text column for every kind of row.** The outline view has
+		// already indented this view by its depth; anything added here is an
+		// offset of its own, and five row kinds each adding a different one is
+		// what made the tree look ragged.
+		var x = RowMetrics.textInset
 
-		// The current branch gets a tick, which is how git itself marks it.
-		if branch.isCurrent,
-		   let tick = Theme.symbol("checkmark", size: 10 * Theme.current.scale, color: Theme.current.gitAdded) {
-			let size = Theme.current.scaled(11)
-			tick.drawFitted(in: NSRect(x: Theme.current.scaled(4), y: bounds.midY - size / 2, width: size, height: size))
-		}
+		// **What kind of thing this row is, said by a glyph.** A folded prefix
+		// and a branch are both a name at a depth, and with only indentation to
+		// tell them apart somebody has to count. The current branch keeps its
+		// tick — that is how git itself marks it, and it outranks saying what
+		// kind of ref it is, which is obvious for the one you are standing on.
+		let mark: (name: String, colour: NSColor) = {
+			if branch.isCurrent { return ("checkmark", Theme.current.gitAdded) }
+			if case .tag = branch.kind { return ("tag", Theme.current.gitModified) }
+			return ("arrow.trianglehead.branch", Theme.current.gitIgnored)
+		}()
+		RowMetrics.glyph(mark.name, colour: mark.colour, in: bounds)
 
 		let colour = branch.isCurrent ? Theme.current.gitAdded : Theme.current.sidebarText
 		let font = branch.isCurrent
@@ -934,7 +2069,7 @@ private final class BranchRowView: NSView {
 		let limit = bounds.maxX - RowMetrics.trailingInset
 			- (isPushing ? Theme.current.scaled(18) : 0)
 		x = RowMetrics.draw(
-			branch.name, font: font, colour: colour,
+			display, font: font, colour: colour,
 			at: x, in: bounds, limit: limit - countsWidth
 		)
 		guard !tracking.isEmpty else { return }
@@ -946,32 +2081,259 @@ private final class BranchRowView: NSView {
 	}
 }
 
-/// A stash: what it was called, and how long it has been waiting.
-private final class StashRowView: NSView {
-	private let entry: GitStash.Entry
+/// One file inside an opened stash.
+/// The working copy: what you are doing, and how much of it there is.
+private final class WorkingCopyRowView: NSView {
+	private let changed: Int
 	override var isFlipped: Bool { true }
 
-	init(entry: GitStash.Entry) {
-		self.entry = entry
+	init(changed: Int) {
+		self.changed = changed
 		super.init(frame: .zero)
-		toolTip = [entry.reference, entry.branch.isEmpty ? nil : "on \(entry.branch)", entry.age]
-			.compactMap { $0 }
-			.joined(separator: " — ")
+		toolTip = changed == 0
+			? "Nothing has changed"
+			: "\(changed) changed file\(changed == 1 ? "" : "s")"
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
 	override func draw(_ dirtyRect: NSRect) {
-		var x = Theme.current.scaled(18)
+		let colour = changed > 0 ? Theme.current.gitModified : Theme.current.gitIgnored
+		RowMetrics.glyph(
+			changed > 0 ? "pencil.circle" : "checkmark.circle", colour: colour, in: bounds
+		)
+		let after = RowMetrics.draw(
+			"Working copy",
+			font: Theme.current.uiFont(12, weight: .semibold),
+			colour: colour,
+			at: RowMetrics.textInset, in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+		RowMetrics.draw(
+			changed == 0 ? "clean" : "\(changed)",
+			font: Theme.current.uiFont(10.5),
+			colour: Theme.current.gitIgnored,
+			at: after + Theme.current.scaled(8), in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+	}
+}
 
-		if let box = Theme.symbol(
-			"tray.full", size: 10 * Theme.current.scale, color: Theme.current.sidebarText
-		) {
-			let size = Theme.current.scaled(11)
-			box.drawFitted(in: NSRect(
-				x: Theme.current.scaled(4), y: bounds.midY - size / 2, width: size, height: size
-			))
+/// One changed file, or a folder of them, under the working copy.
+///
+/// Its own name rather than `ChangeRowView`, which `ChangesPane` already has:
+/// two files each holding a private class of one name is legal and is a trap
+/// for whoever reads a stack trace next.
+private final class WorkingCopyChangeRowView: NSView {
+	private let node: GitChangeNode
+	private let staged: Bool
+	override var isFlipped: Bool { true }
+
+	init(node: GitChangeNode, staged: Bool) {
+		self.node = node
+		self.staged = staged
+		super.init(frame: .zero)
+		toolTip = node.path
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	private var letter: String {
+		guard let kind = node.change?.kind else { return "" }
+		switch kind {
+		case .added:      return "A"
+		case .deleted:    return "D"
+		case .renamed:    return "R"
+		case .copied:     return "C"
+		case .untracked:  return "?"
+		case .conflicted: return "U"
+		default:          return "M"
 		}
+	}
+
+	private var colour: NSColor {
+		guard let kind = node.change?.kind else { return Theme.current.gitIgnored }
+		switch kind {
+		case .added:      return Theme.current.gitAdded
+		case .untracked:  return Theme.current.gitUnversioned
+		case .deleted:    return Theme.current.gitConflict
+		case .conflicted: return Theme.current.gitConflict
+		default:          return Theme.current.gitModified
+		}
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		var x = RowMetrics.textInset
+
+		// A folder of changes gets a folder, like a folder of branches; a file
+		// gets the letter for what happened to it, in the same column.
+		if node.isFolder {
+			RowMetrics.glyph("folder", colour: Theme.current.gitIgnored, in: bounds)
+		} else if !letter.isEmpty {
+			RowMetrics.draw(
+				letter, font: Theme.current.uiFont(11, weight: .semibold), colour: colour,
+				at: RowMetrics.glyphInset + Theme.current.scaled(4), in: bounds,
+				limit: bounds.maxX - RowMetrics.trailingInset
+			)
+		}
+
+		x = RowMetrics.draw(
+			node.name,
+			font: Theme.current.uiFont(12),
+			colour: node.isFolder ? Theme.current.sidebarText : colour,
+			at: x, in: bounds, limit: bounds.maxX - RowMetrics.trailingInset
+		)
+
+		// A folder says how much of it is on this side, which is the one thing
+		// a folder row has to say that a file row does not: two lists make a
+		// folder in Staged look finished, and somebody reads it that way and
+		// commits half of it.
+		guard node.isFolder else { return }
+		RowMetrics.draw(
+			node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)",
+			font: Theme.current.uiFont(10.5),
+			colour: node.isPartial ? Theme.current.gitModified : Theme.current.gitIgnored,
+			at: x + Theme.current.scaled(6), in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+	}
+}
+
+private final class StashFileRowView: NSView {
+	private let file: GitCommitFile
+	override var isFlipped: Bool { true }
+
+	init(file: GitCommitFile) {
+		self.file = file
+		super.init(frame: .zero)
+		toolTip = file.path
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	private var letter: String {
+		switch file.kind {
+		case .added:      return "A"
+		case .deleted:    return "D"
+		case .renamed:    return "R"
+		case .copied:     return "C"
+		case .untracked:  return "?"
+		case .conflicted: return "U"
+		default:          return "M"
+		}
+	}
+
+	private var colour: NSColor {
+		switch file.kind {
+		case .added, .untracked: return Theme.current.gitAdded
+		case .deleted:           return Theme.current.gitConflict
+		case .conflicted:        return Theme.current.gitConflict
+		default:                 return Theme.current.gitModified
+		}
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		RowMetrics.draw(
+			letter, font: Theme.current.uiFont(10.5), colour: colour,
+			at: RowMetrics.glyphInset, in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+		var x = RowMetrics.textInset
+		// The name, with the folder it is in behind it — a stash of four files
+		// three directories apart is unreadable as bare basenames.
+		x = RowMetrics.draw(
+			file.name, font: Theme.current.uiFont(12), colour: Theme.current.sidebarText,
+			at: x, in: bounds, limit: bounds.maxX - RowMetrics.trailingInset
+		)
+		guard !file.directory.isEmpty else { return }
+		RowMetrics.draw(
+			file.directory, font: Theme.current.uiFont(10.5),
+			colour: Theme.current.gitIgnored,
+			at: x + Theme.current.scaled(6), in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+	}
+}
+
+/// A prefix several branches share, and how many are under it.
+private final class BranchFolderRowView: NSView {
+	private let display: String
+	private let count: Int
+	override var isFlipped: Bool { true }
+
+	init(display: String, count: Int) {
+		self.display = display
+		self.count = count
+		super.init(frame: .zero)
+		toolTip = "\(count) branch\(count == 1 ? "" : "es") under \(display)/"
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func draw(_ dirtyRect: NSRect) {
+		// No twisty and no indent: an outline view draws both, and drawing a
+		// second set beside them is what made this look like several trees.
+		//
+		// A folder does get a folder, which is the whole of what tells it from
+		// a branch of the same name at the same depth.
+		RowMetrics.glyph("folder", colour: Theme.current.gitIgnored, in: bounds)
+		let x = RowMetrics.textInset
+		// **No trailing slash.** It was there to say "a prefix, not a branch
+		// called `feature`" back when this was a flat list with nothing else to
+		// say it. The disclosure triangle says it now — and the same row draws
+		// `Staged` and `Unstaged`, which are not prefixes at all and read as
+		// nonsense with one.
+		let after = RowMetrics.draw(
+			display,
+			font: Theme.current.uiFont(12),
+			colour: Theme.current.sidebarText,
+			at: x, in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset - Theme.current.scaled(24)
+		)
+		RowMetrics.draw(
+			"\(count)",
+			font: Theme.current.uiFont(10.5),
+			colour: Theme.current.gitIgnored,
+			at: after + Theme.current.scaled(6), in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+	}
+}
+
+/// A stash: what it was called, and how long it has been waiting.
+private final class StashRowView: NSView {
+	private let entry: GitStash.Entry
+	private let isOpen: Bool
+	/// Whether it would still go back, once that has been asked. Nil until the
+	/// row has been opened, because asking costs a three-way merge.
+	private let applies: GitStash.Applicability?
+	override var isFlipped: Bool { true }
+
+	init(entry: GitStash.Entry, isOpen: Bool = false, applies: GitStash.Applicability? = nil) {
+		self.entry = entry
+		self.isOpen = isOpen
+		self.applies = applies
+		super.init(frame: .zero)
+
+		var said = [entry.reference, entry.branch.isEmpty ? nil : "on \(entry.branch)", entry.age]
+			.compactMap { $0 }
+		switch applies {
+		case .clean:                 said.append("applies cleanly")
+		case let .conflicts(paths):  said.append("would conflict in \(paths.joined(separator: ", "))")
+		case .unknown, .none:        break
+		}
+		toolTip = said.joined(separator: " — ")
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func draw(_ dirtyRect: NSRect) {
+		var x = RowMetrics.textInset
+
+		RowMetrics.glyph(
+			isOpen ? "tray.full.fill" : "tray.full",
+			colour: Theme.current.sidebarText, in: bounds
+		)
 
 		// How long it has been sitting there decides whether it is still
 		// wanted, so it keeps its room and the message gives way first.
@@ -980,16 +2342,40 @@ private final class StashRowView: NSView {
 			string: entry.age, attributes: [.font: ageFont]
 		).size().width + Theme.current.scaled(8)
 
+		// Whether it would still go back, in the colour that already means
+		// "this is fine" and "this is not" everywhere else in this window.
+		var mark = ""
+		var markColour = Theme.current.gitAdded
+		switch applies {
+		case .clean:
+			mark = "✓"
+		case let .conflicts(paths):
+			mark = "⚠\(paths.count)"
+			markColour = Theme.current.gitModified
+		case .unknown, .none:
+			break
+		}
+		let markFont = Theme.current.uiFont(10.5)
+		let markWidth = mark.isEmpty ? 0 : NSAttributedString(
+			string: mark, attributes: [.font: markFont]
+		).size().width + Theme.current.scaled(8)
+
 		let limit = bounds.maxX - RowMetrics.trailingInset
 		x = RowMetrics.draw(
 			entry.message, font: Theme.current.uiFont(12), colour: Theme.current.sidebarText,
-			at: x, in: bounds, limit: limit - ageWidth
+			at: x, in: bounds, limit: limit - ageWidth - markWidth
 		)
-		guard !entry.age.isEmpty else { return }
 
+		if !entry.age.isEmpty {
+			x = RowMetrics.draw(
+				entry.age, font: ageFont,
+				colour: Theme.current.sidebarText.withAlphaComponent(0.55),
+				at: x + Theme.current.scaled(8), in: bounds, limit: limit - markWidth
+			)
+		}
+		guard !mark.isEmpty else { return }
 		RowMetrics.draw(
-			entry.age, font: ageFont,
-			colour: Theme.current.sidebarText.withAlphaComponent(0.55),
+			mark, font: markFont, colour: markColour,
 			at: x + Theme.current.scaled(8), in: bounds, limit: limit
 		)
 	}

@@ -83,6 +83,9 @@ final class EditorAreaController: NSViewController {
 	var onRunLine: ((URL, Int) -> Void)?
 	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
+	/// Nil where stashing a hunk is not possible — an old git — so the menu
+	/// item is absent rather than failing when pressed.
+	var onStashDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 
 	override func loadView() {
 		let container = ColoredView(color: Theme.current.editorBackground)
@@ -181,6 +184,9 @@ final class EditorAreaController: NSViewController {
 		}
 		group.onDiscardDiffSelection = { [weak self] change, diff, selected in
 			self?.onDiscardDiffSelection?(change, diff, selected)
+		}
+		group.onStashDiffSelection = onStashDiffSelection == nil ? nil : { [weak self] change, diff, selected in
+			self?.onStashDiffSelection?(change, diff, selected)
 		}
 		group.onActivated = { [weak self] activated in
 			self?.activeGroup = activated

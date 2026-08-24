@@ -941,6 +941,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.onDiscardDiffSelection = { [weak self] change, diff, selected in
 			self?.discardDiffSelection(change: change, diff: diff, lines: selected)
 		}
+		// **Offered only where git can do it.** `stash push --staged` arrived
+		// in 2.35; on an older one the item is absent rather than a menu entry
+		// that fails when pressed. Asked once, when the window is built.
+		if let root = project?.root {
+			Task { @MainActor [weak self] in
+				guard await GitStash.canPushStaged(in: root) else { return }
+				self?.editor.onStashDiffSelection = { [weak self] change, diff, selected in
+					self?.stashDiffSelection(change: change, diff: diff, lines: selected)
+				}
+			}
+		}
 
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }
@@ -6749,6 +6760,86 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// What the menu over a commit in the log offers.
+	///
+	/// The same shape as `--branch-rows` and for the same reason: the claim is
+	/// that a commit has verbs, and that the one which can lose work is fenced
+	/// off from the ones that cannot. A list of titles diffs; a photograph of an
+	/// open menu does not, and an `NSMenu` popped up for real blocks the run
+	/// loop so the screenshot never fires at all.
+	func commitMenuForTesting(row: Int, waiting: Int = 6) {
+		if historyPane == nil { showSidebarTool(.history) }
+		guard let pane = historyPane else {
+			print("COMMIT-MENU: no history pane")
+			return
+		}
+
+		// The log is read off the main queue and answers on it, so a pane built
+		// a moment ago has no rows yet. Waited for rather than assumed: a fixed
+		// delay long enough for a cold repository is a delay every run pays,
+		// and one short enough not to be is a flake.
+		guard pane.hasRowsForTesting else {
+			guard waiting > 0 else {
+				print("COMMIT-MENU: the log is still empty")
+				return
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+				self?.commitMenuForTesting(row: row, waiting: waiting - 1)
+			}
+			return
+		}
+		print("COMMIT-MENU:\n\(pane.commitMenuForTesting(row: row))")
+	}
+
+	/// Drives the refs tree from the command line: `report`, `shut:<key>`,
+	/// `open:<key>`, `filter:<text>`, `stash:<n>`, `tag-sources:<tag>`,
+	/// `refresh`, `settle[:seconds]`.
+	///
+	/// The same arrangement `--changes-tree` uses and for the same reason: the
+	/// questions this pane turns on are about *this view* — did the prefix
+	/// fold, did the one branch under `hotfix/` stay flat, did filtering
+	/// flatten the lot — and a screenshot is one frame of that rather than the
+	/// sequence.
+	func branchRowsForTesting(_ steps: String) {
+		if branchesPane == nil { showSidebarTool(.branches) }
+		guard let pane = branchesPane else {
+			print("BRANCHES: no branches pane")
+			return
+		}
+
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			// Everything after a `settle` goes back to the run loop: git answers
+			// on the main queue, so a nested wait here would never see the list
+			// it is waiting for.
+			if step == "settle" || step.hasPrefix("settle:") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.branchRowsForTesting(rest)
+				}
+				return
+			}
+
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "report":  print("BRANCHES:\n\(pane.rowsForTesting())")
+			case "stash":
+				pane.openStashForTesting(Int(argument) ?? 0)
+			case "tag-sources":
+				print("TAG-SOURCES:\n\(pane.tagSourcesForTesting(excluding: argument))")
+			case "shut":    pane.setFolderForTesting(argument, collapsed: true)
+			case "open":    pane.setFolderForTesting(argument, collapsed: false)
+			case "filter":  pane.filterForTesting(argument)
+			case "refresh": pane.refresh()
+			default:        print("BRANCHES: unknown step \(step)")
+			}
+		}
+	}
+
 	/// Drives the changes tree from the command line: `report`, `stage:<path>`,
 	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `offer:<path>`,
 	/// `offer-staged:<path>`, `discard:<path>`, `refresh`, `settle[:seconds]`.
@@ -10278,6 +10369,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			guard let project, project.git != nil else { return nil }
 			let pane = ChangesPane(root: scopeRoot ?? project.root)
 			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
+			// `…` promotes the message rather than starting a second one.
+			pane.onOpenPage = { [weak self] summary in
+				self?.showCommitPage(carrying: summary)
+			}
 			pane.onWorkingCopyChanged = { [weak self] in self?.navigator.refreshGitStatus() }
 			changesPane = pane
 			view = pane
@@ -10294,6 +10389,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// setting said, and opened a second window on a checkout that
 			// already had one. The backlog card, the project switcher and now
 			// the titlebar all go through the same door.
+			pane.onOpenCommitPage = { [weak self] in self?.showCommitPage(carrying: nil) }
+			pane.onOpenFiles = { [weak self] paths in
+				guard let self, let project = self.project else { return }
+				for path in paths {
+					self.editor.open(fileURL: project.root.appendingPathComponent(path))
+				}
+			}
+			pane.onShowLog = { [weak self] ref in self?.showLogPage(scopedTo: ref) }
+			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
 			pane.onOpenWorktree = { [weak self] path in
 				guard let self else { return }
 				(NSApp.delegate as? AppDelegate)?.open(projectAt: path, from: self)
@@ -10363,6 +10467,182 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func toggleScratchesView(_ sender: Any?) { showSidebarTool(.scratches) }
 	@objc func toggleHistoryView(_ sender: Any?) { showSidebarTool(.history) }
 
+	/// A key that used to open something and now opens the git tool.
+	///
+	/// **Doing nothing would be the worse answer.** ⌘2 and ⌘6 have been Commit
+	/// and History for as long as this app has had them, and fingers do not
+	/// read release notes. For one release they land somewhere sensible and say
+	/// where the thing they used to open has gone.
+	@objc func movedShortcut(_ sender: Any?) {
+		showSidebarTool(.branches)
+		guard let item = sender as? NSMenuItem else { return }
+		if item.keyEquivalent == "5" {
+			Toast.post(
+				"Committing is ⇧⌘K now",
+				detail: "The working copy is in the git tool on ⌘2, and the message is written "
+					+ "on a page of its own.",
+				kind: .information
+			)
+		} else {
+			Toast.post(
+				"The log is ⇧⌘L now",
+				detail: "It opens as a page, where a graph has room for its lanes.",
+				kind: .information
+			)
+		}
+	}
+
+	/// Opens the log as a page in the editor area.
+	///
+	/// **The same pane at the size it needs**, which is why this reaches for
+	/// `HistoryPane(root:layout:)` rather than a class of its own: the loader,
+	/// the collapse rule, the graph and the commit menu are the same questions
+	/// at either size, and two classes asking them would be two answers that
+	/// drift apart in colours, in what counts as unpushed, in how a merge
+	/// folds.
+	///
+	/// A page rather than a dialog, for the reason `LaunchConfigurationsPage`
+	/// gives: it can be left open, switched away from, and come back to.
+	@objc func showLogPage(_ sender: Any?) { showLogPage(scopedTo: nil) }
+
+	/// - Parameter ref: a branch or tag to show the history of, or nil for the
+	///   branch that is checked out.
+	func showLogPage(scopedTo ref: String?) {
+		leaveTerminalFullScreen()
+		guard let project, project.git != nil, let group = editor.activeGroup else { return }
+
+		let page = (group.page(identifier: "log") as? HistoryPane)
+			?? HistoryPane(root: scopeRoot ?? project.root, layout: .page)
+		logPage = page
+
+		// Named for what it is showing: two log tabs both called "Log" would be
+		// the tab strip saying nothing, and a log scoped to a branch is a
+		// different question from the one about where you are standing.
+		group.openPage(
+			page,
+			title: ref.map { "Log · \($0)" } ?? "Log",
+			identifier: "log",
+			symbol: "clock.arrow.circlepath"
+		)
+		page.setRef(ref)
+	}
+
+	/// The log page, while one is open, for the driver to read.
+	private weak var logPage: HistoryPane?
+	/// The commit page, likewise.
+	private weak var commitPage: ChangesPane?
+
+	/// Opens the commit view as a page in the editor area.
+	///
+	/// **The same pane at the size it needs**, exactly as the log is: the tree,
+	/// folder staging and the discard question are the same questions at either
+	/// size, so there is one class and two arrangements rather than two classes
+	/// that drift.
+	///
+	/// - Parameter carrying: what has been typed into the sidebar's summary, so
+	///   pressing `…` is promoting a message rather than starting a second one.
+	@objc func showCommitPage(_ sender: Any?) { showCommitPage(carrying: nil) }
+
+	func showCommitPage(carrying summary: String?) {
+		leaveTerminalFullScreen()
+		guard let project, project.git != nil, let group = editor.activeGroup else { return }
+
+		let page: ChangesPane
+		if let existing = group.page(identifier: "commit") as? ChangesPane {
+			page = existing
+		} else {
+			page = ChangesPane(root: scopeRoot ?? project.root, layout: .page)
+			page.onWorkingCopyChanged = { [weak self] in
+				self?.navigator.refreshGitStatus()
+				self?.changesPane?.refresh()
+			}
+		}
+		commitPage = page
+		group.openPage(page, title: "Commit", identifier: "commit", symbol: "checkmark.circle")
+
+		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
+		page.refresh()
+	}
+
+	/// What the commit page holds.
+	func commitPageForTesting(_ steps: String, waiting: Int = 8) {
+		if commitPage == nil { showCommitPage(carrying: nil) }
+		guard let page = commitPage else {
+			print("COMMIT-PAGE: no page")
+			return
+		}
+
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			if step == "settle" || step.hasPrefix("settle:") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.commitPageForTesting(rest, waiting: waiting)
+				}
+				return
+			}
+
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "report": print("COMMIT-PAGE:\n\(page.pageReportForTesting())")
+			case "select": page.selectChangeForTesting(argument)
+			case "type":   page.carrySummaryForTesting(argument)
+			default:       print("COMMIT-PAGE: unknown step \(step)")
+			}
+		}
+	}
+
+	/// What the log page holds, and what its menu over a commit offers.
+	func logPageForTesting(_ steps: String, waiting: Int = 8) {
+		if logPage == nil { showLogPage(nil) }
+		guard let page = logPage else {
+			print("LOG-PAGE: no page")
+			return
+		}
+		guard page.hasRowsForTesting else {
+			guard waiting > 0 else {
+				print("LOG-PAGE: the log is still empty")
+				return
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+				self?.logPageForTesting(steps, waiting: waiting - 1)
+			}
+			return
+		}
+
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			// The diff of a file is read off the main queue like everything
+			// else here, so a report taken in the same turn as the selection
+			// sees the state before it.
+			if step == "settle" || step.hasPrefix("settle:") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.logPageForTesting(rest)
+				}
+				return
+			}
+
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "report": print("LOG-PAGE:\n\(page.pageReportForTesting())")
+			case "menu":   print("LOG-PAGE-MENU:\n\(page.commitMenuForTesting(row: Int(argument) ?? 0))")
+			case "file":
+				page.selectCommitForTesting(0)
+				page.selectFileForTesting(Int(argument) ?? 0)
+			default:       print("LOG-PAGE: unknown step \(step)")
+			}
+		}
+	}
+
 	/// Moves the selected lines across the index, in whichever direction the
 	/// diff's side implies.
 	private func applyDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
@@ -10372,6 +10652,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				? await GitWorkingCopy.unstage(lines: lines, ofDiff: diff, in: project.root)
 				: await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: project.root)
 			finishDiffOperation(result, change: change)
+		}
+	}
+
+	/// Puts just these lines aside.
+	///
+	/// **No new patch machinery at all.** `GitPatch.patch(selecting:)` already
+	/// builds a partial patch and `GitWorkingCopy.stage(lines:ofDiff:)` already
+	/// applies one to the index — so "stash these hunks" is staging them and
+	/// stashing what is staged, which is what `--staged` is for.
+	///
+	/// The index is put back the way it was found: somebody who had staged
+	/// something else and then stashed a hunk should not discover their staging
+	/// had been swept up with it.
+	private func stashDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+		guard let project, !lines.isEmpty else { return }
+		let root = project.root
+
+		Task { @MainActor in
+			let alreadyStaged = await GitWorkingCopy.status(in: root).staged.map(\.path)
+			guard alreadyStaged.isEmpty else {
+				Toast.post(
+					"Something is already staged",
+					detail: "Stashing lines uses the index, so it needs the index empty. "
+						+ "Commit or unstage what is there first."
+				)
+				return
+			}
+
+			let staged = await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: root)
+			guard staged.exitCode == 0 else {
+				finishDiffOperation(staged, change: change)
+				return
+			}
+
+			let name = "\(lines.count) line\(lines.count == 1 ? "" : "s") of \(change.name)"
+			let put = await GitStash.pushStaged(in: root, message: name)
+			finishDiffOperation(put, change: change)
+			if put.exitCode == 0 {
+				Toast.post("Stashed \(name)", kind: .information)
+			}
 		}
 	}
 
