@@ -197,6 +197,82 @@ struct ScriptLaunchTests {
 		)
 	}
 
+	/// **The poll must not spend the JVM's handshake.** A `connect` that closes
+	/// without sending `JDWP-Handshake` makes the JVM give up on the session —
+	///
+	///     Debugger failed to attach: handshake failed - connection prematurally closed
+	///
+	/// — and the debugger that arrives next is refused, leaving a suspended JVM
+	/// waiting for one that can never come. Polling five times a second, the
+	/// probe was always the first thing to reach the port, so this was not a rare
+	/// race: it broke every launch it was watching.
+	@Test func pollingAPortDoesNotSpendTheJVMsHandshake() async throws {
+		let java = URL(fileURLWithPath: "/usr/bin/java")
+		try #require(FileManager.default.isExecutableFile(atPath: java.path))
+
+		let port = try #require(DebugPort.free())
+		let process = Process()
+		process.executableURL = java
+		process.arguments = [ScriptLaunch.jdwpOption(port: port), "-version"]
+		process.standardOutput = Pipe()
+		process.standardError = Pipe()
+		try process.run()
+		defer { if process.isRunning { process.terminate() } }
+
+		// Watched the way a launch watches it: repeatedly, and first.
+		#expect(await DebugPort.waitUntilOpen(port, timeout: 30))
+		for _ in 0 ..< 10 { _ = DebugPort.isOpen(port) }
+
+		// And a real debugger can still attach, which is what the old probe
+		// destroyed before anything else got the chance to try.
+		#expect(jdwpHandshakeSucceeds(onPort: port), "the JVM should still take a debugger")
+	}
+
+	/// A real JDWP handshake: those fourteen bytes, and the same fourteen back.
+	///
+	/// Written out rather than mocked because the claim is about what a JVM does
+	/// with the socket, and nothing but the socket can settle it.
+	private func jdwpHandshakeSucceeds(onPort port: Int) -> Bool {
+		let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+		guard descriptor >= 0 else { return false }
+		defer { close(descriptor) }
+
+		// A read timeout, so a JVM that says nothing fails the test rather than
+		// hanging the suite.
+		var limit = timeval(tv_sec: 5, tv_usec: 0)
+		setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
+
+		var address = sockaddr_in()
+		address.sin_family = sa_family_t(AF_INET)
+		address.sin_addr.s_addr = inet_addr("127.0.0.1")
+		address.sin_port = in_port_t(UInt16(port).bigEndian)
+
+		let connected = withUnsafePointer(to: &address) { pointer in
+			pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+				connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+			}
+		}
+		guard connected == 0 else { return false }
+
+		let greeting = Array("JDWP-Handshake".utf8)
+		// Qualified: this type has a `write(_:named:)` of its own.
+		guard Darwin.write(descriptor, greeting, greeting.count) == greeting.count else { return false }
+
+		// `expected` in a local: reading `reply.count` inside a mutable-bytes
+		// closure is an overlapping access to `reply`.
+		let expected = greeting.count
+		var reply = [UInt8](repeating: 0, count: expected)
+		var filled = 0
+		while filled < expected {
+			let got = reply.withUnsafeMutableBytes { buffer -> Int in
+				Darwin.read(descriptor, buffer.baseAddress!.advanced(by: filled), expected - filled)
+			}
+			guard got > 0 else { return false }
+			filled += got
+		}
+		return reply == greeting
+	}
+
 	// MARK: - Helpers
 
 	/// Counts the asks and starts answering yes at a given one.
@@ -315,4 +391,106 @@ struct ScriptLaunchCheckTests {
 		let found = problems(program: "build/app", kind: nil)
 		#expect(!found.contains { $0.message.contains("script") })
 	}
+
+	// MARK: - Not asking for two debug agents
+
+	/// A JVM refuses to start with two JDWP agents on it: `Cannot load this JVM
+	/// TI agent twice`, then `agent library failed Agent_OnLoad: jdwp`, out of VM
+	/// initialisation with exit code 1 and before a line of the program runs.
+	///
+	/// A configuration that carries its own option in `MAVEN_OPTS` is a normal
+	/// thing to have — `mvnw`'s own header comment suggests exactly that — so
+	/// appending to it blindly turned pressing Debug into a JVM that could not
+	/// start, with nothing in the failure naming the option that had just been
+	/// added.
+	@Test func aDebugAgentAlreadyInTheOptionsIsDisplacedRatherThanStacked() {
+		let existing = "-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=8000 -Xmx8G"
+		let plan = ScriptLaunch.plan(
+			kind: .maven, port: 41234, environment: ["MAVEN_OPTS": existing], arguments: ["test"]
+		)
+
+		let options = plan.environment["MAVEN_OPTS"] ?? ""
+		#expect(!options.contains("-Xrunjdwp"), "the old agent has to be gone, not merely followed")
+		#expect(options.contains("address=127.0.0.1:41234"), "ours is the port the adapter wants")
+		// Exactly one, counted rather than eyeballed: this is the whole bug.
+		#expect(options.components(separatedBy: "-agentlib:jdwp").count - 1 == 1)
+		// Everything that was not an agent survives — a lost -Xmx8G is a build
+		// that dies differently.
+		#expect(options.contains("-Xmx8G"))
+	}
+
+	/// The same for an unrecognised script, which is asked through
+	/// `JAVA_TOOL_OPTIONS` — and where the variable more often already has
+	/// something in it that matters.
+	@Test func javaToolOptionsKeepsWhatIsNotAnAgent() {
+		let existing = "-Djavax.net.ssl.trustStore=/Users/someone/cacerts -agentlib:jdwp=address=1"
+		let plan = ScriptLaunch.plan(
+			kind: .script, port: 5150, environment: ["JAVA_TOOL_OPTIONS": existing], arguments: []
+		)
+
+		let options = plan.environment["JAVA_TOOL_OPTIONS"] ?? ""
+		#expect(options.contains("-Djavax.net.ssl.trustStore=/Users/someone/cacerts"))
+		#expect(options.components(separatedBy: "-agentlib:jdwp").count - 1 == 1)
+		#expect(options.contains("address=127.0.0.1:5150"))
+	}
+
+	/// Displacing somebody's option silently would be worse than stacking it:
+	/// the variable is in the environment rather than in the command the run
+	/// pane shows, so the plan's note is the only place it can be said.
+	@Test func displacingAnAgentIsSaidInTheNote() {
+		let plan = ScriptLaunch.plan(
+			kind: .maven,
+			port: 41234,
+			environment: ["MAVEN_OPTS": "-Xrunjdwp:address=8000"],
+			arguments: []
+		)
+		#expect(plan.note.contains("-Xrunjdwp:address=8000"))
+		#expect(plan.note.contains("will not start with two"))
+	}
+
+	/// And nothing is said when there was nothing to displace.
+	@Test func anUntouchedNoteSaysNothingAboutDisplacement() {
+		let plan = ScriptLaunch.plan(kind: .maven, port: 41234, environment: [:], arguments: [])
+		#expect(!plan.note.contains("taken out"))
+	}
+
+	// MARK: - Where the waiting happens
+
+	/// **The poll must not run on the main thread.** It blocks for up to a
+	/// quarter of a second per probe and keeps that up for two minutes, so a
+	/// wait that inherited the window's actor would freeze the project for the
+	/// whole launch — which is exactly what a launch that has already failed
+	/// used to do, since nothing was going to open the port.
+	///
+	/// Asserted about the probe rather than about the UI, because the probe is
+	/// the part that blocks and the only part a test can hold still.
+	@MainActor
+	@Test func theProbeNeverRunsOnTheMainThread() async {
+		let seen = ThreadWitness()
+		let opened = await DebugPort.waitUntilOpen(
+			1, timeout: 0.3, interval: 0.1, isOpen: { _ in seen.record(); return false }
+		)
+
+		#expect(!opened)
+		#expect(seen.probes > 0, "the test proves nothing if it never probed")
+		#expect(seen.onMain == 0, "\(seen.onMain) of \(seen.probes) probes blocked the main thread")
+	}
+}
+
+/// Which thread the probes ran on, countable from another one.
+private final class ThreadWitness: @unchecked Sendable {
+	private let lock = NSLock()
+	private var total = 0
+	private var main = 0
+
+	func record() {
+		let isMain = Thread.isMainThread
+		lock.lock()
+		defer { lock.unlock() }
+		total += 1
+		if isMain { main += 1 }
+	}
+
+	var probes: Int { lock.withLock { total } }
+	var onMain: Int { lock.withLock { main } }
 }

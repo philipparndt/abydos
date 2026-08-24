@@ -6736,6 +6736,43 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			makeRun: selectedMakeRun?.name,
 			selected: selectedConfigurationName
 		))
+		refreshLaunchNotice()
+	}
+
+	/// Says up front when the selected launch could not be debugged here.
+	///
+	/// Everything this asks is a `PATH` lookup or a jar on disk. Pressing Debug
+	/// without it started a JVM, suspended it on a port, spent the classpath scan
+	/// and *then* said that no debugger was ever going to arrive — the same
+	/// information, after the wait, about a JVM now stuck waiting for it.
+	private func refreshLaunchNotice() {
+		guard let project, let selection = selectedJavaDebuggableLaunch() else {
+			editor.activeGroup?.setLaunchNotice(nil)
+			return
+		}
+		_ = selection
+		editor.activeGroup?.setLaunchNotice(
+			LanguageService.shared.javaDebugNotice(project: project.root)
+		)
+	}
+
+	/// The selected configuration, when debugging it would go through jdtls.
+	///
+	/// Which is any configuration whose debugger is the Java one, and any whose
+	/// program is a wrapper script — `mvnw`, `gradlew`, a `#!` script — because
+	/// those debug by asking the JVM the script starts to wait, and the adapter
+	/// that then attaches lives inside jdtls. A configuration that is only ever
+	/// run is included, and says so honestly: the strip is about what Debug
+	/// would do, not about what Run is doing.
+	private func selectedJavaDebuggableLaunch() -> LaunchConfiguration? {
+		guard let name = selectedConfigurationName,
+		      let configuration = launchConfigurations.first(where: { $0.name == name })
+		else { return nil }
+
+		if configuration.adapterID == "java" { return configuration }
+		guard let root = project?.root else { return nil }
+		let program = configuration.expandedProgram(root: root)
+		return ScriptLaunch.kind(ofProgramAt: program) != nil ? configuration : nil
 	}
 
 	/// Keeps the titlebar saying what the session is doing.
@@ -9124,7 +9161,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let target = try await LanguageService.shared.javaLaunchTarget(
 				project: root,
 				anchor: JavaTooling.mainClasses(in: root).first.map { URL(fileURLWithPath: $0.file) },
-				saying: { sentence in self.runControl?.setStatus(sentence, busy: true) }
+				saying: { sentence in
+						self.runControl?.setStatus(sentence, busy: true, preparing: true)
+					}
 			)
 			request.host = "127.0.0.1"
 			request.port = debugForward.localPort
@@ -9394,21 +9433,89 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// run pane does not show it — the option went into the environment.
 		bottomPanel.showDebug()?.appendOutput(plan.note + "\n")
 
-		Task { @MainActor [weak self] in
-			guard let self else { return }
-			self.runControl?.setStatus("Waiting for the JVM on \(plan.port)…", busy: true)
-			guard await DebugPort.waitUntilOpen(plan.port) else {
-				// Deliberately specific about the two ways this ends badly,
-				// because they need opposite things done about them.
-				self.runControl?.setStatus("The JVM never opened \(plan.port)", failed: true)
-				self.notify(
-					"Nothing opened port \(plan.port)",
-					detail: Self.scriptDebugAdvice(for: kind)
+		scriptDebugExit = nil
+		runControl?.setStatus(
+			"Waiting for the JVM on \(plan.port)…", busy: true, preparing: true
+		)
+
+		// Detached, and that is the point rather than a detail: the poll blocks a
+		// thread for up to a quarter of a second at a time and keeps it up for
+		// two minutes, and a `Task { @MainActor in … }` here would inherit this
+		// window's actor and make that thread the one drawing. A launch that is
+		// waiting has to leave the project usable — the wait is for a grandchild
+		// process, and nothing about it belongs on the main thread.
+		let waitedPort = plan.port
+		let waiter = Task.detached { [weak self] in
+			let opened = await DebugPort.waitUntilOpen(waitedPort)
+			await self?.scriptDebugFinished(
+				opened: opened, configuration: configuration, kind: kind, port: waitedPort, root: root
+			)
+		}
+
+		// The poll above is waiting for a JVM that this process starts. Once the
+		// process itself is gone, no JVM is coming and there is nothing left to
+		// wait for — so stop, rather than spending the rest of the two minutes
+		// saying "Waiting for the JVM" about something that has already failed.
+		//
+		// That is how a duplicate JDWP option in MAVEN_OPTS presented: VM
+		// initialisation refused it in the first second, and the window then sat
+		// on "Waiting for the JVM on 49565…" for two minutes before offering
+		// advice about forked goals, which had nothing to do with it. The
+		// handler is taken and called on rather than replaced, the way
+		// `followRunningPane` does it, so the run tab still learns its process
+		// has gone.
+		let followHandler = pane?.terminalView.onProcessExit
+		pane?.terminalView.onProcessExit = { [weak self] code in
+			followHandler?(code)
+			MainActor.assumeIsolated {
+				self?.scriptDebugExit = code
+				waiter.cancel()
+			}
+		}
+	}
+
+	/// What the script being debugged exited with, while its port is awaited.
+	///
+	/// Read when the wait ends to tell "the build is still going" from "the thing
+	/// died", which from the port alone look identical.
+	private var scriptDebugExit: Int32?
+
+	/// What to do once the wait for the script's JVM is over, however it ended.
+	///
+	/// A method rather than the tail of the detached task's closure: the closure
+	/// runs off the main actor and everything here belongs on it, and reaching
+	/// back into a weakly captured `self` from inside a nested `MainActor.run`
+	/// is a captured-var reference that Swift 6 makes an error.
+	@MainActor
+	private func scriptDebugFinished(
+		opened: Bool,
+		configuration: LaunchConfiguration,
+		kind: ScriptLaunch.Kind,
+		port: Int,
+		root: URL
+	) {
+		guard opened else {
+			// Three ways this ends badly now, and the first is the one that used
+			// to be reported as one of the other two.
+			if let code = scriptDebugExit {
+				runControl?.setStatus(
+					"Exited with code \(code) before opening \(port)", failed: true
+				)
+				notify(
+					"\(configuration.name) exited before the JVM opened port \(port)",
+					detail: "Exit code \(code). Whatever it printed is in the run pane — the "
+						+ "script never got as far as a JVM, so none of the advice about which "
+						+ "goal forks one applies."
 				)
 				return
 			}
-			self.attachToScriptJVM(configuration, port: plan.port, root: root)
+			// Deliberately specific about the two ways this ends badly, because
+			// they need opposite things done about them.
+			runControl?.setStatus("The JVM never opened \(port)", failed: true)
+			notify("Nothing opened port \(port)", detail: Self.scriptDebugAdvice(for: kind))
+			return
 		}
+		attachToScriptJVM(configuration, port: port, root: root)
 	}
 
 	/// What to try when the port never opened, which differs by wrapper.
@@ -9433,6 +9540,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		_ configuration: LaunchConfiguration, port: Int, root: URL
 	) {
 		Task { @MainActor in
+			// The anchor decides which module's classpath jdtls answers about, so
+			// it is chosen against *this configuration's* working directory rather
+			// than taken from the front of the project's list — see
+			// `JavaTooling.nearestFile`.
+			//
+			// From what discovery already found, rather than by reading every
+			// source file in the project again. `refreshRunConfigurations` walks
+			// the project off the main thread when it opens and again when files
+			// change, and every Java entry it returns carries the file its `main`
+			// is in — so the answer is already in hand and cost nothing to get.
+			//
+			// Pressing Debug used to spend that walk a second time: tens of
+			// thousands of file reads on a large repository, in the seconds right
+			// after the JVM had suspended itself waiting for us.
+			let directory = configuration.expandedWorkingDirectory(root: root)
+			var anchor = JavaTooling.nearestFile(
+				to: directory,
+				among: runConfigurations.filter { $0.source == .javaMain }.compactMap(\.file)
+			).map { URL(fileURLWithPath: $0) }
+
+			// Only if discovery has not run yet, or found none — a project opened
+			// a moment ago, which is exactly when somebody presses Debug.
+			if anchor == nil {
+				runControl?.setStatus("Looking for the class to debug…", busy: true, preparing: true)
+				let scanned = await JavaTooling.mainClassesOffMain(in: root).map(\.file)
+				anchor = JavaTooling.nearestFile(to: directory, among: scanned)
+					.map { URL(fileURLWithPath: $0) }
+			}
+			// Said in the debug console, beside the plan: which file the classpath
+			// was asked about is the difference between debugging this module and
+			// debugging whichever one sorted first, and it is not visible anywhere
+			// else.
+			if let anchor {
+				bottomPanel.showDebug()?.appendOutput(
+					"Classpath from \(MakeLaunch.relativeToWorkspace(anchor, root: root))\n"
+				)
+			}
+
 			// The class files and the server's own port together, as the pod
 			// attach does: a frame from the JVM then lands on the source it was
 			// compiled from rather than on a decompiled stub.
@@ -9440,15 +9585,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             do {
 				target = try await LanguageService.shared.javaLaunchTarget(
 					project: root,
-					anchor: JavaTooling.mainClasses(in: root).first.map { URL(fileURLWithPath: $0.file) },
-					saying: { sentence in self.runControl?.setStatus(sentence, busy: true) }
+					anchor: anchor,
+					saying: { sentence in
+						self.runControl?.setStatus(sentence, busy: true, preparing: true)
+					}
 				)
 			} catch {
 				runControl?.setStatus("Java cannot be debugged yet", failed: true)
+				// The error already says which of the several reasons it was —
+				// jdtls not installed, the java-debug bundle missing, an import
+				// still running, a classpath with nothing in it — and each wants
+				// something different done about it. `JavaDebugFailure` spells
+				// every one of them out; reporting one sentence about readiness
+				// instead threw that away and sent somebody looking at a language
+				// server that was never on the machine.
 				notify(
-					"The Java language server is not ready",
-					detail: "The debugger for Java lives inside it, and the JVM is waiting on port "
-						+ "\(port) until it arrives or you stop it."
+					"Java cannot be debugged here",
+					detail: error.localizedDescription
+						+ "\n\nThe JVM is waiting on port \(port) until a debugger arrives or you "
+						+ "stop it."
 				)
 				return
 			}

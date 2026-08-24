@@ -56,9 +56,13 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	var onRunStateChanged: ((TitlebarSeam.State) -> Void)?
 
 	private var runState: TitlebarSeam.State {
-		if isBusy { return .running }
+		if isBusy { return isPreparing ? .preparing : .running }
 		return failed ? .failed : .idle
 	}
+
+	/// Whether the busy state is a launch being arranged rather than a program
+	/// running. It decides whether the seam moves; see `TitlebarSeam.State`.
+	private var isPreparing = false
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -141,18 +145,25 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	}
 
 	/// What to say about the last or current run.
-	func setStatus(_ text: String, busy: Bool = false, failed: Bool = false) {
+	func setStatus(
+		_ text: String, busy: Bool = false, failed: Bool = false, preparing: Bool = false
+	) {
 		// One line, whatever it was given: this is a strip in a titlebar, and a
 		// message with newlines in it turns into a paragraph across the window.
 		let text = text.replacingOccurrences(of: "\n", with: " ")
 			.trimmingCharacters(in: .whitespaces)
-		guard text != status || busy != isBusy || failed != self.failed else { return }
+		guard text != status || busy != isBusy || failed != self.failed
+			|| preparing != isPreparing
+		else { return }
 		let wasBusy = isBusy
 		let wasState = runState
 		status = text
 		if !busy { isStopping = false }
 		rebuildToolTips()
 		isBusy = busy
+		// Only meaningful while busy: a failure or an idle strip has nothing to
+		// be preparing, and leaving it set would move the seam over a finished run.
+		isPreparing = busy && preparing
 		self.failed = failed
 		needsDisplay = true
 		// The run button is a stop button while busy, and says so.

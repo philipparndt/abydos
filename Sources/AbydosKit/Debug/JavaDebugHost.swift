@@ -296,7 +296,9 @@ public final class JavaDebugHost {
 	/// with.
 	public func startDebugSession() async throws -> Int {
 		guard isRunning else { throw Failure.refused(lastStandardError ?? "jdtls is not running.") }
-		let result = try await client.executeCommand(JavaDebug.startCommand)
+		let result = try await client.executeCommand(
+			JavaDebug.startCommand, timeout: JavaDebug.queryTimeout
+		)
 		if let port = result as? Int { return port }
 		if let port = (result as? NSNumber)?.intValue { return port }
 		throw Failure.refused("jdtls started no debug session.")
@@ -328,25 +330,63 @@ public final class JavaDebugHost {
 		guard isRunning else { return nil }
 		guard let result = try? await client.executeCommand(
 			JavaDebug.classpathCommand,
-			arguments: [url.absoluteString, JavaDebug.classpathOptions()]
+			arguments: [url.absoluteString, JavaDebug.classpathOptions()],
+			timeout: JavaDebug.queryTimeout
 		), let object = result as? [String: Any] else { return nil }
 		guard let answeredFor = object["projectRoot"] as? String,
 		      Self.isInside(answeredFor, root)
 		else { return nil }
 		let paths = object["classpaths"] as? [String] ?? []
 		let modules = object["modulepaths"] as? [String] ?? []
-		return (URL(fileURLWithPath: answeredFor).lastPathComponent, paths + modules)
+		// The same parse as the guard above, for the same reason: a URI read as a
+		// path happens to end in the right component, and naming the project by
+		// accident is not naming it.
+		return (Self.fileURL(from: answeredFor).lastPathComponent, paths + modules)
 	}
 
-	/// Whether a path the server named is inside the project it was rooted at.
+	/// Whether a place the server named is inside the project it was rooted at.
 	///
 	/// Canonical on both sides and with the separator on the prefix, so `/proj-old`
 	/// is not inside `/proj` — the same care `DebugAdapters` takes for the same
 	/// reason.
-	public static func isInside(_ path: String, _ root: URL) -> Bool {
-		let inside = FilePath.canonicalEvenIfMissing(URL(fileURLWithPath: path))
+	public static func isInside(_ pathOrURI: String, _ root: URL) -> Bool {
+		let inside = FilePath.canonicalEvenIfMissing(fileURL(from: pathOrURI))
 		let outer = FilePath.canonical(root)
 		return inside == outer || inside.hasPrefix(outer + "/")
+	}
+
+	/// A place as jdtls spells it, which is a path or a `file:` URI.
+	///
+	/// **java-debug answers `projectRoot` with a URI**, in the single-slash
+	/// spelling — `file:/Users/…`, not `file:///Users/…`.
+	/// `URL(fileURLWithPath:)` reads that as a *relative path* whose first
+	/// component is `file:`, so it hands back the working directory with the whole
+	/// URI glued onto the end, and that is inside nothing.
+	///
+	/// Which turned every good classpath into "an answer about another project".
+	/// The guard above is right that an answer about somewhere else is not an
+	/// answer — it was being told that a module of this very repository was
+	/// somewhere else. Measured against java-debug 0.53.2 on a Maven repository
+	/// whose import had finished half an hour earlier: the JVM sat suspended on
+	/// its port while the editor said the import had not finished.
+	///
+	/// Reading it as a URI also undoes percent-encoding, which a path with a space
+	/// in it arrives carrying and which no comparison against a real path would
+	/// otherwise survive.
+	static func fileURL(from pathOrURI: String) -> URL {
+		guard pathOrURI.hasPrefix("file:"),
+		      let url = URL(string: pathOrURI), url.isFileURL
+		else { return URL(fileURLWithPath: pathOrURI) }
+		return url
+	}
+
+	/// What to call the project jdtls answered about, from the root it named.
+	///
+	/// Public because the editing-server path in the app asks the same question
+	/// of the same answer, and two spellings of "last component of a thing that
+	/// might be a URI" is how the two drift apart.
+	public static func projectName(fromRoot pathOrURI: String) -> String {
+		fileURL(from: pathOrURI).lastPathComponent
 	}
 
 	/// Asks the server to compile what it has imported.

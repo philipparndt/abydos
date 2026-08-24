@@ -276,11 +276,72 @@ public enum JavaTooling {
 		"target", "build", "out", ".git", ".gradle", ".idea", "node_modules", "bin",
 	]
 
+	/// `mainClasses`, off whichever actor is asking.
+	///
+	/// **The scan reads every `.java` and `.kt` file in the project** — the file
+	/// contents are the whole point of it — so on a repository of a thousand
+	/// modules it is tens of thousands of reads and takes many seconds. Run from
+	/// the main actor that is a spinning cursor with nothing on screen to explain
+	/// it, and the callers that reach for this are main-actor code arranging a
+	/// debug session, which is the worst moment to stop drawing.
+	///
+	/// Detached rather than merely `async`: the point is to leave the caller's
+	/// actor, and an `async` function declared beside main-actor code that
+	/// inherited it would read as fixed while changing nothing.
+	/// Of several source files, the one nearest a directory.
+	///
+	/// **Which module a classpath is asked about decides which classpath comes
+	/// back.** jdtls answers `java.project.getClasspaths` about the module the
+	/// file it is given belongs to, so the file is not an incidental anchor — it
+	/// chooses the answer. Taking the project's *first* main class meant a
+	/// thousand-module repository resolved whichever one the directory walk
+	/// reached first: a launch configuration for the Eclipse client was handed
+	/// `cli/com.vector.acli.application`'s classpath, and the attach then mapped
+	/// frames against the wrong module's jars.
+	///
+	/// Nearness is counted in shared leading path components with the
+	/// configuration's own working directory, which gives the useful answer
+	/// without needing to know what a module is. A file inside that directory
+	/// shares all of them and wins outright. When the directory holds no Java at
+	/// all — an assembly module that is one pom and nothing else, which is what
+	/// an OSGi product launch points at — the count still prefers a sibling under
+	/// `almplus/client/…` over something under `cli/…`, which is the intent
+	/// expressed as arithmetic rather than as a special case.
+	///
+	/// Ties go to the shorter path: equally near, the one less deep is the more
+	/// likely module root.
+	public static func nearestFile(to directory: String, among files: [String]) -> String? {
+		let target = FilePath.canonicalEvenIfMissing(URL(fileURLWithPath: directory))
+			.split(separator: "/").map(String.init)
+
+		return files
+			.map { file -> (file: String, shared: Int, depth: Int) in
+				let parts = FilePath.canonicalEvenIfMissing(URL(fileURLWithPath: file))
+					.split(separator: "/").map(String.init)
+				var shared = 0
+				for (mine, theirs) in zip(target, parts) {
+					guard mine == theirs else { break }
+					shared += 1
+				}
+				return (file, shared, parts.count)
+			}
+			// Sorted rather than reduced, so the tie-break is written down.
+			.sorted { ($0.shared, -$0.depth) > ($1.shared, -$1.depth) }
+			.first?.file
+	}
+
+	public static func mainClassesOffMain(in root: URL, limit: Int = 40) async -> [MainClass] {
+		await Task.detached { mainClasses(in: root, limit: limit) }.value
+	}
+
 	/// Every class in a project that can be run.
 	///
 	/// A scan of the source rather than a question to the language server: this
 	/// has to answer before jdtls has finished importing a large project, which
 	/// takes tens of seconds, and the answer barely changes.
+	///
+	/// Reads every source file in the project, so anything on the main actor
+	/// wants `mainClassesOffMain` instead.
 	public static func mainClasses(in root: URL, limit: Int = 40) -> [MainClass] {
 		var found: [MainClass] = []
 		let manager = FileManager.default

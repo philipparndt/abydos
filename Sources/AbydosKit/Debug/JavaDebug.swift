@@ -14,6 +14,22 @@ import Foundation
 /// finished importing cannot be debugged yet. Saying so is better than a
 /// timeout with no cause.
 public enum JavaDebug {
+	/// How long to let jdtls think about a question asked while a debug session
+	/// is being arranged.
+	///
+	/// **`executeCommand`'s default of 30 seconds is a small-project number.**
+	/// Two of these questions — the debug port and the classpath — were left at
+	/// it while the build beside them asks for 300, and on a thousand-module
+	/// Maven reactor neither answers inside half a minute. Measured there:
+	/// `java.project.getClasspaths` timed out at 30 seconds, and all the window
+	/// said was that Java could not be debugged yet, about a server that was
+	/// working on the answer.
+	///
+	/// Not unbounded, because a jdtls that has genuinely stopped answering has to
+	/// end in a sentence rather than a spinner. `javaLaunchTarget` allows the
+	/// whole arrangement 600 seconds; one question inside it gets a quarter.
+	public static let queryTimeout: TimeInterval = 150
+
 	/// The command jdtls answers with a debug port.
 	public static let startCommand = "vscode.java.startDebugSession"
 	/// The command that reports a project's classpath.

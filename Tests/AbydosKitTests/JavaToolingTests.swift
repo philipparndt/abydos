@@ -121,4 +121,54 @@ struct JavaToolingTests {
 		#expect(JavaTooling.isJavaProject(root))
 		#expect(JavaTooling.buildFile(in: root)?.lastPathComponent == "pom.xml")
 	}
+
+	// MARK: - Which module the classpath is asked about
+
+	/// **The anchor chooses the answer.** jdtls answers
+	/// `java.project.getClasspaths` about the module the file belongs to, so
+	/// taking the project's first main class made a thousand-module repository
+	/// resolve whichever the directory walk reached first.
+	///
+	/// The case measured: a launch configuration for the Eclipse client, whose
+	/// working directory is an assembly module holding one pom and no Java at all,
+	/// was handed `cli/com.vector.acli.application`'s classpath.
+	@Test func theAnchorIsChosenNearTheLaunchsOwnDirectory() {
+		let root = "/repo"
+		let client = "\(root)/almplus/client/maven.assembly.com.vector.almplus.client"
+		let candidates = [
+			"\(root)/cli/com.vector.acli.application/src/main/java/com/vector/acli/CliApplication.java",
+			"\(root)/almplus/client/core/com.vector.almplus.client.core.base/src/main/java/com/vector/Base.java",
+		]
+
+		// The assembly module has no Java of its own, so nearness has to carry it:
+		// two shared components under almplus/client beats none under cli.
+		#expect(
+			JavaTooling.nearestFile(to: client, among: candidates)?.contains("client.core.base") == true
+		)
+		// And a launch rooted in the CLI still gets the CLI.
+		#expect(
+			JavaTooling.nearestFile(
+				to: "\(root)/cli/com.vector.acli.application", among: candidates
+			)?.contains("CliApplication") == true
+		)
+	}
+
+	/// A file actually inside the directory wins outright, however deep the
+	/// alternatives are.
+	@Test func aFileInsideTheDirectoryWins() {
+		let inside = "/repo/mod/src/main/java/A.java"
+		let elsewhere = "/repo/other/src/main/java/B.java"
+		#expect(JavaTooling.nearestFile(to: "/repo/mod", among: [elsewhere, inside]) == inside)
+	}
+
+	/// Equally near, the shallower one — the more likely module root.
+	@Test func tiesGoToTheShallowerPath() {
+		let shallow = "/repo/a/A.java"
+		let deep = "/repo/a/b/c/d/B.java"
+		#expect(JavaTooling.nearestFile(to: "/repo/x", among: [deep, shallow]) == shallow)
+	}
+
+	@Test func nothingToChooseFromIsNil() {
+		#expect(JavaTooling.nearestFile(to: "/repo/mod", among: []) == nil)
+	}
 }

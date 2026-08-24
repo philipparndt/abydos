@@ -927,25 +927,52 @@ final class EditorViewController: NSViewController {
 	/// The first knows whether anything is running, coming, or neither, so the
 	/// strip goes away when the server lands however late that is.
 	private func refreshServerBanner() {
+		if let notice = fileServerNotice() ?? launchNotice {
+			serverBanner.show(notice)
+			serverBanner.isHidden = false
+			serverBannerHeight.constant = LanguageServerBanner.height
+			return
+		}
+		hideServerBanner()
+	}
+
+	/// What the file in front of somebody has to say about its own server.
+	private func fileServerNotice() -> LanguageService.ServerNotice? {
 		guard project != nil,
 		      let tab = activeTab,
 		      !tab.isDiff,
 		      let languageId = tab.document?.languageId,
 		      !dismissedSuggestions.contains(languageId),
-		      let root = serverRoot(for: tab),
-		      let notice = LanguageService.shared.notice(
-		      	forLanguage: languageId,
-		      	project: root,
-		      	ignoring: Set(Settings.shared.ignoredLanguageServers)
-		      )
-		else {
-			hideServerBanner()
-			return
-		}
+		      let root = serverRoot(for: tab)
+		else { return nil }
 
-		serverBanner.show(notice)
-		serverBanner.isHidden = false
-		serverBannerHeight.constant = LanguageServerBanner.height
+		return LanguageService.shared.notice(
+			forLanguage: languageId,
+			project: root,
+			ignoring: Set(Settings.shared.ignoredLanguageServers)
+		)
+	}
+
+	/// What the selected launch configuration has to say, when the file has
+	/// nothing.
+	///
+	/// Second, not first: the strip sits above the code, and a sentence about the
+	/// file somebody is reading outranks one about a configuration they have not
+	/// pressed yet. Both at once is the case this ordering settles — a Java file
+	/// with no server, in a project whose launch cannot be debugged either, is
+	/// one problem with one cause, and the file's version of it is the one that
+	/// names the language.
+	private var launchNotice: LanguageService.ServerNotice?
+
+	/// Set by the window when the selected configuration changes.
+	///
+	/// Held here rather than recomputed, because deciding it needs the run
+	/// picker's selection and this controller knows nothing about that.
+	func setLaunchNotice(_ notice: LanguageService.ServerNotice?) {
+		guard notice != launchNotice else { return }
+		if let notice, dismissedSuggestions.contains(notice.languageId) { return }
+		launchNotice = notice
+		refreshServerBanner()
 	}
 
 	/// Works out what the footer's chip says and pushes it, if it has changed.

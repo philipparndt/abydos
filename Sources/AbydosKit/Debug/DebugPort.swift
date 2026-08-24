@@ -44,51 +44,51 @@ public enum DebugPort {
 		return Int(UInt16(bigEndian: assigned.sin_port))
 	}
 
-	/// How long a single probe may take. Loopback either answers at once or is
-	/// not going to.
-	private static let probeTimeout: TimeInterval = 0.25
-
-	/// Whether something is listening on a local port right now.
+	/// Whether something holds a local port right now.
 	///
-	/// **Non-blocking, and that is not a refinement.** A plain `connect` to a
-	/// listening socket whose backlog is full does not fail — it waits, through
-	/// SYN retransmissions, for as long as the kernel feels like. A test that
-	/// probed such a port took 88 seconds, and this is called from the poll loop
-	/// below while a launch is in flight, so a probe that blocks is a launch that
-	/// hangs with nothing on screen explaining it.
+	/// **Asked by trying to take the port, never by connecting to it.** A
+	/// connect is not a neutral question to ask of a JDWP port. The JVM's
+	/// transport accepts it, waits for the `JDWP-Handshake` bytes, gets a close
+	/// instead, and gives up on the session:
+	///
+	///     Listening for transport dt_socket at address: 51400
+	///     Debugger failed to attach: handshake failed - connection prematurally closed
+	///
+	/// after which the real debugger is refused and a suspended JVM waits for one
+	/// that can no longer arrive. The poll below asks five times a second while a
+	/// launch is in flight, so the probe was reliably the first thing to reach the
+	/// port it was waiting for: it broke every launch it was watching, and the
+	/// JVM's complaint named a debugger nobody had started yet.
+	///
+	/// `bind` asks the kernel who owns the address and touches nothing on the
+	/// other side. It answers about ownership rather than about willingness to
+	/// talk, which is the better question anyway — a JVM that has printed
+	/// `Listening for transport` owns its port well before it will finish a
+	/// handshake.
+	///
+	/// Two things it cannot tell, both harmless here: a port in `TIME_WAIT` reads
+	/// as held, and a privileged port under 1024 refuses the bind with `EACCES`
+	/// and so reads as free. The ports this waits on are ones `free()` has just
+	/// handed out, or Gradle's 5005.
 	public static func isOpen(_ port: Int) -> Bool {
 		let descriptor = socket(AF_INET, SOCK_STREAM, 0)
 		guard descriptor >= 0 else { return false }
 		defer { close(descriptor) }
 
-		let flags = fcntl(descriptor, F_GETFL, 0)
-		guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else { return false }
-
+		// Deliberately no SO_REUSEADDR: whether the bind is refused *is* the
+		// question, and reuse is the one option that stops it being asked.
 		var address = sockaddr_in()
 		address.sin_family = sa_family_t(AF_INET)
 		address.sin_addr.s_addr = inet_addr("127.0.0.1")
 		address.sin_port = in_port_t(UInt16(port).bigEndian)
 
-		let started = withUnsafePointer(to: &address) { pointer in
+		let bound = withUnsafePointer(to: &address) { pointer in
 			pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-				connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+				bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
 			}
 		}
-		// Loopback commonly completes inside the call.
-		if started == 0 { return true }
-		guard errno == EINPROGRESS else { return false }
-
-		var watched = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
-		guard poll(&watched, 1, Int32(probeTimeout * 1000)) > 0 else { return false }
-
-		// Writable is not the same as connected: a refused connection becomes
-		// writable too, and the error is only readable off the socket itself.
-		var failure: Int32 = 0
-		var length = socklen_t(MemoryLayout<Int32>.size)
-		guard getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length) == 0 else {
-			return false
-		}
-		return failure == 0
+		if bound == 0 { return false }
+		return errno == EADDRINUSE
 	}
 
 	/// Waits until something is listening, or gives up.

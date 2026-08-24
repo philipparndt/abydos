@@ -143,6 +143,48 @@ struct JavaDebugHostTests {
 		#expect(!JavaDebugHost.isInside(root.path + "-old", root))
 	}
 
+	/// **And it arrives as a URI, not as a path.** java-debug answers
+	/// `projectRoot` with `file:/Users/…` — one slash, not three — and
+	/// `URL(fileURLWithPath:)` reads that as a relative path whose first
+	/// component is `file:`, so it comes back as the working directory with the
+	/// whole URI on the end and is inside nothing.
+	///
+	/// Every test above passes a `.path`, which is why this went unseen while it
+	/// rejected every classpath java-debug 0.53.2 ever returned: a module of the
+	/// repository being debugged was reported as being somewhere else, and the
+	/// editor said the import had not finished about an import that had finished
+	/// half an hour earlier.
+	@Test func aProjectRootArrivingAsAURIIsStillInsideTheProject() throws {
+		let root = try JavaTestDirectory.make()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let module = root.appendingPathComponent("cli/com.vector.acli.application")
+		#expect(JavaDebugHost.isInside("file:" + module.path, root))
+		#expect(JavaDebugHost.isInside("file://" + module.path, root))
+		#expect(JavaDebugHost.isInside(module.path, root), "a plain path still works")
+
+		// The checks above must not have been bought by making everything inside.
+		#expect(!JavaDebugHost.isInside("file:" + root.path + "-old", root))
+		#expect(!JavaDebugHost.isInside(
+			"file:" + JavaDebugHost.workspace(for: root)
+				.appendingPathComponent("jdt.ls-java-project").path,
+			root
+		))
+	}
+
+	/// The name comes off the same answer, so it needs the same parse. It used to
+	/// be right by accident — the last component of a mis-parsed URI is still the
+	/// last component — and naming a project by accident is not naming it.
+	@Test func theProjectNameIsReadFromAURIToo() {
+		#expect(
+			JavaDebugHost.projectName(fromRoot: "file:/a/b/com.vector.acli.application")
+				== "com.vector.acli.application"
+		)
+		#expect(JavaDebugHost.projectName(fromRoot: "/a/b/plain") == "plain")
+		// Percent-encoding, which a path with a space in it arrives carrying.
+		#expect(JavaDebugHost.projectName(fromRoot: "file:/a/b/two%20words") == "two words")
+	}
+
 	/// Where somebody chooses between two servers, both of them say what they
 	/// cost.
 	///

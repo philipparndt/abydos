@@ -518,6 +518,47 @@ final class LanguageService {
 		}
 	}
 
+	/// What to say about a project whose selected launch wants a Java debugger
+	/// that is not here, or nil when there is nothing to say.
+	///
+	/// **Asked when a launch is chosen rather than when Debug is pressed**, which
+	/// is what `JavaDebugHost.refusal` was written for and has always said in its
+	/// own documentation: every one of these answers is a `PATH` lookup or a jar
+	/// on disk, knowable in milliseconds, and finding out afterwards is the same
+	/// information delivered as an insult. Pressing Debug on a project with no
+	/// jdtls used to start a JVM, suspend it on a port, and only then admit that
+	/// nothing was ever going to attach to it.
+	///
+	/// `.nothingHostsIt` is deliberately not reported. It means the project shows
+	/// none of the server's markers — no pom, no Gradle build — and a strip
+	/// saying Java cannot be debugged here belongs to a Java project, not to
+	/// every project with a launch configuration in it.
+	///
+	/// Ignorable, and a problem rather than an idea: it is a statement about what
+	/// this project cannot do, and somebody who never debugs Java should be able
+	/// to put it away for good.
+	func javaDebugNotice(project: URL) -> ServerNotice? {
+		guard let refusal = JavaDebugHost.refusal(
+			project: project,
+			inDevContainer: devContainerNameHoldingServers(for: project)
+		) else { return nil }
+		guard refusal != .nothingHostsIt else { return nil }
+
+		// No manual, and nothing lost by it: every one of these `Failure` cases
+		// already carries its own remedy in its sentence — `.notInstalled` has
+		// the server's install hint spliced into it, and java-debug is not a
+		// program any package manager carries, so a "How to install" button would
+		// promise a page that says less than the strip already does.
+		return ServerNotice(
+			languageId: "java",
+			languageName: LanguageRegistry.shared.displayName(for: "java"),
+			text: refusal.errorDescription ?? "Java cannot be debugged in this project.",
+			manual: nil,
+			isIgnorable: true,
+			problem: true
+		)
+	}
+
 	/// What to say about a language in a project, or nil for nothing.
 	///
 	/// Nil is the common answer and the important one: a server that is
@@ -1461,8 +1502,15 @@ final class LanguageService {
 		deadline: TimeInterval = 600,
 		saying: @escaping (String) -> Void = { _ in }
 	) async throws -> JavaLaunchTarget {
-		let anchor = anchor ?? JavaTooling.mainClasses(in: project).first
-			.map { URL(fileURLWithPath: $0.file) }
+		// Off the main actor: this type is @MainActor, and the scan reads every
+		// source file in the project. Spelled out rather than through `??`,
+		// whose autoclosure cannot carry an await.
+		var chosen = anchor
+		if chosen == nil {
+			chosen = await JavaTooling.mainClassesOffMain(in: project).first
+				.map { URL(fileURLWithPath: $0.file) }
+		}
+		let anchor = chosen
 
 		// The chosen server, when it is one that hosts an adapter. Nothing starts
 		// a second jdtls beside a jdtls: the one that is running has the import
@@ -1471,8 +1519,11 @@ final class LanguageService {
 		if let server = server(for: "java", project: project), server.client.isRunning,
 		   server.definition.hostsDebugAdapter {
 			guard JavaTooling.debugPlugin() != nil else { throw JavaDebugFailure.noBundle }
+			saying("Asking \(server.definition.name) for a debug port")
 			let port = try await portFromEditingServer(server)
-			guard let anchor, let resolved = await javaClasspath(for: anchor, project: project) else {
+			guard let anchor, let resolved = await classpathWaiting(
+				for: anchor, project: project, deadline: deadline, saying: saying
+			) else {
 				throw JavaDebugFailure.refused(
 					"\(server.definition.name) is running but has no classpath for this project "
 						+ "yet, so there is nothing to start a JVM with. A project it is still "
@@ -1588,7 +1639,9 @@ final class LanguageService {
 		for attempt in 0..<5 {
 			if attempt > 0 { try? await Task.sleep(nanoseconds: 2_000_000_000) }
 			do {
-				let result = try await server.client.executeCommand(JavaDebug.startCommand)
+				let result = try await server.client.executeCommand(
+					JavaDebug.startCommand, timeout: JavaDebug.queryTimeout
+				)
 				// The port comes back as a number, and which flavour of number
 				// depends on the JSON decoder's mood.
 				if let port = result as? Int { return port }
@@ -1673,12 +1726,67 @@ final class LanguageService {
 	/// classpath, for the wrong thing. Taking it starts a JVM that fails with
 	/// `UnsupportedClassVersionError` or `ClassNotFoundException`, which reads as a
 	/// broken project. See `JavaDebugHost.classpath(for:)`, where this was found.
+	/// The classpath, waiting while the server is still working it out.
+	///
+	/// **One ask used to be the whole of it**, and "not yet" — which is what a
+	/// large project answers for as long as it is importing — was reported as
+	/// "there is nothing to start a JVM with". It recovered if somebody pressed
+	/// Debug again a few minutes later, which is the shape of a wait misreported
+	/// as a failure, and it left a suspended JVM behind each time.
+	///
+	/// The other route to a debug session — `JavaDebugHost.waitUntilLaunchable` —
+	/// has waited on the same deadline with the same progress from the start. This
+	/// is the editing-server route catching up, so which of the two you get no
+	/// longer decides whether Debug can work on a big repository.
+	///
+	/// Says what it is waiting for, every few seconds: an import of a thousand
+	/// modules is minutes of nothing on screen otherwise, and "still importing" is
+	/// the difference between a wait somebody will sit through and a hang they
+	/// will kill.
+	private func classpathWaiting(
+		for anchor: URL,
+		project: URL,
+		deadline: TimeInterval,
+		saying: @escaping (String) -> Void
+	) async -> (projectName: String?, classPaths: [String])? {
+		let started = Date()
+		while true {
+			if let resolved = await javaClasspath(for: anchor, project: project),
+			   !resolved.classPaths.isEmpty {
+				return resolved
+			}
+			let waited = Int(Date().timeIntervalSince(started))
+			guard Double(waited) < deadline else { return nil }
+
+			// The server's own state rather than a guess: "importing" is a wait
+			// with an end, and anything else is a server that answered "no
+			// classpath" and will go on answering it.
+			let importing = isPreparing(languageId: "java", project: project)
+			saying(
+				importing
+					? "Waiting for the classpath — jdtls is still importing, \(waited) s"
+					: "Waiting for the classpath — \(waited) s"
+			)
+			// In the log as well as on screen, at a coarser interval: the status
+			// line is gone the moment the launch ends, and a launch that failed
+			// after four minutes of waiting is unanswerable afterwards without
+			// this. Twice today it was.
+			if waited > 0, waited % 15 < 3 {
+				log("java classpath still unresolved after \(waited) s for "
+					+ "\(project.lastPathComponent)"
+					+ (importing ? " — jdtls is importing" : " — jdtls is not importing"))
+			}
+			try? await Task.sleep(nanoseconds: 3_000_000_000)
+		}
+	}
+
 	func javaClasspath(for url: URL, project: URL) async -> (projectName: String?, classPaths: [String])? {
 		guard let server = server(for: "java", project: project), server.client.isRunning else { return nil }
 		do {
 			let result = try await server.client.executeCommand(
 				JavaDebug.classpathCommand,
-				arguments: [uri(for: url), JavaDebug.classpathOptions()]
+				arguments: [uri(for: url), JavaDebug.classpathOptions()],
+				timeout: JavaDebug.queryTimeout
 			)
 			guard let object = result as? [String: Any] else { return nil }
 			guard let answeredFor = object["projectRoot"] as? String,
@@ -1691,7 +1799,9 @@ final class LanguageService {
 			}
 			let paths = object["classpaths"] as? [String] ?? []
 			let modules = object["modulepaths"] as? [String] ?? []
-			return (URL(fileURLWithPath: answeredFor).lastPathComponent, paths + modules)
+			return (
+				JavaDebugHost.projectName(fromRoot: answeredFor), paths + modules
+			)
 		} catch {
 			log("java classpath unavailable for \(url.lastPathComponent): \(error.localizedDescription)")
 			return nil
