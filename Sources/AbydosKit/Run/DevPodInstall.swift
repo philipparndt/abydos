@@ -38,6 +38,25 @@ public enum DevPodInstall {
 	/// From the project's own name, because a developer looking at
 	/// `helm list` should recognise what they are looking at, and because two
 	/// projects in one cluster must not be the same pod.
+	///
+	/// **It said `ideai-` until 0.6.2, and was kept that way on purpose once.**
+	/// The argument was that a release name is not a format: it names something
+	/// that exists in somebody's cluster, and changing it orphans that rather
+	/// than migrating it. What that argument missed is where the name is *read*
+	/// — not in `helm list`, but in the pod name, next to the chart's own:
+	///
+	///     ideai-go-service-abydos-devpod-d8b5785d5-kd442
+	///
+	/// Half of that had already moved. A name that is half renamed is worse
+	/// than either whole one, because it reads as a bug in front of somebody
+	/// every time they run `kubectl get pods` — and the thing being protected
+	/// was one `helm uninstall`.
+	///
+	/// So the release for a project installed by an earlier version is not
+	/// upgraded; a second one is installed beside it, and the first is left
+	/// running until it is removed by hand. Both are found — they both carry
+	/// `DevPods.label` — so the cost is a duplicate in the list rather than a
+	/// pod nobody can see.
 	public static func releaseName(for project: URL) -> String {
 		let cleaned = project.lastPathComponent.map { character -> Character in
 			character.isLetter || character.isNumber ? character : "-"

@@ -115,8 +115,15 @@ struct GitBranchIntegrationTests {
 		let root = try await makeRepository()
 		await GitBranches.create("side", from: nil, checkout: false, in: root)
 
-		let side = await GitBranches.list(in: root).first { $0.name == "side" }
-		let result = await GitBranches.checkout(side!, in: root)
+		// **`require`, not `!`.** A `git` that failed to spawn under load makes
+		// `list` answer with nothing, `first` answer nil, and the force-unwrap
+		// end the *process* — which is the whole bundle, not this test, so one
+		// flake is reported as every suite still running failing at once.
+		let side = try #require(
+			await GitBranches.list(in: root).first { $0.name == "side" },
+			"git listed no branch called side"
+		)
+		let result = await GitBranches.checkout(side, in: root)
 		#expect(result.exitCode == 0, "\(result.stderr)")
 
 		let after = await GitBranches.list(in: root)

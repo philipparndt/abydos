@@ -60,12 +60,16 @@ struct ProjectGitRaceTests {
 			for await _ in group {}
 		}
 
-		#expect(project.git != nil, "no repository was found at all")
+		// `require` rather than `expect` and a force-unwrap three lines down:
+		// `#expect` carries on, so "no repository was found at all" would be
+		// recorded and then immediately trapped on, ending the whole bundle
+		// instead of this test.
+		let git = try #require(project.git, "no repository was found at all")
 		let gitRoot = try #require(project.gitRoot)
 		#expect(FilePath.canonical(gitRoot) == FilePath.canonical(root))
 		// The two are written together and must never disagree — a torn write
 		// is exactly what the crash was.
-		#expect(FilePath.canonical(gitRoot) == FilePath.canonical(project.git!.root))
+		#expect(FilePath.canonical(gitRoot) == FilePath.canonical(git.root))
 	}
 
 	/// Repeated rounds, because a race that survives one round may only show on

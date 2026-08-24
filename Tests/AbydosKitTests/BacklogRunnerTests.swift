@@ -189,7 +189,8 @@ struct BacklogRunnerTests {
 
 		// Put back in `ready` by hand, which is the way somebody would blunder
 		// into starting a second agent on a checkout that already has one.
-		let again = try backlog.move(backlog.item(number: 1)!, to: .ready)
+		let existing = try #require(backlog.item(number: 1), "the item was not on disk to move back")
+		let again = try backlog.move(existing, to: .ready)
 		await #expect(throws: BacklogRunner.Problem.self) {
 			_ = try await BacklogRunner.start(again, in: backlog, assistant: nil)
 		}
@@ -207,7 +208,8 @@ struct BacklogRunnerTests {
 		// `rm -rf`, which is what people actually do. The branch survives it.
 		try FileManager.default.removeItem(at: first.directory)
 
-		let again = try backlog.move(backlog.item(number: 1)!, to: .ready)
+		let existing = try #require(backlog.item(number: 1), "the item was not on disk to move back")
+		let again = try backlog.move(existing, to: .ready)
 		let second = try await BacklogRunner.start(again, in: backlog, assistant: nil)
 		defer { _ = GitRepository.runSync(["worktree", "remove", "--force", second.directory.path], in: root) }
 

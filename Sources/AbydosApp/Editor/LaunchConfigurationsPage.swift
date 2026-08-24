@@ -283,7 +283,7 @@ final class LaunchConfigurationsPage: NSView {
 		clusterSection = section("Cluster", caption: "Where this runs when it does not run here.", rows: [
 			labelled("Context", contextPopUp),
 			field("Only run on contexts matching", key: "allowed", monospaced: true, placeholder: "*-local, k3c-*"),
-			field("Namespace", key: "namespace", monospaced: true, placeholder: "ideai-dev"),
+			field("Namespace", key: "namespace", monospaced: true, placeholder: "abydos-dev"),
 			field("Kubeconfig", key: "kubeconfig", monospaced: true, placeholder: "~/.kube/config"),
 			field("Pod image", key: "image", monospaced: true, placeholder: DevPodImage.default),
 			field("Service port", key: "port", monospaced: true, placeholder: "8080"),
