@@ -1,9 +1,9 @@
-The development pod {{ include "ideai-devpod.fullname" . }} is installed.
+The development pod {{ include "abydos-devpod.fullname" . }} is installed.
 
 It is empty: nothing runs until a binary is pushed into it.
 
-  ideai:   open the project, then Run ▸ Dev Pod…
-  by hand: kubectl port-forward deploy/{{ include "ideai-devpod.fullname" . }} {{ .Values.supervisor.controlPort }}
+  Abydos:  open the project, then Run ▸ Dev Pod…
+  by hand: kubectl port-forward deploy/{{ include "abydos-devpod.fullname" . }} {{ .Values.supervisor.controlPort }}
            curl --data-binary @./my-service http://localhost:{{ .Values.supervisor.controlPort }}/binary
 
 The binary must be built for linux/{{ "{{" }} the node's architecture {{ "}}" }},

@@ -1,10 +1,10 @@
 {
   "args" : [
     "-push",
-    "pharndt/ideai-devpod:dev",
+    "pharndt/abydos-devpod:dev",
     "$(foreach",
     "-env",
-    "IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+    "ABYDOS_BINARY=/app/current,ABYDOS_WORKDIR=/app,ABYDOS_CONTROL_ADDR=:7999,ABYDOS_DEBUG_ADDR=:2345,ABYDOS_DLV=/usr/local/bin/dlv,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
   ],
   "cwd" : "${workspaceFolder}/DevPod",
   "name" : "make publish",

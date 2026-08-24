@@ -29,10 +29,10 @@ import (
 func main() {
 	var (
 		output    = flag.String("out", "image.tar", "tarball to write")
-		reference = flag.String("tag", "ideai-devpod:dev", "image reference")
+		reference = flag.String("tag", "abydos-devpod:dev", "image reference")
 		arch      = flag.String("arch", "arm64", "linux architecture")
 		from      = flag.String("from", "", "directory whose contents become the image")
-		entry     = flag.String("entrypoint", "/usr/local/bin/ideai-supervisor", "entrypoint")
+		entry     = flag.String("entrypoint", "/usr/local/bin/abydos-supervisor", "entrypoint")
 		envs      = flag.String("env", "", "comma-separated KEY=VALUE")
 		ports     = flag.String("ports", "7999/tcp,2345/tcp", "comma-separated exposed ports")
 		push      = flag.String("push", "", "registry reference to publish to, e.g. user/image:tag")
@@ -110,7 +110,7 @@ func build(root, output, reference, arch, entrypoint string, envs, ports []strin
 			"diff_ids": []string{"sha256:" + diffID},
 		},
 		"history": []map[string]any{
-			{"created": time.Unix(0, 0).UTC().Format(time.RFC3339), "created_by": "ideai mkimage"},
+			{"created": time.Unix(0, 0).UTC().Format(time.RFC3339), "created_by": "abydos mkimage"},
 		},
 	}
 	configJSON, err := json.Marshal(config)

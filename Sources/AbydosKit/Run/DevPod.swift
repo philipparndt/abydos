@@ -356,7 +356,7 @@ public enum DevPods {
 /// the cluster pulls — 13 MB against 32 — without anybody having to know that
 /// the tags exist.
 public enum DevPodImage {
-	public static let repository = "pharndt/ideai-devpod"
+	public static let repository = "pharndt/abydos-devpod"
 	public static let version = "dev"
 
 	/// The full image: both debuggers, and what an unrecognised project gets.

@@ -1,12 +1,12 @@
-{{- if and .Values.ingress.enabled (eq (include "ideai-devpod.ingressKind" .) "gateway") }}
+{{- if and .Values.ingress.enabled (eq (include "abydos-devpod.ingressKind" .) "gateway") }}
 {{- if not .Values.ingress.host }}{{ fail "ingress.host is required when ingress.enabled" }}{{ end }}
 {{- if not .Values.ingress.gateway.name }}{{ fail "ingress.gateway.name is required for a Gateway API route" }}{{ end }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ include "ideai-devpod.fullname" . }}
+  name: {{ include "abydos-devpod.fullname" . }}
   labels:
-    {{- include "ideai-devpod.labels" . | nindent 4 }}
+    {{- include "abydos-devpod.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -28,6 +28,6 @@ spec:
             type: PathPrefix
             value: {{ .Values.ingress.path }}
       backendRefs:
-        - name: {{ include "ideai-devpod.fullname" . }}
-          port: {{ include "ideai-devpod.routePort" . }}
+        - name: {{ include "abydos-devpod.fullname" . }}
+          port: {{ include "abydos-devpod.routePort" . }}
 {{- end }}

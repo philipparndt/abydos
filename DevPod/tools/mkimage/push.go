@@ -66,7 +66,7 @@ type variant struct {
 
 type registry struct {
 	base   string // https://registry-1.docker.io
-	name   string // pharndt/ideai-devpod
+	name   string // pharndt/abydos-devpod
 	tag    string
 	token  string
 	client *http.Client
@@ -186,7 +186,7 @@ func imageConfig(arch, diffID, entrypoint string, envs, ports []string) map[stri
 			"ExposedPorts": exposed(ports),
 		},
 		"rootfs":  map[string]any{"type": "layers", "diff_ids": []string{"sha256:" + diffID}},
-		"history": []map[string]any{{"created": created, "created_by": "ideai mkimage"}},
+		"history": []map[string]any{{"created": created, "created_by": "abydos mkimage"}},
 	}
 }
 

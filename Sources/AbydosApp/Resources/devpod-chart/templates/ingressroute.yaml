@@ -1,11 +1,11 @@
-{{- if and .Values.ingress.enabled (eq (include "ideai-devpod.ingressKind" .) "traefik") }}
+{{- if and .Values.ingress.enabled (eq (include "abydos-devpod.ingressKind" .) "traefik") }}
 {{- if not .Values.ingress.host }}{{ fail "ingress.host is required when ingress.enabled" }}{{ end }}
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: {{ include "ideai-devpod.fullname" . }}
+  name: {{ include "abydos-devpod.fullname" . }}
   labels:
-    {{- include "ideai-devpod.labels" . | nindent 4 }}
+    {{- include "abydos-devpod.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -19,8 +19,8 @@ spec:
     - match: Host(`{{ .Values.ingress.host }}`){{ if ne .Values.ingress.path "/" }} && PathPrefix(`{{ .Values.ingress.path }}`){{ end }}
       kind: Rule
       services:
-        - name: {{ include "ideai-devpod.fullname" . }}
-          port: {{ include "ideai-devpod.routePort" . }}
+        - name: {{ include "abydos-devpod.fullname" . }}
+          port: {{ include "abydos-devpod.routePort" . }}
       {{- with .Values.ingress.traefik.middlewares }}
       middlewares:
         {{- toYaml . | nindent 8 }}

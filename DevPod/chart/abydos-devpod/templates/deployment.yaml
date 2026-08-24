@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ideai-devpod.fullname" . }}
+  name: {{ include "abydos-devpod.fullname" . }}
   labels:
-    {{- include "ideai-devpod.labels" . | nindent 4 }}
+    {{- include "abydos-devpod.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "ideai-devpod.selectorLabels" . | nindent 6 }}
+      {{- include "abydos-devpod.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "ideai-devpod.selectorLabels" . | nindent 8 }}
+        {{- include "abydos-devpod.selectorLabels" . | nindent 8 }}
         # On the pod, not only on the Deployment: this is what the editor
         # looks for, and it looks at pods.
-        ideai.dev/devpod: "true"
+        abydos.dev/devpod: "true"
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -41,16 +41,16 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            - name: IDEAI_CONTROL_ADDR
+            - name: ABYDOS_CONTROL_ADDR
               value: ":{{ .Values.supervisor.controlPort }}"
-            - name: IDEAI_DEBUG_ADDR
+            - name: ABYDOS_DEBUG_ADDR
               value: ":{{ .Values.supervisor.debugPort }}"
-            - name: IDEAI_WORKDIR
+            - name: ABYDOS_WORKDIR
               value: {{ .Values.app.workdir | quote }}
-            - name: IDEAI_AUTOSTART
+            - name: ABYDOS_AUTOSTART
               value: {{ .Values.supervisor.autoStart | quote }}
             {{- with .Values.app.args }}
-            - name: IDEAI_ARGS
+            - name: ABYDOS_ARGS
               value: {{ join " " . | quote }}
             {{- end }}
             {{- range $name, $value := .Values.app.env }}

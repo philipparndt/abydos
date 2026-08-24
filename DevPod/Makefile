@@ -18,9 +18,9 @@ DELVE       ?= v1.27.1
 TAG         ?= $(REPOSITORY):$(VERSION)
 OUT         := out
 ROOTFS      := $(OUT)/rootfs_$(ARCH)_$(VARIANT)
-IMAGE       := $(OUT)/ideai-devpod-$(ARCH)-$(VARIANT).tar
+IMAGE       := $(OUT)/abydos-devpod-$(ARCH)-$(VARIANT).tar
 
-REPOSITORY  ?= pharndt/ideai-devpod
+REPOSITORY  ?= pharndt/abydos-devpod
 VERSION     ?= dev
 PLATFORMS   ?= amd64 arm64
 
@@ -29,7 +29,7 @@ NAMESPACE   ?= devpod
 RELEASE     ?= demo
 
 # What the supervisor needs to know, and where its parts are.
-IMAGE_ENV   := IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,IDEAI_JAVA=/opt/java/bin/java,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+IMAGE_ENV   := ABYDOS_BINARY=/app/current,ABYDOS_WORKDIR=/app,ABYDOS_CONTROL_ADDR=:7999,ABYDOS_DEBUG_ADDR=:2345,ABYDOS_DLV=/usr/local/bin/dlv,ABYDOS_JAVA=/opt/java/bin/java,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 .DEFAULT_GOAL := help
 
@@ -46,7 +46,7 @@ test: ## Run the supervisor's tests
 binaries: ## Cross-compile the supervisor and delve for linux/$(ARCH)
 	@mkdir -p $(OUT)/linux_$(ARCH)
 	@cd supervisor && GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 \
-		go build -trimpath -o ../$(OUT)/linux_$(ARCH)/ideai-supervisor .
+		go build -trimpath -o ../$(OUT)/linux_$(ARCH)/abydos-supervisor .
 	@GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 go install github.com/go-delve/delve/cmd/dlv@$(DELVE)
 	@cp "$$(go env GOPATH)/bin/linux_$(ARCH)/dlv" $(OUT)/linux_$(ARCH)/dlv
 	@echo "==> $(OUT)/linux_$(ARCH)"
@@ -55,7 +55,7 @@ binaries: ## Cross-compile the supervisor and delve for linux/$(ARCH)
 rootfs: binaries ## Lay out the image's files (ARCH, VARIANT=full|go|native)
 	@rm -rf $(ROOTFS)
 	@mkdir -p $(ROOTFS)/usr/local/bin $(ROOTFS)/app $(ROOTFS)/tmp $(ROOTFS)/etc/ssl/certs
-	@cp $(OUT)/linux_$(ARCH)/ideai-supervisor $(ROOTFS)/usr/local/bin/
+	@cp $(OUT)/linux_$(ARCH)/abydos-supervisor $(ROOTFS)/usr/local/bin/
 	@cp /etc/ssl/cert.pem $(ROOTFS)/etc/ssl/certs/ca-certificates.crt
 	@if [ "$(VARIANT)" = "jvm" ]; then ./tools/fetch-jre.sh $(ARCH) $(ROOTFS); fi
 	@if [ "$(VARIANT)" != "native" ] && [ "$(VARIANT)" != "jvm" ]; then cp $(OUT)/linux_$(ARCH)/dlv $(ROOTFS)/usr/local/bin/; fi
@@ -94,7 +94,7 @@ publish-all: ## Push the full image plus the per-language ones
 
 .PHONY: import-k3c
 import-k3c: image ## Put the image in a k3c cluster (CLUSTER=demo1)
-	@cp $(IMAGE) $$HOME/.config/k3c/clusters/$(CLUSTER)/images/ideai-devpod.tar
+	@cp $(IMAGE) $$HOME/.config/k3c/clusters/$(CLUSTER)/images/abydos-devpod.tar
 	@echo "==> staged; k3s imports it on start. If the cluster is already up:"
 	@echo "    k3c cluster stop $(CLUSTER) && k3c cluster start $(CLUSTER)"
 

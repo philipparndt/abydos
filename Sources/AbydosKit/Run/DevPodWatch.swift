@@ -97,7 +97,7 @@ public enum DevPodWatch {
 
 			A cluster anywhere else has to pull it, so publish one and name it \
 			in this configuration's Image field:
-			    make devpod-publish REPOSITORY=<user>/ideai-devpod VERSION=v1
+			    make devpod-publish REPOSITORY=<user>/abydos-devpod VERSION=v1
 
 			The cluster said: \(state.message.isEmpty ? state.reason : state.message)
 			"""

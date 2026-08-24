@@ -6,7 +6,7 @@ import Testing
 struct DevPodTests {
 	@Test func readsAPodAndItsPorts() {
 		let json = """
-		{"items":[{"metadata":{"name":"dev-ideai-devpod-abc","namespace":"devpod",
+		{"items":[{"metadata":{"name":"dev-abydos-devpod-abc","namespace":"devpod",
 		   "creationTimestamp":"2026-08-01T12:00:00Z"},
 		 "spec":{"containers":[{"name":"devpod","ports":[
 		   {"name":"control","containerPort":7999},
@@ -319,13 +319,13 @@ struct DevPodFileTests {
 struct DevPodWatchTests {
 	private let stuck = """
 	{"items": [{
-	  "metadata": {"name": "ideai-thing-ideai-devpod-59cd-2cmr2"},
+	  "metadata": {"name": "ideai-thing-abydos-devpod-59cd-2cmr2"},
 	  "status": {
 	    "phase": "Pending",
 	    "containerStatuses": [{
 	      "state": {"waiting": {
 	        "reason": "ImagePullBackOff",
-	        "message": "Back-off pulling image \\"ideai-devpod:dev\\""
+	        "message": "Back-off pulling image \\"abydos-devpod:dev\\""
 	      }}
 	    }]
 	  }
@@ -335,7 +335,7 @@ struct DevPodWatchTests {
 	@Test func readsWhyAPodIsNotRunning() {
 		let states = DevPodWatch.parse(stuck)
 		#expect(states.count == 1)
-		#expect(states[0].pod == "ideai-thing-ideai-devpod-59cd-2cmr2")
+		#expect(states[0].pod == "ideai-thing-abydos-devpod-59cd-2cmr2")
 		#expect(states[0].phase == "Pending")
 		#expect(states[0].reason == "ImagePullBackOff")
 		#expect(states[0].isHopeless)
@@ -390,11 +390,11 @@ struct DevPodWatchTests {
 		configuration.devPod = LaunchConfiguration.DevPodSettings(
 			context: "k3c-demo1",
 			namespace: "devpod",
-			image: "pharndt/ideai-devpod:v1"
+			image: "pharndt/abydos-devpod:v1"
 		)
 		let json = configuration.json
 		let read = try #require(LaunchConfiguration(json: json))
-		#expect(read.devPod?.image == "pharndt/ideai-devpod:v1")
+		#expect(read.devPod?.image == "pharndt/abydos-devpod:v1")
 	}
 }
 
@@ -519,26 +519,26 @@ struct DevPodIngressTests {
 
 	/// The chart joins the repository and the tag, so a reference with a tag on
 	/// it has to arrive as two values — otherwise the pod is asked to pull
-	/// `pharndt/ideai-devpod:v2:dev`, which exists nowhere.
+	/// `pharndt/abydos-devpod:v2:dev`, which exists nowhere.
 	@Test func theImageComesThroughAsARepositoryAndATag() {
-		let values = DevPodFiles.helmValues(for: .init(image: "pharndt/ideai-devpod:v2"))
-		#expect(values == ["image.repository=pharndt/ideai-devpod", "image.tag=v2"])
+		let values = DevPodFiles.helmValues(for: .init(image: "pharndt/abydos-devpod:v2"))
+		#expect(values == ["image.repository=pharndt/abydos-devpod", "image.tag=v2"])
 	}
 
 	/// What the project needs, when nobody has said: the pod for a Zig project
 	/// holds gdbserver and not Delve.
 	@Test func anImageWorkedOutFromTheProjectWinsOverAnEmptyField() {
 		let values = DevPodFiles.helmValues(
-			for: .init(), image: "pharndt/ideai-devpod:dev-native"
+			for: .init(), image: "pharndt/abydos-devpod:dev-native"
 		)
-		#expect(values == ["image.repository=pharndt/ideai-devpod", "image.tag=dev-native"])
+		#expect(values == ["image.repository=pharndt/abydos-devpod", "image.tag=dev-native"])
 	}
 }
 
 /// Noticing that the pod in the cluster is not what the configuration asks for.
 struct DevPodUpgradeTests {
 	private let deployed = """
-	{"image": {"repository": "pharndt/ideai-devpod"},
+	{"image": {"repository": "pharndt/abydos-devpod"},
 	 "ingress": {"enabled": true, "host": "thing.example.com"},
 	 "app": {"ports": [{"name": "http", "containerPort": 9000}]}}
 	"""

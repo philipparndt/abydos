@@ -16,7 +16,7 @@ ENV CGO_ENABLED=0 GOOS=linux
 
 WORKDIR /src
 COPY supervisor/ ./supervisor/
-RUN cd supervisor && GOARCH=$TARGETARCH go build -trimpath -o /out/ideai-supervisor .
+RUN cd supervisor && GOARCH=$TARGETARCH go build -trimpath -o /out/abydos-supervisor .
 
 # Delve is fetched rather than vendored: it tracks the Go release, and a
 # development image is rebuilt often enough that pinning it here is the right
@@ -32,17 +32,17 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates procps curl \
 	&& rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /out/ideai-supervisor /usr/local/bin/ideai-supervisor
+COPY --from=build /out/abydos-supervisor /usr/local/bin/abydos-supervisor
 COPY --from=build /out/dlv /usr/local/bin/dlv
 
 # Writable by whichever user the chart runs as: a pod that runs as non-root
 # still has to receive a binary.
 RUN mkdir -p /app && chmod 1777 /app
 
-ENV IDEAI_BINARY=/app/current \
-	IDEAI_WORKDIR=/app \
-	IDEAI_CONTROL_ADDR=:7999 \
-	IDEAI_DEBUG_ADDR=:2345
+ENV ABYDOS_BINARY=/app/current \
+	ABYDOS_WORKDIR=/app \
+	ABYDOS_CONTROL_ADDR=:7999 \
+	ABYDOS_DEBUG_ADDR=:2345
 
 EXPOSE 7999 2345
-ENTRYPOINT ["/usr/local/bin/ideai-supervisor"]
+ENTRYPOINT ["/usr/local/bin/abydos-supervisor"]

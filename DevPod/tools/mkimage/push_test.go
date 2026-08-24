@@ -74,7 +74,7 @@ func TestPublishSendsOneManifestPerArchitectureAndAnIndex(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "ideai-supervisor"), []byte("binary for "+arch), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "abydos-supervisor"), []byte("binary for "+arch), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,8 +83,8 @@ func TestPublishSendsOneManifestPerArchitectureAndAnIndex(t *testing.T) {
 	err := publish(
 		host+"/me/image:test",
 		[]variant{{arch: "amd64", dir: filepath.Join(root, "amd64")}, {arch: "arm64", dir: filepath.Join(root, "arm64")}},
-		"/usr/local/bin/ideai-supervisor",
-		[]string{"IDEAI_BINARY=/app/current"},
+		"/usr/local/bin/abydos-supervisor",
+		[]string{"ABYDOS_BINARY=/app/current"},
 		[]string{"7999/tcp"},
 	)
 	if err != nil {
@@ -145,8 +145,8 @@ func TestImageConfigCarriesItsArchitecture(t *testing.T) {
 
 func TestReferenceParsing(t *testing.T) {
 	for reference, want := range map[string][3]string{
-		"pharndt/ideai-devpod:v1":     {"https://registry-1.docker.io", "pharndt/ideai-devpod", "v1"},
-		"pharndt/ideai-devpod":        {"https://registry-1.docker.io", "pharndt/ideai-devpod", "latest"},
+		"pharndt/abydos-devpod:v1":     {"https://registry-1.docker.io", "pharndt/abydos-devpod", "v1"},
+		"pharndt/abydos-devpod":        {"https://registry-1.docker.io", "pharndt/abydos-devpod", "latest"},
 		"ghcr.io/philipp/thing:1.2.3": {"https://ghcr.io", "philipp/thing", "1.2.3"},
 		"localhost:5000/thing:dev":    {"http://localhost:5000", "thing", "dev"},
 	} {

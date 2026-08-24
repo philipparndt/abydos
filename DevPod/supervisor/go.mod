@@ -1,3 +1,3 @@
-module github.com/philipparndt/ideai/devpod/supervisor
+module github.com/philipparndt/abydos/devpod/supervisor
 
 go 1.22

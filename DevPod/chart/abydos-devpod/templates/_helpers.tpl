@@ -1,24 +1,24 @@
-{{- define "ideai-devpod.name" -}}
+{{- define "abydos-devpod.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "ideai-devpod.fullname" -}}
+{{- define "abydos-devpod.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- printf "%s-%s" .Release.Name (include "ideai-devpod.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" .Release.Name (include "abydos-devpod.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "ideai-devpod.labels" -}}
-app.kubernetes.io/name: {{ include "ideai-devpod.name" . }}
+{{- define "abydos-devpod.labels" -}}
+app.kubernetes.io/name: {{ include "abydos-devpod.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-ideai.dev/devpod: "true"
+abydos.dev/devpod: "true"
 {{- end -}}
 
-{{- define "ideai-devpod.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "ideai-devpod.name" . }}
+{{- define "abydos-devpod.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "abydos-devpod.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -29,7 +29,7 @@ Worked out from the cluster's own API groups rather than asked for, because
 the answer is a property of the cluster and the person installing this wants
 a URL, not a taxonomy lesson.
 */}}
-{{- define "ideai-devpod.ingressKind" -}}
+{{- define "abydos-devpod.ingressKind" -}}
 {{- $mode := .Values.ingress.mode | default "auto" -}}
 {{- if ne $mode "auto" -}}
 {{- $mode -}}
@@ -43,7 +43,7 @@ ingress
 {{- end -}}
 
 {{/* The container port the route sends traffic to. */}}
-{{- define "ideai-devpod.routePort" -}}
+{{- define "abydos-devpod.routePort" -}}
 {{- $name := .Values.ingress.port -}}
 {{- $port := 0 -}}
 {{- range .Values.app.ports -}}

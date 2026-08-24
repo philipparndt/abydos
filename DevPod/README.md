@@ -43,7 +43,7 @@ A remote cluster cannot be handed a tarball — it pulls — so for anything but
 local cluster the image has to be in a registry:
 
 ```sh
-make publish                                # pharndt/ideai-devpod:dev
+make publish                                # pharndt/abydos-devpod:dev
 make publish VERSION=v1 PLATFORMS="amd64 arm64"
 ```
 
@@ -62,7 +62,7 @@ supervisor itself possible.
 A configuration can name a different one in its Image field, or:
 
 ```sh
---set image.repository=pharndt/ideai-devpod --set image.tag=v1
+--set image.repository=pharndt/abydos-devpod --set image.tag=v1
 ```
 
 ## Installing
@@ -132,7 +132,7 @@ the first instruction until something attaches. There is no debugger in the
 pod for this: a JVM given the flag is one.
 
 That needs a JVM in the image, which only the `jvm` variant has —
-`pharndt/ideai-devpod:dev-jvm`, and what a Java launch configuration asks for
+`pharndt/abydos-devpod:dev-jvm`, and what a Java launch configuration asks for
 by default. It is the one variant that is bigger rather than smaller: a Java 21
 JRE and the four musl libraries it needs come to 167 MB, against the 10 a Go
 pod costs.
@@ -246,7 +246,7 @@ cross-compile. In order:
 
 | the project has | what runs |
 |---|---|
-| a make step in the configuration | `make <targets>`, with `IDEAI_TARGET_OS=linux`, `IDEAI_TARGET_ARCH`, `GOOS` and `GOARCH` set — and the configuration's program is the binary it must produce |
+| a make step in the configuration | `make <targets>`, with `ABYDOS_TARGET_OS=linux`, `ABYDOS_TARGET_ARCH`, `GOOS` and `GOARCH` set — and the configuration's program is the binary it must produce |
 | `go.mod` | `go build` for linux, static, with the flags a debugger needs |
 | `build.zig` | `zig build -Dtarget=<arch>-linux-musl` |
 | `.odin` sources | `odin build -build-mode:obj -target:linux_<arch>`, then `zig cc` to link — Odin's own linker cannot cross-link, zig's can |

@@ -14,7 +14,7 @@ image:
   # Still the old name: this is an image that exists on a registry, and
   # renaming the string here would only mean pulling one that does not. It
   # follows when the next image is published.
-  repository: pharndt/ideai-devpod
+  repository: pharndt/abydos-devpod
   tag: dev
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -55,7 +55,7 @@ service:
 # have its Service send traffic here instead.
 podLabels: {}
 podAnnotations:
-  # Read by ideai's profiler when it lists pods.
+  # Read by Abydos's profiler when it lists pods.
   goprofiler.io/port: "6060"
 
 replicaCount: 1

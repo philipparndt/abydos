@@ -3,16 +3,16 @@
     "-from",
     "out/rootfs_arm64_full",
     "-out",
-    "out/ideai-devpod-arm64-full.tar",
+    "out/abydos-devpod-arm64-full.tar",
     "-tag",
-    "pharndt/ideai-devpod:dev",
+    "pharndt/abydos-devpod:dev",
     "-arch",
     "arm64",
     "-env",
-    "IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,IDEAI_JAVA=/opt/java/bin/java,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+    "ABYDOS_BINARY=/app/current,ABYDOS_WORKDIR=/app,ABYDOS_CONTROL_ADDR=:7999,ABYDOS_DEBUG_ADDR=:2345,ABYDOS_DLV=/usr/local/bin/dlv,ABYDOS_JAVA=/opt/java/bin/java,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
   ],
   "cwd" : "${workspaceFolder}/DevPod",
-  "ideai.make" : {
+  "abydos.make" : {
     "directory" : "${workspaceFolder}/DevPod",
     "targets" : [
       "rootfs"

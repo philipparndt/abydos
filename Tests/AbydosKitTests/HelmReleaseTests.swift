@@ -87,7 +87,7 @@ struct HelmReleaseTests {
 /// Swapping one container of a real workload for the supervisor.
 struct DevContainerPatchTests {
 	private var patched: [String: Any] {
-		let json = DevContainerPatch.json(container: "app", image: "pharndt/ideai-devpod:dev")
+		let json = DevContainerPatch.json(container: "app", image: "pharndt/abydos-devpod:dev")
 		let data = json.data(using: .utf8) ?? Data()
 		return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 	}
@@ -103,8 +103,8 @@ struct DevContainerPatchTests {
 	/// environment, its mounted secrets, its neighbours — stays.
 	@Test func thePatchNamesTheContainerItReplaces() {
 		#expect(container["name"] as? String == "app")
-		#expect(container["image"] as? String == "pharndt/ideai-devpod:dev")
-		#expect(container["command"] as? [String] == ["/usr/local/bin/ideai-supervisor"])
+		#expect(container["image"] as? String == "pharndt/abydos-devpod:dev")
+		#expect(container["command"] as? [String] == ["/usr/local/bin/abydos-supervisor"])
 	}
 
 	/// A container restarted every ten seconds is one nothing can be pushed

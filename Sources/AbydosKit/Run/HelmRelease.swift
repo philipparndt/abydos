@@ -230,7 +230,7 @@ public enum DevContainerPatch {
 						"containers": [[
 							"name": container,
 							"image": image,
-							"command": ["/usr/local/bin/ideai-supervisor"],
+							"command": ["/usr/local/bin/abydos-supervisor"],
 							"args": NSNull(),
 							"ports": [
 								["name": "control", "containerPort": 7999],

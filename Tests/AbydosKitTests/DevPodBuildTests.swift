@@ -240,7 +240,7 @@ struct DevPodImageTests {
 
 		#expect(DevPodImage.resolved(
 			"", for: configuration("${workspaceFolder}", type: "go"), root: root
-		) == "pharndt/ideai-devpod:dev-go")
+		) == "pharndt/abydos-devpod:dev-go")
 	}
 
 	@Test func nativeProjectsGetTheImageWithGdbserverInIt() throws {
@@ -256,7 +256,7 @@ struct DevPodImageTests {
 
 			#expect(DevPodImage.resolved(
 				"", for: configuration("${workspaceFolder}/build/thing"), root: root
-			) == "pharndt/ideai-devpod:dev-native", "\(files)")
+			) == "pharndt/abydos-devpod:dev-native", "\(files)")
 		}
 	}
 
@@ -273,7 +273,7 @@ struct DevPodImageTests {
 			"directory": .string("${workspaceFolder}"),
 		])
 		#expect(DevPodImage.resolved("", for: configuration, root: root) == DevPodImage.default)
-		#expect(DevPodImage.default == "pharndt/ideai-devpod:dev")
+		#expect(DevPodImage.default == "pharndt/abydos-devpod:dev")
 	}
 
 	/// A make step in a project whose language is still readable from the
@@ -284,11 +284,11 @@ struct DevPodImageTests {
 
 		var go = configuration("${workspaceFolder}/build/thing", type: "go")
 		go.extras["abydos.make"] = .object(["targets": .array([.string("linux")])])
-		#expect(DevPodImage.resolved("", for: go, root: root) == "pharndt/ideai-devpod:dev-go")
+		#expect(DevPodImage.resolved("", for: go, root: root) == "pharndt/abydos-devpod:dev-go")
 
 		var native = configuration("${workspaceFolder}/build/thing", type: "lldb")
 		native.extras["abydos.make"] = .object(["targets": .array([.string("linux")])])
-		#expect(DevPodImage.resolved("", for: native, root: root) == "pharndt/ideai-devpod:dev-native")
+		#expect(DevPodImage.resolved("", for: native, root: root) == "pharndt/abydos-devpod:dev-native")
 	}
 
 	/// Somebody who has typed an image has said what they want — a cluster that
@@ -306,18 +306,18 @@ struct DevPodImageTests {
 	// MARK: - Repository and tag
 
 	@Test func aReferenceIsSplitIntoWhatTheChartWants() {
-		#expect(DevPodImage.values(for: "pharndt/ideai-devpod:dev-native")
-			== ["image.repository=pharndt/ideai-devpod", "image.tag=dev-native"])
+		#expect(DevPodImage.values(for: "pharndt/abydos-devpod:dev-native")
+			== ["image.repository=pharndt/abydos-devpod", "image.tag=dev-native"])
 	}
 
 	/// A registry with a port in it is not a tag: `localhost:5000/thing` would
 	/// otherwise become the repository `localhost` at the tag `5000/thing`.
 	@Test func aPortInTheRegistryIsNotATag() {
-		let (repository, tag) = DevPodImage.split("localhost:5000/ideai-devpod")
-		#expect(repository == "localhost:5000/ideai-devpod")
+		let (repository, tag) = DevPodImage.split("localhost:5000/abydos-devpod")
+		#expect(repository == "localhost:5000/abydos-devpod")
 		#expect(tag == nil)
 
-		#expect(DevPodImage.split("localhost:5000/ideai-devpod:dev").tag == "dev")
+		#expect(DevPodImage.split("localhost:5000/abydos-devpod:dev").tag == "dev")
 	}
 
 	@Test func nothingSaidSetsNothing() {

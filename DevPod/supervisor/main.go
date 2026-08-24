@@ -1,4 +1,4 @@
-// Command ideai-supervisor is PID 1 in a development pod.
+// Command abydos-supervisor is PID 1 in a development pod.
 //
 // It holds a pod open with the real chart's config, secrets, service account
 // and sidecars, and waits for a binary to be pushed into it. The point is the
@@ -98,16 +98,16 @@ type Options struct {
 
 func readOptions() Options {
 	options := Options{
-		ControlAddr:   env("IDEAI_CONTROL_ADDR", ":7999"),
-		BinaryPath:    env("IDEAI_BINARY", "/app/current"),
-		WorkDir:       env("IDEAI_WORKDIR", "/app"),
-		DebugAddr:     env("IDEAI_DEBUG_ADDR", ":2345"),
-		DelvePath:     env("IDEAI_DLV", "/usr/local/bin/dlv"),
-		GdbServerPath: env("IDEAI_GDBSERVER", "/usr/local/bin/gdbserver"),
-		JavaPath:      env("IDEAI_JAVA", "/opt/java/bin/java"),
-		AutoStart:     env("IDEAI_AUTOSTART", "true") == "true",
+		ControlAddr:   env("ABYDOS_CONTROL_ADDR", ":7999"),
+		BinaryPath:    env("ABYDOS_BINARY", "/app/current"),
+		WorkDir:       env("ABYDOS_WORKDIR", "/app"),
+		DebugAddr:     env("ABYDOS_DEBUG_ADDR", ":2345"),
+		DelvePath:     env("ABYDOS_DLV", "/usr/local/bin/dlv"),
+		GdbServerPath: env("ABYDOS_GDBSERVER", "/usr/local/bin/gdbserver"),
+		JavaPath:      env("ABYDOS_JAVA", "/opt/java/bin/java"),
+		AutoStart:     env("ABYDOS_AUTOSTART", "true") == "true",
 	}
-	if raw := os.Getenv("IDEAI_ARGS"); raw != "" {
+	if raw := os.Getenv("ABYDOS_ARGS"); raw != "" {
 		options.Args = strings.Fields(raw)
 	}
 	if raw := os.Getenv("JAVA_OPTS"); raw != "" {
