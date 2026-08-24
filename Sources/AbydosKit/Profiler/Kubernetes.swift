@@ -389,33 +389,11 @@ public final class PortForward: @unchecked Sendable {
 		throw errorText.isEmpty ? Failure.timedOut : Failure.failed(errorText)
 	}
 
-	/// A port nobody is using, found by asking the kernel for one and letting
-	/// it go again.
-	static func freePort() -> Int? {
-		let socketDescriptor = socket(AF_INET, SOCK_STREAM, 0)
-		guard socketDescriptor >= 0 else { return nil }
-		defer { close(socketDescriptor) }
-
-		var address = sockaddr_in()
-		address.sin_family = sa_family_t(AF_INET)
-		address.sin_addr.s_addr = inet_addr("127.0.0.1")
-		address.sin_port = 0
-
-		let bound = withUnsafePointer(to: &address) { pointer in
-			pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-				bind(socketDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-			}
-		}
-		guard bound == 0 else { return nil }
-
-		var assigned = sockaddr_in()
-		var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-		let named = withUnsafeMutablePointer(to: &assigned) { pointer in
-			pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-				getsockname(socketDescriptor, $0, &length)
-			}
-		}
-		guard named == 0 else { return nil }
-		return Int(UInt16(bigEndian: assigned.sin_port))
-	}
+	/// A port nobody is using.
+	///
+	/// The socket dance moved to `DebugPort` when a second caller wanted it — a
+	/// JVM started by a wrapper script waits on a port on this machine, with no
+	/// pod and no forward in it. Kept as a name here because this is where the
+	/// forwards ask.
+	static func freePort() -> Int? { DebugPort.free() }
 }

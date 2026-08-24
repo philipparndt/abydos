@@ -38,10 +38,14 @@ public enum LaunchConfigurationCheck {
 	}
 
 	/// Everything worth saying about one configuration.
+	/// - `scriptKind`: injectable for the same reason `fileExists` is — deciding
+	///   this reads the first two bytes of the file, and the fixtures these rules
+	///   are checked against have no files.
 	public static func problems(
 		for configuration: LaunchConfiguration,
 		root: URL,
-		fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+		fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+		scriptKind: (String) -> ScriptLaunch.Kind? = { ScriptLaunch.kind(ofProgramAt: $0) }
 	) -> [Problem] {
 		var found: [Problem] = []
 		let program = expand(configuration.program, root: root)
@@ -61,6 +65,40 @@ public enum LaunchConfigurationCheck {
 				message: "Nothing at \(shorten(program, root: root)).",
 				fix: nil
 			))
+		}
+
+		// A script, which is not a thing a debugger opens. Said here because the
+		// alternative is finding out from LLDB — "is not a valid executable",
+		// about a file that is perfectly valid and simply is not a binary — and
+		// because what happens instead is worth knowing before pressing play:
+		// debugging goes through the JVM the script starts, and for Gradle it
+		// goes through a port that cannot be chosen.
+		if !configuration.program.isEmpty, fileExists(program),
+		   let kind = scriptKind(program) {
+			switch kind {
+			case .maven:
+				found.append(Problem(
+					field: "program",
+					message: "This is a script, so debugging attaches to the JVM Maven starts.",
+					fix: "A forked goal starts a JVM that does not inherit MAVEN_OPTS; Surefire "
+						+ "wants the option in argLine, Spring Boot in jvmArguments."
+				))
+			case .gradle:
+				found.append(Problem(
+					field: "program",
+					message: "This is a script, so debugging runs it with --debug-jvm and attaches "
+						+ "to the JVM Gradle forks.",
+					fix: "Gradle's debug port is always \(ScriptLaunch.gradleDebugPort) and cannot "
+						+ "be chosen, so only one such launch can be waiting at a time."
+				))
+			case .script:
+				found.append(Problem(
+					field: "program",
+					message: "This is a script, so there is no native debugger for it.",
+					fix: "It runs with JAVA_TOOL_OPTIONS asking the first JVM it starts to wait "
+						+ "for the debugger. If it starts none, it simply runs."
+				))
+			}
 		}
 
 		let directory = expand(configuration.workingDirectory, root: root)
