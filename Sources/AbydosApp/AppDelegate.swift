@@ -434,11 +434,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let path = options.switchTo {
 			DispatchQueue.main.asyncAfter(deadline: .now() + options.switchToAt) {
-				let to = self.open(
-					projectAt: URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-				)
-				print("SWITCHED to \(to.project?.root.lastPathComponent ?? "nothing"); "
-					+ "\(self.windowControllers.count) window(s)")
+				let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+				// Timed in place when there is a window to switch, because that
+				// is the thing being complained about: a switch inside the window
+				// somebody is looking at, not a second window opening beside it.
+				if let controller = self.windowControllers.first {
+					controller.measureProjectSwitchForTesting(to: url)
+					print("SWITCHED to \(controller.project?.root.lastPathComponent ?? "nothing"); "
+						+ "\(self.windowControllers.count) window(s)")
+				} else {
+					let to = self.open(projectAt: url)
+					print("SWITCHED to \(to.project?.root.lastPathComponent ?? "nothing"); "
+						+ "\(self.windowControllers.count) window(s)")
+				}
 				fflush(stdout)
 			}
 		}

@@ -397,13 +397,60 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// filesystem watcher: `reloadData` throws away every row's identity, so a
 	/// section that rebuilt itself on each event would collapse whatever
 	/// somebody had open while they were reading it.
+	/// **Off the main thread, because it is a directory walk.**
+	///
+	/// `ExternalDependencies.read` walks the project two deep and parses a
+	/// manifest per subproject. On a work tree of thirteen thousand folders that
+	/// measured 1,196 ms — and it ran inside `load(project:)`, so it was 1,196 ms
+	/// of a window that had stopped answering. Switching projects "felt like it
+	/// had crashed", and the terminal stopped drawing with it, because the main
+	/// thread was in here.
+	///
+	/// The read itself is a static over the filesystem with no shared state, so
+	/// the only thing that has to stay on the main thread is what it is applied
+	/// to.
 	private func refreshDependencies() {
 		guard let project else { return }
 		lastDependencyRead = Date()
-		let sets = ExternalDependencies.read(project: project.root)
-		guard sets != dependencies?.sets else { return }
+		let root = project.root
+		isReadingDependencies = true
 
-		rebuildDependencies(sets: sets)
+		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+			let sets = ExternalDependencies.read(project: root)
+			DispatchQueue.main.async {
+				guard let self else { return }
+				// The project may have been switched again while this walked.
+				// Applying it would put one project's packages under another's
+				// name, which is worse than not having them yet.
+				guard self.project?.root == root else { return }
+				self.isReadingDependencies = false
+				// Whatever the answer, the reveals that arrived while this was
+				// out are owed another look — see `deferredReveals`.
+				defer { self.replayDeferredReveals() }
+				guard sets != self.dependencies?.sets else { return }
+				self.rebuildDependencies(sets: sets)
+			}
+		}
+	}
+
+	/// Whether the dependency walk is out, and what asked to be revealed while
+	/// it was.
+	///
+	/// **This is the race the old synchronous read was buying off.** `reveal`
+	/// asks the Dependencies section first, because a file under
+	/// `.build/checkouts/Cadova` is reachable both ways and only the section can
+	/// say which package it is. With the read in flight there is no section to
+	/// ask, so the reveal would land in `.build` — the one row that cannot answer
+	/// the question. Rather than hold the window still until the walk finishes,
+	/// the reveal is done again when it lands, and the section wins then.
+	private var isReadingDependencies = false
+	private var deferredReveals: [URL] = []
+
+	private func replayDeferredReveals() {
+		let owed = deferredReveals
+		deferredReveals = []
+		guard !owed.isEmpty else { return }
+		reveal(urls: owed)
 	}
 
 	/// Redraws the section, keeping what was open and what was selected.
@@ -2841,6 +2888,15 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// last folder opened. The topmost is what gets scrolled to.
 	func reveal(urls: [URL]) {
 		guard !urls.isEmpty else { return }
+
+		// Held back while the dependency walk is out, and done again when it
+		// lands. Without this a reveal during those milliseconds answers from
+		// `.build` rather than from the Dependencies section — see
+		// `deferredReveals` for why that is the wrong row.
+		if isReadingDependencies {
+			deferredReveals.append(contentsOf: urls)
+			return
+		}
 
 		// Before anything is looked up: a file from a toolchain has no row yet,
 		// and this is the moment its path is in hand. Gives the section a row
