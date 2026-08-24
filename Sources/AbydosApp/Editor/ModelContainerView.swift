@@ -1,4 +1,5 @@
 import AppKit
+import AbydosKit
 import GoSTL
 
 /// A pane that does not pay for what is in it until somebody stops on it.
@@ -69,6 +70,10 @@ final class ModelContainerView: DelayedPaneView, SnapshotDrawable {
 	/// photographs as an empty rectangle.
 	var snapshot: ContentView.EmbeddingOptions.SnapshotProvider?
 
+	/// The model this pane is for, so a render that kills the app can be blamed
+	/// on something in particular rather than on 3D in general.
+	var modelPath: String?
+
 	/// Builds the viewer, and is thrown away once it has.
 	var makeViewer: (() -> NSView)? {
 		didSet {
@@ -76,10 +81,85 @@ final class ModelContainerView: DelayedPaneView, SnapshotDrawable {
 			whenShown = { [weak self] in
 				guard let self, let make = self.makeViewer else { return }
 				self.makeViewer = nil
+
+				// The one model the last run did not survive is not rendered
+				// again without being asked for. See `ViewerGuard`: a trap inside
+				// the viewer is the end of the process, and a session that
+				// restores the tab which caused it makes the app unstartable.
+				let path = self.modelPath ?? ""
+				if ViewerGuard.isBlamed(path) {
+					self.refuse(path: path, make: make)
+					return
+				}
+
+				ViewerGuard.begin(path)
 				let viewer = make()
 				viewer.frame = self.bounds
 				self.addSubview(viewer)
+				// Cleared only once the app is plainly still here. Clearing it as
+				// soon as `make()` returned would clear it before the failure:
+				// the abort happens in the first layout pass, which is after this.
+				DispatchQueue.main.asyncAfter(deadline: .now() + ViewerGuard.settleDelay) {
+					guard ViewerGuard.isBlamed(path) else { return }
+					ViewerGuard.settled()
+				}
 			}
+		}
+	}
+
+	/// Says why the model is not on screen, and offers to try it anyway.
+	///
+	/// An offer rather than a refusal: the app may have died for a reason that
+	/// has since been fixed — a toolchain installed, a dependency updated — and
+	/// the only way anybody finds that out is by asking again.
+	private func refuse(path: String, make: @escaping () -> NSView) {
+		let name = (path as NSString).lastPathComponent
+		let label = NSTextField(wrappingLabelWithString:
+			"Rendering \(name) ended the last session.\n"
+			+ "It has not been opened again in case it does so twice.")
+		label.font = Theme.current.uiFont(12)
+		label.textColor = Theme.current.gitIgnored
+		label.alignment = .center
+		label.isSelectable = false
+
+		let button = NSButton(title: "Show anyway", target: self, action: #selector(showAnyway))
+		button.bezelStyle = .rounded
+		blamedBuild = make
+		blamedPath = path
+
+		let stack = NSStackView(views: [label, button])
+		stack.orientation = .vertical
+		stack.alignment = .centerX
+		stack.spacing = Theme.current.scaled(12)
+		stack.translatesAutoresizingMaskIntoConstraints = false
+		addSubview(stack)
+		NSLayoutConstraint.activate([
+			stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+			stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+			stack.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -40),
+		])
+		notice = stack
+	}
+
+	private var blamedBuild: (() -> NSView)?
+	private var blamedPath: String?
+	private weak var notice: NSView?
+
+	@objc private func showAnyway() {
+		guard let make = blamedBuild, let path = blamedPath else { return }
+		blamedBuild = nil
+		notice?.removeFromSuperview()
+		// Forgiven before the attempt, not after: if it aborts again the note is
+		// rewritten by `begin` below, and if it works there was nothing to
+		// forgive. Leaving it would refuse a model that has just been shown.
+		ViewerGuard.settled()
+		ViewerGuard.begin(path)
+		let viewer = make()
+		viewer.frame = bounds
+		addSubview(viewer)
+		DispatchQueue.main.asyncAfter(deadline: .now() + ViewerGuard.settleDelay) {
+			guard ViewerGuard.isBlamed(path) else { return }
+			ViewerGuard.settled()
 		}
 	}
 
