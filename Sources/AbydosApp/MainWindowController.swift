@@ -997,6 +997,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				Task { @MainActor in
 					await current.loadGit()
 					let head = await current.git?.currentHead()
+					self.capsule?.isReadingBranch = false
 					self.capsule?.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
 					self.layoutTitlebarPills()
 				}
@@ -1182,6 +1183,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@discardableResult
 	private func readGit() -> Task<GitRepository.Head?, Never> {
 		branchRead?.cancel()
+		let askedAt = Date()
+		// Said before the asking, because the asking is the part that takes the
+		// time. This is the 784 ms the pill used to spend absent.
+		capsule?.isReadingBranch = true
+		layoutTitlebarPills()
 		let read = Task { @MainActor [weak self] () -> GitRepository.Head? in
 			guard let self, let project = self.project else { return nil }
 			await project.loadGit()
@@ -1192,7 +1198,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		Task { @MainActor [weak self] in
 			let head = await read.value
 			guard let self, !Task.isCancelled else { return }
+			self.capsule?.isReadingBranch = false
 			self.capsule?.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
+			if ProjectSwitcherPopover.reportsForTesting {
+				print(String(format: "BRANCHPILL appeared after %8.2f ms  (%@)",
+					Date().timeIntervalSince(askedAt) * 1000, head?.name ?? "no branch"))
+				fflush(stdout)
+			}
 			// The capsule only gets its width once it has a name to show.
 			self.layoutTitlebarPills()
 			self.navigator.refreshGitStatus()
@@ -1351,6 +1363,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		worktrees = []
 		worktreePill?.setWorktree(nil)
 		capsule?.setBranch(nil)
+		// Reading, not absent: this window is about to ask git about the project
+		// that has just arrived, and that is what the half should say meanwhile.
+		capsule?.isReadingBranch = true
 		refreshDevContainerPill()
 		layoutTitlebarPills()
 		readWorktree()
@@ -12361,10 +12376,31 @@ extension MainWindowController: NSToolbarDelegate {
 		return menu
 	}
 
+	/// Clicks the branch pill, for measuring what opening it costs.
+	func showBranchMenuForTesting() { showBranchMenu() }
+
 	fileprivate func showBranchMenu() {
 		guard let project, let capsule else { return }
 		capsule.menuHalf = .branch
-		BranchMenu.show(relativeTo: capsule, anchorRect: capsule.branchRect, project: project)
+		// The switcher's popover rather than an `NSMenu`, in its branches mode.
+		//
+		// It already was a branch picker — it lists them, filters them and
+		// checks them out — and it had the filter field and the styling that a
+		// hundred branches need. A second control that had to be kept looking
+		// the same would be the thing that stopped looking the same.
+		//
+		// It also opens when git has not answered yet, which the menu could not:
+		// `BranchMenu.show` returned without opening anything if the repository
+		// was still being read, so a click in the first second of a project did
+		// nothing at all, said nothing, and read as a slow menu. This one opens
+		// and says what it is waiting for.
+		ProjectSwitcherPopover.show(
+			relativeTo: capsule,
+			anchorRect: capsule.branchRect,
+			currentProject: project,
+			owner: self,
+			focus: .branches
+		)
 	}
 }
 

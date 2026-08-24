@@ -24,6 +24,12 @@ import Foundation
 /// produced it, many times over, and fail if the answer ever comes out
 /// inconsistent — which is what these do. Under the old code this file is a
 /// crash; under the new one it is a second of work.
+/// **Serialised, and deliberately modest about how many it starts.** Each load
+/// spawns git subprocesses, and the first version of this file asked for
+/// thirty-two at once — enough, running beside three thousand other tests, to
+/// starve *their* `git init` and turn thirty-odd unrelated git tests red. The
+/// race needs two concurrent callers to exist; six is already generous.
+@Suite(.serialized)
 @MainActor
 struct ProjectGitRaceTests {
 	private func makeRepository() async throws -> URL {
@@ -41,14 +47,14 @@ struct ProjectGitRaceTests {
 		return root
 	}
 
-	/// The shape the watcher produces: many loads asked for at once.
+	/// The shape the watcher produces: several loads asked for at once.
 	@Test func manyLoadsAtOnceAgreeAndDoNotTearTheProject() async throws {
 		let root = try await makeRepository()
 		defer { try? FileManager.default.removeItem(at: root) }
 		let project = Project(root: root)
 
 		await withTaskGroup(of: Void.self) { group in
-			for _ in 0..<32 {
+			for _ in 0..<6 {
 				group.addTask { @MainActor in await project.loadGit() }
 			}
 			for await _ in group {}
@@ -62,16 +68,16 @@ struct ProjectGitRaceTests {
 		#expect(FilePath.canonical(gitRoot) == FilePath.canonical(project.git!.root))
 	}
 
-	/// Repeated rounds, because a race that survives one round of thirty-two
-	/// may only show on the fourth.
+	/// Repeated rounds, because a race that survives one round may only show on
+	/// the third.
 	@Test func repeatedRoundsStayConsistent() async throws {
 		let root = try await makeRepository()
 		defer { try? FileManager.default.removeItem(at: root) }
 		let project = Project(root: root)
 
-		for round in 0..<8 {
+		for round in 0..<3 {
 			await withTaskGroup(of: Void.self) { group in
-				for _ in 0..<8 {
+				for _ in 0..<4 {
 					group.addTask { @MainActor in await project.loadGit() }
 				}
 				for await _ in group {}
@@ -93,29 +99,28 @@ struct ProjectGitRaceTests {
 		defer { try? FileManager.default.removeItem(at: root) }
 		let project = Project(root: root)
 
-		// Wall clock only as a ratio, never as a bound: thirty-two loads that
-		// each did their own work would take many times one, and joined they
-		// take about one. The assertion is the ratio, which is what coalescing
-		// means.
+		// Wall clock only as a ratio, never as a bound: six loads that each did
+		// their own work would take about six times one, and joined they take
+		// about one. The assertion is the ratio, which is what coalescing means.
 		let oneStarted = Date()
 		await project.loadGit()
 		let one = Date().timeIntervalSince(oneStarted)
 
 		let manyStarted = Date()
 		await withTaskGroup(of: Void.self) { group in
-			for _ in 0..<32 {
+			for _ in 0..<6 {
 				group.addTask { @MainActor in await project.loadGit() }
 			}
 			for await _ in group {}
 		}
 		let many = Date().timeIntervalSince(manyStarted)
 
-		print(String(format: "PERF one load %.1f ms, 32 at once %.1f ms — %@",
+		print(String(format: "PERF one load %.1f ms, 6 at once %.1f ms — %@",
 			one * 1000, many * 1000, MachineLoad.said))
 
 		guard Stopwatch.maySay("PERF", "joined project loads") else { return }
-		#expect(many < one * 8,
-		        "32 loads cost \(many)s against \(one)s for one — \(MachineLoad.said)")
+		#expect(many < one * 4,
+		        "6 loads cost \(many)s against \(one)s for one — \(MachineLoad.said)")
 	}
 
 	/// A directory that is not a work tree answers, rather than leaving the last

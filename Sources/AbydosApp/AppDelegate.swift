@@ -1659,6 +1659,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let at = options.branchPillAt {
+			ProjectSwitcherPopover.reportsForTesting = true
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.showBranchMenuForTesting()
+				// Twice: once as it opens, which is what somebody clicking early
+				// sees, and once after git has answered, which is the list.
+				for delay in [0.05, 6.0] {
+					DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+						print("BRANCHPOPOVER at +\(delay)s")
+						for line in ProjectSwitcherPopover.rowsForTesting() {
+							print("BRANCHPOPOVER \(line)")
+						}
+						fflush(stdout)
+					}
+				}
+			}
+		}
+
 		if let branch = options.pushBranch {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.pushBranchForTesting(branch)

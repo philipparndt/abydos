@@ -329,6 +329,9 @@ struct LaunchOptions {
 	/// enough, and the answer for jdtls on a Tycho reactor is minutes rather
 	/// than the twelve seconds `--lsp-wait` defaults to. What is wanted is the
 	/// moment the server *starts* answering, which nothing but polling can find.
+	/// Open the titlebar branch menu and report what it cost, as
+	/// `--branch-pill` or `--branch-pill@seconds`.
+	var branchPillAt: Double?
 	var answerAt: String?
 	/// Give up on `--report-answer` after this long. Everything still silent is
 	/// reported as such, which is a finding rather than a missing line.
@@ -860,6 +863,8 @@ struct LaunchOptions {
 				options.openReportsAt = (next() ?? "10")
 					.split(separator: ",").compactMap { Double($0) }
 			case "--report-typing": options.openReportTyping = next().flatMap(Int.init) ?? 100
+			case "--branch-pill":
+				options.branchPillAt = next().flatMap(Double.init) ?? 8.0
 			case "--report-answer": options.answerAt = next()
 			case "--answer-until": options.answerDeadline = next().flatMap(Double.init) ?? 300
 			case "--stall":      options.stallMilliseconds = next().flatMap(Int.init)
