@@ -1468,6 +1468,52 @@ final class BranchesPane: NSView {
 		}
 	}
 
+	@objc private func fastForwardBranch() {
+		guard let branch = selectedBranch, case .local = branch.kind else { return }
+		let root = self.root
+
+		Task { @MainActor [weak self] in
+			let outcome = await GitFastForward.advance(branch: branch.name, in: root)
+			guard let self else { return }
+
+			switch outcome {
+			case let .moved(commits):
+				Toast.post(
+					"\(branch.name) moved \(commits == 1 ? "1 commit" : "\(commits) commits")",
+					detail: "Fast-forwarded to \(branch.upstream ?? "its upstream"). "
+						+ "Nothing was checked out."
+				)
+			case .alreadyThere:
+				Toast.post("\(branch.name) is already up to date", detail: "")
+			case .noUpstream:
+				Toast.post(
+					"\(branch.name) has no upstream",
+					detail: "There is nothing to fast-forward it to."
+				)
+			case let .diverged(ahead):
+				// Named rather than refused silently: the branch has work on it,
+				// and which work is the thing somebody needs to know before
+				// deciding what to do about it.
+				Toast.post(
+					"\(branch.name) has moved on its own",
+					detail: "\(ahead == 1 ? "One commit is" : "\(ahead) commits are") on it and not "
+						+ "on \(branch.upstream ?? "its upstream"), so this is not a fast-forward. "
+						+ "Merge or rebase it instead."
+				)
+			case .checkedOut:
+				Toast.post(
+					"\(branch.name) is checked out",
+					detail: "Bringing the branch you are on up to date is a pull."
+				)
+			case let .refused(said):
+				self.presentFailure(said)
+			}
+
+			self.refresh()
+			self.onRepositoryChanged?()
+		}
+	}
+
 	@objc private func mergeIntoCurrent() {
 		guard let branch = selectedBranch else { return }
 		run { await GitBranches.merge(branch.checkoutName, in: self.root) }
@@ -1742,6 +1788,21 @@ extension BranchesPane: NSMenuDelegate {
 		}
 		if let forge {
 			menu.addItem(item("Open on \(forge.displayName)", #selector(openBranchOnForge)))
+		}
+
+		// **Bringing a branch up to date without standing on it.** `main ↓4`
+		// while the work happens on a feature branch was three operations —
+		// checkout, pull, checkout back — and a working copy touched twice for a
+		// ref that could simply be moved. Offered only where it is a
+		// fast-forward: behind its upstream and with nothing of its own on it,
+		// which is exactly when moving the ref loses nothing.
+		if case .local = branch.kind, !branch.isCurrent,
+		   branch.upstream != nil, branch.behind > 0, branch.ahead == 0 {
+			menu.addItem(.separator())
+			menu.addItem(item(
+				"Fast-forward to \(branch.upstream ?? "Upstream")",
+				#selector(fastForwardBranch)
+			))
 		}
 
 		menu.addItem(.separator())
