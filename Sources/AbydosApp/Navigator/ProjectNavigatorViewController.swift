@@ -506,7 +506,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			// leaves behind — had no status at all and was drawn as if it were
 			// tracked and unmodified.
 			await git.refresh()
-			let repoRoot = await git.root
+			let repoRoot = git.root
 			gitRoot = repoRoot
 
 			// Collect the lookups on the actor, then apply them synchronously so
@@ -550,8 +550,40 @@ final class ProjectNavigatorViewController: NSViewController {
 			// long ago the last build was rather than what opening cost.
 			LaunchClock.mark("tree coloured")
 			onChangeCount?(await git.changedFileCount())
+
+			// And the greying-out, which is a slower question asked less often.
+			// Deliberately after the colours are on screen and deliberately
+			// outside the one-at-a-time gate above: reading the ignored set
+			// walks the whole work tree, and holding the gate for it would stop
+			// the tree recolouring for as long as that takes.
+			refreshIgnoredIfRulesChanged()
 		}
 	}
+
+	/// Re-reads what git ignores, when the ignore rules have moved.
+	///
+	/// Its own task and its own gate. `git status --ignored` cannot use git's
+	/// untracked cache, so on a work tree with tens of thousands of untracked
+	/// files it takes seconds every time — which is why it is not on the
+	/// filesystem-event path with everything else. `needsIgnoredRefresh()` is
+	/// the cheap question that keeps it off: it stats the ignore files, and a
+	/// build writing class files does not touch one.
+	private func refreshIgnoredIfRulesChanged() {
+		guard let git = project?.git, !isReadingIgnored else { return }
+		isReadingIgnored = true
+
+		Task { @MainActor [weak self] in
+			defer { self?.isReadingIgnored = false }
+			guard await git.needsIgnoredRefresh() else { return }
+			await git.refreshIgnored()
+			// One more pass to put the new answer on screen. Through the
+			// ordinary refresh so there is one place that applies colours, and
+			// it will not come back here: the fingerprint now matches.
+			self?.refreshGitStatus()
+		}
+	}
+
+	private var isReadingIgnored = false
 
 	/// The submenu under "New", filled in as it is about to be shown.
 	private var newMenu: NSMenu?

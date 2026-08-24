@@ -104,6 +104,7 @@ final class ChangesPane: NSView {
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		build()
+		beginFirstRead()
 		refresh()
 
 		// The lists have to follow the work tree, not just this view's own
@@ -422,10 +423,33 @@ final class ChangesPane: NSView {
 		refreshPushState()
 		Task { @MainActor in
 			let fresh = await GitWorkingCopy.status(in: root)
+			// Taken down before the comparison below, not after it. An
+			// unchanged status is still an answer, and a spinner that only
+			// stopped when something had changed span for ever over a clean
+			// working copy.
+			finishFirstRead()
 			guard fresh != status else { return }
 			status = fresh
 			reload()
 		}
+	}
+
+	/// Shown until the first `git status` comes back.
+	///
+	/// Only the first: after that the pane has rows on it, and covering them
+	/// every time a build writes a file would be worse than a moment of
+	/// staleness.
+	private var activity: PaneActivityView?
+
+	/// Puts the spinner up. Called once, as the pane is built, because that is
+	/// when there is nothing on screen and the wait is longest.
+	private func beginFirstRead() {
+		activity = PaneActivityView.install(over: self, message: "Reading changes…")
+	}
+
+	private func finishFirstRead() {
+		activity?.finish()
+		activity = nil
 	}
 
 	private func reload() {
@@ -496,9 +520,46 @@ final class ChangesPane: NSView {
 	}
 
 	private func expand(_ nodes: [GitChangeNode], in outline: NSOutlineView, collapsed: Set<String>) {
+		// Counted first, because `expandItem` is not free and there is a number
+		// of them past which opening everything is not a favour. A work tree
+		// holding untracked build output has thousands of folders in it, and
+		// expanding every one meant thousands of `expandItem` calls on the main
+		// thread on every filesystem event — a pane that took seconds to appear
+		// and then could not be scrolled.
+		//
+		// Past the limit the top level is opened and the rest is left folded,
+		// which is also the more useful shape: a tree that arrives entirely open
+		// and ten thousand rows long has told you nothing.
+		var folders = 0
+		count(nodes, into: &folders, upTo: Self.expandEverythingBelow)
+		let deep = folders <= Self.expandEverythingBelow
+		expand(nodes, in: outline, collapsed: collapsed, recursively: deep)
+	}
+
+	/// How many folders a side may have before it stops opening all of them.
+	private static let expandEverythingBelow = 500
+
+	private func count(_ nodes: [GitChangeNode], into total: inout Int, upTo limit: Int) {
+		for node in nodes where node.isFolder {
+			total += 1
+			// Stops as soon as the answer cannot change, so counting a tree of
+			// fifteen thousand folders costs five hundred.
+			guard total <= limit else { return }
+			count(node.children, into: &total, upTo: limit)
+			guard total <= limit else { return }
+		}
+	}
+
+	private func expand(
+		_ nodes: [GitChangeNode],
+		in outline: NSOutlineView,
+		collapsed: Set<String>,
+		recursively: Bool
+	) {
 		for node in nodes where node.isFolder && !collapsed.contains(node.path) {
 			outline.expandItem(node)
-			expand(node.children, in: outline, collapsed: collapsed)
+			guard recursively else { continue }
+			expand(node.children, in: outline, collapsed: collapsed, recursively: true)
 		}
 	}
 

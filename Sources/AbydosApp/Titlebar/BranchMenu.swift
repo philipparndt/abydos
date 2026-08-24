@@ -18,8 +18,15 @@ enum BranchMenu {
 				pill.isMenuOpen = false
 				return
 			}
-			let root = await git.root
-			let head = await git.currentHead()
+			// Both read without touching the actor. They used to be two hops
+			// onto it, for a `let` that never changes and a string that is
+			// already in memory — and the actor is where the work tree's status
+			// is parsed and rolled up, so a menu that had nothing to compute
+			// waited behind however much of that was in flight. On a large
+			// repository that was the whole of "clicking the branch takes ages":
+			// not the git commands, which measure 0.05 s, but the queue.
+			let root = git.root
+			let head = git.lastKnownHead
 			let current = head.name
 
 			// `git branch` sorted by most recent commit puts the branches the user

@@ -158,6 +158,7 @@ final class BranchesPane: NSView {
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		build()
+		beginFirstRead()
 		refresh()
 
 		NotificationCenter.default.addObserver(
@@ -169,6 +170,19 @@ final class BranchesPane: NSView {
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
+
+	/// Shown until the first read comes back — see `ChangesPane.activity` for
+	/// why it is the first only.
+	private var activity: PaneActivityView?
+
+	private func beginFirstRead() {
+		activity = PaneActivityView.install(over: self, message: "Reading branches…")
+	}
+
+	private func finishFirstRead() {
+		activity?.finish()
+		activity = nil
+	}
 	deinit { NotificationCenter.default.removeObserver(self) }
 
 	// MARK: - Layout
@@ -304,9 +318,13 @@ final class BranchesPane: NSView {
 			self.refreshTraffic()
 			self.refreshConflicts()
 			forge = remoteURL.flatMap { GitForge.repository(fromRemote: $0) }
+			// Before the comparison, so an unchanged answer still stops the
+			// spinner — which for a repository nobody has touched is every
+			// answer after the first.
+			finishFirstRead()
 			// The working copy is re-read every time and the rows rebuilt with it,
-		// so an edit in the editor shows here without anything else moving.
-		guard fresh != branches || trees != worktrees || put != stashes else {
+			// so an edit in the editor shows here without anything else moving.
+			guard fresh != branches || trees != worktrees || put != stashes else {
 				rebuildRows()
 				return
 			}

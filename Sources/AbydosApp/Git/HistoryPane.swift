@@ -91,11 +91,25 @@ final class HistoryPane: NSView {
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		build()
+		beginFirstRead()
 		reload()
 
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(reload), name: .abydosRepositoryChanged, object: nil
 		)
+	}
+
+	/// Shown until the first log comes back — see `ChangesPane.activity` for why
+	/// it is the first only.
+	private var activity: PaneActivityView?
+
+	private func beginFirstRead() {
+		activity = PaneActivityView.install(over: self, message: "Reading history…")
+	}
+
+	private func finishFirstRead() {
+		activity?.finish()
+		activity = nil
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -453,6 +467,9 @@ final class HistoryPane: NSView {
 				in: root, path: scope, revision: ref,
 				limit: Self.pageSize, search: search.isEmpty ? nil : search
 			)
+			// Before the guard below: a query that has moved on is still an
+			// answer arriving, and the pane has stopped being blank either way.
+			finishFirstRead()
 			// Another scope or query landed while this was in flight.
 			guard scope == self.scopedPath, search == self.query, ref == self.scopedRef else { return }
 

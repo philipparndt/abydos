@@ -32,11 +32,46 @@ public enum GitFileStatus: Sendable, Equatable {
 /// always consistent with what the user sees on the command line, and it brings
 /// no native dependency. Results are cached and refreshed on filesystem events.
 public actor GitRepository {
-	public let root: URL
+	/// Not isolated, because it never changes and because of who asks for it.
+	/// The branch pill's menu wanted the repository's own path, and asking for
+	/// it was a hop onto this actor — which queues behind whatever synchronous
+	/// work the actor is already doing, and this actor's work is measured in
+	/// tens of thousands of paths. A `let` of a `Sendable` type has nothing to
+	/// serialise and no reason to make anybody wait (item 0498).
+	public nonisolated let root: URL
 
 	private var statusCache: [String: GitFileStatus] = [:]
 	private var directoryCache: [String: GitFileStatus] = [:]
-	private var headState: Head = .detached
+
+	/// The ignored paths, kept apart from everything else because they are read
+	/// on a different schedule.
+	///
+	/// What is ignored changes when an ignore *rule* changes, which happens
+	/// when somebody edits a `.gitignore` — not when a build writes a file.
+	/// Everything else in here is re-read on every filesystem event; asking git
+	/// for the ignored set that often is what made a large work tree unusable,
+	/// because `--ignored` is the flag that switches the untracked cache off.
+	/// So it has its own cache, its own read, and a fingerprint that says when
+	/// the read is worth doing again.
+	private var ignoredCache: [String: GitFileStatus] = [:]
+	/// The ignored entries that are directories, for inheriting down.
+	private var ignoredDirectories: Set<String> = []
+	/// What the ignore rules looked like when `ignoredCache` was filled, or nil
+	/// when it never has been.
+	private var ignoreRulesFingerprint: String?
+
+	private var headState: Head = .detached {
+		didSet { headSnapshot.value = headState }
+	}
+
+	/// The last known head, readable without touching the actor.
+	///
+	/// The same value as `headState` and kept in step with it. It exists for the
+	/// branch pill: opening that menu is not an expensive question — reading a
+	/// string that is already in memory — and it used to sit behind a queue of
+	/// rollup scans over a hundred thousand paths, which is what "clicking the
+	/// branch takes ages" was.
+	private nonisolated let headSnapshot = HeadSnapshot()
 
 	public init(root: URL) {
 		self.root = root
@@ -140,7 +175,21 @@ public actor GitRepository {
 	/// The branch and whether it has anything on it, as of the last refresh.
 	public func currentHead() -> Head { headState }
 
-	/// How many files the working copy has that HEAD does not agree with.
+	/// The same answer, without waiting for the actor.
+	///
+	/// For anything that only wants to *show* the branch — the titlebar pill and
+	/// the menu under it. `currentHead()` is the same value and is the one to
+	/// use when the caller is already on the actor's side of the fence.
+	public nonisolated var lastKnownHead: Head { headSnapshot.value }
+
+	/// How many entries the working copy has that HEAD does not agree with.
+	///
+	/// Entries and not files, which is the same thing for everything git names
+	/// individually and one thing for a wholly untracked directory it named as a
+	/// whole. That is deliberately the same arithmetic the changes pane does, so
+	/// the badge on the strip and the count in the pane agree — they used to
+	/// disagree by four orders of magnitude on a work tree full of build output,
+	/// because one asked for `-uall` and the other did not.
 	///
 	/// Ignored files are not changes — a build directory is not something
 	/// anybody is going to commit — and the count is what the commit button
@@ -153,13 +202,36 @@ public actor GitRepository {
 	public func refresh() async {
 		async let head = Self.head(in: root)
 		async let status = Self.run(
-			// --porcelain=v1 is a stability-guaranteed format. -uall lists files
-			// inside untracked directories instead of collapsing to the directory,
-			// which the tree needs in order to colour individual rows.
+			// --porcelain=v1 is a stability-guaranteed format.
+			//
+			// **Neither `-uall` nor `--ignored`, and the reason is git's untracked
+			// cache.** This used to ask for `-uall --ignored=matching`, on the
+			// grounds that the tree needs a status per row and those two flags
+			// give one for every file. What they also do is switch off the
+			// untracked cache — git cannot reuse a cached per-directory answer
+			// when it has been asked to report the files inside an ignored
+			// directory — so every refresh walked the whole work tree cold, and
+			// this runs on every filesystem event.
+			//
+			// Measured on a repository with 69,829 untracked files in 15,376
+			// folders (build output, which is what any large project's work tree
+			// is mostly made of): four consecutive runs of the old command took
+			// 6.4 s, 16.2 s, 59.7 s and 26.8 s — it never warms up, because there
+			// is no cache to warm. The same question without those two flags is a
+			// steady 0.11 s, and returns 425 records instead of 108,150.
+			//
+			// What is given up is nothing. `-unormal` collapses a wholly
+			// untracked directory to one `dir/` entry, and every file inside a
+			// directory git collapsed is untracked *by definition* — that is why
+			// it was collapsed — so `inherited(for:)` colours those rows from the
+			// directory's own entry rather than from an entry of their own. The
+			// ignored set is still read in full, by `refreshIgnored()`, on the
+			// schedule the question actually has: when an ignore rule changes.
+			//
 			// `-z` so paths arrive literally: without it anything non-ASCII comes
 			// back octal-escaped inside quotes, and the tree would then key its
 			// status by a name no row actually has.
-			["status", "--porcelain=v1", "-uall", "--ignored=matching", "--no-renames", "-z"],
+			["status", "--porcelain=v1", "-unormal", "--no-renames", "-z"],
 			in: root
 		)
 
@@ -174,6 +246,107 @@ public actor GitRepository {
 		let statusResult = await status
         guard statusResult.exitCode == 0 else { return }
 		parse(porcelain: statusResult.stdout)
+	}
+
+	// MARK: - What is ignored
+
+	/// Whether the ignored set is worth reading again.
+	///
+	/// Cheap on purpose — this is asked once per refresh, and a refresh happens
+	/// on every filesystem event. It stats the ignore files rather than reading
+	/// them: an edit that changes what is ignored changes a file's size or its
+	/// modification date, and a build writing ten thousand class files changes
+	/// neither.
+	public func needsIgnoredRefresh() async -> Bool {
+		await Self.ignoreRulesFingerprint(in: root) != ignoreRulesFingerprint
+	}
+
+	/// Re-reads which paths git ignores.
+	///
+	/// The expensive one — `--ignored` cannot use the untracked cache, so this
+	/// walks the work tree cold, which on a large repository is seconds. It is
+	/// called when the ignore rules have moved and not otherwise, so those
+	/// seconds are paid once when a project opens and again when somebody saves
+	/// a `.gitignore`, rather than dozens of times a minute during a build.
+	///
+	/// `-unormal` for the same reason `refresh()` uses it: an ignored directory
+	/// arrives as one `dir/` entry, and the rows inside it inherit from that.
+	public func refreshIgnored() async {
+		// Read before the walk, not after: if somebody saves a `.gitignore`
+		// while this is running, the fingerprint stored is the one this answer
+		// belongs to, and the next refresh notices the difference and asks
+		// again. Stored the other way round, that edit would be swallowed.
+		let fingerprint = await Self.ignoreRulesFingerprint(in: root)
+
+		let result = await Self.run(
+			["status", "--porcelain=v1", "-unormal", "--ignored=traditional",
+			 "--no-renames", "-z"],
+			in: root
+		)
+		guard result.exitCode == 0 else { return }
+
+		var ignored: [String: GitFileStatus] = [:]
+		var directories: Set<String> = []
+		for record in result.stdout.split(separator: "\0", omittingEmptySubsequences: true) {
+			guard record.count > 3, record.hasPrefix("!!") else { continue }
+			var path = GitWorkingCopy.unquote(String(record.dropFirst(3)))
+			if path.hasSuffix("/") {
+				path = String(path.dropLast())
+				directories.insert(path)
+			}
+			guard !path.isEmpty else { continue }
+			ignored[path] = .ignored
+		}
+
+		// Replaced wholesale, for the reason the directory cache is: what was
+		// here before is what git said under the old rules, and a folder that
+		// has stopped being ignored has to stop being grey.
+		ignoredCache = ignored
+		ignoredDirectories = directories
+		ignoreRulesFingerprint = fingerprint
+	}
+
+	/// A cheap summary of every ignore rule that applies to this work tree.
+	///
+	/// The tracked `.gitignore` files, `.git/info/exclude` and the global
+	/// excludes file, each as its size and modification date. `ls-files` reads
+	/// the index and never touches the work tree, so finding them costs
+	/// milliseconds even where there are more than a thousand.
+	///
+	/// Untracked `.gitignore` files are deliberately left out. One only affects
+	/// its own directory and below, and a directory holding an untracked
+	/// `.gitignore` is itself untracked — so everything under it is already
+	/// coloured by inheriting from it, whatever the rules inside say.
+	private static func ignoreRulesFingerprint(in root: URL) async -> String {
+		let listed = await run(
+			["ls-files", "-z", "--cached", "--", "*.gitignore", ".gitignore"],
+			in: root
+		)
+		var paths = listed.exitCode == 0
+			? listed.stdout.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
+			: []
+		paths.append(".git/info/exclude")
+
+		var files = paths.map { root.appendingPathComponent($0) }
+		let global = await run(["config", "--get", "core.excludesFile"], in: root)
+		let globalPath = global.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		if !globalPath.isEmpty {
+			files.append(URL(fileURLWithPath: NSString(string: globalPath).expandingTildeInPath))
+		}
+
+		// Sorted so the same set of files always produces the same string:
+		// `ls-files` is ordered, but the two appended entries are not part of
+		// that order and a fingerprint that depends on assembly order would
+		// report a change that had not happened.
+		return files
+			.map { url -> String in
+				let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+				let size = (attributes?[.size] as? NSNumber)?.int64Value ?? -1
+				let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+				return "\(url.path):\(size):\(modified)"
+			}
+			.sorted()
+			.joined(separator: "\n")
 	}
 
 	/// Internal rather than private so the status rules can be unit-tested
@@ -214,8 +387,54 @@ public actor GitRepository {
 		// Adding `!backlog/` to an ignore file and saving it looked like nothing
 		// happening at all, until the project was closed and opened again.
 		directoryCache = directories
-		// The rollups are derived from both, and are recomputed lazily.
-		rollupCache = [:]
+		rollupCache = Self.rollups(of: files)
+	}
+
+	/// The worst status under each directory, computed once for the whole set.
+	///
+	/// **Once, walking ancestors — not per directory, scanning everything.** A
+	/// directory's colour used to be worked out by sweeping the entire status
+	/// cache and prefix-matching every key against it, memoised per directory.
+	/// That is O(changes) for one row and O(rows × changes) for a refresh, it
+	/// ran synchronously on the actor, and on a work tree with a hundred
+	/// thousand entries it was tens of millions of string comparisons with
+	/// everything else — the branch pill included — waiting behind it.
+	///
+	/// Walking each entry's own ancestors instead costs one pass over the
+	/// entries and touches each path component once, and it answers the same
+	/// question: a directory is as bad as the worst thing beneath it.
+	private static func rollups(of files: [String: GitFileStatus]) -> [String: GitFileStatus] {
+		var worst: [String: GitFileStatus] = [:]
+
+		for (path, status) in files {
+			// A directory is *not* ignored merely because something inside it
+			// is. Almost every project has a tracked directory holding build
+			// output, and dimming those would grey out most of the tree. Only an
+			// explicit entry or an ignored ancestor makes a directory ignored,
+			// and both are answered before the rollups are consulted.
+			guard status != .ignored else { continue }
+
+			var components = path.split(separator: "/").map(String.init)
+			// The entry's own name: its status is in `statusCache` already, and
+			// what is being built here is what its *parents* should look like.
+			guard !components.isEmpty else { continue }
+			components.removeLast()
+
+			while true {
+				let directory = components.joined(separator: "/")
+				// The root is "" and is a real key: the project's own row.
+				if status.severity > (worst[directory]?.severity ?? -1) {
+					worst[directory] = status
+				} else {
+					// Every shallower ancestor has already been given something
+					// at least this severe by whatever wrote this one.
+					break
+				}
+				guard !components.isEmpty else { break }
+				components.removeLast()
+			}
+		}
+		return worst
 	}
 
 	private static func status(forCodes codes: String) -> GitFileStatus {
@@ -244,33 +463,21 @@ public actor GitRepository {
 	public func status(forRelativePath path: String, isDirectory: Bool) -> GitFileStatus {
 		if !isDirectory {
 			if let direct = statusCache[path] { return direct }
-			// A file inside an ignored directory has no entry of its own.
-			return inheritedIgnore(for: path) ?? .unmodified
+			// A file inside a directory git collapsed has no entry of its own.
+			if let inherited = inherited(for: path) { return inherited }
+			return ignoredCache[path] ?? .unmodified
 		}
 
-		if let cached = rollupCache[path] { return cached }
-		if let explicit = directoryCache[path] {
-			rollupCache[path] = explicit
-			return explicit
-		}
-		if let inherited = inheritedIgnore(for: path) {
-			rollupCache[path] = inherited
-			return inherited
-		}
-
-		let prefix = path.isEmpty ? "" : path + "/"
-		var worst = GitFileStatus.unmodified
-		for (candidate, status) in statusCache where candidate.hasPrefix(prefix) {
-			// A directory is *not* ignored merely because something inside it is.
-			// Almost every project has a tracked directory holding build output,
-			// and dimming those would grey out most of the tree. Only an explicit
-			// entry or an ignored ancestor — both handled above — make a
-			// directory itself ignored.
-			if status == .ignored { continue }
-			if status.severity > worst.severity { worst = status }
-		}
-		rollupCache[path] = worst
-		return worst
+		// An explicit entry first: a collapsed `dir/` is git saying the whole
+		// directory is one thing, and that is more specific than a rollup.
+		if let explicit = directoryCache[path] { return explicit }
+		if let rolled = rollupCache[path] { return rolled }
+		if let inherited = inherited(for: path) { return inherited }
+		// Last, and only where nothing else had anything to say. A directory
+		// with a change under it is not ignored however many ignored files sit
+		// beside that change — almost every project keeps its build output
+		// inside a tracked directory, and dimming those would grey out the tree.
+		return ignoredCache[path] ?? .unmodified
 	}
 
 	/// Status for many paths, answered in one visit.
@@ -290,12 +497,32 @@ public actor GitRepository {
 		paths.map { status(forRelativePath: $0.path, isDirectory: $0.isDirectory) }
 	}
 
-	/// Walks up ancestors looking for an ignored directory.
-	private func inheritedIgnore(for path: String) -> GitFileStatus? {
+	/// Walks up ancestors looking for a directory git answered as a whole.
+	///
+	/// Two statuses come back that way and both are inherited exactly rather
+	/// than approximately. An ignored directory's contents are ignored — that is
+	/// what the rule said. An untracked directory's contents are untracked *by
+	/// definition*: git collapses a directory to `dir/` only when it has nothing
+	/// tracked inside it, so a row under one cannot be anything else.
+	///
+	/// Which is why asking for `-uall` bought nothing. It made git name each of
+	/// those files individually, at the price of the untracked cache and of a
+	/// hundred thousand entries to carry around, to say what the directory above
+	/// them already said.
+	private func inherited(for path: String) -> GitFileStatus? {
 		var components = path.split(separator: "/").map(String.init)
 		while components.count > 1 {
 			components.removeLast()
-			if directoryCache[components.joined(separator: "/")] == .ignored { return .ignored }
+			let ancestor = components.joined(separator: "/")
+			// The nearest one wins, so both maps are asked at each level before
+			// moving further up. An ignored directory inside an untracked one is
+			// possible, and so is the other way round.
+			if ignoredDirectories.contains(ancestor) { return .ignored }
+			switch directoryCache[ancestor] {
+			case .ignored: return .ignored
+			case .unversioned: return .unversioned
+			default: continue
+			}
 		}
 		return nil
 	}
@@ -377,5 +604,21 @@ public actor GitRepository {
 			stderr: captured.stderr,
 			exitCode: process.terminationStatus
 		)
+	}
+}
+
+/// A `Head` that can be read from anywhere, holding a lock rather than an actor.
+///
+/// Exists for one caller: the branch pill, which wants to show a name it already
+/// knows without joining the queue for an actor that is busy with a hundred
+/// thousand paths. A lock held for the length of one assignment is the whole
+/// cost, against a hop and a continuation for the alternative.
+final class HeadSnapshot: @unchecked Sendable {
+	private let lock = NSLock()
+	private var stored: GitRepository.Head = .detached
+
+	var value: GitRepository.Head {
+		get { lock.withLock { stored } }
+		set { lock.withLock { stored = newValue } }
 	}
 }
