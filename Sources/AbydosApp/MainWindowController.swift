@@ -4394,7 +4394,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Checked first: starting an agent, waiting for it to look around and
 			// report nothing is a slow way to learn there was nothing to review.
 			if let project, let git = project.git {
-				let root = await git.root
+				let root = git.root
 				let status = await GitRepository.run(["status", "--porcelain"], in: root)
 				if status.exitCode == 0,
 				   status.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -4429,7 +4429,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Best guess at the branch a review should compare against.
 	private func defaultBaseBranch() async -> String {
 		guard let project, let git = project.git else { return "main" }
-		let root = await git.root
+		let root = git.root
 
 		// origin/HEAD names the default branch when the remote has been fetched.
 		let result = await GitRepository.run(["symbolic-ref", "refs/remotes/origin/HEAD"], in: root)
@@ -5687,9 +5687,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			Task { @MainActor [weak self] in
 				guard let self else { return }
 				let found = await GitRepository.discover(from: url.deletingLastPathComponent())
-				// `root` is the actor's, so it is read on the actor once rather
-				// than reached for three times.
-				guard let root = await found?.root else {
+				// Read once and kept, rather than reached for three times.
+				guard let root = found?.root else {
 					self.notify(
 						"No repository to link to",
 						detail: "A permalink names a commit, and this file is not in a checkout.",
@@ -10262,8 +10261,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard pendingSidebarTool != tool else { return }
 		pendingSidebarTool = tool
 
+		// Something to look at while the repository is being read. The sidebar
+		// used to keep the *previous* tool on screen for the whole wait, so
+		// asking for the changes view on a large repository looked like the
+		// click had missed — and clicking again did nothing, because the second
+		// ask is the one this guard drops.
+		let waiting = PaneActivityView.install(
+			over: primaryContainer, message: "Reading repository…"
+		)
+
 		Task { @MainActor [weak self] in
 			await self?.project?.loadGit()
+			waiting.finish()
 			guard let self, self.pendingSidebarTool == tool else { return }
 			self.pendingSidebarTool = nil
 			// It may have arrived while this was waiting: reading a repository
@@ -10752,7 +10761,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let text = await GitWorkingCopy.diff(
 				for: change.path,
 				staged: change.isStaged,
-				in: project.root
+				in: project.root,
+				isDirectory: change.isDirectory
 			)
 			editor.openDiff(for: change, root: project.root, text: text)
 		}

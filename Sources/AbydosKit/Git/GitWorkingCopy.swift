@@ -12,14 +12,25 @@ public struct GitChange: Equatable, Sendable, Identifiable {
 	/// Where the change is: staged for commit, or only in the work tree.
 	public let isStaged: Bool
 
+	/// Whether this entry is a whole directory rather than one file.
+	///
+	/// Git answers `git status` with a directory when everything inside it is
+	/// untracked — `build/` rather than the ten thousand files under it — and
+	/// that entry is one thing to stage, which is what somebody who has just
+	/// created a folder meant anyway. The flag exists so the row can say what it
+	/// is: a diff of a directory is not a diff, and asking git for one gets
+	/// nothing back rather than an error.
+	public let isDirectory: Bool
+
 	public var id: String { "\(isStaged ? "s" : "u"):\(path)" }
 	public var name: String { (path as NSString).lastPathComponent }
 	public var directory: String { (path as NSString).deletingLastPathComponent }
 
-	public init(path: String, kind: Kind, isStaged: Bool) {
+	public init(path: String, kind: Kind, isStaged: Bool, isDirectory: Bool = false) {
 		self.path = path
 		self.kind = kind
 		self.isStaged = isStaged
+		self.isDirectory = isDirectory
 	}
 }
 
@@ -51,8 +62,21 @@ public enum GitWorkingCopy {
 		// Without it git escapes anything non-ASCII — "kühlschrank" comes back
 		// as "k\303\274hlschrank" inside quotes — and the escaped form is not a
 		// path any later command can find.
+		// `-unormal`, so a wholly untracked directory arrives as one `dir/` entry
+		// rather than as everything inside it. `-uall` was seven seconds on a
+		// work tree with 69,829 untracked files — it has to stat every one of
+		// them to name it — and this runs on every filesystem event, which
+		// during a build is dozens a minute. The same question with `-unormal`
+		// is 0.11 s and returns 425 records.
+		//
+		// The pane loses nothing it was using. A collapsed directory is one row
+		// to stage, `git add -A -- build` is what staging it runs, and that is
+		// what somebody clicking a folder of untracked build output meant. What
+		// it gains is that the row exists at all: fifteen thousand folders of
+		// them was a tree nobody could read and an outline view nobody could
+		// scroll.
 		let result = await GitRepository.run(
-			["status", "--porcelain=v1", "-uall", "--no-renames", "-z"],
+			["status", "--porcelain=v1", "-unormal", "--no-renames", "-z"],
 			in: root
 		)
 		guard result.exitCode == 0 else { return GitWorkingCopyStatus() }
@@ -80,27 +104,41 @@ public enum GitWorkingCopy {
 
 			let index = line[line.startIndex]
 			let worktree = line[line.index(after: line.startIndex)]
-			let path = unquote(String(line.dropFirst(3)))
+			var path = unquote(String(line.dropFirst(3)))
+			// A directory git answered as a whole arrives with a trailing
+			// slash. Kept out of the path: `name` would be empty, `directory`
+			// would be the directory itself, and the tree would build a folder
+			// with a nameless child in it.
+			let isDirectory = path.hasSuffix("/")
+			if isDirectory { path = String(path.dropLast()) }
 			guard !path.isEmpty else { continue }
 
 			// A conflict is not a staged change with an unstaged one beside it;
 			// it is one unresolved path, and offering to stage half of it would
 			// be wrong. Both codes are consumed by this case.
 			if isConflict(index: index, worktree: worktree) {
-				status.unstaged.append(GitChange(path: path, kind: .conflicted, isStaged: false))
+				status.unstaged.append(GitChange(
+					path: path, kind: .conflicted, isStaged: false, isDirectory: isDirectory
+				))
 				continue
 			}
 
 			if index == "?" {
-				status.unstaged.append(GitChange(path: path, kind: .untracked, isStaged: false))
+				status.unstaged.append(GitChange(
+					path: path, kind: .untracked, isStaged: false, isDirectory: isDirectory
+				))
 				continue
 			}
 
 			if let kind = kind(for: index) {
-				status.staged.append(GitChange(path: path, kind: kind, isStaged: true))
+				status.staged.append(GitChange(
+					path: path, kind: kind, isStaged: true, isDirectory: isDirectory
+				))
 			}
 			if let kind = kind(for: worktree) {
-				status.unstaged.append(GitChange(path: path, kind: kind, isStaged: false))
+				status.unstaged.append(GitChange(
+					path: path, kind: kind, isStaged: false, isDirectory: isDirectory
+				))
 			}
 		}
 
@@ -289,7 +327,15 @@ public enum GitWorkingCopy {
 	// MARK: - Diffs
 
 	/// The unified diff for one path, on one side of the index.
-	public static func diff(for path: String, staged: Bool, in root: URL) async -> String {
+	///
+	/// - `isDirectory`: whether the entry is a whole untracked directory, in
+	///   which case there is no diff to show and what is wanted is the list of
+	///   what staging it would add.
+	public static func diff(
+		for path: String, staged: Bool, in root: URL, isDirectory: Bool = false
+	) async -> String {
+		if isDirectory { return await contents(ofUntrackedDirectory: path, in: root) }
+
 		var arguments = ["diff", "--no-color"]
 		if staged { arguments.append("--cached") }
 		arguments += ["--", path]
@@ -306,5 +352,47 @@ public enum GitWorkingCopy {
 			in: root
 		)
 		return untracked.stdout
+	}
+
+	/// What is inside a directory git reported as a whole, as a list.
+	///
+	/// Not a diff, because there is no such thing for a directory — asking git
+	/// for one gets an empty answer, which reads as "nothing here" rather than
+	/// as "this is a folder". A list of what staging this row would add is the
+	/// honest version of the same question.
+	///
+	/// `-uall` here where the listing does not use it, and that is the point of
+	/// the split: scoped to one directory it walks one subtree, not the work
+	/// tree, so it costs what that directory holds.
+	private static func contents(ofUntrackedDirectory path: String, in root: URL) async -> String {
+		let result = await GitRepository.run(
+			["status", "--porcelain=v1", "-uall", "--no-renames", "-z", "--", path],
+			in: root
+		)
+		guard result.exitCode == 0 else { return "" }
+
+		let files = result.stdout
+			.split(separator: "\0", omittingEmptySubsequences: true)
+			.compactMap { record -> String? in
+				guard record.count > 3 else { return nil }
+				let name = unquote(String(record.dropFirst(3)))
+				return name.isEmpty ? nil : name
+			}
+			.sorted()
+
+		guard !files.isEmpty else { return "\(path)/ — an empty folder\n" }
+		let heading = files.count == 1
+			? "\(path)/ — a new folder, 1 file\n"
+			: "\(path)/ — a new folder, \(files.count) files\n"
+		// Capped, because the reason this row is a folder at all is that there
+		// can be tens of thousands under it, and a pane that tries to print them
+		// is the thing being fixed. The count above is the whole truth; the list
+		// is a sample of it, and says so.
+		let shown = files.prefix(500)
+		var text = heading + "\n" + shown.map { "+ \($0)" }.joined(separator: "\n") + "\n"
+		if files.count > shown.count {
+			text += "\n… and \(files.count - shown.count) more\n"
+		}
+		return text
 	}
 }

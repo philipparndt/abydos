@@ -12,7 +12,12 @@ import Testing
 struct FileSystemWatcherTests {
 	private let root = URL(fileURLWithPath: "/p")
 
-	private func change(
+	/// Named `batch` and not `change`, which is what it was. Every test binds
+	/// its result to a `change`, and inside `#require` the macro re-expands the
+	/// call *after* that binding is in scope — so the local shadowed the helper
+	/// and the whole file stopped compiling with "cannot call value of
+	/// non-function type 'FileSystemChange'".
+	private func batch(
 		_ paths: [String],
 		flags: [FSEventStreamEventFlags]? = nil
 	) -> FileSystemChange? {
@@ -25,7 +30,7 @@ struct FileSystemWatcherTests {
 	}
 
 	@Test func namesTheFilesAndTheirDirectories() throws {
-		let change = try #require(change([
+		let change = try #require(batch([
 			"/p/bundle/.classpath",
 			"/p/bundle/src/App.java",
 		]))
@@ -41,7 +46,7 @@ struct FileSystemWatcherTests {
 	/// A burst too large to describe file by file says so, because a filter over
 	/// the names would otherwise silently pass a batch it never saw.
 	@Test func aSubtreeScanAdmitsItDoesNotKnowTheNames() throws {
-		let change = try #require(change(
+		let change = try #require(batch(
 			["/p/bundle"],
 			flags: [FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs)]
 		))
@@ -54,7 +59,7 @@ struct FileSystemWatcherTests {
 	/// The project moved underneath us, so nothing named in the batch is a
 	/// reliable account of what is now where.
 	@Test func aMovedRootAdmitsTheSame() throws {
-		let change = try #require(change(
+		let change = try #require(batch(
 			["/p"],
 			flags: [FSEventStreamEventFlags(kFSEventStreamEventFlagRootChanged)]
 		))
@@ -64,13 +69,13 @@ struct FileSystemWatcherTests {
 	}
 
 	@Test func skipsTheGitDirectoryAndDesktopServicesFiles() {
-		#expect(change(["/p/.git/index"]) == nil)
-		#expect(change(["/p/.DS_Store"]) == nil)
+		#expect(batch(["/p/.git/index"]) == nil)
+		#expect(batch(["/p/.DS_Store"]) == nil)
 	}
 
 	/// A batch that is entirely `.git` is nothing at all rather than an empty
 	/// batch: an empty one would still cost every listener its guard.
 	@Test func aBatchOfNothingIsNotDelivered() {
-		#expect(change([]) == nil)
+		#expect(batch([]) == nil)
 	}
 }

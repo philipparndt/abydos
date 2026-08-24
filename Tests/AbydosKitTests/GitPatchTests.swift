@@ -344,21 +344,51 @@ struct GitPartialStagingTests {
 	/// its default output and the escaped form matches nothing.
 	@Test func pathsWithNonASCIICharactersCanBeStaged() async throws {
 		let root = try await makeRepository(contents: "x\n")
-		let name = "kühlschrank-türe/abdeckung.3mf"
+		let folder = "kühlschrank-türe"
+		let name = "\(folder)/abdeckung.3mf"
 		try FileManager.default.createDirectory(
-			at: root.appendingPathComponent("kühlschrank-türe"),
+			at: root.appendingPathComponent(folder),
 			withIntermediateDirectories: true
 		)
 		try "content\n".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
 
+		// The folder, because nothing in it is tracked and that is how git
+		// answers such a folder: one entry, and the trailing slash it arrives
+		// with taken off so the path is one that can be staged.
 		let before = await GitWorkingCopy.status(in: root)
-		#expect(before.unstaged.map(\.path) == [name])
+		#expect(before.unstaged.map(\.path) == [folder])
+		#expect(before.unstaged.first?.isDirectory == true)
 
+		// Staged by the file's own name, which is the thing the escaping used to
+		// break, and it works whether or not the listing named it.
 		let result = await GitWorkingCopy.stage(paths: [name], in: root)
 		#expect(result.exitCode == 0, "\(result.stderr)")
 
 		let after = await GitWorkingCopy.status(in: root)
 		#expect(after.staged.map(\.path) == [name])
+		#expect(after.staged.first?.isDirectory == false)
+	}
+
+	/// A folder git answered as a whole has no diff, so the pane is given the
+	/// list of what staging it would add instead of an empty one.
+	@Test func aWholeUntrackedFolderIsShownAsWhatIsInIt() async throws {
+		let root = try await makeRepository(contents: "x\n")
+		try FileManager.default.createDirectory(
+			at: root.appendingPathComponent("fresh/deeper"),
+			withIntermediateDirectories: true
+		)
+		for name in ["fresh/one.txt", "fresh/deeper/two.txt"] {
+			try "hello\n".write(
+				to: root.appendingPathComponent(name), atomically: true, encoding: .utf8
+			)
+		}
+
+		let listing = await GitWorkingCopy.diff(
+			for: "fresh", staged: false, in: root, isDirectory: true
+		)
+		#expect(listing.contains("a new folder, 2 files"))
+		#expect(listing.contains("+ fresh/one.txt"))
+		#expect(listing.contains("+ fresh/deeper/two.txt"))
 	}
 }
 

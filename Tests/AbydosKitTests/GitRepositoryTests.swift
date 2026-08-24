@@ -15,7 +15,7 @@ struct GitRepositoryRootTests {
 		_ = GitRepository.runSync(["init", "-q", "."], in: root)
 
 		let repository = await GitRepository.discover(from: root)
-		let discovered = await repository?.root
+		let discovered = repository?.root
 		#expect(discovered?.path == root.standardizedFileURL.path)
 	}
 }
