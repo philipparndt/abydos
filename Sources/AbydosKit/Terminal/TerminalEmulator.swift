@@ -604,13 +604,45 @@ public final class TerminalEmulator {
 		}
 
 		let value = scalar.value
+
+		// Zero-width before anything else. A variation selector is how a scalar
+		// is *asked* for emoji presentation, so the emoji test below would claim
+		// it as two columns of its own.
 		switch value {
 		case 0x0300...0x036F, 0x200B...0x200F, 0xFE00...0xFE0F: return 0
+		default: break
+		}
+
+		// **Asked of Unicode rather than listed by hand.** A scalar whose default
+		// presentation is emoji is East Asian Wide, and that is the whole rule —
+		// so this one line is every emoji block, including the ones added after
+		// it was written.
+		//
+		// The list it replaces was `0x1F300...0x1F64F` and `0x1F900...0x1F9FF`,
+		// which is a real but arbitrary slice of the emoji planes. Everything
+		// outside it was measured as one column while the font drew two, and the
+		// two failures compound: the glyph is clipped to half its width, *and*
+		// every cell after it on the line sits one column to the left of where
+		// the program put it. What was missing included ✅ U+2705, ❌ U+274C,
+		// 🟩 U+1F7E9, ✨ U+2728, ⌚ U+231A, the zodiac, all of Transport and Map
+		// (🚀 U+1F680 onwards) and all of the coloured squares and circles.
+		//
+		// A build log full of ✅ was the report, and it is the ordinary case:
+		// these are what a script prints to say a step passed.
+		//
+		// Deliberately *not* extended to a base scalar plus U+FE0F. U+2714 is
+		// Neutral and one column wide on its own; whether `2714 FE0F` becomes two
+		// is a question about presentation rather than about East Asian Width,
+		// and libghostty-vt answers one there too, so agreeing with it costs
+		// nothing and keeps the two engines comparable.
+		if scalar.properties.isEmojiPresentation { return 2 }
+
+		switch value {
 		case 0x1100...0x115F, 0x2E80...0x303E, 0x3041...0x33FF,
 		     0x3400...0x4DBF, 0x4E00...0x9FFF, 0xA000...0xA4CF,
-		     0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE30...0xFE6F,
+		     0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE10...0xFE19, 0xFE30...0xFE6F,
 		     0xFF00...0xFF60, 0xFFE0...0xFFE6,
-		     0x1F300...0x1F64F, 0x1F900...0x1F9FF, 0x20000...0x3FFFD:
+		     0x1F200...0x1F2FF, 0x20000...0x3FFFD:
 			return 2
 		default:
 			return 1
