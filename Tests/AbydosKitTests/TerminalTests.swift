@@ -530,7 +530,7 @@ struct PseudoTerminalTests {
 	/// service.
 	private func makePTY() -> PseudoTerminal {
 		let pty = PseudoTerminal()
-		pty.callbackQueue = DispatchQueue(label: "ideai.tests.pty.callbacks")
+		pty.callbackQueue = DispatchQueue(label: "abydos.tests.pty.callbacks")
 		return pty
 	}
 

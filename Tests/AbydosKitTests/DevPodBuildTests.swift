@@ -112,7 +112,7 @@ struct DevPodBuildStrategyTests {
 		defer { try? FileManager.default.removeItem(at: root) }
 
 		var configuration = configuration("${workspaceFolder}/build/thing", type: "go")
-		configuration.extras["ideai.make"] = .object([
+		configuration.extras["abydos.make"] = .object([
 			"targets": .array([.string("linux")]),
 			"directory": .string("${workspaceFolder}"),
 		])
@@ -268,7 +268,7 @@ struct DevPodImageTests {
 		defer { try? FileManager.default.removeItem(at: root) }
 
 		var configuration = configuration("${workspaceFolder}/build/thing", type: "custom")
-		configuration.extras["ideai.make"] = .object([
+		configuration.extras["abydos.make"] = .object([
 			"targets": .array([.string("linux")]),
 			"directory": .string("${workspaceFolder}"),
 		])
@@ -283,11 +283,11 @@ struct DevPodImageTests {
 		defer { try? FileManager.default.removeItem(at: root) }
 
 		var go = configuration("${workspaceFolder}/build/thing", type: "go")
-		go.extras["ideai.make"] = .object(["targets": .array([.string("linux")])])
+		go.extras["abydos.make"] = .object(["targets": .array([.string("linux")])])
 		#expect(DevPodImage.resolved("", for: go, root: root) == "pharndt/ideai-devpod:dev-go")
 
 		var native = configuration("${workspaceFolder}/build/thing", type: "lldb")
-		native.extras["ideai.make"] = .object(["targets": .array([.string("linux")])])
+		native.extras["abydos.make"] = .object(["targets": .array([.string("linux")])])
 		#expect(DevPodImage.resolved("", for: native, root: root) == "pharndt/ideai-devpod:dev-native")
 	}
 

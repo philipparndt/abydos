@@ -40,7 +40,7 @@ public final class TextDocument {
 
 	/// Owned by `engineQueue`; never touched from the main thread.
 	private var engine: SyntaxEngine?
-	private let engineQueue = DispatchQueue(label: "ideai.syntax", qos: .userInteractive)
+	private let engineQueue = DispatchQueue(label: "abydos.syntax", qos: .userInteractive)
 
 	/// Bumped on every edit. A background result carrying an older generation
 	/// describes text that no longer exists and is dropped.

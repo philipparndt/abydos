@@ -273,7 +273,7 @@ public enum ContextPattern {
 /// Finding development pods.
 public enum DevPods {
 	/// The label the chart puts on every pod it makes.
-	public static let label = "ideai.dev/devpod=true"
+	public static let label = "abydos.dev/devpod=true"
 
 	public static func list(
 		context: String?,
@@ -1294,15 +1294,15 @@ public extension LaunchConfiguration {
 	/// Where this runs, when it does not run here.
 	var devPod: DevPodSettings? {
 		get {
-			guard let value = extras["ideai.devPod"] else { return nil }
+			guard let value = extra("devPod") else { return nil }
 			return DevPodSettings(json: value)
 		}
 		set {
 			guard let newValue else {
-				extras.removeValue(forKey: "ideai.devPod")
+				setExtra("devPod", nil)
 				return
 			}
-			extras["ideai.devPod"] = newValue.json
+			setExtra("devPod", newValue.json)
 		}
 	}
 
@@ -1390,15 +1390,15 @@ public extension LaunchConfiguration {
 	/// The project's own chart, when this configuration runs inside one.
 	var helm: HelmSettings? {
 		get {
-			guard let value = extras["ideai.helm"] else { return nil }
+			guard let value = extra("helm") else { return nil }
 			return HelmSettings(json: value)
 		}
 		set {
 			guard let newValue else {
-				extras.removeValue(forKey: "ideai.helm")
+				setExtra("helm", nil)
 				return
 			}
-			extras["ideai.helm"] = newValue.json
+			setExtra("helm", newValue.json)
 		}
 	}
 

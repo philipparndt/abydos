@@ -3,7 +3,7 @@ import AbydosKit
 
 extension Notification.Name {
 	/// A scratch was made, renamed, moved or thrown away.
-	static let ideaiScratchesChanged = Notification.Name("ideai.scratchesChanged")
+	static let ideaiScratchesChanged = Notification.Name("abydos.scratchesChanged")
 }
 
 /// Every scratch on the machine, searchable by what is written in it.

@@ -45,6 +45,33 @@ public struct LaunchConfiguration: Equatable, Sendable, Identifiable {
 		self.extras = extras
 	}
 
+	/// The prefix this app puts on the extras it owns.
+	///
+	/// `launch.json` is somebody else's format, so anything of ours in it is
+	/// namespaced — a key without a dot is a key some other tool may mean
+	/// something by.
+	///
+	/// It said `ideai.` until the app was renamed, and **nothing reads that any
+	/// more**: a configuration written by an older version loses its build step
+	/// and its environment commands, and has to be written again. Chosen while
+	/// there were few enough of those files to say so, rather than carrying a
+	/// second spelling in the format for as long as the format exists.
+	static let extraPrefix = "abydos."
+
+	/// One of the extras this app owns.
+	func extra(_ name: String) -> JSONValue? {
+		extras[Self.extraPrefix + name]
+	}
+
+	/// Sets one of the extras this app owns.
+	mutating func setExtra(_ name: String, _ value: JSONValue?) {
+		guard let value else {
+			extras.removeValue(forKey: Self.extraPrefix + name)
+			return
+		}
+		extras[Self.extraPrefix + name] = value
+	}
+
 	/// Keys this type owns. Anything else is an extra.
 	static let knownKeys: Set<String> = [
 		"name", "type", "request", "program", "args", "cwd", "env",

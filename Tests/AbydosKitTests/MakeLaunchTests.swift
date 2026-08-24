@@ -109,13 +109,13 @@ struct MakeLaunchTests {
 		#expect(configuration.program == "${workspaceFolder}/app")
 		#expect(configuration.workingDirectory == "${workspaceFolder}/app")
 
-		let make = try #require(configuration.extras["ideai.make"])
+		let make = try #require(configuration.extras["abydos.make"])
 		guard case let .object(fields) = make, case let .array(targets) = fields["targets"] else {
 			Issue.record("no make targets")
 			return
 		}
 		#expect(targets == [.string("build-frontend")])
-		#expect(configuration.extras["ideai.envCommands"] != nil)
+		#expect(configuration.extras["abydos.envCommands"] != nil)
 	}
 
 	/// Whatever we add has to survive a round trip through the file, since
@@ -133,7 +133,7 @@ struct MakeLaunchTests {
 
 		let read = try #require(LaunchFile.read(in: root).first)
 		#expect(read == configuration)
-		#expect(read.extras["ideai.make"] != nil)
+		#expect(read.extras["abydos.make"] != nil)
 	}
 }
 
@@ -142,7 +142,7 @@ struct LaunchExtrasTests {
 	@Test func readsTheMakeStepBack() {
 		let configuration = LaunchConfiguration(
 			name: "make dev",
-			extras: ["ideai.make": .object([
+			extras: ["abydos.make": .object([
 				"targets": .array([.string("build-frontend"), .string("assets")]),
 				"directory": .string("${workspaceFolder}/app"),
 			])]
@@ -157,14 +157,14 @@ struct LaunchExtrasTests {
 		#expect(LaunchConfiguration(name: "plain").makeStep == nil)
 		#expect(LaunchConfiguration(name: "plain").environmentCommands.isEmpty)
 		// A malformed entry is the same as none, rather than a crash.
-		#expect(LaunchConfiguration(name: "x", extras: ["ideai.make": .string("nonsense")])
+		#expect(LaunchConfiguration(name: "x", extras: ["abydos.make": .string("nonsense")])
 			.makeStep == nil)
 	}
 
 	@Test func readsEnvironmentCommands() {
 		let configuration = LaunchConfiguration(
 			name: "x",
-			extras: ["ideai.envCommands": .object(["TOKEN": .string("$(echo secret)")])]
+			extras: ["abydos.envCommands": .object(["TOKEN": .string("$(echo secret)")])]
 		)
 		#expect(configuration.environmentCommands == ["TOKEN": "$(echo secret)"])
 	}

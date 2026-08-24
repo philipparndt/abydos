@@ -23,7 +23,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		let info = Bundle.main.infoDictionary
 		let version = info?["CFBundleShortVersionString"] as? String ?? "?"
 		let build = info?["CFBundleVersion"] as? String ?? "?"
-		let commit = info?["IdeaiCommit"] as? String ?? "unknown"
+		let commit = info?["AbydosCommit"] as? String ?? "unknown"
 		return "Abydos \(version) (build \(build), \(commit))"
 	}
 

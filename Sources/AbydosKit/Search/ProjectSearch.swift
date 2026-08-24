@@ -49,7 +49,7 @@ public struct SearchOutcome: Equatable, Sendable {
 /// abandon the previous one rather than queue behind it.
 public final class ProjectSearch {
 	private let root: URL
-	private let queue = DispatchQueue(label: "ideai.search", qos: .userInitiated, attributes: .concurrent)
+	private let queue = DispatchQueue(label: "abydos.search", qos: .userInitiated, attributes: .concurrent)
 	private var generation = 0
 	private let lock = NSLock()
 

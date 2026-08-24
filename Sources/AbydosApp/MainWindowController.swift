@@ -401,6 +401,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// The same shape as the `setSidebarSelection` call beside it, which is the
 	/// point: both groups of the rail now answer one question in one way.
+
+	// MARK: - Remembered layout
+
+	/// What AppKit files this window's frame and dividers under.
+	///
+	/// Renamed with the app, and **carried across rather than simply renamed**:
+	/// these are the only `ideai` names that held something a person would miss.
+	/// A rename on its own puts the window back at its default size and both
+	/// dividers back to the middle, once, for everybody — which is a small loss
+	/// but an avoidable one, and nobody would connect it to a rename.
+	static let mainWindowLayoutName = "AbydosMainWindow"
+	static let splitLayoutName = "AbydosSplit"
+	static let panelSplitLayoutName = "AbydosPanelSplit"
+
+	/// Copies what the old names saved onto the new ones, once.
+	///
+	/// The defaults keys are AppKit's own spelling — `NSWindow Frame <name>` and
+	/// `NSSplitView Subview Frames <name>` — which is why they are written out
+	/// here rather than derived: they are somebody else's format and worth being
+	/// able to read.
+	///
+	/// Only when the new key is absent, so this cannot undo a later change; and
+	/// the old keys are left where they are, because a copy nobody reads costs a
+	/// few bytes and deleting somebody's data to save them is the wrong trade.
+	static func carryRememberedLayoutAcross() {
+		let defaults = UserDefaults.standard
+		let moves = [
+			("NSWindow Frame IdeaiMainWindow", "NSWindow Frame \(mainWindowLayoutName)"),
+			("NSSplitView Subview Frames IdeaiSplit", "NSSplitView Subview Frames \(splitLayoutName)"),
+			("NSSplitView Subview Frames IdeaiPanelSplit",
+			 "NSSplitView Subview Frames \(panelSplitLayoutName)"),
+		]
+		for (old, new) in moves where defaults.object(forKey: new) == nil {
+			guard let saved = defaults.object(forKey: old) else { continue }
+			defaults.set(saved, forKey: new)
+		}
+	}
+
 	private func updateRailForPanel() {
 		toolStrip.setPanelSelection(bottomPanel.frontPaneKinds)
 	}
@@ -496,14 +534,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// A driven run reads the remembered frame and does not register to save
 		// one. AppKit's autosave is a write to `UserDefaults.standard` that no
 		// injected store can intercept — it happens inside the framework, under
-		// `NSWindow Frame IdeaiMainWindow` — so the only way a driven run leaves
+		// `NSWindow Frame AbydosMainWindow` — so the only way a driven run leaves
 		// somebody's window where they left it is not to take the name. 0522
 		// caught this by driving a run and diffing `defaults` either side of it:
 		// nothing this program writes had moved, and the split frames had.
 		if DrivenRun.isActive {
-			window.setFrameUsingName("IdeaiMainWindow")
+			Self.carryRememberedLayoutAcross()
+		window.setFrameUsingName(Self.mainWindowLayoutName)
 		} else {
-			window.setFrameAutosaveName("IdeaiMainWindow")
+			window.setFrameAutosaveName(Self.mainWindowLayoutName)
 		}
 
 		// A second window must not sit exactly on top of the first, so AppKit
@@ -684,7 +723,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// autosaved split writes `UserDefaults.standard` from inside AppKit. A
 		// capture that wants a particular sidebar says so with `--sidebar-width`,
 		// which is what `Scripts/screenshots.sh` has always done and why.
-		splitView.autosaveName = DrivenRun.isActive ? "" : "IdeaiSplit"
+		splitView.autosaveName = DrivenRun.isActive ? "" : Self.splitLayoutName
 		// The tree keeps the width it was given; the editor takes the rest.
 		// Without this the split view re-divides whenever what is in the editor
 		// changes shape — and opening a page of controls made the tree jump
@@ -718,7 +757,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		verticalSplitView.dividerStyle = .thin
 		verticalSplitView.addArrangedSubview(splitView)
 		verticalSplitView.addArrangedSubview(bottomPanel)
-		verticalSplitView.autosaveName = DrivenRun.isActive ? "" : "IdeaiPanelSplit"
+		verticalSplitView.autosaveName = DrivenRun.isActive ? "" : Self.panelSplitLayoutName
 		// For `splitViewDidResizeSubviews`, which rounds the panel down to
 		// whole terminal rows.
 		verticalSplitView.delegate = self
@@ -1057,7 +1096,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	private func buildToolbar() {
-		let toolbar = NSToolbar(identifier: "IdeaiToolbar")
+		let toolbar = NSToolbar(identifier: "AbydosToolbar")
 		toolbar.delegate = self
 		toolbar.displayMode = .iconOnly
 		toolbar.allowsUserCustomization = false
@@ -12190,11 +12229,11 @@ extension MainWindowController: NSToolbarDelegate {
 	// These identifiers keep their old spelling for the same reason the window
 	// autosave names do: AppKit stores a toolbar's arrangement under them, and
 	// renaming would rebuild everybody's toolbar from the default.
-	private static let capsuleItem = NSToolbarItem.Identifier("ideai.capsule")
-	private static let subprojectItem = NSToolbarItem.Identifier("ideai.subproject")
-	private static let worktreeItem = NSToolbarItem.Identifier("ideai.worktree")
-	private static let devContainerItem = NSToolbarItem.Identifier("ideai.devcontainer")
-	private static let runItem = NSToolbarItem.Identifier("ideai.run")
+	private static let capsuleItem = NSToolbarItem.Identifier("abydos.capsule")
+	private static let subprojectItem = NSToolbarItem.Identifier("abydos.subproject")
+	private static let worktreeItem = NSToolbarItem.Identifier("abydos.worktree")
+	private static let devContainerItem = NSToolbarItem.Identifier("abydos.devcontainer")
+	private static let runItem = NSToolbarItem.Identifier("abydos.run")
 
 	/// Next to the traffic lights, where a window says what it is.
 	///

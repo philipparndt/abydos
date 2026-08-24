@@ -127,8 +127,8 @@ public final class PseudoTerminal {
 	/// Guards the read source and whether it is suspended, so that suspending,
 	/// resuming and cancelling it cannot happen at once from three threads.
 	private let sourceLock = NSLock()
-	private let writeQueue = DispatchQueue(label: "ideai.pty.write")
-	private let readQueue = DispatchQueue(label: "ideai.pty.read", qos: .userInitiated)
+	private let writeQueue = DispatchQueue(label: "abydos.pty.write")
+	private let readQueue = DispatchQueue(label: "abydos.pty.read", qos: .userInitiated)
 	/// Whether reading is paused because the reader has a backlog.
 	///
 	/// Suspending the source leaves the bytes in the pty's own buffer, and once

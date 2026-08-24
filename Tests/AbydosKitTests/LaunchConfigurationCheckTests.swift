@@ -78,14 +78,14 @@ struct LaunchConfigurationCheckTests {
 		defer { try? FileManager.default.removeItem(at: root) }
 
 		var configuration = LaunchConfiguration(name: "cluster", program: "${workspaceFolder}/app")
-		configuration.extras["ideai.devPod"] = .object([
+		configuration.extras["abydos.devPod"] = .object([
 			"files": .array([.string("production/config/missing.json")]),
 		])
 		let problems = LaunchConfigurationCheck.problems(for: configuration, root: root)
 		#expect(problems.contains { $0.field == "files" })
 
 		// Relative to the project, which is how this app writes them.
-		configuration.extras["ideai.devPod"] = .object([
+		configuration.extras["abydos.devPod"] = .object([
 			"files": .array([.string("production/config/config.json")]),
 		])
 		#expect(LaunchConfigurationCheck.problems(for: configuration, root: root).isEmpty)

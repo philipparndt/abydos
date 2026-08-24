@@ -9,7 +9,7 @@ struct MCPServerTests {
 	private func makeServer() throws -> MCPServer {
 		let server = MCPServer(token: "test-token")
 		// Tool handlers would otherwise wait on a main queue no test services.
-		server.callbackQueue = DispatchQueue(label: "ideai.tests.mcp")
+		server.callbackQueue = DispatchQueue(label: "abydos.tests.mcp")
 		try server.start()
 		return server
 	}

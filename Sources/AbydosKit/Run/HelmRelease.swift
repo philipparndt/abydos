@@ -225,7 +225,7 @@ public enum DevContainerPatch {
 		[
 			"spec": [
 				"template": [
-					"metadata": ["labels": ["ideai.dev/devpod": "true"]],
+					"metadata": ["labels": ["abydos.dev/devpod": "true"]],
 					"spec": [
 						"containers": [[
 							"name": container,

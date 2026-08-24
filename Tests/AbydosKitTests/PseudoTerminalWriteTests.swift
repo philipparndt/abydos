@@ -108,7 +108,7 @@ struct PseudoTerminalWriteTests {
 	/// third of a second of unshown output stayed invisible.
 	@Test func outputSaysWhenItWasReadRatherThanWhenItWasHandled() async throws {
 		let terminal = PseudoTerminal()
-		let queue = DispatchQueue(label: "ideai.tests.pty.blocked")
+		let queue = DispatchQueue(label: "abydos.tests.pty.blocked")
 		terminal.callbackQueue = queue
 		let ages = Ages()
 		terminal.onOutput = { _, readAt in ages.note(-readAt.timeIntervalSinceNow) }
@@ -135,7 +135,7 @@ struct PseudoTerminalWriteTests {
 	/// what log output cost before this.
 	@Test func readsAreMergedWhileAHandOverIsWaiting() async throws {
 		let terminal = PseudoTerminal()
-		let queue = DispatchQueue(label: "ideai.tests.pty.merging")
+		let queue = DispatchQueue(label: "abydos.tests.pty.merging")
 		terminal.callbackQueue = queue
 		let received = Received()
 		let handOvers = Ages()

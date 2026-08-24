@@ -392,6 +392,7 @@ struct ScriptLaunchCheckTests {
 		#expect(!found.contains { $0.message.contains("script") })
 	}
 
+
 	// MARK: - Not asking for two debug agents
 
 	/// A JVM refuses to start with two JDWP agents on it: `Cannot load this JVM

@@ -172,7 +172,7 @@ public enum MakeLaunch {
 
 			var extras: [String: JSONValue] = [:]
 			if !build.isEmpty {
-				extras["ideai.make"] = .object([
+				extras[LaunchConfiguration.extraPrefix + "make"] = .object([
 					"targets": .array(build.map(JSONValue.string)),
 					"directory": .string(directory),
 				])
@@ -212,13 +212,14 @@ public enum MakeLaunch {
 		if !plan.buildTargets.isEmpty {
 			// Our own key, carried through launch.json untouched by anything
 			// else that reads the file.
-			extras["ideai.make"] = .object([
+			extras[LaunchConfiguration.extraPrefix + "make"] = .object([
 				"targets": .array(plan.buildTargets.map(JSONValue.string)),
 				"directory": .string(directory),
 			])
 		}
 		if !plan.environmentCommands.isEmpty {
-			extras["ideai.envCommands"] = .object(plan.environmentCommands.mapValues(JSONValue.string))
+			extras[LaunchConfiguration.extraPrefix + "envCommands"] =
+				.object(plan.environmentCommands.mapValues(JSONValue.string))
 		}
 
 		return LaunchConfiguration(
@@ -451,7 +452,7 @@ public extension LaunchConfiguration {
 
 	/// The build to run before this starts, if there is one.
 	var makeStep: MakeStep? {
-		guard case let .object(fields)? = extras["ideai.make"],
+		guard case let .object(fields)? = extra("make"),
 		      case let .array(targets)? = fields["targets"]
 		else { return nil }
 
@@ -469,7 +470,7 @@ public extension LaunchConfiguration {
 	/// Environment whose values have to be produced by a shell — a password
 	/// out of sops, a token out of a keychain — rather than written down.
 	var environmentCommands: [String: String] {
-		guard case let .object(fields)? = extras["ideai.envCommands"] else { return [:] }
+		guard case let .object(fields)? = extra("envCommands") else { return [:] }
 		return fields.compactMapValues { value in
 			guard case let .string(command) = value else { return nil }
 			return command

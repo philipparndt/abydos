@@ -192,7 +192,7 @@ public enum StallWatch {
 				))
 			}
 		}
-		thread.name = "ideai.stallwatch"
+		thread.name = "abydos.stallwatch"
 		// Below everything it is measuring: a watchdog that competes for the
 		// CPU reports its own waiting as somebody else's stall.
 		thread.qualityOfService = .utility

@@ -129,8 +129,8 @@ struct DevContainerPatchTests {
 		let template = spec?["template"] as? [String: Any]
 		let metadata = template?["metadata"] as? [String: Any]
 		let labels = metadata?["labels"] as? [String: String]
-		#expect(labels?["ideai.dev/devpod"] == "true")
-		#expect(DevPods.label == "ideai.dev/devpod=true")
+		#expect(labels?["abydos.dev/devpod"] == "true")
+		#expect(DevPods.label == "abydos.dev/devpod=true")
 	}
 
 	@Test func theSupervisorIsToldWhereEverythingIs() {

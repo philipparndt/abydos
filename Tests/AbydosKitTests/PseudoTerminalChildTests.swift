@@ -31,7 +31,7 @@ struct PseudoTerminalChildTests {
 	/// 128 + SIGTERM, the way a shell reports it.
 	@Test func aSignalReachesTheChildEvenWhenThisThreadBlocksIt() async throws {
 		let terminal = PseudoTerminal()
-		terminal.callbackQueue = DispatchQueue(label: "ideai.tests.pty.signals")
+		terminal.callbackQueue = DispatchQueue(label: "abydos.tests.pty.signals")
 		let exit = Exited()
 		terminal.onExit = { exit.note($0) }
 
@@ -77,7 +77,7 @@ struct PseudoTerminalChildTests {
 	/// known and the end that pins the pty.
 	@Test func theTerminalsDescriptorsAreNotInheritedByTheNextProgramStarted() throws {
 		let terminal = PseudoTerminal()
-		terminal.callbackQueue = DispatchQueue(label: "ideai.tests.pty.inheritance")
+		terminal.callbackQueue = DispatchQueue(label: "abydos.tests.pty.inheritance")
 		try #require(terminal.start(
 			executable: "/bin/cat", arguments: [], rows: 24, columns: 80
 		))

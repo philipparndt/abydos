@@ -48,7 +48,7 @@ public final class MCPServer {
 
 	private var tools: [String: Tool] = [:]
 	private var listener: NWListener?
-	private let queue = DispatchQueue(label: "ideai.mcp", qos: .userInitiated)
+	private let queue = DispatchQueue(label: "abydos.mcp", qos: .userInitiated)
 	private var connections: [ObjectIdentifier: NWConnection] = [:]
 
 	private static let protocolVersion = "2025-06-18"

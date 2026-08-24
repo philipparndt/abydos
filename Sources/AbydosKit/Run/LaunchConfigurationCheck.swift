@@ -168,7 +168,7 @@ public enum LaunchConfigurationCheck {
 	}
 
 	static func devPodFiles(in configuration: LaunchConfiguration) -> [String] {
-		guard case let .object(pod)? = configuration.extras["ideai.devPod"],
+		guard case let .object(pod)? = configuration.extra("devPod"),
 		      case let .array(files)? = pod["files"]
 		else { return [] }
 		return files.compactMap { if case let .string(value) = $0 { return value } else { return nil } }

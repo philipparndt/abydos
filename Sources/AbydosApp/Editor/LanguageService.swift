@@ -3,15 +3,15 @@ import AbydosKit
 
 extension Notification.Name {
 	/// Diagnostics arrived for a file. The object is its URL.
-	static let ideaiDiagnosticsChanged = Notification.Name("ideai.diagnosticsChanged")
+	static let ideaiDiagnosticsChanged = Notification.Name("abydos.diagnosticsChanged")
 	/// A language server started, stopped, or failed to be found.
-	static let ideaiLanguageServersChanged = Notification.Name("ideai.languageServersChanged")
+	static let ideaiLanguageServersChanged = Notification.Name("abydos.languageServersChanged")
 	/// A project's servers moved between this machine and its devcontainer, so
 	/// every file open in it has to be opened again at whichever answers for it
 	/// now. The object is the project root. Distinct from the one above, which
 	/// says a server's state changed and is answered by re-reading the strip:
 	/// this one is answered by re-sending the documents.
-	static let ideaiLanguageServersMoved = Notification.Name("ideai.languageServersMoved")
+	static let ideaiLanguageServersMoved = Notification.Name("abydos.languageServersMoved")
 }
 
 /// The language servers a project is using.

@@ -39,7 +39,7 @@ public struct FileSystemChange {
 public final class FileSystemWatcher {
 	private var stream: FSEventStreamRef?
 	private let root: URL
-	private let queue = DispatchQueue(label: "ideai.fswatch")
+	private let queue = DispatchQueue(label: "abydos.fswatch")
 	private let onChange: (FileSystemChange) -> Void
 
 	/// Events are coalesced over this window so a burst of writes produces one

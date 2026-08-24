@@ -1558,7 +1558,7 @@ final class EditorViewController: NSViewController {
 	/// builds in the order they were asked for, and each hands back to the main
 	/// queue as it finishes, so the order survives both hops.
 	private static let languageTextQueue = DispatchQueue(
-		label: "ideai.languagetext", qos: .userInitiated
+		label: "abydos.languagetext", qos: .userInitiated
 	)
 
 	/// Builds a document's whole text away from the main queue and sends it from
