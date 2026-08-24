@@ -14,7 +14,7 @@ ARCH        ?= arm64
 # The tag is not derived from the variant: the editor asks for `:dev-jvm`, so
 # a JVM image built to be imported locally needs VERSION=dev-jvm as well.
 VARIANT     ?= full
-DELVE       ?= v1.26.2
+DELVE       ?= v1.27.1
 TAG         ?= $(REPOSITORY):$(VERSION)
 OUT         := out
 ROOTFS      := $(OUT)/rootfs_$(ARCH)_$(VARIANT)
