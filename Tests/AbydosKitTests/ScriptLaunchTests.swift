@@ -444,7 +444,7 @@ struct ScriptLaunchCheckTests {
 			environment: ["MAVEN_OPTS": "-Xrunjdwp:address=8000"],
 			arguments: []
 		)
-		#expect(plan.note.contains("-Xrunjdwp:address=8000"))
+		#expect(plan.note.contains("MAVEN_OPTS=-Xrunjdwp:address=8000"))
 		#expect(plan.note.contains("will not start with two"))
 	}
 
@@ -452,6 +452,60 @@ struct ScriptLaunchCheckTests {
 	@Test func anUntouchedNoteSaysNothingAboutDisplacement() {
 		let plan = ScriptLaunch.plan(kind: .maven, port: 41234, environment: [:], arguments: [])
 		#expect(!plan.note.contains("taken out"))
+	}
+
+
+	/// **The variable is not the unit of the problem; the JVM is.** A launcher
+	/// script that puts an agent in `MAVEN_OPTS` and this app putting one in
+	/// `JAVA_TOOL_OPTIONS` are writing to different variables and the same JVM,
+	/// which then refuses to start. Cleaning only the variable being written to
+	/// left exactly that collision in place.
+	@Test func anAgentInAnyVariableIsDisplaced() {
+		let plan = ScriptLaunch.plan(
+			kind: .script,
+			port: 4242,
+			environment: [
+				"MAVEN_OPTS": "-Xrunjdwp:transport=dt_socket,address=8000 -Xmx8G",
+				"JAVA_TOOL_OPTIONS": "-Djavax.net.ssl.trustStore=/somewhere/cacerts",
+			],
+			arguments: []
+		)
+
+		// The other variable's agent is gone, and what sat beside it is not.
+		#expect(plan.environment["MAVEN_OPTS"] == "-Xmx8G")
+		// Ours is the only one left, in the variable this kind uses.
+		let tool = plan.environment["JAVA_TOOL_OPTIONS"] ?? ""
+		#expect(tool.components(separatedBy: "-agentlib:jdwp").count - 1 == 1)
+		#expect(tool.contains("address=127.0.0.1:4242"))
+		#expect(tool.contains("trustStore=/somewhere/cacerts"))
+		// And the note names where it came from, since the variable is not on
+		// the command line the run pane shows.
+		#expect(plan.note.contains("MAVEN_OPTS=-Xrunjdwp"))
+	}
+
+	/// Gradle asks through the task rather than the environment, so it used to
+	/// sweep nothing — but the JVM it forks inherits these variables, and an
+	/// agent there collides with the one `--debug-jvm` installs.
+	@Test func gradleAlsoSweepsTheEnvironmentItDoesNotWriteTo() {
+		let plan = ScriptLaunch.plan(
+			kind: .gradle,
+			port: 0,
+			environment: ["JAVA_TOOL_OPTIONS": "-agentlib:jdwp=address=9999 -Dfoo=bar"],
+			arguments: ["run"]
+		)
+
+		#expect(plan.arguments == ["run", "--debug-jvm"])
+		#expect(plan.environment["JAVA_TOOL_OPTIONS"] == "-Dfoo=bar")
+		#expect(plan.note.contains("JAVA_TOOL_OPTIONS=-agentlib:jdwp=address=9999"))
+	}
+
+	/// A variable that never had an agent is left absent rather than written
+	/// empty: the command line is already long enough.
+	@Test func untouchedVariablesAreNotAdded() {
+		let plan = ScriptLaunch.plan(kind: .maven, port: 1, environment: [:], arguments: [])
+		#expect(plan.environment["GRADLE_OPTS"] == nil)
+		#expect(plan.environment["_JAVA_OPTIONS"] == nil)
+		#expect(plan.environment["JDK_JAVA_OPTIONS"] == nil)
 	}
 
 	// MARK: - Where the waiting happens

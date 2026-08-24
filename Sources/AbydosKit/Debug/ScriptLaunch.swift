@@ -146,20 +146,25 @@ public enum ScriptLaunch {
 				environment: asked.environment,
 				arguments: arguments,
 				note: "Maven will run with JDWP on 127.0.0.1:\(port), waiting for the debugger."
-					+ displacementNote(asked.displaced, variable: "MAVEN_OPTS")
+					+ displacementNote(asked.displaced)
 			)
 
 		case .gradle:
-			// The port is Gradle's, not ours.
+			// The port is Gradle's, not ours, and it is asked for through the
+			// task rather than the environment — but an agent already in the
+			// environment would still reach the JVM Gradle forks and collide with
+			// the one `--debug-jvm` puts there, so the sweep happens anyway.
+			let cleaned = withoutDebugAgents(environment)
 			return Plan(
 				port: gradleDebugPort,
-				environment: environment,
+				environment: cleaned.environment,
 				// Appended rather than prepended: it belongs to the task named in
 				// the arguments, and Gradle reads it as an option of whatever task
 				// came before it.
 				arguments: arguments + ["--debug-jvm"],
 				note: "Gradle will fork the JVM with --debug-jvm on 127.0.0.1:"
 					+ "\(gradleDebugPort), waiting for the debugger."
+					+ displacementNote(cleaned.displaced)
 			)
 
 		case .script:
@@ -170,7 +175,7 @@ public enum ScriptLaunch {
 				arguments: arguments,
 				note: "The first JVM this script starts will open JDWP on 127.0.0.1:\(port), "
 					+ "waiting for the debugger."
-					+ displacementNote(asked.displaced, variable: "JAVA_TOOL_OPTIONS")
+					+ displacementNote(asked.displaced)
 			)
 		}
 	}
@@ -185,61 +190,86 @@ public enum ScriptLaunch {
 		option.hasPrefix("-agentlib:jdwp") || option.hasPrefix("-Xrunjdwp")
 	}
 
-	/// Adds our debug option, taking out any the variable already carried.
+	/// Every variable whose contents reach a JVM this app is about to start.
+	///
+	/// All five are honoured by any JVM started under them, so an agent in any
+	/// one of them lands on the same JVM as the one we are adding — and two
+	/// agents is a JVM that will not start. `GRADLE_OPTS` is in the list because
+	/// the daemon passes it on, and the JDK's own two are here because a machine
+	/// that sets `_JAVA_OPTIONS` sets it for everything.
+	static let jvmOptionVariables = [
+		"MAVEN_OPTS", "GRADLE_OPTS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
+	]
+
+	/// The environment with every JDWP agent taken out of every variable that
+	/// reaches the JVM.
+	///
+	/// **Per-variable was not enough.** Cleaning only the variable being written
+	/// to leaves the collision it was meant to prevent: a launcher script that
+	/// puts an agent in `MAVEN_OPTS` and an editor that puts one in
+	/// `JAVA_TOOL_OPTIONS` are writing to different variables and the same JVM,
+	/// which then refuses to start with `Cannot load this JVM TI agent twice`.
+	/// The variable is not the unit of the problem; the JVM is.
+	///
+	/// A variable that carried nothing is left absent rather than written empty,
+	/// so the command line stays as short as it was.
+	static func withoutDebugAgents(
+		_ environment: [String: String]
+	) -> (environment: [String: String], displaced: [String]) {
+		var result = environment
+		var displaced: [String] = []
+
+		for variable in jvmOptionVariables {
+			// The process environment as well as the configuration's, because the
+			// pane's shell has both and only what we set here can override it.
+			let existing = (environment[variable] ?? ProcessInfo.processInfo.environment[variable])
+			guard let existing else { continue }
+
+			let words = existing.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+			let agents = words.filter(loadsDebugAgent)
+			guard !agents.isEmpty else { continue }
+
+			displaced += agents.map { "\(variable)=\($0)" }
+			result[variable] = words.filter { !loadsDebugAgent($0) }.joined(separator: " ")
+		}
+		return (result, displaced)
+	}
+
+	/// Adds our debug option, having first taken every other one out.
 	///
 	/// **A JVM will not start with two of them.** It refuses out of VM
 	/// initialisation — `Cannot load this JVM TI agent twice`, then
 	/// `agent library failed Agent_OnLoad: jdwp`, exit code 1 — before a line of
 	/// the program runs. Appending blindly is therefore not a neutral act: for
-	/// any configuration that sets its own JDWP option, it produced a JVM that
-	/// could not start, and the failure named neither the app nor the option it
-	/// had just added.
+	/// any configuration or machine that sets its own JDWP option, it produced a
+	/// JVM that could not start, and the failure named neither the app nor the
+	/// option it had just added.
 	///
 	/// Ours displaces theirs, rather than the other way round, because ours is
 	/// the port the adapter is about to connect to; theirs is a number this app
-	/// never learns. Everything else in the variable is kept — see `appending`,
-	/// whose reasoning applies unchanged to every option that is not this one.
+	/// never learns. Everything else in every variable is kept — see `appending`,
+	/// whose reasoning applies unchanged to every option that is not an agent.
 	static func adding(
 		_ option: String, to variable: String, in environment: [String: String]
 	) -> (environment: [String: String], displaced: [String]) {
-		let existing = (environment[variable] ?? ProcessInfo.processInfo.environment[variable] ?? "")
-			.split(separator: " ", omittingEmptySubsequences: true)
-			.map(String.init)
+		let cleaned = withoutDebugAgents(environment)
+		var result = cleaned.environment
 
-		let displaced = existing.filter(loadsDebugAgent)
-		let kept = existing.filter { !loadsDebugAgent($0) }
-
-		var result = environment
-		result[variable] = (kept + [option]).joined(separator: " ")
-		return (result, displaced)
+		let kept = (result[variable] ?? "").trimmingCharacters(in: .whitespaces)
+		result[variable] = kept.isEmpty ? option : kept + " " + option
+		return (result, cleaned.displaced)
 	}
 
-	/// The half-sentence that says an option was taken out, or nothing at all.
+	/// The half-sentence that says what was taken out, or nothing at all.
 	///
-	/// Printed with the plan because the displacement is otherwise invisible:
-	/// the variable is in the environment, not in the command line the run pane
+	/// Printed with the plan because the displacement is otherwise invisible: the
+	/// variables are in the environment, not in the command line the run pane
 	/// shows, and somebody who put a JDWP option there deliberately is owed the
 	/// news that it is not the one in effect.
-	static func displacementNote(_ displaced: [String], variable: String) -> String {
+	static func displacementNote(_ displaced: [String]) -> String {
 		guard !displaced.isEmpty else { return "" }
-		return " \(variable) already asked for a debug agent (\(displaced.joined(separator: " "))); "
+		return " A debug agent was already asked for (\(displaced.joined(separator: " "))); "
 			+ "it was taken out, because a JVM will not start with two."
 	}
 
-	/// Adds an option to a JVM option variable without throwing away what is
-	/// already in it.
-	///
-	/// Replacing it is not an option and this is not hypothetical: a machine here
-	/// carries `JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=…`, and a build that
-	/// lost it would fail to reach an internal repository — a failure with
-	/// nothing in it to connect back to the debugger.
-	static func appending(
-		_ option: String, to variable: String, in environment: [String: String]
-	) -> [String: String] {
-		var result = environment
-		let existing = (environment[variable] ?? ProcessInfo.processInfo.environment[variable] ?? "")
-			.trimmingCharacters(in: .whitespaces)
-		result[variable] = existing.isEmpty ? option : existing + " " + option
-		return result
-	}
 }
