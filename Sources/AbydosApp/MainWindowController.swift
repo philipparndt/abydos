@@ -2447,6 +2447,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let root = root.standardizedFileURL
 		guard root.path != project?.root.standardizedFileURL.path else { return }
 
+		// Named, so that a stall inside a switch says "project switch" rather
+		// than "idle". It used to say idle — a two-and-a-half-second stall with
+		// nothing to say for itself — which is the one thing the stall log
+		// exists not to do.
+		StallWatch.mark("project switch") {
+			switchProjectBody(to: root, followingTerminal: followingTerminal)
+		}
+	}
+
+	private func switchProjectBody(to root: URL, followingTerminal: Bool) {
 		leftScope()
 
 		if let current = project?.root {
@@ -7793,6 +7803,50 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// The main thread going away is what "usable" fails to be, so the worst
 		// of them are printed with the numbers rather than left in the log.
 		for stall in StallWatch.worst(limit: 8) { print("OPEN stall \(stall.line)") }
+	}
+
+	/// What switching to another project costs, in the one number that matters:
+	/// how long the main thread is gone.
+	///
+	/// The complaint is not that a large project takes a while to finish
+	/// arriving — it is that the window stops answering while it does, so
+	/// switching between projects "feels like it crashed" and the terminal
+	/// stops drawing with it. The wall time around `switchProject` *is* that
+	/// number: it runs on the main thread, so nothing else can happen inside it.
+	///
+	/// The stalls are printed beside it because the total says a switch was
+	/// slow and `StallWatch` says which part of it was, which is the difference
+	/// between a number and a lead.
+	func measureProjectSwitchForTesting(to root: URL) {
+		StallWatch.clear()
+		let before = Date()
+		switchProject(to: root)
+		let elapsed = Date().timeIntervalSince(before) * 1000
+
+		print(String(format: "SWITCH main thread held    %8.2f ms", elapsed))
+		// The load beside the number, which the house rules ask for: a timing
+		// without it cannot be told from a regression.
+		var average = [Double](repeating: 0, count: 3)
+		getloadavg(&average, 3)
+		print(String(format: "SWITCH load                %.2f %.2f %.2f",
+			average[0], average[1], average[2]))
+
+		// After the run loop has turned a few times: the work this is about
+		// finishing off the main thread is exactly the work that would not show
+		// up in a reading taken the instant the call returned.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+			for stall in StallWatch.worst(limit: 8) { print("SWITCH stall \(stall.line)") }
+			// What arrived after the switch returned. The point of moving the
+			// walks off the main thread is that these land *later*, so a reading
+			// that did not check them would be measuring the app forgetting to
+			// do the work rather than doing it elsewhere.
+			print("SWITCH deps \(self.navigator.dependencyReportForTesting().joined(separator: " | "))")
+			print("SWITCH settled")
+			// Flushed, because stdout to a pipe is block-buffered and a harness
+			// that kills the app when it has seen enough would otherwise lose
+			// every line written after the last flush — which is all of these.
+			fflush(stdout)
+		}
 	}
 
 	/// Asks the language server a real question, over and over, until it answers.

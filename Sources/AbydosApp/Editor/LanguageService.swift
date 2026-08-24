@@ -349,32 +349,54 @@ final class LanguageService {
 		// be installed. Asked as one question so the project is walked once
 		// rather than once per definition.
 		let choices = choices(for: project)
-		let suited = LanguageServers.suitedDefinitions(in: project, choosing: choices)
-		// 0437 cut this from one walk per definition to one walk; 0428 asks what
-		// the remaining walk costs at a thousand bundles, on the queue the
-		// keyboard shares. The mark sits after the walk and before the servers
-		// start, so what it times is the scan and not the first handshake.
-		LaunchClock.mark("language servers scanned")
-		for definition in suited {
-			guard let languageId = LanguageServers.chosenLanguage(for: definition, choosing: choices)
-			else { continue }
-			_ = server(for: languageId, project: project)
+
+		// **The scan is a directory walk, so it does not happen here.**
+		//
+		// 0437 cut this from one walk per definition to one walk; 0428 asked what
+		// the remaining walk costs "at a thousand bundles, on the queue the
+		// keyboard shares". The answer, measured on a work tree of thirteen
+		// thousand folders, is 1,190 ms — and `warmUp` is called from
+		// `load(project:)`, so that was 1,190 ms of a window that had stopped
+		// answering. Together with the dependency walk beside it, switching
+		// projects held the main thread for two and a half seconds.
+		//
+		// It walks the filesystem and reads nothing of ours, so it runs off the
+		// main actor and comes back to start the servers. Nothing waits for it:
+		// a server exists to answer questions about a file, and no file can be
+		// asked about before it is open.
+		Task.detached(priority: .userInitiated) {
+			let suited = LanguageServers.suitedDefinitions(in: project, choosing: choices)
+            await MainActor.run {
+				// The mark sits after the walk and before the servers start, so
+				// what it times is the scan and not the first handshake.
+				LaunchClock.mark("language servers scanned")
+				for definition in suited {
+					guard let languageId = LanguageServers.chosenLanguage(
+						for: definition, choosing: choices
+					) else { continue }
+					_ = LanguageService.shared.server(for: languageId, project: project)
+				}
+				LanguageService.shared.refuseUnknownServers(for: project, choosing: choices)
+			}
 		}
-		// A server the project asked for and this app has never heard of appears
-		// in no scan — there is no definition to have markers — so the only
-		// evidence of it would be a language quietly without diagnostics.
-		// Refused here, when the project opens, rather than whenever somebody
-		// happens to open a file of that language. Only the choices that cannot
-		// be honoured: asking about the rest would decide that a project has no
-		// Go manifest at a moment when it may not have been cloned yet, and
-		// `unavailable` is remembered for the session.
+		LaunchClock.mark("language servers started")
+	}
+
+	/// A server the project asked for and this app has never heard of appears
+	/// in no scan — there is no definition to have markers — so the only
+	/// evidence of it would be a language quietly without diagnostics.
+	/// Refused when the project opens, rather than whenever somebody happens to
+	/// open a file of that language. Only the choices that cannot be honoured:
+	/// asking about the rest would decide that a project has no Go manifest at a
+	/// moment when it may not have been cloned yet, and `unavailable` is
+	/// remembered for the session.
+	private func refuseUnknownServers(for project: URL, choosing choices: LanguageServerChoices) {
 		for languageId in choices.byLanguage.keys.sorted() {
 			guard case .noSuchServer = LanguageServers.selection(
 				forLanguage: languageId, choosing: choices
 			) else { continue }
 			_ = server(for: languageId, project: project)
 		}
-		LaunchClock.mark("language servers started")
 	}
 
 	/// Which languages have a server running for this project, and which are
