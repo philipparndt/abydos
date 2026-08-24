@@ -90,17 +90,62 @@ echo "    copied $COUNT grammar bundles"
 # resolves to the build path whenever it still exists, which it does on the
 # machine that built the app, so shipping it only inside the .app leaves a
 # developer running a viewer that cannot find its shaders.
+#
+# **And a shader that does not compile fails the build.** This block was right
+# and its failure path was silence: where the Metal toolchain is not installed,
+# `xcrun metal` cannot run, the `&&` chain quietly produces nothing, there is no
+# `else`, and the build goes on to print `==> Done`. What ships is the bundle
+# this comment was written to prevent — `Shaders.metal` present, `default.metallib`
+# absent — and the app then dies at
+#
+#     GoSTL/MetalView.swift:80: Fatal error: Failed to initialize Metal
+#     renderer: shaderLoadingFailed
+#
+# the first time anything opens the 3D viewer. With a `.scad` tab in the restored
+# session that is one second after launch, every launch: an app nobody can start,
+# from a build that reported success. The same fault as the codesign warning
+# below, found the same way, and it is the third time in this file that an error
+# printed instead of returned has cost a day.
 GOSTL_SHADER=$(find "$CONTENTS/Resources" -name Shaders.metal -path "*GoSTL*" 2>/dev/null | head -1)
 if [ -n "$GOSTL_SHADER" ]; then
-	xcrun -sdk macosx metal -c "$GOSTL_SHADER" -o "$BIN_DIR/Shaders.air" \
-		&& xcrun -sdk macosx metallib "$BIN_DIR/Shaders.air" -o "$BIN_DIR/default.metallib" \
-		&& echo "    compiled the 3D viewer's shaders"
+	if ! SHADER_OUT=$(xcrun -sdk macosx metal -c "$GOSTL_SHADER" -o "$BIN_DIR/Shaders.air" 2>&1) \
+		|| ! SHADER_OUT=$(xcrun -sdk macosx metallib "$BIN_DIR/Shaders.air" -o "$BIN_DIR/default.metallib" 2>&1)
+	then
+		echo "    error: the 3D viewer's shaders did not compile, so opening a" >&2
+		echo "    model would abort the app:" >&2
+		echo "$SHADER_OUT" | sed 's/^/    /' >&2
+		case "$SHADER_OUT" in
+			*"Metal Toolchain"*)
+				echo "    Install it with: xcodebuild -downloadComponent MetalToolchain" >&2
+				;;
+		esac
+		# An escape hatch, because the alternative to a broken 3D viewer should
+		# not be no build at all. Somebody who never opens a model can pass
+		# ALLOW_MISSING_SHADERS=1 and get an app that works in every other
+		# respect — and is told, in the one sentence that matters, what it will
+		# do if they ever do open one.
+		if [ "${ALLOW_MISSING_SHADERS:-0}" = "1" ]; then
+			echo "    ALLOW_MISSING_SHADERS=1: carrying on without them. Opening a" >&2
+			echo "    model in this build will abort the app." >&2
+		else
+			exit 1
+		fi
+	else
+		echo "    compiled the 3D viewer's shaders"
+	fi
 
 	if [ -f "$BIN_DIR/default.metallib" ]; then
+		# Asked of the result rather than assumed from an exit code, because what
+		# the renderer looks for is a file at a path and nothing else will do.
 		find "$CONTENTS/Resources" "$BIN_DIR" -type d -name "GoSTL_GoSTL.bundle" 2>/dev/null |
 			while read -r target; do
 				cp "$BIN_DIR/default.metallib" "$target/"
 			done
+
+		if [ ! -f "$CONTENTS/Resources/GoSTL_GoSTL.bundle/default.metallib" ]; then
+			echo "    error: the shaders compiled but did not reach the app bundle" >&2
+			exit 1
+		fi
 	fi
 fi
 
