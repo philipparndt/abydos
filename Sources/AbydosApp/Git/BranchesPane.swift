@@ -1476,19 +1476,34 @@ final class BranchesPane: NSView {
 			let outcome = await GitFastForward.advance(branch: branch.name, in: root)
 			guard let self else { return }
 
+			// **Every one of these says what kind of news it is, and that is a
+			// fix rather than a flourish.** `Toast.post` defaults to `.error`,
+			// so a fast-forward that did exactly what was asked came up in red
+			// under a window titled *Error*, saying "main moved 1 commit" — the
+			// success and the failure were indistinguishable, and the one people
+			// see most often is the success. Reported from use.
 			switch outcome {
 			case let .moved(commits):
 				Toast.post(
 					"\(branch.name) moved \(commits == 1 ? "1 commit" : "\(commits) commits")",
 					detail: "Fast-forwarded to \(branch.upstream ?? "its upstream"). "
-						+ "Nothing was checked out."
+						+ "Nothing was checked out.",
+					kind: .information
 				)
 			case .alreadyThere:
-				Toast.post("\(branch.name) is already up to date", detail: "")
+				Toast.post(
+					"\(branch.name) is already up to date",
+					detail: "It is already at \(branch.upstream ?? "its upstream").",
+					kind: .information
+				)
+			// The three below did nothing, and none of them is a fault: there
+			// was simply nothing to do, or what was asked for is not this
+			// gesture. A warning says "read me" without saying "something broke".
 			case .noUpstream:
 				Toast.post(
 					"\(branch.name) has no upstream",
-					detail: "There is nothing to fast-forward it to."
+					detail: "There is nothing to fast-forward it to.",
+					kind: .warning
 				)
 			case let .diverged(ahead):
 				// Named rather than refused silently: the branch has work on it,
@@ -1498,14 +1513,17 @@ final class BranchesPane: NSView {
 					"\(branch.name) has moved on its own",
 					detail: "\(ahead == 1 ? "One commit is" : "\(ahead) commits are") on it and not "
 						+ "on \(branch.upstream ?? "its upstream"), so this is not a fast-forward. "
-						+ "Merge or rebase it instead."
+						+ "Merge or rebase it instead.",
+					kind: .warning
 				)
 			case .checkedOut:
 				Toast.post(
 					"\(branch.name) is checked out",
-					detail: "Bringing the branch you are on up to date is a pull."
+					detail: "Bringing the branch you are on up to date is a pull.",
+					kind: .warning
 				)
 			case let .refused(said):
+				// The only one that is an error, and it keeps the red.
 				self.presentFailure(said)
 			}
 
