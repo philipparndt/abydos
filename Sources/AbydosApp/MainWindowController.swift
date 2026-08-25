@@ -7829,6 +7829,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "alt-cmd-v": navigator.pressKeyForTesting(9, modifiers: [.command, .option])
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
+			// How far the text in front can be scrolled sideways. Here rather
+			// than in `--navigate` for the same reason `type:` is: only this
+			// list can put an edit and a question in a chosen order, and the
+			// question is only interesting *after* something has been typed.
+			//
+			// A screenshot cannot answer it. An overlay scroller is invisible
+			// until somebody scrolls, so "there is no scrollbar" and "there is
+			// nothing to scroll to" look exactly alike in a picture — which is
+			// how a document view that never grew past its pane went unnoticed.
+			case "scroll":
+				print("EDITOR scroll: "
+					+ (editor.activeGroup?.activeCodeView?.scrollReportForTesting ?? "no code view in front"))
+				continue
 			// The header's third button. A row count with it off and the same
 			// count with it on is the whole claim this change makes, and `rows`
 			// is what says both.

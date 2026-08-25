@@ -406,6 +406,11 @@ final class CodeView: NSView, NSTextInputClient {
 		// number they were put at.
 		document.onLinesChanged = { [weak self] first, removed, inserted in
 			self?.onLinesChanged?(first, removed, inserted)
+			// Every line the edit put in, and not only the one the caret ended
+			// on: a paste drops a block, and the widest line in it can be any of
+			// them. Proportional to what was just pasted, which is work the
+			// paste has already done once.
+			self?.widenForTheLongestLine(lines: first...(first + inserted))
 		}
 		// A snippet's stops follow the text under them the same way, a span at
 		// a time rather than a line at a time.
@@ -454,6 +459,22 @@ final class CodeView: NSView, NSTextInputClient {
 				self.updateFrameSize()
 			}
 		}
+	}
+
+	/// What the editor can be scrolled across, and how much of it is on screen.
+	///
+	/// The one number this view could never be asked for, and the reason
+	/// horizontal scrolling could break without anything noticing: the document
+	/// width is worked out from `longestLineColumns`, which was measured once
+	/// when the file was opened and never again — so a line *typed* wider than
+	/// the pane left the view exactly as wide as the pane, and there was no
+	/// scroller, no scroll range, and nothing that could say so.
+	var scrollReportForTesting: String {
+		let clip = enclosingScrollView?.contentSize.width ?? 0
+		let visible = enclosingScrollView?.documentVisibleRect ?? .zero
+		return "doc=\(Int(frame.width)) clip=\(Int(clip)) "
+			+ "longest=\(longestLineColumns) wrap=\(isWordWrapEnabled) "
+			+ "scrollable=\(frame.width > clip + 0.5) at=\(Int(visible.minX))"
 	}
 
 	// MARK: - Geometry
@@ -1991,6 +2012,16 @@ final class CodeView: NSView, NSTextInputClient {
 	/// the real answer is never smaller.
 	private func widenForTheLongestLine(upTo line: Int) {
 		longestLineColumns = max(longestLineColumns, displayColumns(ofLine: line) + 2)
+	}
+
+	/// The same for a run of lines, which is what an edit that moved lines about
+	/// has just written.
+	private func widenForTheLongestLine(lines: ClosedRange<Int>) {
+		guard let document else { return }
+		let last = min(lines.upperBound, document.lineCount - 1)
+		let first = max(0, lines.lowerBound)
+		guard first <= last else { return }
+		for line in first...last { widenForTheLongestLine(upTo: line) }
 	}
 
 	/// A place that should be on screen and could not be worked out yet.
@@ -3698,6 +3729,16 @@ final class CodeView: NSView, NSTextInputClient {
 		selectionAnchor = newCaret
 		desiredColumnX = nil
 
+		// The line that was just edited may be longer than anything the file
+		// held when it was opened, and `longestLineColumns` is measured once at
+		// load and never again. Without this, typing or pasting a line wider
+		// than the pane produces a document view no wider than the pane: no
+		// scroll range, no horizontal scroller, and no way to reach the text
+		// that was just typed. `reveal` has widened for one line since it was
+		// written — the same call, at the other place a line's width can change.
+		widenForTheLongestLine(upTo: document.rope.line(
+			atByteOffset: document.rope.byteOffset(fromUTF16: newCaret)
+		))
 		updateFrameSize()
 		restartCaretBlink()
 		scrollCaretToVisible()
