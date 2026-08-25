@@ -92,6 +92,29 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// whether a burst was replayed or held.
 	static var drawCountForTesting = 0
 
+	/// The grid a terminal starts with, before layout has told it anything.
+	///
+	/// **A constant here is wrong for exactly the output that cannot be fixed
+	/// afterwards.** A pane starts its process once `launchWhenSized` sees it
+	/// laid out — or, after twenty attempts, regardless — and a pane that starts
+	/// unsized keeps whatever the emulator was constructed with, because
+	/// `recomputeGridSize` returns early on a view with no bounds. Layout does
+	/// correct the emulator and the pty a moment later, and it is too late by
+	/// then: scrollback does not reflow, so everything printed in between stays
+	/// wrapped at the constructed width for as long as the pane exists. A JVM's
+	/// `-D` flags folded at eighty columns down the left of a much wider pane is
+	/// what that looks like, and no resize will ever straighten it.
+	///
+	/// So the width a pane was last *measured* at is remembered and used instead.
+	/// By the time anybody opens a second terminal there has been a first one,
+	/// and its width is a much better guess: same window, same font, usually the
+	/// same column of the panel.
+	///
+	/// It stays a guess, and it is allowed to be — `recomputeGridSize` overrides
+	/// it the moment the pane is measured. The point is only that the guess it
+	/// replaces was a fixed 24×80 that no pane in this app has ever been.
+	private static var lastMeasuredGrid: (rows: Int, columns: Int)?
+
 	/// When the backlog started, or nil while caught up. A burst is held back
 	/// rather than drawn frame by frame, and this is how long it has lasted.
 	private var behindSince: Date?
@@ -190,7 +213,10 @@ final class TerminalView: NSView, NSTextInputClient {
 		command: (executable: String, arguments: [String])? = nil,
 		startsProcess: Bool = true
 	) {
-		emulator = Self.makeEngine(rows: 24, columns: 80)
+		// The last measured pane's grid, or the traditional default when this is
+		// the first terminal of the session and there is nothing better to say.
+		let initial = Self.lastMeasuredGrid ?? (rows: 24, columns: 80)
+		emulator = Self.makeEngine(rows: initial.rows, columns: initial.columns)
 		pty = PseudoTerminal()
 		super.init(frame: .zero)
 
@@ -1103,6 +1129,13 @@ final class TerminalView: NSView, NSTextInputClient {
 
 		let columns = max(20, Int(floor(usableWidth / max(1, cellWidth))))
 		let rows = max(4, Int(floor(usableHeight / max(1, cellHeight))))
+
+		// Recorded for whatever pane opens next, which may start its process
+		// before it is ever laid out. Before the early return below, not after:
+		// a size that has not changed is still a size that was measured, and for
+		// a pane that was born at the right width that is the only place it is
+		// ever learnt.
+		Self.lastMeasuredGrid = (rows: rows, columns: columns)
 
 		let size = sizeAndHistory
 		guard rows != size.rows || columns != size.columns else { return }
