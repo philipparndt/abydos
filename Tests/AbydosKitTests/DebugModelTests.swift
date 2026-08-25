@@ -425,3 +425,68 @@ struct EndOfSessionTests {
 		func append(_ text: String) { lock.lock(); items.append(text); lock.unlock() }
 	}
 }
+
+/// Opening a watched value up.
+///
+/// **Reported from use: a watch could not be browsed even when it returned a
+/// struct.** `evaluate` hands back a `variablesReference` exactly as a variable
+/// does, and the session had been storing it since watches were written — but
+/// there was no way to address the root of a watch, so nothing ever asked what
+/// was behind it. A watch on anything but a scalar was a row saying `{...}` with
+/// no way in.
+@MainActor
+struct WatchExpansionTests {
+	private func makeSession() -> DebugSession {
+		DebugSession(projectRoot: URL(fileURLWithPath: NSTemporaryDirectory()))
+	}
+
+	/// A scalar has nothing inside it, and a triangle beside one would be a
+	/// promise the debugger cannot keep.
+	@Test func onlyAValueWithAReferenceIsWorthATriangle() {
+		#expect(!WatchExpression(expression: "count").isExpandable)
+		#expect(WatchExpression(expression: "user", variablesReference: 7).isExpandable)
+	}
+
+	@Test func openingIsRememberedAndClosingUndoesIt() async {
+		let session = makeSession()
+		// As a stopped debugger would have answered it.
+		let id = session.seedWatchForTesting(expression: "user", reference: 7)
+
+		await session.toggleWatchExpansion(id: id)
+		#expect(session.watches.first?.isExpanded == true)
+
+		await session.toggleWatchExpansion(id: id)
+		#expect(session.watches.first?.isExpanded == false)
+	}
+
+	/// A watch with nothing behind it cannot be opened, so nothing records that
+	/// it was.
+	@Test func aScalarCannotBeOpened() async {
+		let session = makeSession()
+		let id = session.seedWatchForTesting(expression: "count")
+
+		await session.toggleWatchExpansion(id: id)
+		#expect(session.watches.first?.isExpanded == false)
+	}
+
+	/// **The handle expires with the stop it was issued at.** A tree still
+	/// showing the fields it had two stops ago is exactly the fault
+	/// `refreshWatches` exists to prevent, one level down — so a refresh keeps
+	/// the row open and throws away what was under it.
+	@Test func aRefreshKeepsTheRowOpenAndDropsWhatWasInIt() async {
+		let session = makeSession()
+		let id = session.seedWatchForTesting(expression: "user", reference: 7)
+		await session.toggleWatchExpansion(id: id)
+		session.setWatchChildrenForTesting(id: id, children: [
+			Variable(name: "name", value: "\"ada\"", type: "string", variablesReference: 0),
+		])
+		#expect(session.watches.first?.children?.count == 1)
+
+		// Nothing is running, so there is no frame to evaluate in.
+		await session.refreshWatches()
+
+		#expect(session.watches.first?.isExpanded == true, "the row somebody opened closed itself")
+		#expect(session.watches.first?.children == nil, "values from an expired handle were kept")
+		#expect(session.watches.first?.variablesReference == 0)
+	}
+}
