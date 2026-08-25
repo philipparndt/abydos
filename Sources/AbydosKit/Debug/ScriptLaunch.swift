@@ -197,7 +197,7 @@ public enum ScriptLaunch {
 	/// agents is a JVM that will not start. `GRADLE_OPTS` is in the list because
 	/// the daemon passes it on, and the JDK's own two are here because a machine
 	/// that sets `_JAVA_OPTIONS` sets it for everything.
-	static let jvmOptionVariables = [
+	public static let jvmOptionVariables = [
 		"MAVEN_OPTS", "GRADLE_OPTS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
 	]
 

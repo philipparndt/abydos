@@ -9692,7 +9692,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// the wrong program. What a wrapper script has to be debugged through is
 		// the JVM it eventually starts.
 		if let kind = ScriptLaunch.kind(ofProgramAt: configuration.expandedProgram(root: root)) {
-			startScriptDebug(configuration, kind: kind, in: root, environment: environment)
+			// The JVM option variables are resolved against the shell that will run
+			// the command before the plan is made, so that the plan can both take
+			// the agents out of them and add its own without losing what was
+			// there. See `ShellEnvironment.values(of:in:)` for why this app's own
+			// environment is the wrong thing to ask.
+			Task { @MainActor in
+				let directory = URL(
+					fileURLWithPath: configuration.expandedWorkingDirectory(root: root)
+				)
+				let known = ScriptLaunch.jvmOptionVariables.filter { environment[$0] == nil }
+				let fromShell = await ShellEnvironment.values(of: known, in: directory)
+				self.startScriptDebug(
+					configuration,
+					kind: kind,
+					in: root,
+					environment: environment.merging(fromShell) { mine, _ in mine }
+				)
+			}
 			return
 		}
 

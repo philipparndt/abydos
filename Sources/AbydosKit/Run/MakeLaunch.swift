@@ -505,6 +505,59 @@ public enum ShellEnvironment {
 		return (values, failures)
 	}
 
+	/// What the shell that will run the command already has in these variables.
+	///
+	/// **Not `ProcessInfo.processInfo.environment`, and the difference is the
+	/// whole point.** That is *this app's* environment, and an app launched from
+	/// the Finder has launchd's — not the one a login shell builds from somebody's
+	/// profile, and not the one an environment agent injects into terminals. So
+	/// asking it whether `JAVA_TOOL_OPTIONS` is set answers about the wrong
+	/// process: it says no, the caller writes the variable as though it were
+	/// starting from nothing, and `env VAR=…` in front of the command then
+	/// *replaces* what the shell would have supplied.
+	///
+	/// That was measured, not imagined: a client launched this way lost
+	/// `-Djavax.net.ssl.trustStore` and failed to log in, reporting
+	/// `SSL error. Check cacerts (<default>)` — a store that was not wrong but
+	/// absent.
+	///
+	/// One shell for all of them, and unset is left out rather than returned
+	/// empty, so a caller can tell "not set" from "set to nothing".
+	/// - Parameter preparing: shell run before the variables are read. For tests,
+	///   which cannot export anything into a shell they do not start.
+	public static func values(
+		of names: [String],
+		in directory: URL,
+		preparing: String = ""
+	) async -> [String: String] {
+		guard !names.isEmpty else { return [:] }
+
+		// A record separator between them, because these hold whitespace and
+		// quotes and a newline-separated answer cannot be taken apart again.
+		//
+		// The stand-in for "not set" is the literal text below rather than a
+		// control character: `${VAR-…}` does not interpret escapes, so whatever
+		// is written there arrives as itself. Only printf's own format is
+		// interpreted, which is why the separator can be `\037` and this cannot.
+		let script = names
+			.map { "printf '%s\\037' \"${\($0)-\\036}\"" }
+			.joined(separator: "; ")
+
+		let line = preparing.isEmpty ? script : preparing + "; " + script
+		let result = await run(line, in: directory)
+		guard result.exitCode == 0 else { return [:] }
+
+		let fields = result.output.components(separatedBy: "\u{1f}")
+		var values: [String: String] = [:]
+		for (name, field) in zip(names, fields) where field != unsetMarker {
+			values[name] = field
+		}
+		return values
+	}
+
+	/// What a variable that is not set comes back as. See `values(of:in:)`.
+	static let unsetMarker = "\\036"
+
 	public static func run(
 		_ line: String,
 		in directory: URL,

@@ -393,6 +393,40 @@ struct ScriptLaunchCheckTests {
 	}
 
 
+
+	// MARK: - Asking the shell, not this process
+
+	/// **The shell that runs the command is the one to ask.** This app's own
+	/// environment is launchd's when it was started from the Finder, so asking
+	/// `ProcessInfo` whether a variable is set answers about the wrong process —
+	/// it says no, the plan writes the variable from nothing, and `env VAR=…`
+	/// then replaces what the shell would have supplied. A client lost its
+	/// `-Djavax.net.ssl.trustStore` exactly that way.
+	@Test func theShellsOwnValuesAreRead() async throws {
+		let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+		// Set for the shell that runs the probe, not for this process — which is
+		// the whole distinction being tested.
+		let script = "export ABYDOS_PROBE_ONE='first value'; export ABYDOS_PROBE_TWO=''"
+        let values = await ShellEnvironment.values(
+			of: ["ABYDOS_PROBE_ONE", "ABYDOS_PROBE_TWO", "ABYDOS_PROBE_MISSING"],
+			in: directory,
+			preparing: script
+		)
+
+		#expect(values["ABYDOS_PROBE_ONE"] == "first value", "a value with a space in it survives")
+		// Set but empty is not the same as unset: one is a variable somebody
+		// cleared on purpose, the other is a variable to leave alone.
+		#expect(values["ABYDOS_PROBE_TWO"] == "")
+		#expect(values["ABYDOS_PROBE_MISSING"] == nil)
+	}
+
+	@Test func askingForNothingRunsNoShell() async {
+		let values = await ShellEnvironment.values(
+			of: [], in: URL(fileURLWithPath: NSTemporaryDirectory())
+		)
+		#expect(values.isEmpty)
+	}
+
 	// MARK: - Not asking for two debug agents
 
 	/// A JVM refuses to start with two JDWP agents on it: `Cannot load this JVM
