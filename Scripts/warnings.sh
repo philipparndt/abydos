@@ -66,6 +66,17 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+# How long the files are, before how much the compiler has to say about them.
+#
+# It needs no build, so it can say what is wrong before somebody waits a minute
+# for the compiler — and when it is the only thing wrong, they know at once. It
+# belongs under this verb for the reason the whole script exists: a complaint
+# that only a build reports is seen once by whoever was watching the tail of it,
+# and a file's length is exactly that kind of complaint. `Scripts/file-size.sh`
+# says nothing at all when there is nothing to say.
+Scripts/file-size.sh
+SIZES=$?
+
 LOG="$(mktemp -t abydos-warnings)"
 trap 'rm -f "$LOG"' EXIT
 
@@ -146,7 +157,10 @@ fi
 echo
 if [ "$OURS_COUNT" -eq 0 ]; then
 	echo "No warnings in this repository's Swift. Keep it that way."
-	exit 0
+	# A file over the ceiling is still something this verb found, and its exit
+	# code has to say so — the whole argument for trusting these codes is that
+	# they mean what they say.
+	exit $SIZES
 fi
 
 echo "$OURS_COUNT warning(s) in this repository's Swift:"
