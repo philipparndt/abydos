@@ -31,16 +31,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Testing
 
-	func openForTesting(_ url: URL) { editor.open(fileURL: url, focusEditor: true) }
-	func tearOffForTesting(index: Int, at screenPoint: NSPoint) {
-		editor.tearOffForTesting(index: index, at: screenPoint)
-	}
-	func dropForTesting(payload: EditorTabDrag.Payload, at index: Int) {
-		editor.dropForTesting(payload: payload, at: index)
-	}
-	var activeGroupIDForTesting: UUID? { editor.activeGroupID }
-	var tabCountForTesting: Int { editor.activeTabCount }
-
 	/// Rings the bell, as a program printing \u{07} would.
 	func ringTerminalBellForTesting() {
 		setPanelVisible(true)
@@ -324,64 +314,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Which of those windows is the active one.
 	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
-
-	/// Drags a tmux tab from one position to another.
-	func dragTmuxTabForTesting(from: Int, to: Int) {
-		bottomPanel.dragTmuxTabForTesting(from: from, to: to)
-	}
-
-	/// Presses the + on tmux's strip, for testing what it does.
-	func addTmuxWindowForTesting() { bottomPanel.addTmuxWindowForTesting() }
-
-	/// Closes a tmux tab from its menu, for testing what it does.
-	func closeTmuxTabForTesting(_ index: Int) {
-		bottomPanel.closeTmuxTabForTesting(index)
-	}
-
-	/// Presses the + on the terminal strip, for testing what it does.
-	/// Panes in the panel, for proving the tmux + added none.
-	var paneCountForTesting: Int { bottomPanel.paneCountForTesting }
-
-	/// The editor's own text, drawn to a PNG.
-	@discardableResult
-	func writeEditorImageForTesting(to path: String) -> Bool {
-		editor.writeEditorImageForTesting(to: path)
-	}
-
-	/// What the panel's tab strip is showing and what it is holding back.
-	var panelOverflowReportForTesting: String { bottomPanel.overflowReportForTesting }
-
-	/// Chooses one of the tabs the strip had no room for, as its menu entry
-	/// would — so that the run moving to bring it into view can be looked at.
-	func selectHiddenPanelTabForTesting(_ position: Int) -> String {
-		bottomPanel.selectHiddenTabForTesting(position)
-	}
-
-	func addTerminalTabForTesting() {
-		bottomPanel.addTabForTesting()
-	}
-
-	func closeTerminalTabsForTesting() {
-		bottomPanel.closeTerminalTabsForTesting()
-	}
-
-	@discardableResult
-	func closeTerminalTabsForTesting(count: Int) -> String {
-		bottomPanel.closeTerminalTabsForTesting(count: count)
-	}
-
-	func clickPanelTabForTesting(_ index: Int) -> String {
-		let said = bottomPanel.clickPanelTabForTesting(index)
-		// Where the keyboard landed, which is the whole of what reaching for a
-		// pane means: a tree nobody can walk is a tree nobody selected.
-		return said + " | " + bottomPanel.variablesKeyboardReportForTesting()
-	}
-
-	/// Brings a tmux window forward, as clicking its tab would.
-	/// Presses ⌃C in the debugger's console, for `--debug-interrupt`.
-	func pressDebugInterruptForTesting() -> String {
-		bottomPanel.activeDebugPane?.pressInterruptForTesting() ?? "no debug session"
-	}
 
 	/// What the rail is showing, for `--rail`.
 	///
@@ -1670,45 +1602,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		install(tool: currentSidebarTool, force: true)
 	}
 
-	/// Puts the pointer on the ✕ of every tab of every strip in the window and
-	/// says what each strip made of it, then photographs the window with the
-	/// first ✕ of each hovered and again with the pointer off them all.
-	///
-	/// The strips are found by walking the window rather than asked of the editor
-	/// and the panel in turn. What is being checked is that the two agree, and one
-	/// walk both puts them in the same picture and picks up a third strip if
-	/// somebody adds one — which is how this went wrong in the first place: the
-	/// editor's strip grew a hover and the panel's was somewhere else.
-	func tabCloseHoverForTesting(to path: String) {
-		guard let window else { return }
-		bottomPanel.seedUnclosableTabForTesting()
-		window.contentView?.layoutSubtreeIfNeeded()
-		let strips = Self.tabStrips(under: window.contentView)
-
-		print("HOVER: \(strips.count) strips")
-		// Every tab, not only the first: the one that must *not* light up is a
-		// tmux window, and tmux's windows are never at the front of a strip.
-		for strip in strips {
-			for index in 0..<max(strip.tabCountForTesting, 1) {
-				print("  on  \(strip.hoverCloseForTesting(index))")
-			}
-			strip.hoverCloseForTesting(0)
-		}
-		WindowCapture.write(window: window, to: path)
-
-		for strip in strips { print("  off \(strip.hoverCloseForTesting(nil))") }
-		WindowCapture.write(
-			window: window, to: (path as NSString).deletingPathExtension + "-left.png"
-		)
-		fflush(stdout)
-	}
-
-	private static func tabStrips(under view: NSView?) -> [any TabCloseHovering] {
-		guard let view else { return [] }
-		let here = view as? (any TabCloseHovering)
-		return (here.map { [$0] } ?? []) + view.subviews.flatMap { tabStrips(under: $0) }
-	}
-
 	/// Draws the sidebar's pane into a file, whatever the window is doing.
 	///
 	/// The window capture goes through the compositor and a pane that has just
@@ -1914,32 +1807,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Types a small block the way somebody would, and prints the result.
-	///
-	/// Through the editor's own insertion path, so what is measured is what
-	/// return actually does rather than what the indent rules would say.
-	func exerciseReturnIndentForTesting() {
-		editor.moveCaretToEndForTesting()
-		editor.simulateTyping("\n")
-
-		// A function, its body, and a nested block — typed exactly as somebody
-		// would, with no manual indentation at all.
-		editor.simulateTyping("func demo() {")
-		editor.simulateReturn()
-		editor.simulateTyping("if ready {")
-		editor.simulateReturn()
-		editor.simulateTyping("run()")
-		editor.simulateReturn()
-		editor.simulateTyping("}")
-		editor.simulateReturn()
-		editor.simulateTyping("}")
-
-		print("RETURN:")
-		for line in editor.textTailLinesForTesting(6) {
-			print("RETURN: |\(line)|")
-		}
-	}
-
 	/// Presses ⌘T in the editor and then in the terminal.
 	///
 	/// Through the menu's own validation and action, which is what the key
@@ -1952,18 +1819,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		editor.focusForTesting()
 		print("TAB: in editor   focused=\(isTerminalFocused) enabled=\(validateMenuItem(item)) "
-			+ "sessions=\(terminalSessionCountForTesting)")
+			+ "sessions=\(bottomPanel.terminalSessionCountForTesting)")
 		if validateMenuItem(item) { newTerminalTab(nil) }
 
 		toggleTerminal(nil)
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
 			guard let self else { return }
 			print("TAB: in terminal focused=\(self.isTerminalFocused) "
-				+ "enabled=\(self.validateMenuItem(item)) sessions=\(self.terminalSessionCountForTesting)")
+				+ "enabled=\(self.validateMenuItem(item)) sessions=\(self.bottomPanel.terminalSessionCountForTesting)")
 			if self.validateMenuItem(item) { self.newTerminalTab(nil) }
 
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-				print("TAB: after ⌘T   sessions=\(self.terminalSessionCountForTesting)")
+				print("TAB: after ⌘T   sessions=\(self.bottomPanel.terminalSessionCountForTesting)")
 			}
 		}
 	}
@@ -2202,40 +2069,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		fflush(stdout)
 	}
 
-	/// Find, in every tab, and then the gesture the report is about.
-	///
-	/// Search in the file in front, switch to the next tab, and step — which is
-	/// where one file's offsets used to reach another file's view.
-	func exerciseFindAcrossTabsForTesting() {
-		print("FIND before:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
-		fflush(stdout)
-
-		editor.activeGroup?.selectNextTab(offset: 1)
-		print("FIND after switch:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
-		fflush(stdout)
-
-		// The step. Before this change it used the group's matches, which were
-		// the *other* file's.
-		editor.activeGroup?.findNext()
-		print("FIND after step:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
-		fflush(stdout)
-
-		// And back, to show the first tab kept what it was doing.
-		editor.activeGroup?.selectNextTab(offset: -1)
-		print("FIND back:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
-		fflush(stdout)
-
-		// Closing the searched tab takes its find state with it, because the
-		// state lives on the tab. Asserted rather than assumed: state that
-		// outlived its tab is what this change is about.
-		if let url = editor.activeGroup?.activeTabURL {
-			_ = editor.activeGroup?.closeTab(showing: url)
-		}
-		print("FIND after close:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
-		fflush(stdout)
-		exit(0)
-	}
-
 	/// Drops files on the editor the way the Finder would, and says what happened.
 	///
 	/// A real drag cannot be scripted, so this puts the URLs on a pasteboard and
@@ -2276,63 +2109,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			fflush(stdout)
 			exit(0)
 		}
-	}
-
-	/// Drags a tab onto the group's right-hand zone, the way another group would.
-	///
-	/// **The regression check for the drop path**, which this change edited: a
-	/// file drag and a tab drag now arrive at the same `performDragOperation`,
-	/// and the tab must still split. Driven rather than tested because
-	/// `EditorTabDrag` lives in the app target, where the suite cannot reach it.
-	func dragTabForTesting() {
-		guard let group = editor.activeGroup, let target = group.view as? EditorDropView else {
-			print("TABDRAG: no drop view")
-			fflush(stdout)
-			return
-		}
-		print("TABDRAG before: groups=\(editor.groupCountForTesting)"
-			+ " tabs=[\(editor.openTabNamesForTesting)]")
-
-		let payload: [String: Any] = [
-			"group": group.groupID.uuidString, "index": 0,
-			"path": group.activeTabURL?.path ?? "",
-		]
-		let board = NSPasteboard(name: .init("dev.abydos.tabdrag-test"))
-		board.clearContents()
-		board.setData(
-			try? JSONSerialization.data(withJSONObject: payload),
-			forType: EditorTabDrag.pasteboardType
-		)
-
-		// Well to the right, which is the zone that splits — **in window
-		// coordinates**, because `updateZone` converts `draggingLocation` from
-		// nil, which is the window. Handing it view coordinates put the point in
-		// the centre zone, and a centre drop onto a tab's own group is refused
-		// by design: the first run of this read as a broken split and was a
-		// broken harness.
-		let inView = NSPoint(x: target.bounds.width * 0.9, y: target.bounds.midY)
-		let drag = TestingDrag(pasteboard: board, at: target.convert(inView, to: nil))
-		let offered = target.draggingEntered(drag)
-		print("TABDRAG offered: \(offered.contains(.move) ? "move" : "other")")
-		_ = target.performDragOperation(drag)
-		fflush(stdout)
-
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-			guard let self else { return }
-			print("TABDRAG after: groups=\(self.editor.groupCountForTesting)")
-			fflush(stdout)
-			exit(0)
-		}
-	}
-
-	/// The geometry every board card is drawn with, for `--card-report`.
-	func cardGeometryForTesting() -> String {
-		bottomPanel.existingBacklogPane?.cardGeometryReportForTesting ?? "no pane"
-	}
-
-	/// Which server root the file in front is filed under, for `--lsp-root`.
-	func serverRootReportForTesting() -> String {
-		editor.activeGroup?.serverRootReportForTesting ?? "no group"
 	}
 
 	/// Steps as the keyboard would, for checking the commands are connected.
@@ -2757,12 +2533,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		fflush(stdout)
 	}
 
-	/// Takes a completion and steps through its stops with Tab, saying where
-	/// the caret and selection went. `--snippet 'cube(${1:size});$0|10|tab'`.
-	func exerciseSnippetForTesting(_ spec: String) {
-		editor.exerciseSnippetForTesting(spec)
-	}
-
 	/// Whether ⌘/ is wired up, which is a different question from whether the
 	/// toggle works and the only one the suite cannot answer.
 	///
@@ -2833,9 +2603,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// question the first press cannot answer.
 		if let item = items.first {
 			for (name, event) in MenuKeyReport.presses(reaching: item) {
-				let before = editorTextForTesting()
+				let before = editor.editorTextForTesting()
 				let handled = NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
-				let after = editorTextForTesting()
+				let after = editor.editorTextForTesting()
 				print("COMMENTKEY \(name) at the real menu: answered "
 					+ "\(handled ? "it" : "NOTHING") and the text "
 					+ "\(before == after ? "DID NOT CHANGE" : "changed")")
@@ -2845,16 +2615,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func setFindQuery(_ query: String) { editor.setFindQuery(query) }
-
-	/// `--find-next`: ⌘G with the keyboard back in the code. Says where the
-	/// keyboard ended up, since that is the whole claim the picture it is taken
-	/// for makes — the same reason `selectLinesForTesting` reports it.
-	func findNextFromEditorForTesting(_ times: Int) {
-		editor.findNextFromEditor(times)
-		let responder = window?.firstResponder
-		print("FIND NEXT \(times) keyboard=\(responder.map { String(describing: type(of: $0)) } ?? "nothing")")
-		fflush(stdout)
-	}
 
 	func setProjectSearchQuery(_ query: String) {
 		showProjectSearch(query: query)
@@ -4471,9 +4231,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			: "ran \(OpenSpec.initCommand()) in a terminal"
 	}
 
-	/// Whether the board has any cards yet, for a driver waiting on it.
-	func backlogHasCardsForTesting() -> Bool { bottomPanel.backlogHasCardsForTesting() }
-
 	/// What a card's context menu offers, for `--backlog-menu`.
 	func backlogMenuForTesting(number: Int) -> String {
 		guard let pane = bottomPanel.showBacklog() else { return "no project" }
@@ -4668,9 +4425,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		item.representedObject = choice?.file
 		return item
 	}
-
-	/// What the + and its chevron answer to, for the harness.
-	var terminalAddControlsForTesting: String { bottomPanel.addControlsForTesting }
 
 	/// Shows the panel and nothing else, so the strip has a layout to be asked
 	/// about.
@@ -5451,29 +5205,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What to do once the shell being waited for has answered, so that a second
 	/// container is opened after the first rather than beside it.
 	private var afterContainerShellForTesting: (() -> Void)?
-
-	/// Follows ⌘-click, through the same path the click takes.
-	func exerciseGoToDefinitionForTesting(line: Int, character: Int) {
-		let before = editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
-		editor.goToDefinitionForTesting(line: line, character: character)
-		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-			guard let self else { return }
-			let landed = self.editor.activeGroup?.activeTabURL
-			let after = landed?.lastPathComponent ?? "nothing"
-			print("DEFINITION: \(before) → \(after) \(self.editor.caretReportForTesting)")
-			// The whole path, and not decoration: a server running inside a
-			// devcontainer answers about /workspaces/…, and what has to arrive
-			// here is the same file named as this machine names it. A report
-			// giving only the last component cannot tell the two apart.
-			print("DEFINITION-PATH: \(landed?.path ?? "nothing")")
-			// Flushed, because the run that asks this is usually killed rather
-			// than allowed to exit: a `--lsp-wait` long enough for sourcekit-lsp
-			// to index a package leaves the driver's `timeout` to end the app,
-			// and an unflushed buffer dies with it. Two runs of this verb
-			// reported nothing at all for exactly that reason.
-			fflush(stdout)
-		}
-	}
 
 	/// Right-clicks in the editor and finds usages of whatever is at the caret.
 	/// Renames the symbol at a position, the way somebody would, and says what
@@ -7170,13 +6901,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return pane.typeInCommitBodyForTesting(text)
 	}
 
-	/// Runs a tab's close command and prints what is left.
-	func closeTabsForTesting(_ command: String, at index: Int) {
-		guard let group = editor.activeGroup else { return }
-		group.closeTabsForTesting(command, at: index)
-		print("TABS: \(group.tabTitlesForTesting.joined(separator: ", "))")
-	}
-
 	/// Chooses a configuration by name, as the menu does.
 	func selectConfigurationForTesting(named name: String) {
 		selectedConfigurationName = name
@@ -7437,7 +7161,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	// The sub-controllers a driven run reaches, and the only state this class
+	// exposes to one. A driving verb is declared on the thing it drives, so what
+	// `AppDelegate` needs from the window is which editor, which panel and which
+	// navigator — not the fields any of them keep.
 	var editorForTesting: EditorAreaController { editor }
+	var panelForTesting: BottomPanel { bottomPanel }
+	var navigatorForTesting: ProjectNavigatorViewController { navigator }
 
 	/// Puts the caret on a line of the file being edited, for `:` in the palette.
 	func goTo(line: Int) { editor.goTo(line: line) }
@@ -7572,76 +7302,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return "sent=\(sent) clipboard=\(onOneLine)"
 	}
 
-	/// Exports the diagram in front from its own preview pane, the way the
-	/// pane's menu does, and says what the menu offered on the way past.
-	func exportDiagramForTesting(_ raw: String) {
-		// `--export editable-png` is the second gesture in the same menu: the
-		// picture that is also the document, `x.drawio.png`.
-		let asked = raw.lowercased()
-		let editable = asked.hasPrefix("editable-")
-		guard let format = DiagramFormat(
-			rawValue: editable ? String(asked.dropFirst("editable-".count)) : asked
-		) else {
-			print("EXPORT: no such format \(raw)")
-			return
-		}
-		// A rendered Markdown document is a diagram pane too, in the only sense
-		// that matters here: it has an `Export ▸` on it and writing the pictures
-		// out is one act however many fences the document holds.
-		if editor.activeGroup?.diagramPreview == nil,
-		   let markdown = editor.activeGroup?.markdownPreview,
-		   let url = markdown.fileURL, let source = markdown.markdownSource?()
-		{
-			print("EXPORT menu: \(markdown.exportMenuTitlesForTesting.joined(separator: " | "))")
-			DiagramExportCommand.run(
-				url: url, source: source, format: format,
-				theme: Theme.current.isLight ? .light : .dark, projectRoot: nil
-			) { written in
-				print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
-			}
-			return
-		}
-		guard let pane = editor.activeGroup?.diagramPreview else {
-			print("EXPORT: nothing showing a diagram")
-			return
-		}
-		print("EXPORT menu: \(pane.menuTitlesForTesting.joined(separator: " | "))")
-		pane.export(format, editable: editable) { written in
-			print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
-		}
-	}
-
-	/// Swaps the diagram in front between fitting the pane's width and the
-	/// drawing's own size, as a double-click on it does, and says what the
-	/// corner now reads.
-	///
-	/// The percentage is the point: a screenshot shows a diagram got larger and
-	/// cannot show what it got larger *to*.
-	func setDiagramFitForTesting(_ raw: String) {
-		guard let pane = editor.activeGroup?.diagramPreview else {
-			print("FIT: nothing showing a diagram")
-			return
-		}
-		pane.setFit(raw.lowercased() == "actual" ? .actual : .width)
-		print("FIT: \(pane.scaleReadoutForTesting)")
-	}
-
-	/// The same for the picture in front, and it prints more than a percentage.
-	///
-	/// What 0532 was about is a document view pinned to the pane, and no capture
-	/// of a picture can show whether the thing under it is larger than the hole
-	/// it is seen through. The numbers can: the report names the picture, the
-	/// document it sits in and the part of it on screen, so "pannable rather
-	/// than cropped" is arithmetic anybody can check.
-	func setImageFitForTesting(_ raw: String) {
-		guard let pane = editor.activeGroup?.imagePreview else {
-			print("IMAGE: nothing showing a picture")
-			return
-		}
-		pane.setFit(raw.lowercased() == "actual" ? .actual : .pane)
-		print("IMAGE: \(pane.reportForTesting)")
-	}
-
 	/// Drives the picture in front through the View menu's **own** zoom actions,
 	/// one step per word: `in`, `out`, `actual`, `fit`, `pinch:0.25`.
 	///
@@ -7710,21 +7370,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			responder = current.nextResponder
 		}
 		return "nobody"
-	}
-
-	/// Scrolls the picture in front to a corner of itself, `x,y` as fractions.
-	func panImageForTesting(_ raw: String) {
-		guard let pane = editor.activeGroup?.imagePreview else {
-			print("IMAGE: nothing showing a picture")
-			return
-		}
-		let parts = raw.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-		guard parts.count == 2 else {
-			print("IMAGE: --image-pan wants x,y as fractions, got \(raw)")
-			return
-		}
-		pane.panForTesting(CGPoint(x: parts[0], y: parts[1]))
-		print("IMAGE: \(pane.reportForTesting)")
 	}
 
 	func treeStepsForTesting(_ steps: String) {
@@ -7985,23 +7630,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				"TREE \(step): selected=\(selection.name) rows=\(selection.rows) "
 					+ "editor=\(showing) focus=\(focus) renaming=\(renaming ?? "no")"
 			)
-		}
-	}
-
-	/// Types into the terminal at a human rate and reports what each keystroke
-	/// cost, so "it feels slower" can be answered with numbers.
-	func measureTypingForTesting(presses: Int, interval: TimeInterval) {
-		guard let terminal = bottomPanel.showTerminal()?.terminalView else { return }
-		window?.makeFirstResponder(terminal)
-		let letters = Array("abcdefghijklmnopqrstuvwxyz")
-		for press in 0..<presses {
-			DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(press)) {
-				self.window?.makeFirstResponder(terminal)
-				terminal.typeForTesting(String(letters[press % letters.count]))
-			}
-		}
-		DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(presses) + 0.5) {
-			InputProbe.report()
 		}
 	}
 
@@ -8295,34 +7923,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Right-clicks the tmux status line and then moves the pointer up through
-	/// the menu it opens, which is the gesture that was dead.
-	func tmuxMenuForTesting(hovers: Int) {
-		let grid = bottomPanel.terminalGridForTesting
-		guard grid.rows > 4 else { return }
-		// The window tab, not the session name: `[menu]  [0:zsh]` — the tab is
-		// what has a menu bound to it. Held down, because a tmux menu is a
-		// press-drag-release affair.
-		bottomPanel.terminalMenuDragForTesting(
-			from: (row: grid.rows, column: 12),
-			over: (0..<max(1, hovers)).map { (row: grid.rows - 2 - $0, column: 14) }
-		)
-	}
-
-	/// What the terminal's geometry is, for checking that the bottom row is on
-	/// screen at all.
-	func terminalGeometryForTesting() -> String {
-		bottomPanel.terminalGeometryForTesting()
-	}
-
-	/// The panel's own layout, beside the terminal's grid.
-	///
-	/// Where the tab strip sits inside the panel is not visible in any of the
-	/// numbers above, and it is what a band above the tabs is made of.
-	func panelGeometryForTesting() -> String {
-		bottomPanel.stripGeometryForTesting()
-	}
-
 	/// Whether the terminal panel is showing, what is in it, and what the pane in
 	/// front last said — for 0444's part 4, whose whole claim is about a pane that
 	/// appears without being asked for and must not be asked for again to be seen.
@@ -8330,11 +7930,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		var said = "PANEL: visible=\(isPanelVisible) \(bottomPanel.tabsForTesting)"
 		if tail > 0 { said += "\n  last: " + bottomPanel.activeTerminalTailForTesting(lines: tail) }
 		return said
-	}
-
-	/// Where the terminal in front says it is — the answer the window follows.
-	func terminalDirectoryForTesting() -> URL? {
-		bottomPanel.activeTerminalDirectoryForTesting()
 	}
 
 	/// Which project the window is on, and what it has open.
@@ -8350,16 +7945,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let scope = subprojectRoot?.lastPathComponent ?? "whole"
 		let titles = editor.activeGroup?.tabTitlesForTesting ?? []
 		return "project=\(root) subproject=\(scope) tabs=[\(titles.joined(separator: " "))]"
-	}
-
-	func showDebugConsoleForTesting() {
-		bottomPanel.showDebugConsoleForTesting()
-	}
-
-	func echoDebugOutputForTesting() {
-		bottomPanel.debugOutput = { text in
-			FileHandle.standardError.write(Data("[debug] \(text)".utf8))
-		}
 	}
 
 	/// Opens the run list and prints what is in it.
@@ -10632,22 +10217,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// And which one it asked to be folded away, since a triangle needs a click.
 	var settingsFoldForTesting: String?
 
-	/// Presses the settings sidebar's arrow keys, and says where they left it.
-	///
-	/// Beside `--settings-fold`, which is the triangle: the same folding, by the
-	/// other way in. What comes back also carries the sidebar's sizes, so a run
-	/// can tell whether the zoom reached the page as well as what the keys did.
-	func pressSettingsKeysForTesting(_ keys: String) {
-		guard let page = editor.activeGroup?.page(identifier: "settings") as? SettingsPage else {
-			print("SETTINGS: no settings page")
-			return
-		}
-		page.pressArrowsForTesting(
-			keys.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-		)
-		print("SETTINGS: \(page.reportForTesting)")
-	}
-
 	/// Opens the launch configurations as a page in the editor.
 	///
 	/// A page rather than a dialog: a configuration is edited while looking at
@@ -10750,7 +10319,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		("k", [.control]), ("l", [.control]), ("n", [.control]), ("p", [.control]),
 		("r", [.control]), ("u", [.control]), ("w", [.control]), ("z", [.control]),
 	]
-	var terminalSessionCountForTesting: Int { bottomPanel.sessionCountForTesting }
 
 	// MARK: - Zoom
 
@@ -11502,45 +11070,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return bottomPanel.deadKeyForTesting(presses: presses)
 	}
 
-	/// What the editor is holding, saved or not.
-	func editorTextForTesting() -> String? { editor.textForTesting }
-
-	/// Clicks below the last line of the open file, and says what happened.
-	func clickBelowLastLineForTesting() -> String { editor.clickBelowLastLineForTesting() }
-
-	func globalScratchDirectoryForTesting() -> String { editor.globalScratchDirectoryForTesting() }
-
-	func layoutReportForTesting() -> String { editor.layoutReportForTesting() }
-
-	/// What a right-click on the tab strip offers, over a tab and over the rest.
-	func tabMenuTitlesForTesting(overTab: Bool) -> [String] {
-		editor.tabMenuTitlesForTesting(overTab: overTab)
-	}
-
-	/// Indents or outdents a block, and prints what the file became.
-	/// Selects lines in the editor without going near the first responder, and
-	/// says where the keyboard actually is — which is the whole claim the
-	/// picture it is taken for makes.
-	func selectLinesForTesting(from: Int, to: Int) {
-		let done = editor.selectLinesForTesting(fromLine: from, toLine: to)
-		let responder = window?.firstResponder
-		print("SELECT lines \(from)-\(to) \(done ? "selected" : "no editor") "
-			+ "keyboard=\(responder.map { String(describing: type(of: $0)) } ?? "nothing")")
-		fflush(stdout)
-	}
-
-	func exerciseIndentForTesting(from: Int, to: Int, outdent: Bool) {
-		guard let text = editor.indentForTesting(fromLine: from, toLine: to, outdent: outdent) else {
-			print("INDENT: no editor")
-			return
-		}
-		let lines = text.components(separatedBy: "\n").prefix(6)
-		print("INDENT\(outdent ? "-OUT" : "-IN"):")
-		for (index, line) in lines.enumerated() {
-			print("  \(index): \(line.replacingOccurrences(of: "\t", with: "→"))")
-		}
-	}
-
 	func toggleBreakpointForTesting(line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
 		toggleBreakpoint(file: url, line: line)
@@ -11581,10 +11110,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if wantsDebug { debug(configuration) } else { run(configuration) }
 	}
 
-	func createFolderForTesting(named name: String) {
-		navigator.createFolderForTesting(named: name)
-	}
-
 	func searchScratchesForTesting(_ query: String) {
 		if !query.isEmpty { scratchesPane?.setQueryForTesting(query) }
 	}
@@ -11595,41 +11120,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
 			self?.historyPane?.selectFileForTesting(file)
 		}
-	}
-
-	/// Underlines invented problems on the open file, so the drawing can be
-	/// looked at without a server having to agree to produce any.
-	func injectDiagnosticsForTesting() {
-		guard let url = editor.activeGroup?.activeTabURL else { return }
-		LanguageService.shared.injectForTesting([
-			LSPDiagnostic(
-				range: LSPRange(
-					start: LSPPosition(line: 4, character: 8),
-					end: LSPPosition(line: 4, character: 20)
-				),
-				severity: .error,
-				message: "cannot find 'nonesuch' in scope",
-				source: "swiftc"
-			),
-			LSPDiagnostic(
-				range: LSPRange(
-					start: LSPPosition(line: 6, character: 4),
-					end: LSPPosition(line: 6, character: 16)
-				),
-				severity: .warning,
-				message: "initialization of immutable value was never used",
-				source: "swiftc"
-			),
-			LSPDiagnostic(
-				range: LSPRange(
-					start: LSPPosition(line: 8, character: 0),
-					end: LSPPosition(line: 8, character: 30)
-				),
-				severity: .information,
-				message: "consider using a computed property",
-				source: "swiftlint"
-			),
-		], for: url)
 	}
 
 	/// Presses Run twice on whatever is selected, and says what the panel is
@@ -11645,56 +11135,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
 				print("RERUN: after two runs \(self.bottomPanel.runConsolesForTesting)")
 			}
-		}
-	}
-
-	/// Turns the engine setting on and opens a terminal, so a pane older than
-	/// the change sits beside one younger — for `--engine-switch`.
-	func switchEngineForTesting() {
-		Settings.shared.terminalGhosttyEngine = true
-		print("ENGINE: setting on, opening a pane")
-		bottomPanel.newTerminal()
-		fflush(stdout)
-	}
-
-	/// Which panes say they were drawn by the other engine, for `--engines`.
-	func reportEnginesForTesting() {
-		print("ENGINES:\n\(bottomPanel.engineMarksForTesting())")
-		fflush(stdout)
-	}
-
-	/// What the editor said about motions nothing handled, for
-	/// `--unhandled-motions`.
-	func reportUnhandledMotionsForTesting() {
-		let named = editor.exerciseUnhandledMotionsForTesting()
-		print("MOTIONS: \(named)")
-		print("MOTIONS log: \(DiagnosticLog.path("editor"))")
-		fflush(stdout)
-	}
-
-	/// Walks the panel's variables tree with the keyboard, and reads it twice.
-	///
-	/// **The second read is the point.** → on a row the adapter has not been
-	/// asked about returns before its children exist; the tree is rebuilt when
-	/// the answer arrives, and that rebuild is what used to leave nothing
-	/// selected. A report printed on the same turn as the key press cannot see
-	/// it, which is how the bug came back after being called fixed.
-	private func walkThePaneForTesting() {
-		print("VALUE panel: \(bottomPanel.variablesKeyboardReportForTesting())")
-		print("VALUE panel clicked: \(bottomPanel.clickVariablesForTesting())")
-		print("VALUE panel down: \(bottomPanel.walkVariablesForTesting(["down"]))")
-		// Past the leaf and onto a row with something under it: → on a leaf
-		// asks the adapter for nothing, so it cannot rebuild anything and the
-		// bug cannot show. `openable=` in the report says which kind of row
-		// this landed on.
-		print("VALUE panel on a container: \(bottomPanel.walkVariablesForTesting(["down"]))")
-		print("VALUE panel right: \(bottomPanel.walkVariablesForTesting(["right"]))")
-		fflush(stdout)
-		bottomPanel.walkVariablesThenSettleForTesting([]) { [weak self] after in
-			print("VALUE panel right, once its children arrived: \(after)")
-			print("VALUE panel after: \(self?.bottomPanel.variablesKeyboardReportForTesting() ?? "gone")")
-			print("VALUE panel selection: \(self?.bottomPanel.variablesSelectionColourForTesting() ?? "gone")")
-			fflush(stdout)
 		}
 	}
 
@@ -11715,7 +11155,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// The pane's tree is there regardless, and it is checked regardless:
 			// this early return is why the pane's own selection bug was driven
 			// and never seen.
-			walkThePaneForTesting()
+			bottomPanel.walkThePaneForTesting()
 			return
 		}
 		print("VALUE: opened \(opened)")
@@ -11744,7 +11184,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			print("VALUE placement: \(self.editor.openValueReportForTesting().split(separator: "\n").first ?? "")")
 			print("VALUE selection: \(self.editor.openValueSelectionColourForTesting())")
 			// And the panel's own tree, which never had the keyboard either.
-			self.walkThePaneForTesting()
+			bottomPanel.walkThePaneForTesting()
 
 			// And letting the program go takes it away, which is the other half
 			// of what makes this safe to leave open.
@@ -11762,13 +11202,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				}
 			}
 		}
-	}
-
-	/// What a server said about the file in front and how loudly it is drawn,
-	/// for `--diagnostics`.
-	func reportDiagnosticsForTesting(at seconds: Double) {
-		print("DIAGNOSTICS at \(Int(seconds))s: \(editor.diagnosticReportForTesting())")
-		fflush(stdout)
 	}
 
 	/// What a server offers about a line, taken, with the file before and after
@@ -11868,61 +11301,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Says whether the missing-server bar is up, and what it says.
-	func reportServerBannerForTesting() {
-		print("BANNER: \(editor.activeGroup?.serverBannerReportForTesting ?? "no editor")")
-	}
-
-	/// Presses one of the bar's buttons: details, ignore, or dismiss.
-	func pressServerBannerForTesting(_ button: String) {
-		editor.activeGroup?.pressServerBannerForTesting(button)
-		print("BANNER: pressed \(button) -> \(editor.activeGroup?.serverBannerReportForTesting ?? "no editor")")
-	}
-
-	/// Says what a real server had to say by the time this ran.
-	func reportDiagnosticsForTesting() {
-		let running = LanguageService.shared.runningNames
-		guard let url = editor.activeGroup?.activeTabURL else {
-			print("LSP: no file open (servers: \(running))")
-			return
-		}
-		let diagnostics = LanguageService.shared.diagnostics(for: url)
-		print("LSP: servers=\(running) diagnostics=\(diagnostics.count) for \(url.lastPathComponent)")
-		for diagnostic in diagnostics.prefix(5) {
-			print("LSP:   \(diagnostic.severity) line \(diagnostic.range.start.line + 1): \(diagnostic.message)")
-		}
-	}
-
-	/// Types, undoes, types something else, and shows the history.
-	///
-	/// The sequence a plain undo stack cannot survive: the first attempt is
-	/// destroyed the moment the second is typed.
-	func exerciseUndoTreeForTesting() {
-		editor.moveCaretToEndForTesting()
-		editor.simulateTyping("\n// first attempt\n")
-		print("UNDO: after first  \(editor.fileHistoryReportForTesting)")
-
-		editor.undoForTesting()
-		print("UNDO: after undo   \(editor.fileHistoryReportForTesting)")
-
-		editor.simulateTyping("\n// second attempt\n")
-		print("UNDO: after second \(editor.fileHistoryReportForTesting)")
-
-		editor.toggleFileHistory()
-		print("UNDO: states       \(editor.historySummariesForTesting)")
-
-		// Back to the abandoned branch, which no amount of redo would reach.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-			guard let self else { return }
-			let summaries = self.editor.historySummariesForTesting
-			if let index = summaries.firstIndex(where: { $0.contains("first attempt") }) {
-				self.editor.travelToHistoryRowForTesting(index)
-				print("UNDO: travelled to the first attempt")
-			}
-			print("UNDO: text tail    \(self.editor.textTailForTesting)")
-		}
-	}
-
 	/// Presses ⌃Space on an empty line and says what came back.
 	///
 	/// An empty line on purpose: with nothing typed there is no prefix, which is
@@ -11942,58 +11320,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				fflush(stdout)
 			}
 		}
-	}
-
-	/// Types at the end of the file and leaves the completion list up.
-	func exerciseCompletionForTesting(typing text: String) {
-		editor.moveCaretToEndForTesting()
-		editor.simulateTyping("\n")
-		editor.simulateTyping(text)
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-			guard let self else { return }
-			defer { fflush(stdout) }
-			print("COMPLETE: \(self.editor.completionReportForTesting)")
-			// What the server said about the item that is highlighted, which is
-			// the half that used to be parsed and thrown away.
-			print("COMPLETE doc: \(self.editor.completionDocumentationForTesting)")
-
-			self.editor.writeCompletionImageForTesting(to: "build/completion-list.png")
-
-			// Down once, then take it, so what lands in the document is the
-			// second suggestion rather than whatever was highlighted first.
-			self.editor.moveCompletionSelectionForTesting(by: 1)
-			print("COMPLETE doc after ↓: \(self.editor.completionDocumentationForTesting)")
-			let committed = self.editor.commitCompletionForTesting()
-			print("COMMIT: \(committed) → \(self.editor.caretReportForTesting)")
-
-			// **The moment the change is about.** The list has gone and the
-			// first stop is selected: this is where somebody asks what it takes.
-			print("HINT: \(self.editor.parameterHintForTesting)")
-			self.editor.simulateTab()
-			print("HINT after tab: \(self.editor.parameterHintForTesting)")
-			self.editor.simulateEscape()
-			print("HINT after escape: \(self.editor.parameterHintForTesting)")
-		}
-	}
-
-	/// Walks the caret by word and says where it landed at each step.
-	///
-	/// The flush at the end is not decoration: a run ends by killing the app,
-	/// and six lines still in stdout's buffer when the signal lands make a
-	/// driver that works look like one that prints nothing at all.
-	func exerciseWordNavigationForTesting() {
-		defer { fflush(stdout) }
-		print("WORD: start \(editor.caretReportForTesting)")
-		editor.simulateKey("right", modifiers: .option)
-		print("WORD: ⌥→ \(editor.caretReportForTesting)")
-		editor.simulateKey("right", modifiers: .option)
-		print("WORD: ⌥→ \(editor.caretReportForTesting)")
-		editor.simulateKey("right", modifiers: [.option, .shift])
-		print("WORD: ⇧⌥→ \(editor.caretReportForTesting)")
-		editor.simulateKey("left", modifiers: .option)
-		print("WORD: ⌥← \(editor.caretReportForTesting)")
-		editor.simulateKey("left", modifiers: .option)
-		print("WORD: ⌥← \(editor.caretReportForTesting)")
 	}
 
 	/// Presses ↑ on the first line and ↓ on the last, the page keys, and ⌘↑ and
@@ -12256,16 +11582,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		scratchesPane?.openFirstForTesting()
 	}
 
-	func createFileForTesting(named name: String) {
-		navigator.createFileForTesting(named: name)
-	}
-
 	func selectFirstChangeForTesting() {
 		changesPane?.selectFirstChangeForTesting()
-	}
-
-	func selectDiffHunkForTesting(_ hunk: Int) {
-		editor.selectDiffHunkForTesting(hunk)
 	}
 
 	func setWordWrap(_ enabled: Bool) {

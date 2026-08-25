@@ -16,22 +16,22 @@
 
 ## 2. The driving verbs that only forward
 
-- [ ] 2.1 Move the editor's driving verbs (`editorTextForTesting`,
+- [x] 2.1 Move the editor's driving verbs (`editorTextForTesting`,
       `selectLinesForTesting`, the completion and navigation exercises, the
       undo tree) to `EditorAreaController` or `EditorViewController`
-- [ ] 2.2 Move the terminal and panel driving verbs to `BottomPanel` and
+- [x] 2.2 Move the terminal and panel driving verbs to `BottomPanel` and
       `TerminalView`, keeping them under the ceiling as they arrive
-- [ ] 2.3 Move the navigator and scratch driving verbs to
+- [x] 2.3 Move the navigator and scratch driving verbs to
       `ProjectNavigatorViewController` and the scratches pane
-- [ ] 2.4 ~~Move the git-pane driving verbs to `ChangesPane`, `BranchesPane` and
+- [x] 2.4 ~~Move the git-pane driving verbs to `ChangesPane`, `BranchesPane` and
       `HistoryPane`~~ — **not possible here.** Measured: every one of them calls
       `showSidebarTool` to bring its pane up first, so none closes over the
       panes alone. They move in step 5.3, with the method they need. The same
       holds for six panel verbs that call `setPanelVisible`; those wait for 8.1.
-- [ ] 2.5 Point `AppDelegate` and `LaunchOptions` dispatch at the sub-controller
+- [x] 2.5 Point `AppDelegate` and `LaunchOptions` dispatch at the sub-controller
       through the window's existing accessors; delete the empty forwards
-- [ ] 2.6 Run every launch flag whose verb moved and confirm identical output
-- [ ] 2.7 `make test` and `make warnings` green; update the recorded length for
+- [x] 2.6 Run every launch flag whose verb moved and confirm identical output
+- [x] 2.7 `make test` and `make warnings` green; update the recorded length for
       `MainWindowController.swift` and any file that grew
 
 ## 3. ResultsPresenter

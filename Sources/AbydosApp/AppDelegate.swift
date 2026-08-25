@@ -547,7 +547,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// stepping before there are any matches is a no-op that looks like the
 			// verb being broken.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-				controller?.findNextFromEditorForTesting(steps)
+				controller?.editorForTesting.findNextFromEditorForTesting(steps)
 			}
 		}
 		if let query = options.searchQuery {
@@ -577,7 +577,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// text it drew, which is the whole point of exporting from the preview.
 		if let raw = options.exportDiagram {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-				controller?.exportDiagramForTesting(raw)
+				controller?.editorForTesting.exportDiagramForTesting(raw)
 			}
 		}
 
@@ -588,7 +588,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let raw = options.diagramFit {
 			let at = options.isScreenshotRun ? max(3.0, options.screenshotDelay - 1.5) : 8.0
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				controller?.setDiagramFitForTesting(raw)
+				controller?.editorForTesting.setDiagramFitForTesting(raw)
 			}
 		}
 
@@ -598,7 +598,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let raw = options.imageFit {
 			let at = options.isScreenshotRun ? max(1.2, options.screenshotDelay - 1.0) : 2.0
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				controller?.setImageFitForTesting(raw)
+				controller?.editorForTesting.setImageFitForTesting(raw)
 			}
 		}
 
@@ -616,19 +616,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let raw = options.imagePan {
 			let at = options.isScreenshotRun ? max(1.4, options.screenshotDelay - 0.8) : 2.4
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				controller?.panImageForTesting(raw)
+				controller?.editorForTesting.panImageForTesting(raw)
 			}
 		}
 
 		if let name = options.newFolder {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				controller?.createFolderForTesting(named: name)
+				controller?.navigatorForTesting.createFolderForTesting(named: name)
 			}
 		}
 
 		if let name = options.newFile {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				controller?.createFileForTesting(named: name)
+				controller?.navigatorForTesting.createFileForTesting(named: name)
 			}
 		}
 
@@ -640,7 +640,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.typeBlock {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.exerciseReturnIndentForTesting()
+				controller?.editorForTesting.exerciseReturnIndentForTesting()
 			}
 		}
 
@@ -652,7 +652,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.printText {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(2.0, options.screenshotDelay - 0.2)) {
-				let text = controller?.editorTextForTesting() ?? "no editor"
+				let text = controller?.editorForTesting.editorTextForTesting() ?? "no editor"
 				print("TEXT ----------")
 				for line in text.components(separatedBy: "\n") {
 					print("| " + line.replacingOccurrences(of: "\t", with: "→"))
@@ -679,7 +679,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let spec = options.snippet {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.exerciseSnippetForTesting(spec)
+				controller?.editorForTesting.exerciseSnippetForTesting(spec)
 			}
 		}
 
@@ -701,7 +701,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(2.5, options.screenshotDelay - 1.0)) {
 				let parts = spec.split(separator: ":").compactMap { Int($0) }
 				guard parts.count == 2 else { return }
-				controller?.selectLinesForTesting(from: parts[0], to: parts[1])
+				controller?.editorForTesting.selectLinesForTesting(from: parts[0], to: parts[1])
 			}
 		}
 
@@ -709,7 +709,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				let parts = spec.split(separator: ":").map(String.init)
 				guard parts.count == 3, let from = Int(parts[0]), let to = Int(parts[1]) else { return }
-				controller?.exerciseIndentForTesting(from: from, to: to, outdent: parts[2] == "out")
+				controller?.editorForTesting.exerciseIndentForTesting(from: from, to: to, outdent: parts[2] == "out")
 			}
 		}
 
@@ -787,11 +787,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if options.tabMenu {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				for over in [true, false] {
-					let titles = controller?.tabMenuTitlesForTesting(overTab: over) ?? []
+					let titles = controller?.editorForTesting.tabMenuTitlesForTesting(overTab: over) ?? []
 					print("TABMENU \(over ? "tab" : "empty"): \(titles.joined(separator: " | "))")
 				}
-				print("LAYOUT \(controller?.layoutReportForTesting() ?? "no window")")
-				print("GLOBALSCRATCH \(controller?.globalScratchDirectoryForTesting() ?? "no window")")
+				print("LAYOUT \(controller?.editorForTesting.layoutReportForTesting() ?? "no window")")
+				print("GLOBALSCRATCH \(controller?.editorForTesting.globalScratchDirectoryForTesting() ?? "no window")")
 				fflush(stdout)
 				if options.writesACapture { return }
 				exit(0)
@@ -800,7 +800,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.clickBelowLastLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				print("CLICKBELOW \(controller?.clickBelowLastLineForTesting() ?? "no window")")
+				print("CLICKBELOW \(controller?.editorForTesting.clickBelowLastLineForTesting() ?? "no window")")
 				fflush(stdout)
 				if options.writesACapture { return }
 				exit(0)
@@ -851,13 +851,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// After `--find` has typed its query and the debounced search has
 			// run; stepping before there are matches proves nothing.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.exerciseFindAcrossTabsForTesting()
+				controller?.editorForTesting.exerciseFindAcrossTabsForTesting()
 			}
 		}
 
 		if options.dragTab {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.dragTabForTesting()
+				controller?.editorForTesting.dragTabForTesting()
 			}
 		}
 
@@ -905,19 +905,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let at = options.engineSwitchAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				controller?.switchEngineForTesting()
+				controller?.panelForTesting.switchEngineForTesting()
 			}
 		}
 
 		for at in options.engineReportsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				controller?.reportEnginesForTesting()
+				controller?.panelForTesting.reportEnginesForTesting()
 			}
 		}
 
 		if options.unhandledMotions {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.reportUnhandledMotionsForTesting()
+				controller?.editorForTesting.reportUnhandledMotionsForTesting()
 			}
 		}
 
@@ -963,7 +963,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		for at in options.diagnosticsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				controller?.reportDiagnosticsForTesting(at: at)
+				controller?.editorForTesting.reportDiagnosticsForTesting(at: at)
 			}
 		}
 
@@ -984,7 +984,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// After the walk that reads the folders, which happens off the main
 			// thread.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-				print("CARDS:\n\(controller?.cardGeometryForTesting() ?? "no window")")
+				print("CARDS:\n\(controller?.panelForTesting.cardGeometryForTesting() ?? "no window")")
 				fflush(stdout)
 				if options.writesACapture { return }
 				exit(0)
@@ -996,7 +996,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// root is worked out from. No server has to have started: the root
 			// is read off the disk.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-				print("LSPROOT: \(controller?.serverRootReportForTesting() ?? "no window")")
+				print("LSPROOT: \(controller?.editorForTesting.serverRootReportForTesting() ?? "no window")")
 				fflush(stdout)
 				if options.writesACapture { return }
 				exit(0)
@@ -1007,7 +1007,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let parts = spec.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
 				guard parts.count == 2 else { return }
-				controller?.exerciseGoToDefinitionForTesting(line: parts[0] - 1, character: parts[1])
+				controller?.editorForTesting.exerciseGoToDefinitionForTesting(line: parts[0] - 1, character: parts[1])
 			}
 		}
 
@@ -1087,7 +1087,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let at = options.debugInterruptAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print("INTERRUPT: \(controller?.pressDebugInterruptForTesting() ?? "no window")")
+				print("INTERRUPT: \(controller?.panelForTesting.pressDebugInterruptForTesting() ?? "no window")")
 				fflush(stdout)
 			}
 		}
@@ -1104,7 +1104,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.debugConsole {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1)) {
-				controller?.showDebugConsoleForTesting()
+				controller?.panelForTesting.showDebugConsoleForTesting()
 			}
 		}
 
@@ -1120,7 +1120,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let command = options.closeTabs {
 			let parts = command.split(separator: ":")
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.closeTabsForTesting(
+				controller?.editorForTesting.closeTabsForTesting(
 					String(parts.first ?? "close"), at: Int(parts.last ?? "0") ?? 0
 				)
 			}
@@ -1143,7 +1143,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
 				// Echoed so a capture run can be read from a terminal: what the
 				// adapter says is half of what is being checked.
-				controller?.echoDebugOutputForTesting()
+				controller?.panelForTesting.echoDebugOutputForTesting()
 				if options.launchRun { controller?.runSelected(nil) }
 				if options.launchDebug { controller?.debugSelected(nil) }
 				if options.launchMenu {
@@ -1157,7 +1157,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// The console is the third of the three faults and cannot be read
 			// from the session, so it is echoed as it arrives — the same way a
 			// capture run reads what the adapter said.
-			controller?.echoDebugOutputForTesting()
+			controller?.panelForTesting.echoDebugOutputForTesting()
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.goDebug(nil)
 			}
@@ -1214,13 +1214,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.undoTree {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.exerciseUndoTreeForTesting()
+				controller?.editorForTesting.exerciseUndoTreeForTesting()
 			}
 		}
 
 		if let typed = options.completeText {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.exerciseCompletionForTesting(typing: typed)
+				controller?.editorForTesting.exerciseCompletionForTesting(typing: typed)
 			}
 		}
 
@@ -1241,7 +1241,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.wordNavigation {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.exerciseWordNavigationForTesting()
+				controller?.editorForTesting.exerciseWordNavigationForTesting()
 			}
 		}
 
@@ -1259,13 +1259,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.fakeDiagnostics {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.injectDiagnosticsForTesting()
+				controller?.editorForTesting.injectDiagnosticsForTesting()
 			}
 		}
 
 		if let wait = options.lspWait {
 			DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
-				controller?.reportDiagnosticsForTesting()
+				controller?.editorForTesting.reportDiagnosticsForTesting()
 			}
 		}
 
@@ -1319,7 +1319,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.selectFirstChangeForTesting()
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-				controller?.selectDiffHunkForTesting(0)
+				controller?.editorForTesting.selectDiffHunkForTesting(0)
 			}
 		}
 
@@ -1541,17 +1541,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let parts = move.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				guard parts.count == 2 else { return }
-				controller?.dragTmuxTabForTesting(from: parts[0], to: parts[1])
+				controller?.panelForTesting.dragTmuxTabForTesting(from: parts[0], to: parts[1])
 			}
 		}
 
 		if options.addTmuxWindow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-				let before = controller?.paneCountForTesting ?? 0
-				controller?.addTmuxWindowForTesting()
+				let before = controller?.panelForTesting.paneCountForTesting ?? 0
+				controller?.panelForTesting.addTmuxWindowForTesting()
 				// The one thing this button must never do is add a pane here.
 				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-					let after = controller?.paneCountForTesting ?? 0
+					let after = controller?.panelForTesting.paneCountForTesting ?? 0
 					print("TMUXADD: panes \(before) -> \(after)")
 				}
 			}
@@ -1568,28 +1568,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// whether there is anything to say.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
 				if action == "report" {
-					controller?.reportServerBannerForTesting()
+					controller?.editorForTesting.reportServerBannerForTesting()
 				} else {
-					controller?.pressServerBannerForTesting(action)
+					controller?.editorForTesting.pressServerBannerForTesting(action)
 				}
 			}
 		}
 
 		if let index = options.closeTmuxTab {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-				controller?.closeTmuxTabForTesting(index)
+				controller?.panelForTesting.closeTmuxTabForTesting(index)
 			}
 		}
 
 		if let delay = options.addTerminalTabAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-				let before = controller?.paneCountForTesting ?? 0
-				controller?.addTerminalTabForTesting()
+				let before = controller?.panelForTesting.paneCountForTesting ?? 0
+				controller?.panelForTesting.addTerminalTabForTesting()
 				// The panel's own + adds a pane: its strip holds the panel's own
 				// tabs, and tmux's windows have the + on the strip below. The
 				// count goes up by one here and stays put for --tmux-add.
 				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-					print("PANELADD: panes \(before) -> \(controller?.paneCountForTesting ?? 0)")
+					print("PANELADD: panes \(before) -> \(controller?.panelForTesting.paneCountForTesting ?? 0)")
 				}
 			}
 		}
@@ -1616,15 +1616,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// panel never sees in use.
 			for step in 0..<count {
 				DispatchQueue.main.asyncAfter(deadline: .now() + 3.0 + Double(step) * 0.25) {
-					controller?.addTerminalTabForTesting()
+					controller?.panelForTesting.addTerminalTabForTesting()
 				}
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0 + Double(count) * 0.25 + 1.5) {
-				print("TABS: \(controller?.paneCountForTesting ?? 0) panes")
+				print("TABS: \(controller?.panelForTesting.paneCountForTesting ?? 0) panes")
 				// A number rather than a picture: whether a tab can be reached
 				// is a fact, and a screenshot of a full strip is a thing
 				// somebody has to squint at.
-				print("OVERFLOW: \(controller?.panelOverflowReportForTesting ?? "none")")
+				print("OVERFLOW: \(controller?.panelForTesting.panelOverflowReportForTesting ?? "none")")
 				fflush(stdout)
 
 				// And what choosing a hidden one does, which is the half of this
@@ -1636,17 +1636,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				// run is still pushed forward when tabs go away.
 				if let closing = options.closeTerminalTabs {
 					DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-						print("CLOSING: \(controller?.closeTerminalTabsForTesting(count: closing) ?? "none")")
+						print("CLOSING: \(controller?.panelForTesting.closeTerminalTabsForTesting(count: closing) ?? "none")")
 						DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-							print("CLOSED: \(controller?.panelOverflowReportForTesting ?? "none")")
+							print("CLOSED: \(controller?.panelForTesting.panelOverflowReportForTesting ?? "none")")
 							fflush(stdout)
 						}
 					}
 				} else {
 					DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-						print("CHOSE: \(controller?.selectHiddenPanelTabForTesting(0) ?? "none")")
+						print("CHOSE: \(controller?.panelForTesting.selectHiddenPanelTabForTesting(0) ?? "none")")
 						DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-							print("AFTER: \(controller?.panelOverflowReportForTesting ?? "none")")
+							print("AFTER: \(controller?.panelForTesting.panelOverflowReportForTesting ?? "none")")
 							fflush(stdout)
 						}
 					}
@@ -1659,13 +1659,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let index = Int(parts.first ?? "0") ?? 0
 			let at = parts.count > 1 ? Double(parts[1]) ?? 4.0 : 4.0
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print("PANEL \(controller?.clickPanelTabForTesting(index) ?? "no window")")
+				print("PANEL \(controller?.panelForTesting.clickPanelTabAndReportForTesting(index) ?? "no window")")
 			}
 		}
 
 		if let delay = options.closeTerminals {
 			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-				controller?.closeTerminalTabsForTesting()
+				controller?.panelForTesting.closeTerminalTabsForTesting()
 			}
 		}
 
@@ -1686,7 +1686,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let presses = options.typingPresses {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.measureTypingForTesting(presses: presses, interval: 0.12)
+				controller?.panelForTesting.measureTypingForTesting(presses: presses, interval: 0.12)
 			}
 		}
 
@@ -1742,7 +1742,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let hovers = options.tmuxMenuHovers {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-				controller?.tmuxMenuForTesting(hovers: hovers)
+				controller?.panelForTesting.tmuxMenuForTesting(hovers: hovers)
 			}
 		}
 
@@ -1772,7 +1772,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let path = options.tabCloseHover {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(3, options.screenshotDelay)) {
-				controller?.tabCloseHoverForTesting(to: path)
+				controller?.panelForTesting.tabCloseHoverForTesting(to: path)
 				exit(0)
 			}
 		}
@@ -1807,8 +1807,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if options.reportsTerminalGeometry {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-					print("GEOM \(Int(seconds))s: \(controller?.terminalGeometryForTesting() ?? "-")")
-					print("PANEL \(Int(seconds))s: \(controller?.panelGeometryForTesting() ?? "-")")
+					print("GEOM \(Int(seconds))s: \(controller?.panelForTesting.terminalGeometryForTesting() ?? "-")")
+					print("PANEL \(Int(seconds))s: \(controller?.panelForTesting.panelGeometryForTesting() ?? "-")")
 					fflush(stdout)
 				}
 			}
@@ -1896,7 +1896,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		for at in options.serverBannersAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s ", terminator: "")
-				controller?.reportServerBannerForTesting()
+				controller?.editorForTesting.reportServerBannerForTesting()
 				fflush(stdout)
 			}
 		}
@@ -1935,7 +1935,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.showTerminalPanelForTesting()
 				DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-					print("TABADD areas: \(controller?.terminalAddControlsForTesting ?? "no window")")
+					print("TABADD areas: \(controller?.panelForTesting.terminalAddControlsForTesting ?? "no window")")
 					print("TABADD menu: \(controller?.newTerminalMenuForTesting() ?? "no window")")
 					fflush(stdout)
 					if options.writesACapture { return }
@@ -1951,7 +1951,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// there. Flushed, because a driver run ends in a kill.
 			for seconds in [1.0, 2.0, 3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-					let where_ = controller?.terminalDirectoryForTesting()
+					let where_ = controller?.panelForTesting.terminalDirectoryForTesting()
 					print("CWD \(Int(seconds))s: \(where_?.path ?? "unknown")"
 						+ "  \(controller?.projectReportForTesting() ?? "no window")")
 					fflush(stdout)
@@ -1998,10 +1998,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let second = options.tearOffFile {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-				controller?.openForTesting(URL(fileURLWithPath: second))
+				controller?.editorForTesting.openForTesting(URL(fileURLWithPath: second))
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-				controller?.tearOffForTesting(index: 1, at: NSPoint(x: 300, y: 600))
+				controller?.editorForTesting.tearOffForTesting(index: 1, at: NSPoint(x: 300, y: 600))
 				self.reportWindowsForTesting("torn off")
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
@@ -2258,7 +2258,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				DispatchQueue.main.asyncAfter(
 					deadline: .now() + max(0.4, options.screenshotDelay - 0.4)
 				) {
-					controller?.pressSettingsKeysForTesting(keys)
+					controller?.editorForTesting.pressSettingsKeysForTesting(keys)
 				}
 			}
 		}
@@ -2299,7 +2299,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 						// "stopping is not for ever" that is easy to leave
 						// unproven: every open file is announced afresh, exactly
 						// as it is when the scope moves under one.
-						print("RUNNING: rescoping \(controller?.tabCountForTesting ?? -1) tab(s)")
+						print("RUNNING: rescoping \(controller?.editorForTesting.tabCountForTesting ?? -1) tab(s)")
 						controller?.editorForTesting.rescope()
 						DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
 							window.refresh {
@@ -2322,7 +2322,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let path = options.editorShotPath {
 			DispatchQueue.main.asyncAfter(deadline: .now() + options.screenshotDelay) {
-				let ok = controller?.writeEditorImageForTesting(to: path) ?? false
+				let ok = controller?.editorForTesting.writeEditorImageForTesting(to: path) ?? false
 				FileHandle.standardError.write(Data("editor shot \(ok ? "written" : "failed"): \(path)\n".utf8))
 				if options.screenshotPath == nil { exit(ok ? 0 : 2) }
 			}
@@ -2370,7 +2370,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	private func reportWindowsForTesting(_ stage: String) {
 		let described = windowControllers.map { controller in
 			"\(controller.isTornOff ? "torn" : "main")"
-				+ "(tabs=\(controller.tabCountForTesting)"
+				+ "(tabs=\(controller.editorForTesting.tabCountForTesting)"
 				+ ",frame=\(controller.window?.frame ?? .zero))"
 		}
 		print("TEAROFF \(stage): windows=\(windowControllers.count) \(described.joined(separator: " "))")
@@ -2381,9 +2381,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	private func dragTornOffTabBackForTesting(into target: MainWindowController?) {
 		guard let target,
 		      let torn = windowControllers.first(where: { $0.isTornOff }),
-		      let groupID = torn.activeGroupIDForTesting
+		      let groupID = torn.editorForTesting.activeGroupIDForTesting
 		else { return }
-		target.dropForTesting(
+		target.editorForTesting.dropForTesting(
 			payload: EditorTabDrag.Payload(groupID: groupID, index: 0, path: ""),
 			at: 0
 		)
@@ -2449,7 +2449,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// A file: the project is whatever encloses it, and the file itself
 			// is what somebody wanted to look at.
 			let controller = open(projectAt: Project.root(containing: url))
-			controller.openForTesting(url)
+			controller.editorForTesting.openForTesting(url)
 		}
 	}
 
@@ -3320,7 +3320,7 @@ private func whenTheBoardHasCards(
 
 	func look() {
 		guard let controller else { return report() }
-		if controller.backlogHasCardsForTesting() || Date() >= deadline {
+		if controller.panelForTesting.backlogHasCardsForTesting() || Date() >= deadline {
 			report()
 			return
 		}

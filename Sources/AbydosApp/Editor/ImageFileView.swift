@@ -508,7 +508,7 @@ final class ImageFileView: NSView, ScalingPage {
 	}
 
 	/// The picture, the document it sits in and the part of it on screen, in one
-	/// line — see `MainWindowController.setImageFitForTesting`.
+	/// line — see `EditorAreaController.setImageFitForTesting`.
 	///
 	/// **The three sizes and not one.** What 0532 was about is the document being
 	/// the same size as the hole it is seen through, and no capture of a picture
