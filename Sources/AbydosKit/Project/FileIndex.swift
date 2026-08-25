@@ -48,6 +48,17 @@ public actor FileIndex {
 
 	public var count: Int { paths.count }
 
+	/// The paths currently indexed.
+	///
+	/// For a caller that wants to know what the project is *made of* rather than
+	/// to match a query against it. The list is here already, built by one
+	/// `git ls-files` and mended as files come and go, so asking it is free —
+	/// which is the point: the alternative was a walk of the whole project, and
+	/// this type exists because that walk was measured at 3.05 s against 0.03 s.
+	public func indexedPaths() -> [String] {
+		paths.map(\.path)
+	}
+
 	/// Whether the list in hand is known to be behind the project.
 	public var isStale: Bool { builtAt != staleness }
 

@@ -661,6 +661,16 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// changes, so the first file of a new kind shows up in the menu after it
 	/// exists rather than after the project is reopened.
 	private var fileKinds: [NewFileKind]?
+	/// Whether `fileKinds` is known to be behind the project.
+	///
+	/// Separate from throwing the list away, because the menu is not allowed to
+	/// wait for a new one: the last answer is shown while a fresh one is worked
+	/// out behind it. A project does not change what kinds of file it is made of
+	/// very often, so the shown answer is almost always the right one, and when
+	/// it is not it is right a moment later.
+	private var fileKindsAreStale = true
+	/// The recount in flight, so a burst of filesystem events schedules one.
+	private var fileKindsTask: Task<Void, Never>?
 
 	private var isReadingGitStatus = false
 	private var wantsAnotherGitStatus = false
@@ -771,9 +781,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		// `git status` at a time with at most one queued — which is what makes
 		// asking on every event affordable.
 		refreshGitStatus()
-		// And the first file of a new kind should be offered as one, without
-		// the project being reopened. Counted again when a menu next asks.
-		fileKinds = nil
+		// And the first file of a new kind should be offered as one, without the
+		// project being reopened. Marked rather than cleared: see
+		// `fileKindsAreStale`.
+		fileKindsAreStale = true
 		// The palette's file list, which is why this is here rather than in the
 		// palette: the palette is shut when the file somebody is about to look
 		// for is saved, and the watcher is the only thing awake to see it.
@@ -1411,13 +1422,60 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// count is cached, so this is a few string comparisons unless something
 	/// has changed, and a menu that is right whenever it is looked at needs no
 	/// invalidation rules of its own.
+	/// Counts the kinds of file the project holds, from the palette's index.
+	///
+	/// The index is built by one `git ls-files` and mended as files come and go,
+	/// so this costs a map over a list that is already in memory — against the
+	/// walk it replaces, which `FileIndex` itself documents as 3.05 s where the
+	/// index took 0.03 s.
+	///
+	/// One at a time: a `git checkout` names thousands of files in a few batches
+	/// and every batch marks the count stale, and there is no sense in a second
+	/// recount of a list the first one is already reading.
+	private func recountFileKinds() {
+		guard fileKindsTask == nil, let files = project?.files else { return }
+		// Cleared before the work rather than after it, so a change arriving
+		// during the recount is not forgotten — it marks the flag again and the
+		// next menu asks for another.
+		fileKindsAreStale = false
+		fileKindsTask = Task { [weak self] in
+			let paths = await files.indexedPaths()
+			let kinds = NewFileKinds.choose(from: paths)
+			await MainActor.run {
+				guard let self else { return }
+				self.fileKindsTask = nil
+				// An index that has not finished its first build answers with
+				// nothing, and nothing is not an answer — it would empty a submenu
+				// that had perfectly good entries in it. Left alone, and asked
+				// again next time.
+				guard !kinds.isEmpty else {
+					self.fileKindsAreStale = true
+					return
+				}
+				guard kinds != self.fileKinds else { return }
+				self.fileKinds = kinds
+				self.refreshNewMenu()
+			}
+		}
+	}
+
 	private func refreshNewMenu() {
-		guard let menu = newMenu, let root = project?.root else { return }
+		guard let menu = newMenu else { return }
 		while menu.numberOfItems > 2 { menu.removeItem(at: menu.numberOfItems - 1) }
 
-		let kinds = fileKinds ?? NewFileKinds.inProject(root)
-		fileKinds = kinds
-		guard !kinds.isEmpty else { return }
+		// **Never a walk of the project from here.** This runs inside
+		// `menuNeedsUpdate`, which AppKit calls while the menu is opening, on the
+		// main thread, with the menu on screen waiting for it to return. It used
+		// to call `NewFileKinds.inProject`, which collects every file in the
+		// project — and because the watcher cleared the cache on any change, that
+		// walk was paid again on the next right-click after every save. On a
+		// repository of 43,600 entries a right-click took seconds, for a submenu
+		// of five items.
+		//
+		// What is shown is whatever was last counted; a recount is asked for here
+		// and arrives later.
+		if fileKindsAreStale { recountFileKinds() }
+		guard let kinds = fileKinds, !kinds.isEmpty else { return }
 
 		menu.addItem(.separator())
 		for kind in kinds {
