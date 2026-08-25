@@ -13,6 +13,10 @@
 - [x] 1.5 Prove the four cases by hand: unlisted file over the line fails; a
       listed file grown fails with both numbers; a listed file shortened passes;
       a listed file under 1,000 is reported as strikeable
+- [x] 1.6 **Amended after group 4:** one hard number made the arithmetic the
+      goal, so the rule is now an aim of 1,000 and a limit of 1,100. A file
+      between them is reported and passes. Spec and check both updated, and the
+      two new cases proven by hand at 1,050 and 1,150 lines.
 
 ## 2. The driving verbs that only forward
 
@@ -58,17 +62,27 @@
 
 ## 4. TitlebarController
 
-- [ ] 4.1 New `Sources/AbydosApp/Titlebar/TitlebarController.swift` owning the
+- [x] 4.1 New `Sources/AbydosApp/Titlebar/TitlebarController.swift` owning the
       capsule, the four pills, `worktrees`, `branchRead`, `pilledContainer`,
       the backdrop and the seam
-- [ ] 4.2 Move the `NSToolbarDelegate` conformance to it and set it as the
+- [x] 4.2 Move the `NSToolbarDelegate` conformance to it and set it as the
       toolbar's delegate directly — it does not stay on the window controller
-- [ ] 4.3 Move the devcontainer pill and its menu, and the worktree and
+- [x] 4.3 Move the devcontainer pill and its menu, and the worktree and
       subproject menus
-- [ ] 4.4 Split it if it exceeds the ceiling: the toolbar items and the
-      devcontainer menu are the natural second and third files
-- [ ] 4.5 `make test`, `make warnings`, `reportToolbarForTesting` and
+- [x] 4.4 ~~Split it if it exceeds the ceiling~~ — not needed. It came to 974
+      lines once the run item and the branch popover went back to the window,
+      so it stays one file and one type
+- [x] 4.5 `make test`, `make warnings`, `reportToolbarForTesting` and
       `highlightPillsForTesting` unchanged
+- [x] 4.6 **Three things stayed behind, each for a reason worth recording.**
+      `branchRead` is the window's, because `readGit` orchestrates far more than
+      the pill and the titlebar only needs the answer — it is injected.
+      `showBranchMenu` is the window's because `ProjectSwitcherPopover.show`
+      takes a `MainWindowController?` as its owner. The run toolbar item is the
+      window's because every button on it is about running; the titlebar asks
+      for it through `makeRunItem` and will stop having to at group 7.
+- [x] 4.7 `titlebarContainer` was declared and never read. Swift does not warn
+      about an unused property, so it had sat there unnoticed; deleted.
 
 ## 5. SidebarController
 

@@ -12,10 +12,12 @@
 #
 #     Scripts/file-size.sh
 #
-# The ceiling is 1,000 lines. The number is round and that is not the point; the
-# point is that it is checked rather than merely stated, because the rule it
-# replaces — everybody agreeing that files should be smallish — is the rule that
-# produced the 13,030.
+# The aim is 1,000 lines and the limit is 1,100. The numbers are round and that
+# is not the point; the point is that they are checked rather than merely
+# stated, because the rule they replace — everybody agreeing that files should
+# be smallish — is the rule that produced the 13,030. The hundred lines of slack
+# are so that a file lands where its meaning ends rather than where the
+# arithmetic does.
 #
 # It is a limit on the *file*, which is the unit somebody opens, and not on the
 # type. Where a type genuinely wants more than a thousand lines what it wants is
@@ -27,7 +29,7 @@
 #
 # ## Why there is a list of exceptions
 #
-# Twenty-seven files were over the ceiling on the day this was written, 71,296
+# Twenty-seven files were over the aim on the day this was written, 71,296
 # lines between them and 44,296 lines of excess. A check that failed on all of
 # them would have been switched off the same afternoon, and a check that was
 # switched off teaches that the checks in this repository are advisory — which is
@@ -35,10 +37,10 @@
 #
 # So `Scripts/file-size-allowed.txt` is that debt, written down, at the lengths
 # those files were. A listed file may shrink freely; it may not grow. When it
-# comes under the ceiling it is struck from the list and cannot go back on.
+# comes under the aim it is struck from the list and cannot go back on.
 # The list is empty when the work is done, and this script then needs no list.
 #
-# A file that is shorter but still over the ceiling passes silently and its
+# A file that is shorter but still over the aim passes silently and its
 # recorded number is left alone, so that somebody shortening a file is not also
 # obliged to edit a manifest to stay green. Tightening the number is a choice
 # somebody makes.
@@ -46,7 +48,7 @@
 # ## What is not checked
 #
 # `Tests` is left out. A test file is a list of claims rather than a machine, and
-# it is read a claim at a time; three of them are over the ceiling and none of
+# it is read a claim at a time; three of them are over the aim and none of
 # them is hard to navigate. If that stops being true it is a change of its own.
 #
 # Every vendored file in this repository is C, under `Sources/Grammars`, so there
@@ -57,11 +59,20 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-CEILING=1000
+# The aim, and the point at which it is a fault.
+#
+# 1,000 is the number to write code against; 1,100 is where the check stops
+# accepting it. The gap exists because a class that has just had its state moved
+# out lands where it lands, and forcing the last eighty lines somewhere else
+# produces a file split for arithmetic rather than for meaning — which is the
+# habit this whole exercise is against. Over the aim and under the limit, the
+# check says so and passes.
+AIM=1000
+LIMIT=1100
 LIST="Scripts/file-size-allowed.txt"
 
 if [ ! -f "$LIST" ]; then
-	echo "file-size: no $LIST — every file over $CEILING lines would be a fault." >&2
+	echo "file-size: no $LIST — every file over $LIMIT lines would be a fault." >&2
 	exit 2
 fi
 
@@ -80,11 +91,14 @@ while IFS= read -r file; do
 	allowed=$(awk -v f="$file" '$2 == f { print $1; exit }' "$LIST")
 
 	if [ -z "$allowed" ]; then
-		[ "$lines" -gt "$CEILING" ] \
-			&& fault "$((lines - CEILING))	$file is $lines lines, over the $CEILING-line ceiling"
+		if [ "$lines" -gt "$LIMIT" ]; then
+			fault "$((lines - AIM))	$file is $lines lines, over the $LIMIT-line limit"
+		elif [ "$lines" -gt "$AIM" ]; then
+			note "$file is $lines lines, over the $AIM-line aim and under the $LIMIT-line limit"
+		fi
 	elif [ "$lines" -gt "$allowed" ]; then
-		fault "$((lines - CEILING))	$file has grown to $lines lines, recorded at $allowed"
-	elif [ "$lines" -le "$CEILING" ]; then
+		fault "$((lines - AIM))	$file has grown to $lines lines, recorded at $allowed"
+	elif [ "$lines" -le "$AIM" ]; then
 		note "$file is $lines lines and may be struck from $LIST"
 	fi
 done < <(find Sources -name '*.swift' -type f | sort)
@@ -107,10 +121,10 @@ if [ -z "$FAULTS" ]; then
 fi
 
 echo
-echo "$(printf '%s' "$FAULTS" | grep -c .) file(s) over the $CEILING-line ceiling:"
+echo "$(printf '%s' "$FAULTS" | grep -c .) file(s) over the $LIMIT-line limit:"
 printf '%s' "$FAULTS" | sort -rn | cut -f2- | sed 's/^/  /'
 echo
-echo "A file gets under the ceiling by state moving out of it, not by braces"
+echo "A file gets under the limit by state moving out of it, not by braces"
 echo "moving: an extension in another file cannot see \`private\`, so splitting a"
 echo "class that way widens every property the new file touches."
 exit 1

@@ -1365,7 +1365,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				window.setFrame(frame, display: true)
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.reportToolbarForTesting()
+				controller?.titlebarForTesting.reportToolbarForTesting()
 			}
 		}
 
@@ -1437,7 +1437,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.highlightPills {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 1)) {
-				controller?.highlightPillsForTesting()
+				controller?.titlebarForTesting.highlightPillsForTesting()
 			}
 		}
 
@@ -1828,21 +1828,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		for at in options.devContainerPillAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print("\(Int(at))s \(controller?.devContainerPillForTesting() ?? "PILL: no window")")
+				print("\(Int(at))s \(controller?.titlebarForTesting.devContainerPillForTesting() ?? "PILL: no window")")
 				fflush(stdout)
 			}
 		}
 
 		for at in options.worktreePillAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print("\(Int(at))s \(controller?.worktreePillForTesting() ?? "WORKTREE: no window")")
+				print("\(Int(at))s \(controller?.titlebarForTesting.worktreePillForTesting() ?? "WORKTREE: no window")")
 				fflush(stdout)
 			}
 		}
 
 		if let at = options.worktreeMenuAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print("\(Int(at))s \(controller?.worktreeMenuForTesting() ?? "WORKTREEMENU: no window")")
+				print("\(Int(at))s \(controller?.titlebarForTesting.worktreeMenuForTesting() ?? "WORKTREEMENU: no window")")
 				fflush(stdout)
 			}
 		}
@@ -1858,7 +1858,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let at = options.devContainerMenuAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print(controller?.devContainerMenuForTesting() ?? "PILLMENU: no window")
+				print(controller?.titlebarForTesting.devContainerMenuForTesting() ?? "PILLMENU: no window")
 				fflush(stdout)
 			}
 		}
