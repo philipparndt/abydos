@@ -746,9 +746,99 @@ public enum LanguageServers {
 			try? FileManager.default.createDirectory(
 				at: indexScratchPath(for: root), withIntermediateDirectories: true
 			)
+			capBackgroundIndexing()
 		case .plain:
 			break
 		}
+	}
+
+	/// What share of the machine one server's background indexing may take.
+	///
+	/// A quarter, because the number that matters is not this one but this one
+	/// times the number of servers: 0427 keeps a server for every project that
+	/// has been opened, so a session with four of them is the ordinary case and
+	/// four quarters is already the whole machine. Lower would make a single
+	/// project's first index slower than it needs to be for a session that only
+	/// ever has one.
+	public static let backgroundIndexingCoreShare = 0.25
+
+	/// Where sourcekit-lsp reads settings that are not one project's.
+	public static var userConfigurationPath: URL {
+		FileManager.default.homeDirectoryForCurrentUser
+			.appendingPathComponent(".sourcekit-lsp/config.json")
+	}
+
+	/// Stops background indexing taking the whole machine, in the one file
+	/// sourcekit-lsp reads it from.
+	///
+	/// **Why the app writes a file outside itself at all.** A server is kept for
+	/// every project that has been opened — 0427, and the reason is good:
+	/// navigating between two projects every few minutes should not pay for a
+	/// server start each time. What that decision does not price is that each of
+	/// those servers indexes on its own account and fans its build out to every
+	/// core. Measured on a fourteen-core machine: four live servers, one of them
+	/// running `swift-build` at `-j14` with thirteen concurrent `swift-frontend`
+	/// under it, against a 9.7 GB scratch tree every write of which this
+	/// machine's endpoint-security filter scans. `StallWatch` logged the result
+	/// as stalls of 104 s, 54 s and 22 s at `cpu 1%` — a main thread that was
+	/// not computing but blocked, in the filter, behind the app's own indexer.
+	///
+	/// The cap is sourcekit-lsp's own option and it reads it from exactly two
+	/// places: the workspace root, and here. The workspace root is somebody's
+	/// checkout, and 0518 is the whole reason nothing of ours is written into
+	/// one — so it is here, which also means it is set once rather than per
+	/// project.
+	///
+	/// **Never over a value somebody set.** The file is parsed first and the key
+	/// added only when it is missing, so anybody with an opinion about their own
+	/// indexing keeps it; setting it to `1` is how you say "take the machine"
+	/// and have that answer stick. Anything already in the file is written back
+	/// untouched, and a file that does not parse is left exactly as it is —
+	/// rewriting somebody's malformed JSON as our own is worse than the fault.
+	///
+	/// This is a shared file and other editors' servers read it too. That is a
+	/// real cost and it is the one being chosen: a machine this close to its
+	/// limit does not have a spare fourteen cores for whichever editor asks
+	/// second.
+	static func capBackgroundIndexing() {
+		let path = userConfigurationPath
+		guard let data = cappedConfiguration(from: try? Data(contentsOf: path)) else { return }
+		try? FileManager.default.createDirectory(
+			at: path.deletingLastPathComponent(), withIntermediateDirectories: true
+		)
+		try? data.write(to: path, options: .atomic)
+	}
+
+	/// What the configuration file should become, or nil when it should be left
+	/// exactly as it is.
+	///
+	/// Separated from the writing so the decision can be tested without a home
+	/// directory: every "leave it alone" case below is one somebody could
+	/// otherwise only find by losing their own settings to it.
+	///
+	/// - Parameter existing: the file's contents, or nil when there is no file.
+	static func cappedConfiguration(from existing: Data?) -> Data? {
+		var configuration: [String: Any] = [:]
+
+		if let existing {
+			// Present but not JSON we understand: left alone. Replacing a file
+			// we did not write and cannot read is worse than the fault it has.
+			guard let parsed = try? JSONSerialization.jsonObject(with: existing),
+			      let object = parsed as? [String: Any]
+			else { return nil }
+			configuration = object
+		}
+
+		var index = configuration["index"] as? [String: Any] ?? [:]
+		let key = "maxCoresPercentageToUseForBackgroundIndexing"
+		// Somebody's own answer, including one that says take everything.
+		guard index[key] == nil else { return nil }
+		index[key] = backgroundIndexingCoreShare
+		configuration["index"] = index
+
+		return try? JSONSerialization.data(
+			withJSONObject: configuration, options: [.prettyPrinted, .sortedKeys]
+		)
 	}
 
 	/// The directories this server needs beyond the project, as mounts, for the
