@@ -36,17 +36,25 @@
 
 ## 3. ResultsPresenter
 
-- [ ] 3.1 New `Sources/AbydosApp/Results/ResultsPresenter.swift` owning
+- [x] 3.1 New `Sources/AbydosApp/Results/ResultsPresenter.swift` owning
       `usagesWindow`, `searchWindow`, `usagesPlacement`, `searchPlacement`,
       `lastUsagesRequest`, `usagesPane` and `symbolPalette`
-- [ ] 3.2 Move usages, search results, renaming a symbol and copying a link to
+- [x] 3.2 Move usages, search results, renaming a symbol and copying a link to
       it, with the driving verbs that read that state
-- [ ] 3.3 Hand it the editor and the bottom panel at construction; give it
+- [x] 3.3 Hand it the editor and the bottom panel at construction; give it
       closures for what it must tell the window — no reference back to
       `MainWindowController`
-- [ ] 3.4 Leave the `@objc` actions on the window controller as one-line
+- [x] 3.4 Leave the `@objc` actions on the window controller as one-line
       forwards
-- [ ] 3.5 `make test`, `make warnings`, and the driven usages and search flags
+- [x] 3.5 `make test`, `make warnings`, and the driven usages and search flags
+- [x] 3.6 **Finding: the section is three concerns, not one.** The design put
+      renaming and copying a link in this collaborator. Measured, those 1,100
+      lines are three things that share no state: results presentation (the
+      seven properties, ~430 lines, done here), the language server's *edit*
+      actions (rename, code actions, workspace edits, ~350 lines, on the editor
+      and the navigator), and code links (copy and follow a place, ~180 lines,
+      on the project). Lumping them would have made one class at the ceiling
+      and cohesive in nothing. The other two are groups 10 and 11.
 
 ## 4. TitlebarController
 
@@ -103,6 +111,26 @@
       design's open question
 - [ ] 7.7 `make test`, `make warnings`, and every driven run, debug, profile and
       make-goal flag
+
+## 10. Server edit actions
+
+- [ ] 10.1 New `Editor/ServerActions.swift` owning renaming a symbol, offering
+      and taking code actions, and applying a workspace edit — `renameSymbol`,
+      `offerCodeActions`, `takeServerEdits`, `apply`, `remember`,
+      `workspaceEditFiles`, `completeAtCaret`, `symbolName`
+- [ ] 10.2 It is handed the editor and the navigator; `findUsages`, `symbols`
+      and `reasonForNoSymbols` come with it, and `ResultsPresenter`'s three
+      closures are wired to it rather than to the window
+- [ ] 10.3 `make test`, `make warnings`, and the driven rename and code-action
+      flags
+
+## 11. Code links
+
+- [ ] 11.1 New `CodeLinks.swift` owning copying and following a place —
+      `copyLink`, `copyReference`, `copyPermalink`, `goToCopiedPlace`, `follow`,
+      `copyToPasteboard`, and their driving verbs
+- [ ] 11.2 `make test`, `make warnings`, and the driven copy-link and
+      follow-link flags
 
 ## 8. The window controller itself
 

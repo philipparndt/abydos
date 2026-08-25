@@ -1033,7 +1033,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// before then would be walking an empty table.
 			if let steps = options.usagesSteps {
 				DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12) + 4) {
-					controller?.usagesStepsForTesting(steps)
+					controller?.resultsForTesting.usagesStepsForTesting(steps)
 				}
 			}
 		}
@@ -1052,7 +1052,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let query = options.symbolQuery {
 			// After the language server has had time to index.
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
-				controller?.exerciseSymbolPaletteForTesting(query, project: options.symbolProject)
+				controller?.resultsForTesting.exerciseSymbolPaletteForTesting(query, project: options.symbolProject)
 			}
 		}
 
