@@ -1224,6 +1224,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.terminalTabBeside {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.exerciseTerminalTabBesideForTesting()
+			}
+		}
+
+		if options.completeNow {
+			// When it is pressed decides which of the two answers is under
+			// test: early and the server is still preparing, late and it has a
+			// list. Both are the feature working.
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.completeNowAt) {
+				controller?.exerciseExplicitCompletionForTesting()
+			}
+		}
+
 		if options.wordNavigation {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.exerciseWordNavigationForTesting()
@@ -2803,6 +2818,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		rename.keyEquivalentModifierMask = [.shift]
 		editMenu.addItem(rename)
 
+		// **⌃Space, which is IDEA's and Eclipse's, and the key everybody
+		// presses.** A list appears while typing too, but only for a word of two
+		// letters or a character the server asked to be woken by — deliberately,
+		// since a list on every keystroke is in the way. That leaves the case
+		// somebody most wants help with unanswerable: a caret in the middle of
+		// nothing, where the question is "what can go here at all".
+		//
+		// A menu item rather than a key caught in the text view, for the reason
+		// the item below gives — and one more. macOS may have ⌃Space bound to
+		// "select the previous input source"; a system shortcut wins over both,
+		// but as a menu item at least the key is written down where somebody
+		// looking for it can see it and go and free it up.
+		let complete = NSMenuItem(
+			title: "Complete",
+			action: #selector(MainWindowController.completeAtCaret(_:)),
+			keyEquivalent: " "
+		)
+		complete.keyEquivalentModifierMask = [.control]
+		editMenu.addItem(complete)
+
 		// **⌥⏎, which is IDEA's, and the only always-on way in.** Measured in
 		// 0538 against gopls and jdtls: a server answers *something* for every
 		// line of a real file — organise imports, generate accessors, and in
@@ -3144,6 +3179,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		terminalTabItem.keyEquivalentModifierMask = [.command]
 		viewMenu.addItem(terminalTabItem)
+
+		// ⌘D, and the same rules as ⌘T above: only while the terminal has the
+		// keyboard, and sent to nil so a torn-off terminal window answers it
+		// too. Not against a class, for the reason ⌘T's comment gives.
+		let terminalTabBesideItem = NSMenuItem(
+			title: "New Terminal Tab Here",
+			action: Selector(("newTerminalTabBeside:")),
+			keyEquivalent: "d"
+		)
+		terminalTabBesideItem.keyEquivalentModifierMask = [.command]
+		viewMenu.addItem(terminalTabBesideItem)
 		let followTerminal = NSMenuItem(
 			title: "Follow Terminal Project",
 			action: #selector(MainWindowController.toggleFollowTerminal(_:)),

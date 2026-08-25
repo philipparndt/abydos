@@ -1060,6 +1060,72 @@ final class LanguageService {
 		preparing.contains(key(project: project, languageId: languageId))
 	}
 
+	/// How ready this project's language servers are, taken together.
+	///
+	/// **For the titlebar, and the question it answers is "can I start yet".**
+	/// A language server in a dev container takes a minute or two to be useful —
+	/// the image, the handshake, then an index — and until now nothing said when
+	/// that had happened. Everything an editor does with a server is quietly
+	/// wrong before it: go-to-definition finds nothing, completion is the words
+	/// already in the file, and both look like answers.
+	///
+	/// One state for the whole project rather than one per language: a pill has
+	/// room for a colour, and what somebody wants from it is a yes.
+	enum Readiness {
+		/// Nothing started — a project of Markdown, or one not opened yet.
+		case none
+		/// At least one is on its way.
+		case preparing
+		/// At least one has said something is wrong, and none is still trying.
+		case failed
+		/// Every one that started is answering.
+		case ready
+	}
+
+	func readiness(project: URL) -> Readiness {
+		// Every key for a project is `<path>#<server name>`, so this is the
+		// prefix they share and nothing else does — `/a/b#` is not a prefix of
+		// `/a/bc#`, which is why the separator is part of it.
+		let prefix = LanguageServers.serverKey(project: project, server: "")
+
+		let started = servers.filter { $0.key.hasPrefix(prefix) }
+		let onTheWay = preparing.union(fetching).filter { $0.hasPrefix(prefix) }
+		guard !started.isEmpty || !onTheWay.isEmpty else { return .none }
+		if !onTheWay.isEmpty { return .preparing }
+		// **The handshake, not the process.** A client goes into this table the
+		// moment it is spawned and answers `initialize` some seconds later, so
+		// "there is a server" would go green while the server could still not be
+		// asked anything — the false start this is meant to replace.
+		if started.values.contains(where: { !$0.client.hasInitialized }) { return .preparing }
+		if started.keys.contains(where: { health[$0]?.isWorking == false }) { return .failed }
+		return .ready
+	}
+
+	/// Why a server cannot answer yet, in a sentence — or nil when it has no
+	/// excuse.
+	///
+	/// **Telling the three apart is the whole of it.** An empty list means one
+	/// of "ask again in a minute", "this server is not working", and "there is
+	/// nothing here", and they want three different things from whoever is
+	/// reading: wait, look at the server, or ask something else. It used to be
+	/// shown only where a list happened to be on screen already; a question
+	/// asked on purpose — ⌃Space, ⇧⌘O — deserves an answer even when the answer
+	/// is "not yet".
+	func notReadySentence(languageId: String, project: URL) -> String? {
+		let key = key(project: project, languageId: languageId)
+		// The strongest first: a server that has said something is wrong is not
+		// preparing, it has finished and failed.
+		if let failure = failure(forLanguage: languageId, project: project) { return failure }
+		if preparing.contains(key) { return "\(languageId) server is still preparing…" }
+		// Started nothing, and not because it is on its way. A language with no
+		// server at all is not an obstacle — it is a file the words in it are
+		// the best answer for — so this speaks only where one was expected.
+		if servers[key] == nil, fetching.contains(key) {
+			return "\(languageId) server is being fetched…"
+		}
+		return nil
+	}
+
 	func signatureHelp(
 		url: URL,
 		position: LSPPosition,
@@ -2968,6 +3034,14 @@ final class LanguageService {
 					timeout: isJava ? 120 : 10
 				)
 				log("\(resolved.definition.command) initialized")
+				// **Said out loud, because something now depends on the moment
+				// it happens.** The handshake finishing used to change nothing
+				// anybody could see — the strip and the chip are drawn from
+				// `preparing`, and a server that never reports progress goes
+				// from spawned to usable without touching it. The titlebar's
+				// "your tools are ready" is drawn from `readiness`, which turns
+				// on exactly here, so exactly here has to post.
+				NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 			} catch {
 				log("\(resolved.definition.command) handshake failed: \(error.localizedDescription)")
 

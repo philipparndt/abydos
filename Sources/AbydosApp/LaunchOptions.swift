@@ -144,6 +144,12 @@ struct LaunchOptions {
 	var emacsNavigation = false
 	/// Type this at the end of the file and leave the completion list showing.
 	var completeText: String?
+	/// Press ⌃Space on an empty line and report what came back.
+	var completeNow = false
+	/// When to press it. The point of the seconds is that the two answers worth
+	/// telling apart are both real: press early and the server is still
+	/// preparing, press late and it has a list.
+	var completeNowAt: Double = 2.0
 	/// Ring the terminal bell this many seconds before the Metal capture.
 	var bellBefore: Double?
 	/// Type, undo, type again, and show the file's history.
@@ -414,6 +420,8 @@ struct LaunchOptions {
 	/// window hides everything a screenshot is meant to show.
 	var panelHeight: Double?
 	/// Open the list of launch configurations.
+	/// Open three terminal tabs, go back to the middle, and press ⌘D there.
+	var terminalTabBeside = false
 	var launchMenu = false
 	/// A goal in the run list to open, so a capture run can see the places
 	/// behind one rather than only the row that holds them.
@@ -994,6 +1002,9 @@ struct LaunchOptions {
 			case "--vertical-nav": options.verticalNavigation = true
 			case "--emacs-nav":  options.emacsNavigation = true
 			case "--complete":   options.completeText = next()
+			case "--complete-now":
+				options.completeNow = true
+				if let seconds = next().flatMap(Double.init) { options.completeNowAt = seconds }
 			case "--bell":       options.bellBefore = next().flatMap(Double.init) ?? 0.15
 			case "--undo-tree":  options.undoTree = true
 			case "--debug-steps": options.debugSteps = true
@@ -1065,6 +1076,7 @@ struct LaunchOptions {
 			case "--zoom-window": options.zoomWindow = true
 			case "--chart-path": options.reportChart = true
 			case "--debug-console": options.debugConsole = true
+			case "--tab-beside": options.terminalTabBeside = true
 			case "--launch-menu":   options.launchMenu = true
 			case "--launch-menu-open":
 				options.launchMenu = true

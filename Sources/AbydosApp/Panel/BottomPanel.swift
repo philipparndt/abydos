@@ -831,6 +831,22 @@ final class BottomPanel: NSView {
 	/// How many sessions are open, for checking a new tab arrived.
 	var sessionCountForTesting: Int { sessions.count }
 
+	/// Both columns, with the one in front marked, so where a new terminal
+	/// landed can be checked rather than photographed.
+	///
+	/// The two look the same from a count and from one column's strip — which
+	/// is exactly how ⌘D came to open a tab where a pane beside it was asked
+	/// for, and pass a check that only ever read one column.
+	var columnsForTesting: String {
+		let columns = Set(sessions.map(\.column)).sorted()
+		return columns.map { column in
+			let tabs = sessions.filter { $0.column == column }
+				.map { $0 === activeSession ? "[\($0.title)]" : $0.title }
+				.joined(separator: " ")
+			return "col\(column): \(tabs)"
+		}.joined(separator: "   ||   ")
+	}
+
 	/// Asks the terminal in front what a key with Option held would send.
 	func optionKeyForTesting(bare: String, composed: String) -> String {
 		let index = activeIndex ?? 0
@@ -1629,6 +1645,23 @@ final class BottomPanel: NSView {
 	@discardableResult
 	func newTerminal() -> TerminalPane? {
 		newTerminal(rootedAt: workingDirectory, title: "Local")
+	}
+
+	/// The same shell ⌘T opens, put in a column beside the one in front.
+	///
+	/// **Beside, not after.** A tab appended to the strip is still the same one
+	/// pane showing one terminal at a time; what somebody wants when they open a
+	/// shell to do one thing next to the one they are reading is *both on
+	/// screen*, which in this panel is a second column. It is the drag somebody
+	/// would otherwise do — tab, to the right edge, drop — so it ends in
+	/// `putBeside`, the same code that drag ends in.
+	@discardableResult
+	func newTerminalBesideCurrent() -> TerminalPane? {
+		guard let pane = newTerminal() else { return nil }
+		guard let made = sessions.last else { return pane }
+		putBeside(made, on: .right)
+		onTerminalsChanged?()
+		return pane
 	}
 
 	/// A shell that is not this machine's — one inside the project's
@@ -3134,6 +3167,17 @@ final class BottomPanel: NSView {
 	/// Clicks a tab, for the capture harness.
 	func selectTabForTesting(_ index: Int) {
 		activate(sessions[index], focus: false)
+	}
+
+	/// Selects a tab *and* takes the keyboard, which is what a click does.
+	///
+	/// The commands that only work while the terminal has the keyboard cannot
+	/// be exercised through `selectTabForTesting` — it deliberately leaves the
+	/// focus where it was, so a harness using it measures the gate rather than
+	/// the thing behind it.
+	func selectAndFocusTabForTesting(_ index: Int) {
+		guard sessions.indices.contains(index) else { return }
+		activate(sessions[index], focus: true)
 	}
 
 	/// Puts the first tab beside whatever is showing, as the menu does.
