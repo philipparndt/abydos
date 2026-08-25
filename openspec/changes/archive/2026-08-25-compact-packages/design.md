@@ -61,6 +61,14 @@ otherwise. So `src/main/java` folds to `src/main/java`, and the `com/example/mya
 below it folds to `com.example.myapp`, which is what IDEA shows and what was
 asked for.
 
+**And the chain ends at one, too.** A source root is where a package begins, so
+it is also where the chain above it stops: `src/main/java` is one row and the
+`com.example.myapp` below it is another. Without that, the whole of
+`src/main/java/com/example/myapp` folds into a single row, which is neither a
+source root nor a package — and the separator rule has nothing to decide, since
+no chain would ever begin below a `java`. Both spec scenarios ask for the two
+rows; this is the one line that produces them.
+
 Alternatives considered. *Always slashes* — correct everywhere, and misses the
 point of the request. *Dots whenever every component is a valid Java identifier*
 — folds `src/main/java` into `src.main.java`, which is wrong and was the first
@@ -103,6 +111,16 @@ where it was asked for and where IDEA keeps it.
   with anything but one entry, which is nearly all of them; and excluded
   directories are not walked at all. → And it is measured, not argued: task 5.2.
 
+  **Measured** (`make scale`, subject `abydos`, load 8.1 over 14 cores — the
+  corpus itself is not on this machine, so this repository is the subject):
+  opening the root is 1 listing and 5.7 ms of processor time with compaction
+  off, and 18 listings and 9.8 ms with it on — one listing per child directory,
+  which is what the design says it should be. Asking the same tree again is 0
+  listings and 0.1 ms, which is the cache doing what it is there for and is what
+  every refresh after the first one costs. A level deeper, 339 rows cost 37
+  further listings. The shape is as argued: it is paid once, per visible
+  directory, and never again until something moves.
+
 - **The four hand-written walks.** Reveal, expansion save, expansion restore and
   the watcher's reload each descend through `children`, and each would descend
   through folded rows the outline is not showing. → They keep working, because a
@@ -119,10 +137,21 @@ where it was asked for and where IDEA keeps it.
   wider than the sidebar. → The cell already truncates, and the tool tip already
   carries the full path.
 
+### Turning it on folds unconditionally
+
+The open question — whether a chain somebody has explicitly expanded should stay
+unfolded — is answered no. Turning compaction on folds every chain, including the
+one that is open; the row for the deepest directory keeps its path, so it is
+still open afterwards and the file that was selected is still selected. What is
+lost is the expansion of the intermediates, which have no rows while it is on,
+and turning it off puts them back — that is what `FilePath.withAncestors` is for.
+
+A toggle that sometimes does nothing is harder to understand than one that always
+does the same thing, and there is nowhere honest to keep the exception: "this
+chain was expanded on purpose" is state about rows that no longer exist, and it
+would have to survive a reload, a rename and a watcher event that changes the
+chain's shape underneath it.
+
 ## Open Questions
 
-- Should the fold hold when somebody has explicitly expanded an intermediate
-  row — that is, does turning compaction on collapse work in progress, or leave
-  chains that are open alone? Leaning towards folding unconditionally, because a
-  toggle that sometimes does nothing is harder to understand than one that
-  always does the same thing.
+None. The one above is decided in `Decisions`.

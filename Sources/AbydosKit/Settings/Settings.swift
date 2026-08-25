@@ -129,6 +129,7 @@ public final class Settings {
 		static let editorLineHeight = "editorLineHeight"
 		static let tabWidth = "tabWidth"
 		static let showHiddenFiles = "showHiddenFiles"
+		static let compactsPackages = "compactsPackages"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let agentPermissions = "agentPermissions"
@@ -677,6 +678,18 @@ public final class Settings {
 		set { set(newValue, Key.showHiddenFiles) }
 	}
 
+	/// Whether a chain of directories each holding one directory is one row.
+	///
+	/// Off, because the tree changes shape under this and a change of shape
+	/// nobody asked for is one they have to undo before they can work. Per app
+	/// rather than per project, like `showHiddenFiles` above and for the same
+	/// reason: a preference that changed as you switched projects would be one
+	/// you could not learn.
+	public var compactsPackages: Bool {
+		get { defaults.bool(forKey: Key.compactsPackages) }
+		set { set(newValue, Key.compactsPackages) }
+	}
+
 	/// Whether choosing another project opens a window or replaces this one.
 	///
 	/// Replacing by default: the window is where you were working, and a
@@ -757,7 +770,7 @@ public final class Settings {
 		for key in [
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
-			Key.showHiddenFiles, Key.excludedDirectories,
+			Key.showHiddenFiles, Key.compactsPackages, Key.excludedDirectories,
 			Key.uiScale, Key.terminalFontName, Key.wordWrap, Key.fontLigatures,
 			Key.terminalScheme, Key.terminalGPURendering, Key.terminalBellStyle,
 		] {

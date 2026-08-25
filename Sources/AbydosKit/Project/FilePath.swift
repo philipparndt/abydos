@@ -84,4 +84,31 @@ public enum FilePath {
 		else { return nil }
 		return Set(names)
 	}
+
+	/// Every path in the set, and every directory above it.
+	///
+	/// What the navigator restores expansion from. Normally it adds nothing: a
+	/// row can only be open if the row above it is, so a set collected from the
+	/// outline already holds the ancestors. It matters exactly once, and that is
+	/// what it is for — across a change of package compaction, where the set was
+	/// collected from rows that no longer exist. `src/main/java` is one row and
+	/// one path with compaction on, and three rows with it off; the two that had
+	/// no path of their own are what this puts back, so what was open stays
+	/// open.
+	///
+	/// Anything not starting with `/` is passed through untouched: the same set
+	/// carries the Dependencies section's own rows, which are not files and have
+	/// no ancestors on disk.
+	public static func withAncestors(of paths: Set<String>) -> Set<String> {
+		var all = paths
+		for path in paths where path.hasPrefix("/") {
+			var url = URL(fileURLWithPath: path).deletingLastPathComponent()
+			// Stopping at the first one already in the set: everything above it
+			// was put there by whoever put that one there.
+			while url.pathComponents.count > 1, all.insert(url.path).inserted {
+				url = url.deletingLastPathComponent()
+			}
+		}
+		return all
+	}
 }

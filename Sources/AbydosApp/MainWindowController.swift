@@ -7829,6 +7829,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "alt-cmd-v": navigator.pressKeyForTesting(9, modifiers: [.command, .option])
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
+			// The header's third button. A row count with it off and the same
+			// count with it on is the whole claim this change makes, and `rows`
+			// is what says both.
+			case "compact": navigator.toggleCompactPackages()
 			// The Dependencies section, which is not on disk and so is the one
 			// part of the tree `ls:` can say nothing about. `deps` is what the
 			// section holds whether or not anything is open; `rows` is what the
