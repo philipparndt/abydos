@@ -319,7 +319,7 @@ struct DevPodFileTests {
 struct DevPodWatchTests {
 	private let stuck = """
 	{"items": [{
-	  "metadata": {"name": "ideai-thing-abydos-devpod-59cd-2cmr2"},
+	  "metadata": {"name": "abydos-thing-abydos-devpod-59cd-2cmr2"},
 	  "status": {
 	    "phase": "Pending",
 	    "containerStatuses": [{
@@ -335,7 +335,7 @@ struct DevPodWatchTests {
 	@Test func readsWhyAPodIsNotRunning() {
 		let states = DevPodWatch.parse(stuck)
 		#expect(states.count == 1)
-		#expect(states[0].pod == "ideai-thing-abydos-devpod-59cd-2cmr2")
+		#expect(states[0].pod == "abydos-thing-abydos-devpod-59cd-2cmr2")
 		#expect(states[0].phase == "Pending")
 		#expect(states[0].reason == "ImagePullBackOff")
 		#expect(states[0].isHopeless)
@@ -629,7 +629,7 @@ struct HelmPendingTests {
 
 	@Test func theStatusIsReadFromHelmsOwnJSON() {
 		let json = """
-		{"name":"ideai-thing","info":{"status":"pending-upgrade","description":"Preparing upgrade"}}
+		{"name":"abydos-thing","info":{"status":"pending-upgrade","description":"Preparing upgrade"}}
 		"""
 		#expect(DevPodInstall.statusName(fromJSON: json) == "pending-upgrade")
 		#expect(DevPodInstall.statusName(fromJSON: "not json").isEmpty)

@@ -45,7 +45,7 @@ public enum DevPodInstall {
 		var name = String(cleaned).lowercased()
 		while name.contains("--") { name = name.replacingOccurrences(of: "--", with: "-") }
 		name = name.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-		return "ideai-" + (name.isEmpty ? "project" : String(name.prefix(40)))
+		return "abydos-" + (name.isEmpty ? "project" : String(name.prefix(40)))
 	}
 
 	/// Installs or upgrades the chart, and waits for the pod to be ready.
