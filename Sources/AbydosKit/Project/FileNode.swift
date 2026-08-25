@@ -8,15 +8,28 @@ import Foundation
 public final class FileNode {
 	public let url: URL
 	public let isDirectory: Bool
+	/// Whether the entry itself is a link, which is decided when the directory
+	/// is listed and asked again by nothing.
+	///
+	/// Only compaction reads it, and it reads it to refuse: a directory holding
+	/// one link back to itself is a chain with no end, and walking it is a hang
+	/// in the tree rather than a wrong row.
+	public let isSymbolicLink: Bool
 	public private(set) weak var parent: FileNode?
 
 	private var loadedChildren: [FileNode]?
 
 	public var gitStatus: GitFileStatus = .unmodified
 
-	public init(url: URL, isDirectory: Bool, parent: FileNode? = nil) {
+	public init(
+		url: URL,
+		isDirectory: Bool,
+		isSymbolicLink: Bool = false,
+		parent: FileNode? = nil
+	) {
 		self.url = url.standardizedFileURL
 		self.isDirectory = isDirectory
+		self.isSymbolicLink = isSymbolicLink
 		self.parent = parent
 	}
 
@@ -183,7 +196,12 @@ public final class FileNode {
 			if name == ".DS_Store" { return nil }
 			if !showHidden && name.hasPrefix(".") { return nil }
 			let values = try? url.resourceValues(forKeys: Set(keys))
-			return FileNode(url: url, isDirectory: values?.isDirectory ?? false, parent: parent)
+			return FileNode(
+				url: url,
+				isDirectory: values?.isDirectory ?? false,
+				isSymbolicLink: values?.isSymbolicLink ?? false,
+				parent: parent
+			)
 		}
 
 		return nodes.sorted(by: FileNode.order)
@@ -193,6 +211,107 @@ public final class FileNode {
 	public static func order(_ a: FileNode, _ b: FileNode) -> Bool {
 		if a.isDirectory != b.isDirectory { return a.isDirectory }
 		return a.name.localizedStandardCompare(b.name) == .orderedAscending
+	}
+
+	// MARK: - Compaction
+
+	/// Directories whose contents are packages rather than folders.
+	///
+	/// Two things follow from a name being in here, and they are the same thing
+	/// seen from either side: a chain **ends** at one of these, and the chain
+	/// that starts below it is written with dots. So `src/main/java` is one row
+	/// and the `com.example.myapp` beneath it is another, which is what IDEA
+	/// shows and what was asked for — a single row reading
+	/// `src/main/java/com/example/myapp` would fold a source root into a package
+	/// and be neither.
+	///
+	/// The Maven and Gradle convention, and nothing more than that: there is no
+	/// source-root model in the tree, and building one to answer this question
+	/// would be the larger half of the change. Every project laid out the way
+	/// those two lay one out gets the same answer from the path alone.
+	private static let sourceRootNames: Set<String> = ["java", "kotlin", "scala"]
+
+	/// The children of this directory with every chain of single-directory
+	/// folders replaced by the directory the chain ends at.
+	///
+	/// `src/main/java/com/example/myapp` is five rows before any code and four
+	/// of them say only "there is one more folder inside me". This is what makes
+	/// them one row; `compactedName` is what writes that row's name.
+	public var compactedChildren: [FileNode] { children.map(\.compactedRow) }
+
+	/// The row this node is drawn as when compaction is on.
+	///
+	/// Itself, unless it is a directory holding exactly one directory — then the
+	/// deepest directory reachable through steps that each hold exactly one
+	/// entry and that entry a directory. A file, an excluded directory, or a
+	/// directory holding anything but one directory is its own row.
+	public var compactedRow: FileNode {
+		// A root is the project, and its name is the one thing on screen that
+		// says which project this is. It is never folded into anything.
+		guard parent != nil else { return self }
+		var node = self
+		while let only = node.onlyFoldableChild { node = only }
+		return node
+	}
+
+	/// Whether this directory has no row of its own with compaction on: its name
+	/// is drawn as part of the row below it.
+	///
+	/// The question the four hand-written walks ask. Each of them descends
+	/// through `children` and would otherwise try to open a row the outline
+	/// does not have.
+	public var isCompactedAway: Bool {
+		parent != nil && onlyFoldableChild != nil
+	}
+
+	/// The single directory this directory holds, when that is all it holds.
+	///
+	/// Nil ends a chain, and it ends it for every reason a chain ends: two
+	/// entries, one entry that is a file, an excluded directory on either side —
+	/// `target` is tinted for a reason and folding it away would hide it — a
+	/// symbolic link, which is where a chain can have no end at all, and a source
+	/// root, below which the chain is a package and starts again.
+	private var onlyFoldableChild: FileNode? {
+		guard isDirectory, !isExcluded, !isSymbolicLink else { return nil }
+		guard !FileNode.sourceRootNames.contains(name) else { return nil }
+		let entries = children
+		guard entries.count == 1, let only = entries.first else { return nil }
+		guard only.isDirectory, !only.isExcluded, !only.isSymbolicLink else { return nil }
+		return only
+	}
+
+	/// The name a folded row carries: every directory folded into it, and then
+	/// its own.
+	///
+	/// Recovered by walking *up* rather than stored beside the row, and that is
+	/// deliberate: it is exactly the inverse of the walk that produced the row,
+	/// so the two cannot drift, and there is no state to keep in step with a
+	/// tree that reloads under it.
+	public var compactedName: String {
+		guard isDirectory else { return name }
+		var components = [name]
+		var top = self
+		// `onlyFoldableChild === top` is the step down, asked from above: the
+		// parent is part of this row exactly when this row is what the parent
+		// would have folded into.
+		while let above = top.parent, above.parent != nil, above.onlyFoldableChild === top {
+			components.append(above.name)
+			top = above
+		}
+		guard components.count > 1 else { return name }
+		return components.reversed().joined(separator: top.chainSeparator)
+	}
+
+	/// Dots below `java`, `kotlin` or `scala`, slashes everywhere else, asked of
+	/// the node the chain begins at.
+	///
+	/// So `com/example/myapp` under a source root reads `com.example.myapp`,
+	/// which is what it is called, and the `src/main/java` above it reads as
+	/// itself rather than as `src.main.java`, which is a name for something
+	/// nobody calls that.
+	private var chainSeparator: String {
+		guard let above = parent, FileNode.sourceRootNames.contains(above.name) else { return "/" }
+		return "."
 	}
 
 	/// Walks down to `target` through directories that are already open, and

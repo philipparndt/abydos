@@ -111,6 +111,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		let header = NavigatorHeaderView()
 		header.onCollapseAll = { [weak self] in self?.collapseAll() }
 		header.onSelectOpenFile = { [weak self] in self?.selectFileInEditor() }
+		header.onToggleCompactPackages = { [weak self] in self?.toggleCompactPackages() }
+		header.isCompactingPackages = Settings.shared.compactsPackages
 		headerView = header
 		let outline = NavigatorOutlineView()
 		outline.headerView = nil
@@ -829,6 +831,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.rowHeight = Theme.current.scaled(24)
 		outlineView.indentationPerLevel = Theme.current.scaled(14)
 		headerHeightConstraint.constant = Theme.current.scaled(30)
+		headerView.isCompactingPackages = Settings.shared.compactsPackages
 		headerView.restyle()
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
@@ -985,6 +988,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func restore(expandedPaths paths: Set<String>) {
+		let paths = FilePath.withAncestors(of: paths)
 		if let rootNode {
 			outlineView.expandItem(rootNode)
 			expand(node: rootNode, matching: paths)
@@ -995,7 +999,11 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	private func expand(node: FileNode, matching paths: Set<String>) {
 		guard node.hasLoadedChildren else { return }
-		for child in node.children where child.isDirectory && paths.contains(child.url.path) {
+		// The rows, not the children: with compaction on, half the directories
+		// under this one have no row to open, and the one that has is several
+		// levels down. Its path is in `paths` either way, which is what makes
+		// the saved set survive the toggle.
+		for child in rows(under: node) where child.isDirectory && paths.contains(child.url.path) {
 			outlineView.expandItem(child)
 			expand(node: child, matching: paths)
 		}
@@ -2562,6 +2570,16 @@ final class ProjectNavigatorViewController: NSViewController {
 		selectWithoutOpening(url: url)
 	}
 
+	/// Folds chains of single-directory folders into one row, or unfolds them.
+	///
+	/// The rebuild is deliberately not done here. Setting the preference posts
+	/// `.abydosSettingsChanged`, and every window's `applySettings` puts its own
+	/// tree back — the same route Show Hidden Files takes, and the reason a
+	/// second window does not sit there in the old shape.
+	func toggleCompactPackages() {
+		Settings.shared.compactsPackages.toggle()
+	}
+
 	/// Finds the file the editor is showing.
 	///
 	/// The tree already follows along when tabs change; this is for after
@@ -2614,7 +2632,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	func expandTopLevel() {
 		guard let rootNode else { return }
 		outlineView.expandItem(rootNode)
-		for child in rootNode.children where child.isDirectory && !child.isExcluded {
+		for child in rows(under: rootNode) where child.isDirectory && !child.isExcluded {
 			outlineView.expandItem(child)
 		}
 	}
@@ -2748,7 +2766,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			if let node = item as? SessionNode {
 				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "")
 			}
-			return indent + ((item as? FileNode)?.name ?? "?")
+			return indent + ((item as? FileNode).map { title(for: $0) } ?? "?")
 		}
 	}
 
@@ -2937,10 +2955,11 @@ final class ProjectNavigatorViewController: NSViewController {
 			// does not.
 			if let located = dependencies?.locate(url) {
 				for node in located.chain { outlineView.expandItem(node) }
+				let target = row(for: located.node)
 				if let package = located.chain.last, let fileRoot = package.fileRoot {
-					expandAncestors(of: located.node, under: fileRoot)
+					expandAncestors(of: target, under: fileRoot)
 				}
-				found.append(located.node)
+				found.append(target)
 				continue
 			}
 			// **Then Claude Sessions**, which is the third and last claimant.
@@ -2951,13 +2970,15 @@ final class ProjectNavigatorViewController: NSViewController {
 			   let fileRoot = session.fileRoot, let node = fileRoot.node(for: url) {
 				outlineView.expandItem(sessions)
 				outlineView.expandItem(session)
-				expandAncestors(of: node, under: fileRoot)
-				found.append(node)
+				let target = row(for: node)
+				expandAncestors(of: target, under: fileRoot)
+				found.append(target)
 				continue
 			}
 			guard let rootNode, let node = rootNode.node(for: url) else { continue }
-			expandAncestors(of: node, under: rootNode)
-			found.append(node)
+			let target = row(for: node)
+			expandAncestors(of: target, under: rootNode)
+			found.append(target)
 		}
 		guard !found.isEmpty else { return }
 
@@ -2979,9 +3000,22 @@ final class ProjectNavigatorViewController: NSViewController {
 			ancestors.append(parent)
 			current = parent
 		}
-		for ancestor in ancestors.reversed() {
+		// A directory folded into the row below it has no row of its own, and
+		// `expandItem` on something the outline has never been handed does
+		// nothing — silently, which is the failure that would be hard to see.
+		// The row that stands for it is further down and is opened in its turn.
+		for ancestor in ancestors.reversed() where !(compactsPackages && ancestor.isCompactedAway) {
 			outlineView.expandItem(ancestor)
 		}
+	}
+
+	/// The row a node is drawn on: itself, unless compaction has folded it into
+	/// the row below it.
+	///
+	/// A file is always its own row, so this only ever moves a *directory* — the
+	/// reveal of a folder inside a chain, which would otherwise select nothing.
+	private func row(for node: FileNode) -> FileNode {
+		compactsPackages ? node.compactedRow : node
 	}
 
 	/// Which package a file belongs to, for anything outside the tree that wants
@@ -3040,6 +3074,24 @@ extension ProjectNavigatorViewController: NSTextFieldDelegate {
 
 extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineViewDelegate,
 	NSMenuDelegate, NSMenuItemValidation {
+	/// Whether a chain of directories each holding one directory is drawn as one
+	/// row. Off by default; the header's third button turns it on.
+	private var compactsPackages: Bool { Settings.shared.compactsPackages }
+
+	/// The rows under a directory — its children, or the folded ones.
+	///
+	/// Every walk in this file goes through here rather than through `children`
+	/// directly, which is what stops the outline and the four hand-written walks
+	/// disagreeing about which rows exist.
+	private func rows(under node: FileNode) -> [FileNode] {
+		compactsPackages ? node.compactedChildren : node.children
+	}
+
+	/// What a row is called: its own name, or the whole chain folded into it.
+	private func title(for node: FileNode) -> String {
+		compactsPackages ? node.compactedName : node.name
+	}
+
 	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
 		// Two roots when there is a Dependencies section: the project's own
 		// directory, and everything that is not it. IntelliJ's *External
@@ -3053,13 +3105,13 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		if let node = item as? SessionNode {
 			// A session row *is* a directory, the same as a package row: from
 			// here down the rows are ordinary files.
-			if let fileRoot = node.fileRoot { return fileRoot.children.count }
+			if let fileRoot = node.fileRoot { return rows(under: fileRoot).count }
 			return node.childNodes.count
 		}
 		if let node = item as? DependencyNode {
 			// A package row *is* a directory: from here down the rows are
 			// ordinary files and everything the tree does works on them.
-			if let fileRoot = node.fileRoot { return fileRoot.children.count }
+			if let fileRoot = node.fileRoot { return rows(under: fileRoot).count }
 			return node.childNodes.count
 		}
 		guard let node = item as? FileNode, node.isDirectory else { return 0 }
@@ -3069,7 +3121,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		// appeared since would be drawn as though everything about them were
 		// unremarkable. Asking again is cheap; the refresh coalesces.
 		let wasLoaded = node.hasLoadedChildren
-		let count = node.children.count
+		let count = rows(under: node).count
 		if !wasLoaded { scheduleGitStatusRefresh() }
 		// And the one row that is not a file. It is last, so it changes nothing
 		// about the rows above it and cannot move while a name is being typed
@@ -3102,15 +3154,15 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			return sessions!
 		}
 		if let node = item as? SessionNode {
-			if let fileRoot = node.fileRoot { return fileRoot.children[index] }
+			if let fileRoot = node.fileRoot { return rows(under: fileRoot)[index] }
 			return node.childNodes[index]
 		}
 		if let node = item as? DependencyNode {
-			if let fileRoot = node.fileRoot { return fileRoot.children[index] }
+			if let fileRoot = node.fileRoot { return rows(under: fileRoot)[index] }
 			return node.childNodes[index]
 		}
 		let node = item as! FileNode
-		let children = node.children
+		let children = rows(under: node)
 		if index == children.count, let placeholder, placeholder.parent === node {
 			return placeholder.node
 		}
@@ -3152,8 +3204,13 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		guard let node = item as? FileNode else { return nil }
 		let isRoot = (node === rootNode)
 		let cell = NavigatorCellView()
+		// The whole path, which a folded row is the reason for: `com.example.myapp`
+		// says which package and not where it is, and the row is too narrow for
+		// both. Every file row has it, so a folded one is not a special case.
+		cell.toolTip = node.url.path
 		cell.configure(
 			node: node,
+			title: title(for: node),
 			isRoot: isRoot,
 			subtitle: isRoot ? project?.displayPath : nil,
 			isExpanded: outlineView.isItemExpanded(node),
@@ -3389,7 +3446,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	/// Lets the outline view's built-in type-select find rows. Without this the
 	/// custom cells expose no string and typing does nothing.
 	func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
-		(item as? FileNode)?.name
+		(item as? FileNode).map { title(for: $0) }
 	}
 
 	func outlineViewItemDidExpand(_ notification: Notification) {
@@ -3404,10 +3461,19 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 private final class NavigatorHeaderView: NSView {
 	override var isFlipped: Bool { true }
 
-	/// The two things a tree this size needs and cannot do by itself: fold
-	/// everything away, and find its way back to whatever the editor is showing.
+	/// The three things a tree this size needs and cannot do by itself: fold
+	/// everything away, find its way back to whatever the editor is showing, and
+	/// stop spending five rows on what one row could say.
 	var onCollapseAll: (() -> Void)?
 	var onSelectOpenFile: (() -> Void)?
+	var onToggleCompactPackages: (() -> Void)?
+
+	/// Whether the third button is on, which is the one thing about this header
+	/// that is a state rather than a gesture — so it is the one thing drawn
+	/// differently.
+	var isCompactingPackages = false {
+		didSet { if isCompactingPackages != oldValue { restyle() } }
+	}
 
 	private lazy var collapseButton = button(
 		symbol: "arrow.down.right.and.arrow.up.left",
@@ -3419,10 +3485,16 @@ private final class NavigatorHeaderView: NSView {
 		tooltip: "Select the file in the editor",
 		action: #selector(selectOpenFile)
 	)
+	private lazy var compactButton = button(
+		symbol: "rectangle.compress.vertical",
+		tooltip: "Compact middle packages",
+		action: #selector(toggleCompactPackages)
+	)
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
-		for view in [locateButton, collapseButton] { addSubview(view) }
+		for view in [locateButton, collapseButton, compactButton] { addSubview(view) }
+		compactButton.wantsLayer = true
 		layoutButtons()
 	}
 
@@ -3454,10 +3526,11 @@ private final class NavigatorHeaderView: NSView {
 		let size = Theme.current.scaled(20)
 		var x = bounds.maxX - Theme.current.scaled(8) - size
 		// Rightmost first.
-		for view in [locateButton, collapseButton] {
+		for view in [locateButton, collapseButton, compactButton] {
 			view.frame = NSRect(x: x, y: (bounds.height - size) / 2, width: size, height: size)
 			x -= size + Theme.current.scaled(2)
 		}
+		compactButton.layer?.cornerRadius = Theme.current.scaled(4)
 	}
 
 	/// Redrawn on a theme or zoom change, since the symbols carry their colour
@@ -3471,12 +3544,24 @@ private final class NavigatorHeaderView: NSView {
 			"scope", size: Theme.current.scaled(11),
 			color: Theme.current.sidebarHeaderText, weight: .medium
 		)
+		compactButton.image = Theme.symbol(
+			"rectangle.compress.vertical", size: Theme.current.scaled(11),
+			color: Theme.current.sidebarHeaderText, weight: .medium
+		)
+		// On is a pill behind the symbol rather than a colour on it: the symbol
+		// is eleven points of line work, and a tint on something that small
+		// reads as a rendering artefact on one theme and as nothing at all on
+		// the other.
+		compactButton.layer?.backgroundColor = isCompactingPackages
+			? Theme.current.selectionActive.withAlphaComponent(0.45).cgColor
+			: NSColor.clear.cgColor
 		layoutButtons()
 		needsDisplay = true
 	}
 
 	@objc private func collapseAll() { onCollapseAll?() }
 	@objc private func selectOpenFile() { onSelectOpenFile?() }
+	@objc private func toggleCompactPackages() { onToggleCompactPackages?() }
 
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.sidebarBackground.setFill()
@@ -3708,6 +3793,9 @@ private final class CentredFieldCell: NSTextFieldCell {
 
 private final class NavigatorCellView: NSTableCellView {
 	private var node: FileNode?
+	/// What to draw, which is the node's own name until a chain of directories
+	/// is folded into this row and it becomes all of their names.
+	private var title = ""
 	private var isRoot = false
 	private var subtitle: String?
 	private var isExpanded = false
@@ -3733,6 +3821,7 @@ private final class NavigatorCellView: NSTableCellView {
 
 	func configure(
 		node: FileNode,
+		title: String,
 		isRoot: Bool,
 		subtitle: String?,
 		isExpanded: Bool,
@@ -3740,6 +3829,7 @@ private final class NavigatorCellView: NSTableCellView {
 		isRenaming: Bool = false
 	) {
 		self.node = node
+		self.title = title
 		self.isRoot = isRoot
 		self.subtitle = subtitle
 		self.isExpanded = isExpanded
@@ -3829,7 +3919,7 @@ private final class NavigatorCellView: NSTableCellView {
 			}
 		} else {
 			guard let node else { return }
-			text = node.name
+			text = title
 			// The folder being worked on is tinted rather than decorated: a mark
 			// beside the name reads as a status — modified, added — and this is
 			// not a status. It is which folder everything is pointed at.

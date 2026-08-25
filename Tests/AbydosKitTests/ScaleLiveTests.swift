@@ -138,6 +138,61 @@ struct ScaleLiveTests {
 		}
 	}
 
+	/// What deciding to fold costs, which is the one risk the design of package
+	/// compaction names.
+	///
+	/// Folding lists a directory *before* anybody expands it — once for every
+	/// directory on screen, where today there is none. The argument that this is
+	/// affordable has three parts: the listing is cached on the node against the
+	/// directory's modification time, so it is paid once; the walk stops at the
+	/// first directory holding anything but one directory, which is nearly all
+	/// of them; and an excluded directory is not walked at all. That is an
+	/// argument. These are the numbers.
+	///
+	/// `FileNode.directoryReadsForTesting` is process-wide and this suite avoids
+	/// it everywhere else — but a *delta* rather than a zeroing takes nothing
+	/// away from whoever else is counting, and `make scale` is
+	/// `--no-parallel --filter ScaleLiveTests`, so nobody else is.
+	@Test func decidingWhatFoldsIsOneListingPerVisibleDirectory() throws {
+		guard Self.asked else { return }
+		for (name, url) in Self.subjects {
+			// A tree each, so neither run answers from the other's cache.
+			let plain = FileNode(url: url, isDirectory: true)
+			Self.timed(name, "fold: open, compaction off") {
+				let before = FileNode.directoryReadsForTesting
+				let rows = plain.children.count
+				return "\(rows) rows, \(FileNode.directoryReadsForTesting - before) listings"
+			}
+
+			let folded = FileNode(url: url, isDirectory: true)
+			Self.timed(name, "fold: open, compaction on") {
+				let before = FileNode.directoryReadsForTesting
+				let rows = folded.compactedChildren.count
+				return "\(rows) rows, \(FileNode.directoryReadsForTesting - before) listings"
+			}
+
+			// The same question of the same tree a second time, which is what
+			// every refresh after the first one costs: nothing, if the cache is
+			// doing what it is there for.
+			Self.timed(name, "fold: again, compaction on") {
+				let before = FileNode.directoryReadsForTesting
+				let rows = folded.compactedChildren.count
+				return "\(rows) rows, \(FileNode.directoryReadsForTesting - before) listings"
+			}
+
+			// And one level down, where a Java project actually costs something:
+			// every row the tree would draw under the root.
+			Self.timed(name, "fold: one level deeper, compaction on") {
+				let before = FileNode.directoryReadsForTesting
+				var rows = 0
+				for child in folded.compactedChildren where child.isDirectory && !child.isExcluded {
+					rows += child.compactedChildren.count
+				}
+				return "\(rows) rows, \(FileNode.directoryReadsForTesting - before) listings"
+			}
+		}
+	}
+
 	// MARK: - The language server scan
 
 	/// What deciding which servers a project wants costs at this scale.
