@@ -875,6 +875,8 @@ final class EditorAreaController: NSViewController {
 	/// palette.
 	func goTo(line: Int) { activeGroup?.goTo(line: line) }
 
+	func completeAtCaret() { activeGroup?.completeAtCaret() }
+
 	func save() { activeGroup.save() }
 
 	/// The file the active group is showing, for whoever needs to know what a

@@ -383,6 +383,8 @@ final class DevContainerPillButton: PillButton {
 	/// terminal tab wears — or nil when there is no container to show at all.
 	private var mark: String?
 	private var inUse = true
+	/// Whether this project's language servers are answering yet.
+	private var isLanguageReady = false
 
 	private static var iconSize: CGFloat { Theme.current.scaled(13) }
 	private static var horizontalPadding: CGFloat { Theme.current.scaled(7) }
@@ -407,6 +409,21 @@ final class DevContainerPillButton: PillButton {
 		self.inUse = inUse
 		isHidden = (mark == nil)
 		invalidateIntrinsicContentSize()
+		needsDisplay = true
+	}
+
+	/// Says whether this project's language servers are answering.
+	///
+	/// **Reported as a gap rather than a bug: nothing said when you could
+	/// start.** A server in a container takes a minute or two — image, then
+	/// handshake, then an index — and everything an editor does with one is
+	/// quietly wrong before that: go-to-definition finds nothing and completion
+	/// falls back to the words already in the file, both of which look like
+	/// answers. The pill is where somebody is already looking to find out what
+	/// their tools are doing.
+	func setLanguageReady(_ ready: Bool) {
+		guard ready != isLanguageReady else { return }
+		isLanguageReady = ready
 		needsDisplay = true
 	}
 
@@ -437,7 +454,13 @@ final class DevContainerPillButton: PillButton {
 		// an ignored file says "there, and not in play" without saying anything
 		// about whether that was wise.
 		let tint = inUse ? Theme.current.sidebarText : Theme.current.gitIgnored
-		if let icon = Theme.symbol("shippingbox", size: 11 * Theme.current.scale, color: tint) {
+		// **Green only when the servers are up, and only on the box.** The
+		// theme's own added-file green rather than a colour of this file's
+		// invention, so it means here what it means everywhere else in the
+		// window: this is ready. The chevron stays neutral — it opens a menu,
+		// which is as available before the servers are up as after.
+		let boxTint = isLanguageReady && inUse ? Theme.current.gitAdded : tint
+		if let icon = Theme.symbol("shippingbox", size: 11 * Theme.current.scale, color: boxTint) {
 			icon.drawFitted(in: NSRect(
 				x: x, y: rect.midY - Self.iconSize / 2,
 				width: Self.iconSize, height: Self.iconSize

@@ -90,18 +90,38 @@ public struct WatchExpression: Equatable, Sendable, Identifiable {
 	/// Set when the value can be opened up, as a struct or a slice can.
 	public var variablesReference: Int
 
+	/// Whether it has been opened. Kept across a refresh: a watch somebody
+	/// opened at one stop should still be open at the next, showing that stop's
+	/// values rather than closing itself every time execution moves.
+	public var isExpanded: Bool
+
+	/// What is inside it, once asked for. Nil means not asked.
+	///
+	/// Thrown away by every refresh, because `variablesReference` is a handle
+	/// into one stopped state and means nothing at the next one — a tree still
+	/// showing the fields it had two stops ago is exactly the fault
+	/// `refreshWatches` exists to prevent, one level down.
+	public var children: [Variable]?
+
+	/// Whether it is worth offering a triangle beside.
+	public var isExpandable: Bool { variablesReference != 0 }
+
 	public init(
 		id: UUID = UUID(),
 		expression: String,
 		value: String? = nil,
 		failed: Bool = false,
-		variablesReference: Int = 0
+		variablesReference: Int = 0,
+		isExpanded: Bool = false,
+		children: [Variable]? = nil
 	) {
 		self.id = id
 		self.expression = expression
 		self.value = value
 		self.failed = failed
 		self.variablesReference = variablesReference
+		self.isExpanded = isExpanded
+		self.children = children
 	}
 }
 
@@ -1268,6 +1288,10 @@ public final class DebugSession {
 				for index in $0.indices {
 					$0[index].value = nil
 					$0[index].failed = false
+					// Nothing is stopped, so the handle is about nothing. The
+					// row stays open and fills in again at the next stop.
+					$0[index].variablesReference = 0
+					$0[index].children = nil
 				}
 			}
 			onMain { [weak self] in self?.onWatchesChanged?() }
@@ -1285,6 +1309,10 @@ public final class DebugSession {
 					$0.value = result
 					$0.failed = false
 					$0.variablesReference = response?["variablesReference"] as? Int ?? 0
+					// The handle is new, so anything held under the old one is
+					// no longer about anything. Still open, and asked again on
+					// the way back up.
+					$0.children = nil
 				}
 			} else {
 				// An expression that does not compile here is not an error to
@@ -1294,6 +1322,7 @@ public final class DebugSession {
 					$0.failed = true
 					$0.value = "not available here"
 					$0.variablesReference = 0
+					$0.children = nil
 				}
 			}
 		}
@@ -1410,6 +1439,82 @@ public final class DebugSession {
 	}
 
 	/// Expands or collapses a variable, loading children on first expand.
+	/// Opens or closes a watched value, or something inside one.
+	///
+	/// **An empty path is the watch itself**, which is what a scope's variables
+	/// never need: a variable is always reached through its scope, so its path
+	/// has at least one step in it. A watch is a root of its own, and the whole
+	/// reason its values could not be browsed is that there was nothing to
+	/// address that root with.
+	///
+	/// Below the root it is the same walk as a scope's, so it is the same code:
+	/// `evaluate` hands back a `variablesReference` exactly as a variable does,
+	/// and everything under it is ordinary variables.
+	public func toggleWatchExpansion(id: UUID, path: [Int] = []) async {
+		guard let watch = watches.first(where: { $0.id == id }) else { return }
+
+		if path.isEmpty {
+			guard watch.isExpandable else { return }
+			let opening = !watch.isExpanded
+			// Fetched outside the lock: this is a request to the debugger and
+			// waiting for one with the watch list held would stop every other
+			// refresh in the session.
+			var fetched: [Variable]?
+			if opening, watch.children == nil, watch.isExpandable {
+				fetched = await variables(reference: watch.variablesReference)
+			}
+			updateWatch(id: id) {
+				$0.isExpanded = opening
+				if let fetched { $0.children = fetched }
+			}
+		} else {
+			let updated = await toggle(in: watch.children ?? [], path: path)
+			updateWatch(id: id) { $0.children = updated }
+		}
+		onMain { [weak self] in self?.onWatchesChanged?() }
+	}
+
+	/// Fills in a watch that is open but has nothing under it yet.
+	///
+	/// After a refresh: the values are new, the handle is new, and the tree is
+	/// still showing the row opened. Separate from the toggle above because it
+	/// must not close anything — it is not somebody pressing a triangle, it is
+	/// the tree catching up.
+	public func loadOpenWatchChildren() async {
+		for watch in watches where watch.isExpanded && watch.children == nil && watch.isExpandable {
+			let fetched = await variables(reference: watch.variablesReference)
+			updateWatch(id: watch.id) { $0.children = fetched }
+		}
+		onMain { [weak self] in self?.onWatchesChanged?() }
+	}
+
+	/// Puts in a watch as a stopped debugger would have answered it.
+	///
+	/// The expansion rules are about state, not about the wire: what they have
+	/// to get right is that a row stays open across a refresh and that the
+	/// values under it do not. Driving a real adapter to assert that would be a
+	/// live test of something that is not live.
+	///
+	/// **Deliberately not `addWatch`, and that is not tidiness.** `addWatch`
+	/// starts a refresh of its own, and with nothing running that refresh clears
+	/// every reference — so a test that added a watch and then said what it
+	/// evaluated to was racing a task it did not know it had started. It passed
+	/// alone and failed in the suite, which is the worst way for a test to be
+	/// wrong.
+	public func seedWatchForTesting(
+		expression: String, reference: Int = 0, children: [Variable]? = nil
+	) -> UUID {
+		let watch = WatchExpression(
+			expression: expression, value: "…", variablesReference: reference, children: children
+		)
+		withWatches { $0.append(watch) }
+		return watch.id
+	}
+
+	public func setWatchChildrenForTesting(id: UUID, children: [Variable]) {
+		updateWatch(id: id) { $0.children = children }
+	}
+
 	public func toggleExpansion(scopeIndex: Int, path: [Int]) async {
 		guard scopes.indices.contains(scopeIndex) else { return }
 		var scope = scopes[scopeIndex]

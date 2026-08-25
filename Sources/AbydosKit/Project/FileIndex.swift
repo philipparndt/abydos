@@ -143,3 +143,9 @@ public actor FileIndex {
 		FileMatching.matches(for: query, in: paths, limit: limit)
 	}
 }
+
+
+
+
+
+

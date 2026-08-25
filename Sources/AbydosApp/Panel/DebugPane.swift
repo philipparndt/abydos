@@ -33,16 +33,27 @@ final class DebugPane: NSView {
 	private var stackTable: NSTableView!
 	private var variablesOutline: NSOutlineView!
 
+	/// What a variable hangs off, which decides who is asked to open it.
+	///
+	/// A scope's variables are addressed by scope and path; a watch's are
+	/// addressed by the watch's id and a path under it. Same rows, same cells,
+	/// two roots — and the root is the only thing that differs, so it is the
+	/// only thing this says.
+	private enum VariableOwner {
+		case scope(Int)
+		case watch(UUID)
+	}
+
 	/// Flattened variable tree for the outline view.
 	private final class VariableNode {
 		let variable: Variable
-		let scopeIndex: Int
+		let owner: VariableOwner
 		let path: [Int]
 		var children: [VariableNode] = []
 
-		init(variable: Variable, scopeIndex: Int, path: [Int]) {
+		init(variable: Variable, owner: VariableOwner, path: [Int]) {
 			self.variable = variable
-			self.scopeIndex = scopeIndex
+			self.owner = owner
 			self.path = path
 		}
 	}
@@ -50,6 +61,7 @@ final class DebugPane: NSView {
 	/// A watched expression in the tree, above the scopes.
 	private final class WatchNode {
 		let watch: WatchExpression
+		var children: [VariableNode] = []
 		init(watch: WatchExpression) { self.watch = watch }
 	}
 
@@ -695,10 +707,39 @@ final class DebugPane: NSView {
 
 	private func rebuildWatches() {
 		let selected = selectedVariableRow()
-		watchNodes = session.watches.map { WatchNode(watch: $0) }
+		watchNodes = session.watches.map { watch in
+			let node = WatchNode(watch: watch)
+			node.children = build(
+				variables: watch.children ?? [], owner: .watch(watch.id), prefix: []
+			)
+			return node
+		}
 		variablesOutline.reloadData()
-		for node in scopeNodes { variablesOutline.expandItem(node) }
+		restoreOpenRows()
 		select(variableRow: selected)
+
+		// Open, and nothing under it yet, because the refresh threw away values
+		// belonging to a handle that has since expired. Ask for this stop's.
+		if session.watches.contains(where: { $0.isExpanded && $0.children == nil && $0.isExpandable }) {
+			Task { await session.loadOpenWatchChildren() }
+		}
+	}
+
+	/// Re-opens every row the session still reports as open.
+	///
+	/// **Both rebuilds go through here, and that is the point.** The watches and
+	/// the scopes are two halves of one outline view, so either rebuild calls
+	/// `reloadData` on both — and a `rebuildVariableTree` that restored only the
+	/// scopes closed every watch somebody had opened, at every stop, which is
+	/// exactly when it runs.
+	private func restoreOpenRows() {
+		// Scopes open by default; the whole point is to see the values.
+		for node in scopeNodes { variablesOutline.expandItem(node) }
+		restoreExpansion(nodes: scopeNodes.flatMap(\.children))
+		for node in watchNodes where node.watch.isExpanded {
+			variablesOutline.expandItem(node)
+			restoreExpansion(nodes: node.children)
+		}
 	}
 
 	// MARK: - Variables
@@ -707,14 +748,11 @@ final class DebugPane: NSView {
 		let selected = selectedVariableRow()
 		scopeNodes = session.scopes.enumerated().map { index, scope in
 			let node = ScopeNode(scope: scope, index: index)
-			node.children = build(variables: scope.variables, scopeIndex: index, prefix: [])
+			node.children = build(variables: scope.variables, owner: .scope(index), prefix: [])
 			return node
 		}
 		variablesOutline.reloadData()
-
-		// Scopes open by default; the whole point is to see the values.
-		for node in scopeNodes { variablesOutline.expandItem(node) }
-		restoreExpansion(nodes: scopeNodes.flatMap(\.children))
+		restoreOpenRows()
 		select(variableRow: selected)
 	}
 
@@ -733,7 +771,10 @@ final class DebugPane: NSView {
 	private func identity(ofVariableRow item: Any) -> String? {
 		if let scope = item as? ScopeNode { return "scope:\(scope.index)" }
 		if let variable = item as? VariableNode {
-			return "var:\(variable.scopeIndex):\(variable.path)"
+			switch variable.owner {
+			case let .scope(index): return "var:\(index):\(variable.path)"
+			case let .watch(id):    return "watchvar:\(id):\(variable.path)"
+			}
 		}
 		if let watch = item as? WatchNode { return "watch:\(watch.watch.expression)" }
 		return nil
@@ -757,11 +798,11 @@ final class DebugPane: NSView {
 		}
 	}
 
-	private func build(variables: [Variable], scopeIndex: Int, prefix: [Int]) -> [VariableNode] {
+	private func build(variables: [Variable], owner: VariableOwner, prefix: [Int]) -> [VariableNode] {
 		variables.enumerated().map { index, variable in
 			let path = prefix + [index]
-			let node = VariableNode(variable: variable, scopeIndex: scopeIndex, path: path)
-			node.children = build(variables: variable.children ?? [], scopeIndex: scopeIndex, prefix: path)
+			let node = VariableNode(variable: variable, owner: owner, path: path)
+			node.children = build(variables: variable.children ?? [], owner: owner, prefix: path)
 			return node
 		}
 	}
@@ -848,6 +889,12 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// were given.
 		if item == nil { return watchNodes.count + scopeNodes.count }
 		if let scope = item as? ScopeNode { return scope.children.count }
+		if let watch = item as? WatchNode {
+			// The same placeholder trick the variables use: one child before
+			// loading, so the triangle is there to be clicked.
+			if watch.children.isEmpty && watch.watch.isExpandable { return 1 }
+			return watch.children.count
+		}
 		if let variable = item as? VariableNode {
 			// Report one child before loading, so the triangle appears and can be
 			// clicked; the real children arrive on expansion.
@@ -862,6 +909,10 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			return index < watchNodes.count ? watchNodes[index] : scopeNodes[index - watchNodes.count]
 		}
 		if let scope = item as? ScopeNode { return scope.children[index] }
+		if let watch = item as? WatchNode {
+			if watch.children.isEmpty && watch.watch.isExpandable { return PlaceholderNode() }
+			return watch.children[index]
+		}
 		if let variable = item as? VariableNode {
 			if variable.children.isEmpty && variable.variable.isExpandable {
 				return PlaceholderNode()
@@ -873,15 +924,43 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 
 	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
 		if item is ScopeNode { return true }
+		// **Reported from use: a watch could not be opened even when what it
+		// returned was a struct.** `evaluate` hands back a `variablesReference`
+		// exactly as a variable does, and the session had been storing it since
+		// watches were written — nothing ever asked for what was behind it, so
+		// a watch on anything but a scalar was a row saying `{...}` and no way
+		// in.
+		if let watch = item as? WatchNode { return watch.watch.isExpandable }
 		if let variable = item as? VariableNode { return variable.variable.isExpandable }
 		return false
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
-		guard let node = item as? VariableNode else { return true }
 		// Children load asynchronously; the tree rebuilds when they arrive.
+		if let watch = item as? WatchNode {
+			if watch.children.isEmpty {
+				Task { await session.toggleWatchExpansion(id: watch.watch.id) }
+			}
+			return true
+		}
+		guard let node = item as? VariableNode else { return true }
 		if node.children.isEmpty {
-			Task { await session.toggleExpansion(scopeIndex: node.scopeIndex, path: node.path) }
+			switch node.owner {
+			case let .scope(index):
+				Task { await session.toggleExpansion(scopeIndex: index, path: node.path) }
+			case let .watch(id):
+				Task { await session.toggleWatchExpansion(id: id, path: node.path) }
+			}
+		}
+		return true
+	}
+
+	/// Closing is remembered too, so a watch shut at one stop is still shut at
+	/// the next — `rebuildWatches` re-opens from `isExpanded`, and without this
+	/// it would re-open a row somebody had just closed.
+	func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool {
+		if let watch = item as? WatchNode, watch.watch.isExpanded {
+			Task { await session.toggleWatchExpansion(id: watch.watch.id) }
 		}
 		return true
 	}

@@ -35,6 +35,10 @@ final class SymbolPalette: NSObject {
 	private var scope: Scope = .document
 	private var status: NSTextField!
 	private var searchWork: Task<Void, Never>?
+	/// What was last asked for, so the same question can be asked again when a
+	/// server that could not answer it becomes able to.
+	private var lastQuery = ""
+	private var serverObserver: NSObjectProtocol?
 
 	func show(scope: Scope, over parent: NSWindow?) {
 		guard let parent else { return }
@@ -67,6 +71,7 @@ final class SymbolPalette: NSObject {
 		} else {
 			window.orderFront(nil)
 		}
+		watchForServers()
 		search("")
 	}
 
@@ -77,8 +82,33 @@ final class SymbolPalette: NSObject {
 		window.orderOut(nil)
 	}
 
+	/// Asks the same question again when a language server changes state.
+	///
+	/// **Reported from use: the dialog is empty and then works out of nothing.**
+	/// Opened before a server has finished starting it has nothing to show, and
+	/// nothing ever asked again — so it sat empty until it was closed and
+	/// reopened, and whether that was worth doing was a guess. The completion
+	/// list already re-asks on this notification for exactly this reason; this
+	/// is the same fix in the other place people meet a cold server.
+	private func watchForServers() {
+		guard serverObserver == nil else { return }
+		serverObserver = NotificationCenter.default.addObserver(
+			forName: .ideaiLanguageServersChanged, object: nil, queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated {
+				guard let self, self.window?.isVisible == true, self.symbols.isEmpty else { return }
+				self.search(self.lastQuery)
+			}
+		}
+	}
+
+	deinit {
+		if let serverObserver { NotificationCenter.default.removeObserver(serverObserver) }
+	}
+
 	private func search(_ query: String) {
 		searchWork?.cancel()
+		lastQuery = query
 		let scope = self.scope
 		searchWork = Task { @MainActor in
 			// A short pause, so typing a name does not ask the server about
@@ -204,14 +234,39 @@ final class SymbolPalette: NSObject {
 		case 126: // up
 			move(by: -1)
 			return true
+		case 116: // page up
+			move(by: -pageSize)
+			return true
+		case 121: // page down
+			move(by: pageSize)
+			return true
+		case 115: // home
+			move(by: -symbols.count)
+			return true
+		case 119: // end
+			move(by: symbols.count)
+			return true
 		default:
 			return false
 		}
 	}
 
+	/// How far a page moves: what fits in the list, less one row of overlap, so
+	/// the place somebody was reading is still on screen afterwards. The same
+	/// rule the project switcher's list uses, from the same helper.
+	private var pageSize: Int {
+		ListSelection.pageSize(
+			viewportHeight: table.enclosingScrollView?.contentSize.height ?? table.bounds.height,
+			rowHeight: table.rowHeight
+		)
+	}
+
 	fileprivate func move(by delta: Int) {
 		guard !symbols.isEmpty else { return }
-		let next = max(0, min(symbols.count - 1, table.selectedRow + delta))
+		// Clamped rather than wrapped, so ⇞ at the top and ⇟ at the bottom land
+		// on the ends instead of jumping to the other one.
+		let from = table.selectedRow < 0 ? 0 : table.selectedRow
+		let next = max(0, min(symbols.count - 1, from + delta))
 		table.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
 		table.scrollRowToVisible(next)
 	}
@@ -237,6 +292,30 @@ final class SymbolPalette: NSObject {
 		symbols.map { symbol in
 			[symbol.kind.label, symbol.name].filter { !$0.isEmpty }.joined(separator: " ")
 		}
+	}
+
+	/// Presses a key in the list and says where the selection ended up.
+	///
+	/// Through the field editor's `doCommandBy`, the same door the keyboard
+	/// uses: the question is not whether the movement rule is right but whether
+	/// ⇞ reaches it at all, and which selector a key sends depends on the field
+	/// it lands in.
+	func pressForTesting(_ command: String) -> String {
+		let selectors: [String: Selector] = [
+			"down": #selector(NSResponder.moveDown(_:)),
+			"up": #selector(NSResponder.moveUp(_:)),
+			"pageDown": #selector(NSResponder.pageDown(_:)),
+			"pageUp": #selector(NSResponder.pageUp(_:)),
+			"scrollPageDown": #selector(NSResponder.scrollPageDown(_:)),
+			"scrollPageUp": #selector(NSResponder.scrollPageUp(_:)),
+			"end": #selector(NSResponder.moveToEndOfDocument(_:)),
+			"start": #selector(NSResponder.moveToBeginningOfDocument(_:)),
+		]
+		guard let selector = selectors[command] else { return "unknown key \(command)" }
+		let handled = control(field, textView: NSTextView(), doCommandBy: selector)
+		let row = table.selectedRow
+		let what = symbols.indices.contains(row) ? symbols[row].name : "none"
+		return "handled=\(handled) row=\(row) of \(symbols.count): \(what)"
 	}
 
 	func openFirstForTesting() {
@@ -268,6 +347,23 @@ extension SymbolPalette: NSSearchFieldDelegate {
 			return true
 		case #selector(NSResponder.moveUp(_:)):
 			move(by: -1)
+			return true
+		// Both spellings of each, because which one a key sends depends on the
+		// field it lands in — a list that answers only one of them works in some
+		// places and not others. The same pair the project switcher answers.
+		case #selector(NSResponder.pageDown(_:)), #selector(NSResponder.scrollPageDown(_:)):
+			move(by: pageSize)
+			return true
+		case #selector(NSResponder.pageUp(_:)), #selector(NSResponder.scrollPageUp(_:)):
+			move(by: -pageSize)
+			return true
+		case #selector(NSResponder.moveToBeginningOfDocument(_:)),
+		     #selector(NSResponder.scrollToBeginningOfDocument(_:)):
+			move(by: -symbols.count)
+			return true
+		case #selector(NSResponder.moveToEndOfDocument(_:)),
+		     #selector(NSResponder.scrollToEndOfDocument(_:)):
+			move(by: symbols.count)
 			return true
 		case #selector(NSResponder.insertNewline(_:)):
 			openSelected()

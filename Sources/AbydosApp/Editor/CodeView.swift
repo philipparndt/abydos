@@ -80,6 +80,10 @@ final class CodeView: NSView, NSTextInputClient {
 	/// The text changed and the caret is in a word — or on a character the
 	/// server asked to be woken by: offer completions for it.
 	var onRequestCompletions: ((_ prefix: String, _ wasTriggered: Bool, _ caret: NSPoint) -> Void)?
+
+	/// Asks for completions because somebody asked, rather than because they
+	/// typed. Answered even where there is no prefix at all.
+	var onRequestCompletionsNow: ((_ prefix: String) -> Void)?
 	/// The characters this file's server wants to be asked on, over and above a
 	/// word being typed.
 	///
@@ -3331,6 +3335,17 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 		onRequestCompletions?(prefix, isTrigger, point)
 		_ = document
+	}
+
+	/// Offers completions here, whatever is or is not being typed.
+	///
+	/// **The difference from the rule above is the whole point.** Typing offers
+	/// a list only for a word of two letters or a character the server asked to
+	/// be woken by, because a list that appeared on every keystroke would be in
+	/// the way. Asking is not typing: the caret may be in the middle of nothing
+	/// at all, which is exactly when somebody wants to be told what can go there.
+	func requestCompletionsNow() {
+		onRequestCompletionsNow?(currentWordPrefix())
 	}
 
 	/// The identifier being typed immediately before the caret.

@@ -111,13 +111,18 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate, NSMe
 		_ = panel.newTerminal()
 	}
 
+	@objc func newTerminalTabBeside(_ sender: Any?) {
+		_ = panel.newTerminalBesideCurrent()
+	}
+
 	@objc func splitTerminalRight(_ sender: Any?) {
 		panel.splitActiveBesideForTesting()
 	}
 
 	func validateMenuItem(_ item: NSMenuItem) -> Bool {
 		switch item.action {
-		case #selector(newTerminalTab(_:)), #selector(splitTerminalRight(_:)):
+		case #selector(newTerminalTab(_:)), #selector(newTerminalTabBeside(_:)),
+		     #selector(splitTerminalRight(_:)):
 			return true
 		default:
 			return true

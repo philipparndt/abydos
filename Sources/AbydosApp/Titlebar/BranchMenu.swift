@@ -360,8 +360,10 @@ private final class BranchMenuTarget: NSObject {
 		guard let url = sender.representedObject as? URL else { return }
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(url.absoluteString, forType: .string)
-		// Copying leaves nothing on screen to show for itself, so say so.
-		Toast.post("Copied link", detail: url.absoluteString)
+		// Copying leaves nothing on screen to show for itself, so say so — and
+		// say it as news rather than as trouble. `Toast.post` defaults to
+		// `.error`, so this came up in red for a gesture that worked.
+		Toast.post("Copied link", detail: url.absoluteString, kind: .information)
 	}
 
 	@objc func openInFork(_ sender: NSMenuItem) {

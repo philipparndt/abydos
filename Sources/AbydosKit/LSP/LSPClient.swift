@@ -160,6 +160,15 @@ public final class LSPClient: @unchecked Sendable {
 
 	/// Whether the handshake has finished.
 	private var isInitialized = false
+
+	/// Whether the handshake has finished, so questions can be answered.
+	///
+	/// **A process being up is not the same as a server being ready**, and the
+	/// gap between the two is seconds: the client goes into the table the moment
+	/// it is spawned, and `initialize` is answered some way after that. Anything
+	/// telling somebody their tools are ready has to wait for this one, not for
+	/// the process.
+	public var hasInitialized: Bool { locked { isInitialized } }
 	/// Notifications sent before it did.
 	///
 	/// A server rejects everything that arrives before `initialize` — quietly,

@@ -1482,6 +1482,9 @@ final class EditorViewController: NSViewController {
 		codeView.onRequestCompletions = { [weak self] prefix, wasTriggered, _ in
 			self?.scheduleCompletions(for: tab, prefix: prefix, wasTriggered: wasTriggered)
 		}
+		codeView.onRequestCompletionsNow = { [weak self] prefix in
+			self?.completeNow(in: tab, prefix: prefix)
+		}
 		codeView.onDismissCompletions = { [weak self] in
 			self?.completionWork?.cancel()
 			self?.completions.hide()
@@ -1836,6 +1839,59 @@ final class EditorViewController: NSViewController {
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
 	}
 
+	/// Answers ⌃Space: a list now, and a reason when there cannot be one.
+	///
+	/// Not `scheduleCompletions`, and not because of the prefix rule alone. That
+	/// waits 150 ms so a list does not chase somebody's typing, which is right
+	/// for typing and wrong for a keystroke whose whole meaning is *now*.
+	private func completeNow(in tab: Tab, prefix: String) {
+		completionWork?.cancel()
+		completionWork = nil
+
+		// **Said before the question, not after it.** Asking a server is an
+		// await, and until it answers nothing is on screen — measured against
+		// sourcekit-lsp at 1.0 s and 6.0 s after ⌃Space on an empty line: an
+		// empty popup, then twenty items. That first second is exactly the
+		// moment somebody wonders whether the key did anything, and if the
+		// reason it is slow is that the server is still starting, that is the
+		// answer they need and it is already known here.
+		if let codeView = tab.codeView, let languageId = tab.document?.languageId,
+		   let root = serverRoot(for: tab), let point = codeView.caretScreenPoint() {
+			if let obstacle = LanguageService.shared.notReadySentence(
+				languageId: languageId, project: root
+			) {
+				completions.show(
+					notice: obstacle,
+					below: point,
+					lineHeight: codeView.lineHeightForTesting,
+					parent: view.window
+				)
+			} else {
+				// A server with nothing wrong with it can still be slow:
+				// sourcekit-lsp, warm and finished preparing, took over a second
+				// to answer an empty line. Said after a moment rather than at
+				// once — a notice that flashed and was replaced on every fast
+				// answer would be worse than the silence it replaces — and only
+				// if nothing else has appeared by then.
+				let deadline = DispatchTime.now() + 0.15
+				DispatchQueue.main.asyncAfter(deadline: deadline) { [weak self, weak tab] in
+					guard let self, let tab, self.activeTab === tab,
+					      !self.completions.isVisible,
+					      let point = tab.codeView?.caretScreenPoint()
+					else { return }
+					self.completions.show(
+						notice: "Asking the \(languageId) server…",
+						below: point,
+						lineHeight: codeView.lineHeightForTesting,
+						parent: self.view.window
+					)
+				}
+			}
+		}
+
+		Task { @MainActor in await self.showCompletions(for: tab, prefix: prefix, wasAsked: true) }
+	}
+
 	/// Asks again for a list that was told to wait.
 	///
 	/// Only where the popup is showing the sentence: every other list on screen
@@ -1970,7 +2026,7 @@ final class EditorViewController: NSViewController {
 	}
 
 	@MainActor
-	private func showCompletions(for tab: Tab, prefix: String) async {
+	private func showCompletions(for tab: Tab, prefix: String, wasAsked: Bool = false) async {
 		guard activeTab === tab, let codeView = tab.codeView, let document = tab.document else { return }
 
 		// The prefix may have moved on while this was being asked for.
@@ -2017,10 +2073,12 @@ final class EditorViewController: NSViewController {
 		// "this language has nothing to offer" for the whole two minutes.
 		if items.isEmpty, let languageId = document.languageId,
 		   let root = serverRoot(for: tab),
-		   LanguageService.shared.isPreparing(languageId: languageId, project: root) {
+		   let obstacle = LanguageService.shared.notReadySentence(
+			   languageId: languageId, project: root
+		   ) {
 			guard let point = codeView.caretScreenPoint() else { return }
 			completions.show(
-				notice: "\(languageId) server is still preparing…",
+				notice: obstacle,
 				below: point,
 				lineHeight: codeView.lineHeightForTesting,
 				parent: view.window
@@ -2036,7 +2094,20 @@ final class EditorViewController: NSViewController {
 		}
 
 		guard !items.isEmpty, codeView.currentWordPrefix() == prefix else {
-			completions.hide()
+			// A question asked on purpose is answered, including when the answer
+			// is nothing. Typing that finds nothing simply takes the list away,
+			// because there was no question — but ⌃Space over a blank line and
+			// then silence is indistinguishable from a key that does not work.
+			if wasAsked, let point = codeView.caretScreenPoint() {
+				completions.show(
+					notice: "No completions here",
+					below: point,
+					lineHeight: codeView.lineHeightForTesting,
+					parent: view.window
+				)
+			} else {
+				completions.hide()
+			}
 			return
 		}
 
@@ -2598,6 +2669,12 @@ final class EditorViewController: NSViewController {
 	///
 	/// Nothing happens when no file is open: `:` in the palette is a question
 	/// about a document, and there is no document to ask it of.
+	/// ⌃Space: offer completions at the caret, whatever is being typed.
+	func completeAtCaret() {
+		guard let tab = activeTab, let codeView = tab.codeView else { return }
+		codeView.requestCompletionsNow()
+	}
+
 	func goTo(line: Int) {
 		activeTab?.codeView?.reveal(line: line)
 		activeTab?.codeView?.window?.makeFirstResponder(activeTab?.codeView)

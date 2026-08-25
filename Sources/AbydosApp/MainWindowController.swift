@@ -1883,7 +1883,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		     #selector(debugStepOver(_:)), #selector(debugStepInto(_:)),
 		     #selector(debugStepOut(_:)), #selector(debugStop(_:)):
 			return debugSession?.isActive ?? false
-		case #selector(newTerminalTab(_:)):
+		case #selector(newTerminalTab(_:)), #selector(newTerminalTabBeside(_:)):
 			return bottomPanel.hasKeyboardFocus
 		case #selector(newTerminalInContainer(_:)):
 			// Off for the projects that have no such file, which is most of
@@ -1964,6 +1964,48 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				print("TAB: after ⌘T   sessions=\(self.terminalSessionCountForTesting)")
+			}
+		}
+	}
+
+	/// Opens a couple of tabs and presses ⌘D, then says what is in each column.
+	///
+	/// The claim is that the new shell is *beside* the one in front — both on
+	/// screen at once — and that is only visible per column: a tab that landed
+	/// in the same strip and a pane that landed in a column of its own both read
+	/// as "one more terminal" from the count alone, which is how the first
+	/// attempt at this looked right and was not.
+	func exerciseTerminalTabBesideForTesting() {
+		// The command is gated on the terminal having the keyboard, and a run
+		// that never came to the front has given it to nobody — so without this
+		// the harness measures the gate rather than the placement.
+		NSApp.activate(ignoringOtherApps: true)
+		window?.makeKeyAndOrderFront(nil)
+		toggleTerminal(nil)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+			guard let self else { return }
+			for _ in 0..<2 { self.bottomPanel.newTerminal() }
+			print("BESIDE: opened     \(self.bottomPanel.columnsForTesting)")
+
+			self.bottomPanel.selectAndFocusTabForTesting(1)
+			print("BESIDE: selected   \(self.bottomPanel.columnsForTesting)")
+
+			let item = NSMenuItem(
+				title: "New Terminal Tab Here",
+				action: #selector(self.newTerminalTabBeside(_:)),
+				keyEquivalent: "d"
+			)
+			// Two things, reported apart, because they fail apart: whether the
+			// command is offered at all — which needs the keyboard, and a
+			// capture run has no key window to give it — and where the tab
+			// lands, which is what this change is.
+			print("BESIDE: enabled=\(self.validateMenuItem(item)) "
+				+ "keyWindow=\(self.window?.isKeyWindow ?? false)")
+			self.bottomPanel.newTerminalBesideCurrent()
+
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				print("BESIDE: after ⌘D   \(self.bottomPanel.columnsForTesting)")
+				fflush(stdout)
 			}
 		}
 	}
@@ -4956,10 +4998,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// container was in use, which was right when the name was written across
 			// the titlebar and is not right now that hovering is one of the two
 			// places the name is.
-			pill.toolTip = inUse != nil
+			// Green once this project's servers are answering, and the tool tip
+			// says so in words — a colour on its own is a thing to learn, and
+			// somebody hovering to find out what it means should be told.
+			let readiness = LanguageService.shared.readiness(project: root)
+			pill.setLanguageReady(readiness == .ready)
+
+			let state = inUse != nil
 				? DevContainerConsent.pillInUse(container: name)
 				: self.devContainerStateSentence(for: root, container: name, consent: consent)
+			pill.toolTip = [state, Self.languageSentence(for: readiness)]
+				.compactMap { $0 }
+				.joined(separator: "\n")
 			self.layoutTitlebarPills()
+		}
+	}
+
+	/// What the language servers are doing, for the pill's tool tip.
+	///
+	/// Nothing at all for a project with none — a folder of Markdown has no
+	/// servers to be waiting for, and a line saying so would be an answer to a
+	/// question nobody asked.
+	private static func languageSentence(for readiness: LanguageService.Readiness) -> String? {
+		switch readiness {
+		case .none:      nil
+		case .preparing: "Language servers are still starting — definitions and completion are not ready."
+		case .failed:    "A language server could not start; the editor is working without it."
+		case .ready:     "Language servers are ready."
 		}
 	}
 
@@ -5497,18 +5562,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Opens the palette, types a query, and says what came back.
 	func exerciseSymbolPaletteForTesting(_ query: String, project: Bool) {
-		symbolPalette.show(scope: project ? .workspace : .document, over: window)
+		let scope: SymbolPalette.Scope = project ? .workspace : .document
+		symbolPalette.show(scope: scope, over: window)
 		symbolPalette.setQueryForTesting(query)
 
-		DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+		// Twice: at 1 s the server is usually still starting, which is the state
+		// the dialog used to sit in silently and for ever, and at 20 s it has
+		// answered — without the palette having been reopened, which is the
+		// whole of the fix.
+		let say: (Double) -> Void = { [weak self] at in
 			guard let self else { return }
 			let results = self.symbolPalette.resultsForTesting
-			print("SYMBOLS: \(results.count) for “\(query)” reason=“\(self.reasonForNoSymbols(query: query, scope: project ? .workspace : .document))”")
-			for result in results.prefix(6) { print("SYMBOL: \(result)") }
+			print("SYMBOLS +\(at)s: \(results.count) for “\(query)” "
+				+ "reason=“\(self.reasonForNoSymbols(query: query, scope: scope))”")
+			for result in results.prefix(4) { print("SYMBOL: \(result)") }
+			fflush(stdout)
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { say(1.0) }
+
+		DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
+			guard let self else { return }
+			say(20.0)
+			// The keys the list is driven by, including the four that were
+			// missing: ⇟ ⇞ and the two ends.
+			for key in ["down", "pageDown", "pageDown", "end", "pageUp", "start"] {
+				print("SYMBOLKEY \(key): \(self.symbolPalette.pressForTesting(key))")
+			}
+			fflush(stdout)
 
 			self.symbolPalette.openFirstForTesting()
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
 				print("SYMBOLS: opened \(self.editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing")")
+				fflush(stdout)
 			}
 		}
 	}
@@ -5967,6 +6052,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// is something here" would therefore be on every row of every file, which is
 	/// an indicator nobody reads. Asking when somebody asks costs one request and
 	/// is never noise.
+	/// ⌃Space, which is IDEA's and Eclipse's, and what everybody presses.
+	@objc func completeAtCaret(_ sender: Any?) {
+		editor.completeAtCaret()
+	}
+
 	@objc func showCodeActions(_ sender: Any?) {
 		offerCodeActions(fileWide: false)
 	}
@@ -6640,8 +6730,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				return "The \(languageId) language server cannot read this project.\n\(failure)"
 					+ "\n\n\(LanguageService.logPath) has the rest."
 			}
+			// **Definitively, rather than as the hedge this used to be.** "Nothing
+			// declared in this file, or the language server is still starting"
+			// is two answers in one sentence and neither of them is actionable:
+			// the reader cannot tell whether to wait or to go and look at the
+			// file. The service knows which it is.
+			if let notReady = LanguageService.shared.notReadySentence(
+				languageId: languageId,
+				project: editor.activeGroup?.activeTabURL.map {
+					LanguageService.shared.root(for: $0, languageId: languageId, project: project.root)
+				} ?? project.scopeRoot
+			) {
+				return "\(notReady)\nThis list fills in by itself when it is ready."
+			}
 			return query.isEmpty
-				? "Nothing declared in this file, or the language server is still starting."
+				? "Nothing declared in this file."
 				: "Nothing matching \u{201C}\(query)\u{201D}."
 		}
 
@@ -10533,6 +10636,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.newTerminal()
 	}
 
+	/// ⌘D: the same shell, in a column beside the one in front.
+	@objc func newTerminalTabBeside(_ sender: Any?) {
+		guard bottomPanel.hasKeyboardFocus else { return }
+		bottomPanel.newTerminalBesideCurrent()
+	}
+
 	var isTerminalFocused: Bool { bottomPanel.hasKeyboardFocus }
 
 	/// Keystrokes a terminal has a prior claim on.
@@ -11714,6 +11823,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				print("UNDO: travelled to the first attempt")
 			}
 			print("UNDO: text tail    \(self.editor.textTailForTesting)")
+		}
+	}
+
+	/// Presses ⌃Space on an empty line and says what came back.
+	///
+	/// An empty line on purpose: with nothing typed there is no prefix, which is
+	/// the case the typing rule can never answer and the whole reason the key
+	/// exists. What it must never print here is nothing at all.
+	func exerciseExplicitCompletionForTesting() {
+		editor.moveCaretToEndForTesting()
+		editor.simulateTyping("\n")
+		completeAtCaret(nil)
+		// Twice, a second apart: the first says whether anything appeared at
+		// all, the second whether what appeared was the answer or the notice.
+		// A server asked cold answers some way after it is asked.
+		for delay in [1.0, 6.0] {
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+				guard let self else { return }
+				print("COMPLETENOW +\(delay)s: \(self.editor.completionReportForTesting)")
+				fflush(stdout)
+			}
 		}
 	}
 
