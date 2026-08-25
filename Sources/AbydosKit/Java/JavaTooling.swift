@@ -276,18 +276,6 @@ public enum JavaTooling {
 		"target", "build", "out", ".git", ".gradle", ".idea", "node_modules", "bin",
 	]
 
-	/// `mainClasses`, off whichever actor is asking.
-	///
-	/// **The scan reads every `.java` and `.kt` file in the project** — the file
-	/// contents are the whole point of it — so on a repository of a thousand
-	/// modules it is tens of thousands of reads and takes many seconds. Run from
-	/// the main actor that is a spinning cursor with nothing on screen to explain
-	/// it, and the callers that reach for this are main-actor code arranging a
-	/// debug session, which is the worst moment to stop drawing.
-	///
-	/// Detached rather than merely `async`: the point is to leave the caller's
-	/// actor, and an `async` function declared beside main-actor code that
-	/// inherited it would read as fixed while changing nothing.
 	/// Of several source files, the one nearest a directory.
 	///
 	/// **Which module a classpath is asked about decides which classpath comes
@@ -330,8 +318,178 @@ public enum JavaTooling {
 			.first?.file
 	}
 
+	/// A Java source file near a directory, for naming the module a launch
+	/// belongs to.
+	///
+	/// **The anchor does not have to be a main class.** What it is for is naming
+	/// a module: jdtls answers `java.project.getClasspaths` about the project the
+	/// file it is handed belongs to, so any file in the right module produces the
+	/// right classpath. Looking for a *main* class instead meant reading every
+	/// source file in the repository to learn something a handful of directory
+	/// reads answers — and on the checkout this was measured on, the seven files
+	/// with a `main` in them were found among 13,754 that had none.
+	///
+	/// Conventional locations first, and up rather than down: `src/main/java`
+	/// under the working directory, then under each of its parents as far as the
+	/// project root. A launch configuration points at the module it runs, so the
+	/// first probe usually answers, and each one is a single `stat`.
+	///
+	/// Only when none of them exists does it walk *downward*, breadth-first from
+	/// the working directory, and then under a budget: a configuration whose
+	/// directory is the repository root would otherwise be the whole-repository
+	/// walk this exists to avoid. `limit` directories are read and the best
+	/// answer so far is given, which for choosing between modules is the same
+	/// kind of answer a longer walk would have reached.
+	public static func nearestJavaFile(
+		to directory: URL, under root: URL, limit: Int = 400
+	) -> String? {
+		let manager = FileManager.default
+		let rootPath = FilePath.canonicalEvenIfMissing(root)
+
+		// Upward: the module the launch names, then the ones containing it.
+		var cursor = directory
+		while true {
+			for suffix in ["src/main/java", "src/main/kotlin"] {
+				let sources = cursor.appendingPathComponent(suffix)
+				guard manager.fileExists(atPath: sources.path) else { continue }
+				if let found = firstSourceFile(under: sources, limit: limit) { return found }
+			}
+			let parent = cursor.deletingLastPathComponent()
+			// Stop at the project root, and at the filesystem root for a
+			// directory that somehow sits outside it.
+			guard FilePath.canonicalEvenIfMissing(cursor) != rootPath,
+			      parent.path != cursor.path
+			else { break }
+			cursor = parent
+		}
+
+		// Downward, under a budget. A repository of modules with no `src/main`
+		// above the working directory is the case this covers — and a root-level
+		// configuration, where any module is as good an answer as the old scan
+		// gave.
+		return firstJavaFile(under: directory, limit: limit)
+			?? firstJavaFile(under: root, limit: limit)
+	}
+
+	/// The first Java or Kotlin source under a directory, looking for a *module*
+	/// rather than for a file.
+	///
+	/// **A plain breadth-first walk does not work on a deep repository, and the
+	/// first version of this returned nil on the one it was written for.** Sources
+	/// live at `almplus/client/core/<module>/src/main/java/com/vector/…/X.java`:
+	/// nine levels down, under a root with 17,987 directories beneath it. Breadth
+	/// first spends its whole budget on levels two and three and never reaches a
+	/// file — and nil is worse than slow, because the caller then falls back to
+	/// the *first* main class in the project, which is the wrong-module anchor
+	/// that `nearestFile` exists to prevent.
+	///
+	/// So the walk looks for the thing that is actually shallow: a module, which
+	/// announces itself with a `src/main` source root. Two `stat`s per directory
+	/// visited, and `src` itself is never descended — the package chain below it
+	/// is handled by `firstSourceFile`, which knows it is a chain. What is left to
+	/// walk is the module tree, which is shallow and narrow.
+	static func firstJavaFile(under directory: URL, limit: Int) -> String? {
+		let manager = FileManager.default
+		var queue = [directory]
+		var read = 0
+		var fallback: String?
+
+		while !queue.isEmpty, read < limit {
+			let current = queue.removeFirst()
+			read += 1
+
+			for suffix in ["src/main/java", "src/main/kotlin"] {
+				let sources = current.appendingPathComponent(suffix)
+				guard manager.fileExists(atPath: sources.path) else { continue }
+				if let found = firstSourceFile(under: sources, limit: limit) { return found }
+			}
+
+			guard let entries = try? manager.contentsOfDirectory(
+				at: current,
+				includingPropertiesForKeys: [.isDirectoryKey],
+				options: [.skipsHiddenFiles]
+			) else { continue }
+
+			for entry in entries {
+				if (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+					// `src` is not descended: its package tree is a chain, and
+					// walking it here is how the budget was spent for nothing.
+					guard !skipped.contains(entry.lastPathComponent),
+					      entry.lastPathComponent != "src"
+					else { continue }
+					queue.append(entry)
+					continue
+				}
+				// A source lying outside any module — a script beside the root. Kept
+				// only in case no module turns up at all.
+				guard entry.pathExtension == "java" || entry.pathExtension == "kt",
+				      !entry.path.contains("/src/test/")
+				else { continue }
+				if fallback == nil { fallback = FilePath.canonical(entry) }
+			}
+		}
+		return fallback
+	}
+
+	/// The shallowest source file under a source root.
+	///
+	/// Breadth-first, which for a package tree means the file nearest the top of
+	/// it. Bounded like everything else here, and it can legitimately find
+	/// nothing: a source root holding only test helpers, or only directories, is a
+	/// module that cannot anchor anything and the caller moves on to the next one.
+	static func firstSourceFile(under root: URL, limit: Int) -> String? {
+		let manager = FileManager.default
+		var queue = [root]
+		var read = 0
+
+		while !queue.isEmpty, read < limit {
+			let current = queue.removeFirst()
+			read += 1
+			guard let entries = try? manager.contentsOfDirectory(
+				at: current,
+				includingPropertiesForKeys: [.isDirectoryKey],
+				options: [.skipsHiddenFiles]
+			) else { continue }
+
+			for entry in entries {
+				if (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+					guard !skipped.contains(entry.lastPathComponent) else { continue }
+					queue.append(entry)
+					continue
+				}
+				guard entry.pathExtension == "java" || entry.pathExtension == "kt",
+				      !entry.path.contains("/src/test/")
+				else { continue }
+				return FilePath.canonical(entry)
+			}
+		}
+		return nil
+	}
+
+	/// `mainClasses`, off whichever actor is asking, and only once.
+	///
+	/// **The scan reads every `.java` and `.kt` file in the project** — 13,754 of
+	/// them in the repository this was measured on — so on a large checkout it is
+	/// seconds at best. Run from the main actor it is a spinning cursor with
+	/// nothing on screen to explain it, and the callers that reach for this are
+	/// main-actor code arranging a debug session, which is the worst moment to
+	/// stop drawing.
+	///
+	/// Through `MainClassCache`, so that the two callers who want this answer
+	/// within seconds of each other — the discovery walk a project open starts,
+	/// and a Debug press that needs an anchor — wait on one scan instead of
+	/// running two.
 	public static func mainClassesOffMain(in root: URL, limit: Int = 40) async -> [MainClass] {
-		await Task.detached { mainClasses(in: root, limit: limit) }.value
+		await MainClassCache.shared.classes(in: root, limit: limit)
+	}
+
+	/// Forgets what the last scan of a project found.
+	///
+	/// Called when the file-system watcher sees a change worth rescanning for: a
+	/// cached list of main classes is only as good as the tree it was read from,
+	/// and a branch switch invalidates all of it.
+	public static func forgetMainClasses(in root: URL) async {
+		await MainClassCache.shared.invalidate(root)
 	}
 
 	/// Every class in a project that can be run.
@@ -357,16 +515,23 @@ public enum JavaTooling {
 				if skipped.contains(url.lastPathComponent) { enumerator.skipDescendants() }
 				continue
 			}
+			let isKotlin = url.pathExtension == "kt"
 			// Test sources hold their own `main` methods now and then, and none of
 			// them is what somebody means by running the project.
-			guard url.pathExtension == "java" || url.pathExtension == "kt",
+			guard url.pathExtension == "java" || isKotlin,
 			      !url.path.contains("/src/test/"),
 			      // Every source file in the project is read, so the one
 			      // generated file that is a megabyte of constants does not get
 			      // to cost a second on its own.
 			      (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0 < 1_000_000,
-			      let text = try? String(contentsOf: url, encoding: .utf8),
-			      let line = mainMethodLine(in: text, isKotlin: url.pathExtension == "kt")
+			      let bytes = try? Data(contentsOf: url),
+			      // The cheap question first, and it answers no for almost every
+			      // file: one without `main(` in its bytes anywhere cannot hold a
+			      // main method, and is never turned into a String at all. See
+			      // `contains(_:in:)` for what that is worth.
+			      contains(isKotlin ? "fun main" : "main(", in: bytes),
+			      let text = String(data: bytes, encoding: .utf8),
+			      let line = mainMethodLine(in: text, isKotlin: isKotlin)
 			else { continue }
 
 			let type = typeName(of: url, source: text)
@@ -403,6 +568,38 @@ public enum JavaTooling {
 			return index + 1
 		}
 		return nil
+	}
+
+	/// Whether a byte sequence appears anywhere in a file's bytes.
+	///
+	/// **`memmem`, and deliberately nothing from `String`.** This is asked once
+	/// per source file in the project, and the Swift spellings of it are what the
+	/// scan used to cost. `line.contains("main(")` is a Unicode
+	/// canonical-equivalence search, and reaching it at all meant first splitting
+	/// the file into a `String` per line: about a million lines and twice as many
+	/// allocations for a repository of 13,754 sources, which measured 96–139 s.
+	/// The same walk with this in front of it takes 5 s and finds exactly the
+	/// same classes, because a file whose bytes do not contain `main(` cannot
+	/// have a line that does.
+	///
+	/// `Data.firstRange(of:)` is not the shortcut it looks like — it is a generic
+	/// collection search, and substituting it for this changed nothing
+	/// measurable.
+	///
+	/// A prefilter is only sound if it never rejects a file the real test would
+	/// have accepted. Both needles are substrings of what `mainMethodLine` looks
+	/// for on a line — `main(` of its own `contains("main(")`, and `fun main` of
+	/// both `fun main(` and `fun main (` — so every file this drops is one that
+	/// would have been dropped anyway.
+	static func contains(_ needle: String, in bytes: Data) -> Bool {
+		let pattern = Array(needle.utf8)
+		guard !pattern.isEmpty, bytes.count >= pattern.count else { return false }
+		return bytes.withUnsafeBytes { haystack in
+			guard let start = haystack.baseAddress else { return false }
+			return pattern.withUnsafeBytes { sought in
+				memmem(start, haystack.count, sought.baseAddress, sought.count) != nil
+			}
+		}
 	}
 
 	/// The `package` a file declares, or nil for the default package.
@@ -464,5 +661,80 @@ public enum JavaTooling {
 		buildFile(in: root) != nil
 			|| FileManager.default.fileExists(atPath: root.appendingPathComponent("settings.gradle").path)
 			|| FileManager.default.fileExists(atPath: root.appendingPathComponent("settings.gradle.kts").path)
+	}
+}
+
+/// The project scan, run once and shared.
+///
+/// **Two callers want this answer within seconds of each other.** Opening a
+/// project starts a discovery walk, and pressing Debug needs to know which
+/// module a launch belongs to; before this they each ran their own scan of the
+/// same tree. On a repository where the walk takes a minute that is two minutes
+/// of CPU for one answer, and the second walk starts at precisely the moment
+/// somebody is sitting waiting for it.
+///
+/// An actor rather than a lock, because the interesting case is not
+/// serialising around a *finished* scan but joining one still running: a second
+/// caller awaits the first's task and is handed its result. A lock would have
+/// made the second caller wait and then scan anyway, or blocked a cooperative
+/// thread for the duration, which is worse than the problem.
+actor MainClassCache {
+	static let shared = MainClassCache()
+
+	/// The limit is part of the key: a scan that stopped at 40 has not answered
+	/// the question a caller asking for 200 is asking.
+	private struct Key: Hashable {
+		let root: String
+		let limit: Int
+	}
+
+	private var finished: [Key: [JavaTooling.MainClass]] = [:]
+	private var inFlight: [Key: Task<[JavaTooling.MainClass], Never>] = [:]
+	/// Bumped by `invalidate`, so a scan can tell whether the tree changed
+	/// underneath it while it was walking.
+	private var generation: [String: Int] = [:]
+
+	/// How many scans this cache has started, per project.
+	///
+	/// The only way to tell a second caller that *joined* a scan from one that
+	/// quietly ran its own, which is the whole behaviour here and is otherwise
+	/// invisible: both spellings return the same list.
+	///
+	/// Per project rather than one number, because the tests that read it run in
+	/// parallel: a single counter is incremented by whichever other test happens
+	/// to be scanning its own fixture at the time, and the assertion fails for a
+	/// reason that has nothing to do with what it is testing.
+	private var scans: [String: Int] = [:]
+
+	func scansStarted(for root: URL) -> Int {
+		scans[FilePath.canonical(root)] ?? 0
+	}
+
+	func classes(in root: URL, limit: Int) async -> [JavaTooling.MainClass] {
+		let path = FilePath.canonical(root)
+		let key = Key(root: path, limit: limit)
+		if let kept = finished[key] { return kept }
+		if let running = inFlight[key] { return await running.value }
+
+		let startedAt = generation[path] ?? 0
+		scans[path, default: 0] += 1
+		let task = Task.detached { JavaTooling.mainClasses(in: root, limit: limit) }
+		inFlight[key] = task
+		let found = await task.value
+		inFlight[key] = nil
+
+		// A change that arrived while the walk was running makes its answer stale
+		// before it can be stored — it saw part of the tree before the change and
+		// part after. Still returned, because it is the best answer in existence
+		// and whoever asked is waiting for it; just not kept for the next caller.
+		if (generation[path] ?? 0) == startedAt { finished[key] = found }
+		return found
+	}
+
+	/// Forgets a project's scan, and marks any scan now running as stale.
+	func invalidate(_ root: URL) {
+		let path = FilePath.canonical(root)
+		generation[path, default: 0] += 1
+		finished = finished.filter { $0.key.root != path }
 	}
 }

@@ -3570,10 +3570,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			Self.runConfigurationTallyForTesting.skipped += 1
 			return
 		}
-		refreshRunConfigurations()
+		// The cached scan describes the tree as it was, and a change that deserves
+		// a rescan is by definition one it no longer describes.
+		refreshRunConfigurations(forgettingCachedScan: true)
 	}
 
-	func refreshRunConfigurations() {
+	/// The shared Java scan, from a thread that is not in an async context.
+	///
+	/// Discovery runs on a `DispatchQueue`, and the cache that keeps a second
+	/// scan from starting is an actor. A semaphore is the bridge between the two,
+	/// and blocking here is the intended behaviour: this queue exists to wait for
+	/// exactly this. It is not a cooperative-pool thread, so nothing starves.
+	private static func awaitingMainClasses(
+		in root: URL, forgetting forget: Bool
+	) -> [JavaTooling.MainClass] {
+		let gate = DispatchSemaphore(value: 0)
+		// A box rather than a captured `var`: the write happens on whichever
+		// thread the task finishes on, and the read after `wait()` is ordered
+		// after it by the semaphore.
+		final class Box: @unchecked Sendable { var value: [JavaTooling.MainClass] = [] }
+		let box = Box()
+		Task.detached {
+			if forget { await JavaTooling.forgetMainClasses(in: root) }
+			box.value = await JavaTooling.mainClassesOffMain(in: root)
+			gate.signal()
+		}
+		gate.wait()
+		return box.value
+	}
+
+	/// - Parameter forgettingCachedScan: whether the kept Java scan is known to
+	///   be out of date. Set when a file-system change brought us here, and
+	///   acted on *inside* the same task that then rescans: forgetting from a
+	///   task of its own raced the scan it was meant to precede, and a scan whose
+	///   answer is invalidated while it is running is one whose answer cannot be
+	///   kept — so the next Debug press paid for the walk all over again.
+	func refreshRunConfigurations(forgettingCachedScan forget: Bool = false) {
 		guard let project else { return }
 		let root = project.root
 
@@ -3591,7 +3623,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		Self.runConfigurationTallyForTesting.walked += 1
 
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-			let found = RunConfigurationDiscovery.discover(in: root)
+			// The Java scan through the shared cache, and the rest of discovery
+			// around it: pressing Debug wants the same answer and would otherwise
+			// start a second walk of the same tree while this one is still running.
+			let mains = Self.awaitingMainClasses(in: root, forgetting: forget)
+			let found = RunConfigurationDiscovery.discover(in: root, javaMainClasses: mains)
 			DispatchQueue.main.async {
 				guard let self else { return }
 				self.isDiscoveringRunConfigurations = false
@@ -3608,7 +3644,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 				if self.wantsAnotherRunConfigurationScan {
 					self.wantsAnotherRunConfigurationScan = false
-					self.refreshRunConfigurations()
+					// Coalesced changes are still changes: this rescan exists because
+					// more of them arrived while the last walk was running.
+					self.refreshRunConfigurations(forgettingCachedScan: true)
 				}
 			}
 		}
@@ -9302,7 +9340,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// decompiled stub.
 			let target = try await LanguageService.shared.javaLaunchTarget(
 				project: root,
-				anchor: JavaTooling.mainClasses(in: root).first.map { URL(fileURLWithPath: $0.file) },
+				// Off this thread and through the shared cache: the synchronous
+				// scan reads every source file in the project, and
+				// `mainClasses`' own documentation says not to call it from a
+				// context like this one.
+				anchor: await JavaTooling.mainClassesOffMain(in: root).first
+					.map { URL(fileURLWithPath: $0.file) },
 				saying: { sentence in
 						self.runControl?.setStatus(sentence, busy: true, preparing: true)
 					}
@@ -9704,6 +9747,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 			// Only if discovery has not run yet, or found none — a project opened
 			// a moment ago, which is exactly when somebody presses Debug.
+			//
+			// **Any Java file in the module will do, and a main class is not needed
+			// to find one.** The anchor names a module and nothing more: jdtls
+			// answers about the project the file belongs to. Asking for a main class
+			// meant reading every source file in the repository — 96–139 s on a
+			// checkout of 13,754 of them, to reach the seven that had a `main` —
+			// while the JVM sat suspended waiting for the debugger being arranged
+			// here.
+			//
+			// So it is asked for in two ways, better one first. A configuration that
+			// names a module is anchored by a file from that module, which is a few
+			// `stat`s and is *precise*. A configuration whose directory is the
+			// project root names no module and gives nothing to be precise about:
+			// the cheap search would answer with whichever module the walk reached
+			// first, which on the repository this was measured on was a
+			// build-tooling module nobody was debugging. The main classes are the
+			// better signal for that case — and now that the scan behind them is
+			// seconds and shared rather than minutes and repeated, it is one worth
+			// paying for.
+			if anchor == nil, FilePath.canonicalEvenIfMissing(URL(fileURLWithPath: directory))
+				!= FilePath.canonical(root) {
+				runControl?.setStatus("Finding the module to debug…", busy: true, preparing: true)
+				// Detached: bounded, but still a directory walk, and this is the main
+				// actor.
+				anchor = await Task.detached {
+					JavaTooling.nearestJavaFile(
+						to: URL(fileURLWithPath: directory), under: root
+					)
+				}.value.map { URL(fileURLWithPath: $0) }
+			}
 			if anchor == nil {
 				runControl?.setStatus("Looking for the class to debug…", busy: true, preparing: true)
 				let scanned = await JavaTooling.mainClassesOffMain(in: root).map(\.file)
@@ -9900,10 +9973,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Any file in the module will do — the question is about the project
 			// the file belongs to, not the file — so the class's own source is
 			// used when there is one and any main class in the project otherwise.
-			let anchor = anchorFile
-				?? JavaTooling.mainClasses(in: root)
+			// The scan reads every source file in the project, and this closure is
+			// on the main actor: called synchronously here it was the whole-repository
+			// walk on the main thread, which is a beach ball rather than a slow status
+			// — 96–139 s of one on the checkout this was measured on. `mainClasses`
+			// says as much in its own documentation.
+			var anchor = anchorFile
+			if anchor == nil {
+				anchor = await JavaTooling.mainClassesOffMain(in: root)
 					.first { $0.name == mainClass }
 					.map { URL(fileURLWithPath: $0.file) }
+			}
 
 			let target: LanguageService.JavaLaunchTarget
 			do {

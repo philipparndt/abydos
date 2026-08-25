@@ -101,6 +101,140 @@ struct JavaToolingTests {
 			== FilePath.canonical(root))
 	}
 
+	/// A prefilter that rejects a file the real test would have accepted is a
+	/// main class that stops being offered, so this is the property that matters
+	/// rather than any particular speed.
+	@Test func theBytePrefilterAcceptsEverySpellingOfAMainMethod() {
+		let java = [
+			"public static void main(String[] args) {",
+			"static public void main(String... args) {",
+			"public static void main(String[] a) {",
+			"\tpublic static final void main(String[] args) throws Exception {",
+		]
+		for line in java {
+			// Whatever the prefilter does, it must not disagree with the test it
+			// stands in front of.
+			#expect(JavaTooling.mainMethodLine(in: line) != nil)
+			#expect(JavaTooling.contains("main(", in: Data(line.utf8)))
+		}
+
+		// Kotlin, where the declaration may carry a space before the paren.
+		for line in ["fun main() {", "fun main (args: Array<String>) {"] {
+			#expect(JavaTooling.mainMethodLine(in: line, isKotlin: true) != nil)
+			#expect(JavaTooling.contains("fun main", in: Data(line.utf8)))
+		}
+
+		// And it does reject: a file with no candidate in it at all is the case
+		// worth being fast for, since almost every file is that case.
+		#expect(!JavaTooling.contains("main(", in: Data("class Library { void run() {} }".utf8)))
+		#expect(!JavaTooling.contains("main(", in: Data()))
+	}
+
+	/// The anchor names a module, so any source file in the module will do — and
+	/// finding one must not cost a walk of the repository.
+	@Test func findsAnAnchorInAModuleWithNoMainClassInIt() throws {
+		let root = try JavaTestDirectory.make()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let module = root.appendingPathComponent("services/api")
+		try JavaTestDirectory.write("<project/>", to: module.appendingPathComponent("pom.xml"))
+		// No `main` anywhere in it. The old anchor search would have found
+		// nothing here and fallen back to whatever else the repository held.
+		try JavaTestDirectory.write(
+			"package api;\npublic class Service {}\n",
+			to: module.appendingPathComponent("src/main/java/api/Service.java")
+		)
+		// A test source is not an anchor: it is in a different jdtls source root
+		// and answers about a different classpath.
+		try JavaTestDirectory.write(
+			"package api;\npublic class ServiceTest {}\n",
+			to: module.appendingPathComponent("src/test/java/api/ServiceTest.java")
+		)
+
+		let found = JavaTooling.nearestJavaFile(to: module, under: root)
+		#expect(found?.hasSuffix("src/main/java/api/Service.java") == true)
+	}
+
+	/// A configuration whose directory is the repository root still gets an
+	/// answer, and the module's own source beats a loose one at the top.
+	@Test func prefersASourceInsideAModuleToOneLyingAtTheRoot() throws {
+		let root = try JavaTestDirectory.make()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try JavaTestDirectory.write(
+			"public class Loose {}\n", to: root.appendingPathComponent("Loose.java")
+		)
+		try JavaTestDirectory.write(
+			"package api;\npublic class Service {}\n",
+			to: root.appendingPathComponent("api/src/main/java/api/Service.java")
+		)
+
+		let found = JavaTooling.nearestJavaFile(to: root, under: root)
+		#expect(found?.hasSuffix("api/src/main/java/api/Service.java") == true)
+	}
+
+	/// The budget is the only thing standing between a root-level configuration
+	/// and the whole-repository walk this replaced.
+	@Test func stopsLookingForAnAnchorOnceItsBudgetIsSpent() throws {
+		let root = try JavaTestDirectory.make()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try JavaTestDirectory.write(
+			"public class Deep {}\n",
+			to: root.appendingPathComponent("a/b/c/Deep.java")
+		)
+
+		// One directory read reaches `a/` and no further.
+		#expect(JavaTooling.firstJavaFile(under: root, limit: 1) == nil)
+		#expect(JavaTooling.firstJavaFile(under: root, limit: 40) != nil)
+	}
+
+	/// Concurrent askers join one scan. Both spellings return the same list, so
+	/// the count of scans started is the only thing that can tell them apart.
+	@Test func sharesOneScanBetweenCallersInsteadOfRepeatingIt() async throws {
+		let root = try JavaTestDirectory.make()
+		defer { try? FileManager.default.removeItem(at: root) }
+		try JavaTestDirectory.write(
+			"package api;\npublic class Server {\n\tpublic static void main(String[] a) {}\n}\n",
+			to: root.appendingPathComponent("src/main/java/api/Server.java")
+		)
+
+		let before = await MainClassCache.shared.scansStarted(for: root)
+		let results = await withTaskGroup(of: Int.self) { group in
+			for _ in 0..<4 {
+				group.addTask { await JavaTooling.mainClassesOffMain(in: root).count }
+			}
+			var counts: [Int] = []
+			for await count in group { counts.append(count) }
+			return counts
+		}
+		let after = await MainClassCache.shared.scansStarted(for: root)
+
+		#expect(results == [1, 1, 1, 1])
+		#expect(after - before == 1)
+	}
+
+	/// A kept answer is only as good as the tree it was read from.
+	@Test func forgetsAProjectsScanWhenAskedTo() async throws {
+		let root = try JavaTestDirectory.make()
+		defer { try? FileManager.default.removeItem(at: root) }
+		try JavaTestDirectory.write(
+			"package api;\npublic class One {\n\tpublic static void main(String[] a) {}\n}\n",
+			to: root.appendingPathComponent("src/main/java/api/One.java")
+		)
+		#expect(await JavaTooling.mainClassesOffMain(in: root).count == 1)
+
+		try JavaTestDirectory.write(
+			"package api;\npublic class Two {\n\tpublic static void main(String[] a) {}\n}\n",
+			to: root.appendingPathComponent("src/main/java/api/Two.java")
+		)
+		// Still one: the answer is kept, which is the point of keeping it.
+		#expect(await JavaTooling.mainClassesOffMain(in: root).count == 1)
+
+		await JavaTooling.forgetMainClasses(in: root)
+		#expect(await JavaTooling.mainClassesOffMain(in: root).count == 2)
+	}
+
 	/// Two checkouts of the same repository must not share an index, or one
 	/// project's answers are served for the other.
 	@Test func givesEveryProjectItsOwnServerWorkspace() {

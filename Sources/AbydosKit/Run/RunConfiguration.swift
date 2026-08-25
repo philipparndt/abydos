@@ -238,7 +238,18 @@ public enum RunConfigurationDiscovery {
 		return name.hasPrefix("test ") || name.hasSuffix(" test") || name.contains("go test")
 	}
 
-	public static func discover(in root: URL) -> [RunConfiguration] {
+	/// Everything this project can run.
+	///
+	/// - Parameter javaMainClasses: the project's main classes, when the caller
+	///   already has them. The scan that finds them reads every source file in
+	///   the repository, and the app has a shared, coalescing one — see
+	///   `JavaTooling.mainClassesOffMain`. Passing its result in is what keeps a
+	///   project open and a Debug press from walking the same tree twice at once.
+	///   Left out, this scans for itself, which is what a test on a small fixture
+	///   wants.
+	public static func discover(
+		in root: URL, javaMainClasses scanned: [JavaTooling.MainClass]? = nil
+	) -> [RunConfiguration] {
 		var result: [RunConfiguration] = []
 		result += intelliJConfigurations(in: root)
 		result += vscodeConfigurations(in: root)
@@ -253,7 +264,7 @@ public enum RunConfigurationDiscovery {
 			result += bazelTargets(in: directory)
 			result += conanActions(in: directory)
 		}
-		result += javaMainClasses(in: root)
+		result += javaMainClasses(in: root, from: scanned ?? JavaTooling.mainClasses(in: root))
 
 		// Stable order: source first, then name, so the list does not reshuffle
 		// between scans.
@@ -808,8 +819,10 @@ public enum RunConfigurationDiscovery {
 	/// Maven's exec plugin, in that order of preference. The class travels with
 	/// the configuration regardless, so the debugger — which builds its own
 	/// classpath from the language server — can start the right one.
-	static func javaMainClasses(in root: URL) -> [RunConfiguration] {
-		JavaTooling.mainClasses(in: root).compactMap { main in
+	static func javaMainClasses(
+		in root: URL, from scanned: [JavaTooling.MainClass]
+	) -> [RunConfiguration] {
+		scanned.compactMap { main in
 			let module = URL(fileURLWithPath: main.module)
 			guard let command = javaRunCommand(for: main, module: module, root: root) else { return nil }
 
