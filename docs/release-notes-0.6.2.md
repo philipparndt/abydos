@@ -1,68 +1,140 @@
 # Abydos 0.6.2
 
-One name, finished. 0.6.1 moved the development pod off `ideai` and kept the
-Helm *release* prefix deliberately — a release names something that exists in
-somebody's cluster, and changing it orphans that rather than migrating it.
+Twenty commits, and most of them are the app getting out of the way on a big
+project. A debug run that sat for a minute and a half before it started. A
+right-click that took seconds. Four language servers indexing at once and
+stalling the main thread for a hundred and four seconds while doing it. None of
+these were visible on a small checkout, and all of them were unmissable on a
+large one.
 
-That was the right argument about the wrong place. A release name is not read in
-`helm list`. It is read in the pod name, next to the chart's own, every time
-anybody runs `kubectl get pods`:
+## Waiting for things that were never necessary
+
+**Pressing Debug on a large Java repository sat on "Looking for the class to
+debug…" for a minute and a half.** Measured on 13,754 sources: 96–139 s, of
+which reading the files was 2.5 s. The rest was splitting every file into lines
+and running `contains("main(")` — a Unicode canonical-equivalence search — over
+about a million of them.
+
+The anchor never needed a main class. It names a module, and jdtls answers
+about whichever project the file it is handed belongs to. Finding one file from
+a few stats costs 0.9 ms against a walk of the whole tree.
+
+**A right-click in the file tree took seconds**, for a context menu whose slow
+part was a submenu of five items. Working out which kinds of file to offer under
+New collected every file in the project — inside `menuNeedsUpdate`, which AppKit
+calls on the main thread while the menu is on screen waiting. It was cached, and
+the cache was the other half: the filesystem watcher cleared it on any change
+worth rescanning for, so the walk was paid again on the first right-click after
+every save. On a checkout of 43,600 entries, that is a right-click nobody wants
+to use twice.
+
+**Background indexing no longer takes the whole machine.** A language server is
+kept for every project that has been opened, which is right — moving between two
+projects should not pay for a server start each time. What that did not price is
+that each server indexes on its own account and fans its build out to every
+core. On a fourteen-core machine: four live servers, one running `swift-build`
+at `-j14` with thirteen `swift-frontend` under it, against a 9.7 GB tree whose
+every write the endpoint-security filter scans. The main thread stalled for
+104 s, 54 s and 22 s at 1% CPU — not computing, but queued behind the app's own
+indexer.
+
+**The dependency section resolves its paths once.** `realpath(3)` on every node
+and every package path, on every call, keeping none of it — some sixty syscalls
+before a row was drawn on a project with thirty checkouts. Sampled during one of
+the stalls above, 431 of 434 main-thread samples were inside that walk. The app
+cannot make the security filter faster; it can stop asking it the same question.
+
+## Editing and the terminal
+
+**A line typed wider than the pane could not be scrolled to.** The view's width
+was measured when the file was opened and afterwards only by search and
+jump-to-line; ordinary editing never touched it. So text *typed* or pasted wider
+than anything the file held at load left the view exactly as wide as the pane —
+no scroll range, no scroller, no way to reach what had just been typed. Nothing
+about scrolling was broken, which is why it took a while to find.
+
+**A new terminal starts at the width the pane actually has.** A debug run
+printed its VM options folded at eighty columns down the left of a pane half
+again as wide, and no resize straightened it. Every wrap at exactly eighty is
+what gives it away — a wrap at the pane's own edge lands on whatever column that
+edge falls on, not on a round number left over from a hardware terminal. The
+emulator was built at 24×80, and a pane that starts before it is laid out keeps
+what it was built with.
+
+**⌃Space asks for completions, and a cold server says so.** A list already
+appeared while typing, but only after two letters or a character the server asked
+to be woken by — which left the case people most want help with unanswerable: a
+caret in the middle of nothing, where the question is "what can go here at all".
+On an empty line in a Swift file that returns 20 items where the typing rule
+returned none. And where the server is not ready yet, that is now on screen
+instead of nothing happening.
+
+## Debugging
+
+**A watched value can be opened up.** A watch on anything but a scalar was a row
+saying `{...}` with no way in. The session had been storing the reference since
+watches were written; there was simply no way to address the root of a watch, so
+nothing ever asked what was behind it.
+
+**The JVM option variables ask the shell what it has first.** Debugging a script
+writes `JAVA_TOOL_OPTIONS` to carry the JDWP agent, built from this app's own
+environment — which, for an app launched from the Finder, is launchd's, not the
+one a login shell builds from somebody's profile. The variable looked unset, so
+the plan wrote it as if starting from nothing, and `env VAR=…` in front of the
+command then replaced whatever the shell would have supplied.
+
+## The project view and git
+
+**A chain of single-directory folders is one row.**
+`src/main/java/com/example/myapp` is five rows before any code, four of them
+saying only "there is one more folder inside me", and a reactor of fifty modules
+pays that fifty times. Folded, it is `com.example.myapp` under a source root.
+Off by default: the tree changes shape under this, and a change of shape nobody
+asked for is one they undo before they can work.
+
+**A fast-forward that worked is not an error.** Fast-forwarding a branch that is
+not checked out did exactly what was asked and then came up in red, under a
+window titled Error. Every outcome took the default toast kind, so success and
+failure were indistinguishable — and the one people meet most often is success.
+
+## The last place the old name reached a cluster
+
+0.6.1 moved the whole of the development pod to abydos and deliberately kept the
+Helm release prefix: a release names something that exists in somebody's
+cluster, and renaming it orphans that rather than migrating it.
+
+That trade is taken now. A deployment installed from an abydos chart, carrying
+abydos labels, running an abydos supervisor, was still called:
 
     ideai-go-service-abydos-devpod-d8b5785d5-kd442
 
-Half of that had already moved. A name that is half renamed is worse than either
-whole one — it reads as a bug in front of somebody — and the thing being
-protected was a single `helm uninstall`.
+Half a rename reads as a bug every time somebody runs `kubectl get pods`, and
+what it was protecting was one `helm uninstall`. The release for a project is
+now `abydos-<project>`.
 
-The release for a project is now `abydos-<project>`.
-
-## What this costs
-
-A project whose pod was installed by an earlier version **is not upgraded**. The
-new release is installed beside the old one, and the old one keeps running until
-it is removed:
+**What it costs:** a pod installed by an earlier version is not upgraded. The
+new release is installed beside the old one, which keeps running until it is
+removed:
 
     helm uninstall ideai-<project> --namespace <namespace>
 
-Both are found while both exist — they carry the same label — so what you get is
-a duplicate in the pod list rather than a pod nothing can see. That is the whole
-of it, and it is why this was worth doing now rather than never.
+Both are found while both exist — they carry the same label — so it is a
+duplicate in the list rather than a pod nothing can see.
 
-## Three more tests that could take the suite down
-
-0.6.1 fixed a stash test that asserted a list had three entries with `#expect`
-and then subscripted the third — `#expect` records and carries on, so under load
-the subscript trapped, and a trap ends the whole test bundle rather than the one
-test. Finding it took a crash report, because the log blamed the sixty-two
-suites that happened to still be running.
-
-It was not the only one. An audit of every force-unwrap in the suite found three
-more of exactly that shape — an `#expect` that records a nil, and a line
-immediately after that unwraps it anyway:
-
-- `GitBranchesTests` force-unwrapped the branch it had just looked up.
-- `ProjectGitRaceTests` checked `project.git != nil` and then wrote
-  `project.git!` three lines later.
-- `BacklogRunnerTests` force-unwrapped an item it expected to find on disk.
-
-All four are now `try #require`, which stops that one test and lets the rest
-finish. Nothing in the app changed — a test bundle that dies is not a shipped
-binary — but a red run that accuses sixty-two innocent suites costs an
-afternoon, and it had already cost one.
+The Namespace field on a launch configuration suggests `abydos-dev` now. It was
+the last `ideai` left anywhere a person looks.
 
 ## Also
 
-The Namespace field on a launch configuration suggests `abydos-dev` rather than
-`ideai-dev`. It was only ever placeholder text, and it was the last `ideai` left
-anywhere a person looks.
+Four tests could take the whole suite down with them. Each asserted something
+with `#expect` — which records and carries on — and then, on the next line,
+subscripted or force-unwrapped the thing it had just asserted about. Under load
+the assertion was the one that failed, and the unwrap trapped; a trap ends the
+process, so one flake was reported as every suite still running failing at once.
+It took a crash report to find the first, because the log named sixty-two
+suspects. `GitStashLiveTests`, `GitBranchesTests`, `ProjectGitRaceTests` and
+`BacklogRunnerTests` all use `try #require` now.
 
-The images are unchanged. `pharndt/abydos-devpod:dev`, `:dev-go`, `:dev-native`
-and `:dev-jvm` are the same ones 0.6.1 published — the release name is computed
-by the app and handed to Helm, so nothing in the chart or the image moved.
-
-What still says `ideai`, and is staying that way: the shipping bundle identifier
-`de.rnd7.ideai`, which is the App Store identity and the key macOS files the
-Local Network grant under; the jdtls data directory, whose rename costs a
-project re-import; the scratch directory, which holds files somebody wrote; and
-a long tail of names for temporary directories in the test suite, which nobody
-sees.
+The images are unchanged: `pharndt/abydos-devpod:dev`, `:dev-go`, `:dev-native`
+and `:dev-jvm` are the ones 0.6.1 published. The release name is computed by the
+app and handed to Helm, so nothing in the chart or the image moved.
