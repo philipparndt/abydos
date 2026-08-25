@@ -250,6 +250,7 @@ public struct DependencyTree {
 			)
 		}
 		root = DependencyNode(row: .section(subtitle: heading), childNodes: children)
+		locations = DependencyTree.allLocations(under: root)
 	}
 
 	private static func rows(for set: DependencySet) -> [DependencyNode] {
@@ -327,40 +328,80 @@ public struct DependencyTree {
 		var best: (chain: [DependencyNode], node: FileNode)?
 		var bestLength = -1
 
+		for location in locations {
+			for base in location.bases where path == base || path.hasPrefix(base + "/") {
+				guard base.count > bestLength else { continue }
+				// Walked back through the *node's* own URL rather than the
+				// canonical one: the prefix test has to resolve symlinks —
+				// `/tmp` against `/private/tmp` is 508's whole reason for
+				// `FilePath` — but `FileNode` names its children by the path
+				// it listed them under, and a lookup by a canonical path
+				// would match none of them.
+				let relative = path.dropFirst(base.count).drop { $0 == "/" }
+				let target = relative.isEmpty
+					? location.fileRoot.url
+					: location.fileRoot.url.appendingPathComponent(String(relative))
+				if let found = location.fileRoot.node(for: target) {
+					best = (location.chain, found)
+					bestLength = base.count
+				}
+			}
+		}
+		return best
+	}
+
+	/// One row a file could land in, with the paths that claim it already
+	/// resolved.
+	private struct Location {
+		/// Every copy of this checkout, not only the one being shown: a Swift
+		/// package has two, and the file in somebody's tab may have come from
+		/// either. Matched against the other copy, resolved against the shown
+		/// one — so the row that lights up is the row the section is drawing,
+		/// and its siblings are the siblings.
+		let bases: [String]
+		let fileRoot: FileNode
+		let chain: [DependencyNode]
+	}
+
+	/// Where every file-bearing row sits, canonicalised once at construction.
+	///
+	/// **`locate` used to do this per call, and it is a syscall per row.** The
+	/// walk resolved `fileRoot.url` — and each of a package's `otherPaths` —
+	/// through `realpath(3)` at every node it passed, kept nothing, and did it
+	/// again for the next file. `reveal(urls:)` asks twice per URL, once by way
+	/// of `noteToolchains`, so a reveal on a project with thirty checkouts spent
+	/// its main thread in `realpath` some sixty times over before it drew a row.
+	///
+	/// That is affordable on a quiet machine and is not on a busy one. Sampled
+	/// during a stall on a machine whose endpoint-security filter was saturated
+	/// by a background index build, 431 of 434 main-thread samples were inside
+	/// this walk, bottomed out in `__getattrlist` — the syscall the filter
+	/// intercepts. The app cannot make the filter faster; it can stop asking it
+	/// the same question.
+	///
+	/// Safe to hold because the tree does not change: `childNodes` is assigned
+	/// in `init` and nowhere else, and a checkout that moves on disk arrives as
+	/// a filesystem change that rebuilds the whole tree.
+	///
+	/// In pre-order, which is what keeps the tie-break in `locate` the one the
+	/// recursive walk made: bases of equal length keep the row found first.
+	private let locations: [Location]
+
+	private static func allLocations(under root: DependencyNode) -> [Location] {
+		var found: [Location] = []
 		func walk(_ node: DependencyNode, chain: [DependencyNode]) {
 			let chain = chain + [node]
 			if let fileRoot = node.fileRoot {
-				// Every copy of this checkout, not only the one being shown: a
-				// Swift package has two, and the file in somebody's tab may have
-				// come from either. Matched against the other copy, resolved
-				// against the shown one — so the row that lights up is the row
-				// the section is drawing, and its siblings are the siblings.
 				var bases = [FilePath.canonical(fileRoot.url)]
 				if case let .package(package) = node.row {
 					bases += package.otherPaths.map(FilePath.canonical)
 				}
-				for base in bases where path == base || path.hasPrefix(base + "/") {
-					guard base.count > bestLength else { continue }
-					// Walked back through the *node's* own URL rather than the
-					// canonical one: the prefix test has to resolve symlinks —
-					// `/tmp` against `/private/tmp` is 508's whole reason for
-					// `FilePath` — but `FileNode` names its children by the path
-					// it listed them under, and a lookup by a canonical path
-					// would match none of them.
-					let relative = path.dropFirst(base.count).drop { $0 == "/" }
-					let target = relative.isEmpty
-						? fileRoot.url
-						: fileRoot.url.appendingPathComponent(String(relative))
-					if let found = fileRoot.node(for: target) {
-						best = (chain, found)
-						bestLength = base.count
-					}
-				}
+				found.append(Location(bases: bases, fileRoot: fileRoot, chain: chain))
 			}
 			for child in node.childNodes { walk(child, chain: chain) }
 		}
 		walk(root, chain: [])
-		return best
+		return found
 	}
 
 	/// Which package a file belongs to, for anything that wants to say where a
