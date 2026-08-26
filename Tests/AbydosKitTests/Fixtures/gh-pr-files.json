@@ -1,0 +1,35 @@
+[
+ {
+  "additions": 5,
+  "blob_url": "https://github.com/cli/cli/blob/d8115d4ddca137a438bff22f0aa413abf1d0775c/.experiments%2Ftech-debt-burndown%2Fmemory.md",
+  "changes": 5,
+  "contents_url": "https://api.github.com/repos/cli/cli/contents/.experiments%2Ftech-debt-burndown%2Fmemory.md?ref=d8115d4ddca137a438bff22f0aa413abf1d0775c",
+  "deletions": 0,
+  "filename": ".experiments/tech-debt-burndown/memory.md",
+  "raw_url": "https://github.com/cli/cli/raw/d8115d4ddca137a438bff22f0aa413abf1d0775c/.experiments%2Ftech-debt-burndown%2Fmemory.md",
+  "sha": "0930786ef0c2600ee17ee4180545ea0ae8d6a312",
+  "status": "modified"
+ },
+ {
+  "additions": 3,
+  "blob_url": "https://github.com/cli/cli/blob/d8115d4ddca137a438bff22f0aa413abf1d0775c/pkg%2Fcmd%2Fattestation%2Fverify%2Fverify.go",
+  "changes": 5,
+  "contents_url": "https://api.github.com/repos/cli/cli/contents/pkg%2Fcmd%2Fattestation%2Fverify%2Fverify.go?ref=d8115d4ddca137a438bff22f0aa413abf1d0775c",
+  "deletions": 2,
+  "filename": "pkg/cmd/attestation/verify/verify.go",
+  "raw_url": "https://github.com/cli/cli/raw/d8115d4ddca137a438bff22f0aa413abf1d0775c/pkg%2Fcmd%2Fattestation%2Fverify%2Fverify.go",
+  "sha": "36cf0b9d51e072ae61606a22a5770d408ac26692",
+  "status": "modified"
+ },
+ {
+  "additions": 26,
+  "blob_url": "https://github.com/cli/cli/blob/d8115d4ddca137a438bff22f0aa413abf1d0775c/pkg%2Fcmd%2Fattestation%2Fverify%2Fverify_test.go",
+  "changes": 26,
+  "contents_url": "https://api.github.com/repos/cli/cli/contents/pkg%2Fcmd%2Fattestation%2Fverify%2Fverify_test.go?ref=d8115d4ddca137a438bff22f0aa413abf1d0775c",
+  "deletions": 0,
+  "filename": "pkg/cmd/attestation/verify/verify_test.go",
+  "raw_url": "https://github.com/cli/cli/raw/d8115d4ddca137a438bff22f0aa413abf1d0775c/pkg%2Fcmd%2Fattestation%2Fverify%2Fverify_test.go",
+  "sha": "602fafbb9c389abcb52366249f8fb82f876f9d9f",
+  "status": "modified"
+ }
+]

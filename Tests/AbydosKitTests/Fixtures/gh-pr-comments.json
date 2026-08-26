@@ -1,0 +1,78 @@
+[
+ {
+  "body": "Should the branch name also include the `OWNER:` portion if the pull request is coming from a different repo? This would",
+  "commit_id": "996619ea3cf9d0534e98e6a65c64688efd629d1d",
+  "created_at": "2019-10-08T10:01:40Z",
+  "diff_hunk": "@@ -283,19 +283,18 @@ func list() error {",
+  "html_url": "https://github.com/cli/cli/pull/3#discussion_r332430752",
+  "id": 332430752,
+  "line": 297,
+  "original_commit_id": "996619ea3cf9d0534e98e6a65c64688efd629d1d",
+  "original_line": 297,
+  "path": "command/pr.go",
+  "side": "RIGHT",
+  "updated_at": "2019-10-08T10:01:56Z",
+  "user": {
+   "id": 887,
+   "login": "mislav",
+   "type": "User"
+  }
+ },
+ {
+  "body": "It's fine to return nil in place of pointers when an error occurs:\r",
+  "commit_id": "6a3907e7121874d378612b251ff06a6918684f56",
+  "created_at": "2019-10-09T14:02:02Z",
+  "diff_hunk": "@@ -339,7 +342,11 @@ func show(number ...string) error {",
+  "html_url": "https://github.com/cli/cli/pull/7#discussion_r333030758",
+  "id": 333030758,
+  "line": null,
+  "original_commit_id": "625ff56ec8aa817b530aeba2bbe22d6db186d4ac",
+  "original_line": 347,
+  "path": "command/pr.go",
+  "side": "RIGHT",
+  "updated_at": "2019-10-09T20:59:26Z",
+  "user": {
+   "id": 887,
+   "login": "mislav",
+   "type": "User"
+  }
+ },
+ {
+  "body": "Ditto:\r",
+  "commit_id": "6a3907e7121874d378612b251ff06a6918684f56",
+  "created_at": "2019-10-09T14:02:51Z",
+  "diff_hunk": "@@ -388,7 +395,10 @@ func pullRequests() (*graphqlPullRequest, []graphqlPullRequ",
+  "html_url": "https://github.com/cli/cli/pull/7#discussion_r333031216",
+  "id": 333031216,
+  "line": null,
+  "original_commit_id": "625ff56ec8aa817b530aeba2bbe22d6db186d4ac",
+  "original_line": 400,
+  "path": "command/pr.go",
+  "side": "RIGHT",
+  "updated_at": "2019-10-09T20:59:26Z",
+  "user": {
+   "id": 887,
+   "login": "mislav",
+   "type": "User"
+  }
+ },
+ {
+  "body": "I wonder if there would be some value in passing around the branch as a Branch object instead of a string? The `String()",
+  "commit_id": "6a3907e7121874d378612b251ff06a6918684f56",
+  "created_at": "2019-10-09T14:04:40Z",
+  "diff_hunk": "@@ -0,0 +1,30 @@",
+  "html_url": "https://github.com/cli/cli/pull/7#discussion_r333032315",
+  "id": 333032315,
+  "line": 29,
+  "original_commit_id": "625ff56ec8aa817b530aeba2bbe22d6db186d4ac",
+  "original_line": 25,
+  "path": "context/context.go",
+  "side": "RIGHT",
+  "updated_at": "2019-10-09T20:59:26Z",
+  "user": {
+   "id": 887,
+   "login": "mislav",
+   "type": "User"
+  }
+ }
+]

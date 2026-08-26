@@ -1,0 +1,141 @@
+[
+ {
+  "author": {
+   "is_bot": true,
+   "login": "app/dependabot"
+  },
+  "baseRefName": "trunk",
+  "headRefName": "dependabot/go_modules/github.com/google/go-containerregistry-0.22.0",
+  "isDraft": false,
+  "number": 14267,
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-26T14:03:25Z",
+    "conclusion": "SKIPPED",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32977927545/job/98207175829",
+    "name": "label-external",
+    "startedAt": "2026-08-26T14:03:35Z",
+    "status": "COMPLETED",
+    "workflowName": "PR Triaging"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-26T14:03:25Z",
+    "conclusion": "SKIPPED",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32977927568/job/98207174549",
+    "name": "label-external",
+    "startedAt": "2026-08-26T14:03:35Z",
+    "status": "COMPLETED",
+    "workflowName": "PR Triaging"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-26T14:03:26Z",
+    "conclusion": "SKIPPED",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32977928606/job/98207175404",
+    "name": "label-external",
+    "startedAt": "2026-08-26T14:03:35Z",
+    "status": "COMPLETED",
+    "workflowName": "PR Triaging"
+   }
+  ],
+  "title": "chore(deps): bump github.com/google/go-containerregistry from 0.21.9 to 0.22.0",
+  "updatedAt": "2026-08-26T15:02:44Z",
+  "url": "https://github.com/cli/cli/pull/14267"
+ },
+ {
+  "author": {
+   "id": "U_kgDOCKiRcg",
+   "is_bot": false,
+   "login": "SCW5370",
+   "name": "\u5411\u9633"
+  },
+  "baseRefName": "trunk",
+  "headRefName": "tech-debt/errcheck-20260826",
+  "isDraft": false,
+  "number": 14264,
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-26T02:50:54Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32924230752/job/98043726300",
+    "name": "label-external / label_issues",
+    "startedAt": "2026-08-26T02:50:50Z",
+    "status": "COMPLETED",
+    "workflowName": "PR Triaging"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-26T02:50:48Z",
+    "conclusion": "SKIPPED",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32924230752/job/98043726954",
+    "name": "close-from-default-branch / close-from-default-branch",
+    "startedAt": "2026-08-26T02:50:48Z",
+    "status": "COMPLETED",
+    "workflowName": "PR Triaging"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-26T02:51:00Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32924230752/job/98043726411",
+    "name": "check-requirements / check-requirements",
+    "startedAt": "2026-08-26T02:50:51Z",
+    "status": "COMPLETED",
+    "workflowName": "PR Triaging"
+   }
+  ],
+  "title": "Handle attestation detail write errors",
+  "updatedAt": "2026-08-26T02:50:58Z",
+  "url": "https://github.com/cli/cli/pull/14264"
+ },
+ {
+  "author": {
+   "id": "MDQ6VXNlcjM3MjcwNDgw",
+   "is_bot": false,
+   "login": "tommaso-moro",
+   "name": "Tommaso Moro"
+  },
+  "baseRefName": "trunk",
+  "headRefName": "tommaso-moro-support-pi-agent-directory",
+  "isDraft": false,
+  "number": 14260,
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-25T15:40:49Z",
+    "conclusion": "SKIPPED",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32867293049/job/97865579182",
+    "name": "label-external",
+    "startedAt": "2026-08-25T15:40:50Z",
+    "status": "COMPLETED",
+    "workflowName": "PR Triaging"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-25T15:36:26Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32866524284/job/97863042317",
+    "name": "CodeQL-Build (go, manual, ./.github/codeql/codeql-config.yml)",
+    "startedAt": "2026-08-25T15:33:27Z",
+    "status": "COMPLETED",
+    "workflowName": "Code Scanning"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-08-25T15:35:38Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/cli/cli/actions/runs/32866524236/job/97863041907",
+    "name": "lint",
+    "startedAt": "2026-08-25T15:33:26Z",
+    "status": "COMPLETED",
+    "workflowName": "Lint"
+   }
+  ],
+  "title": "Support PI_CODING_AGENT_DIR for skills",
+  "updatedAt": "2026-08-26T14:07:56Z",
+  "url": "https://github.com/cli/cli/pull/14260"
+ }
+]

@@ -14,15 +14,15 @@
 - [ ] 2.1 New `Sources/AbydosKit/Forge/GitHubCLI.swift`: run `gh` the way
       `GitRepository` runs `git` — a process, both pipes drained, exit code and
       output — with the `gh` version reported for a driven run
-- [ ] 2.2 Three answers that are not errors: no `gh` on the path, `gh` not
+- [x] 2.2 Three answers that are not errors: no `gh` on the path, `gh` not
       logged in, and a remote that is not a forge this understands. Each says
       what to do about it
-- [ ] 2.3 `PullRequest`, `PullRequestFile`, `ReviewComment`, `ChecksState` —
+- [x] 2.3 `PullRequest`, `PullRequestFile`, `ReviewComment`, `ChecksState` —
       decoded from `gh --json`, one decoder per command, a missing field
       degrading its row rather than failing the list
-- [ ] 2.4 Tests over recorded `gh` output for every decoder, including a payload
+- [x] 2.4 Tests over recorded `gh` output for every decoder, including a payload
       with fields missing and one from an Enterprise host
-- [ ] 2.5 `GitForge.repository(in:)` says which repository to ask about; nothing
+- [x] 2.5 `GitForge.repository(in:)` says which repository to ask about; nothing
       here re-parses a remote
 
 ## 3. Browsing them
