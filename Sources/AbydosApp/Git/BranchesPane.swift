@@ -108,7 +108,8 @@ final class BranchesPane: NSView {
 	private var conflictBanner: ConflictBanner!
 	private var conflictHeight: NSLayoutConstraint!
 	private var conflictPaths: [String] = []
-	private var filterField: NSSearchField!
+	/// The filter, when it is open. Nil is the ordinary state.
+	private var filterStrip: PaneFilterStrip?
 	/// The repository, drawn as the first row and pinned above the scrolling
 	/// ones — see `RepositoryRowView` for why it does not scroll.
 	private var repositoryRow: RepositoryRowView!
@@ -198,18 +199,6 @@ final class BranchesPane: NSView {
 	// MARK: - Layout
 
 	private func build() {
-		filterField = NSSearchField()
-		filterField.placeholderString = "Filter branches"
-		filterField.font = Theme.current.uiFont(12)
-		filterField.focusRingType = .none
-		filterField.delegate = self
-		filterField.sendsWholeSearchString = false
-
-		let newButton = NSButton(title: "New Branch…", target: self, action: #selector(newBranch))
-		newButton.bezelStyle = .rounded
-		newButton.controlSize = .small
-		newButton.font = Theme.current.uiFont(11)
-
 		// **The repository, as a control**, which is what the button above this
 		// tree used to be: fetch when level, pull when behind, push when ahead.
 		// Its own comment gave the reason it was a button — *a verb here hangs
@@ -278,13 +267,11 @@ final class BranchesPane: NSView {
 		scrollView.backgroundColor = Theme.current.sidebarBackground
 		scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
 
-		for view in [conflictBanner, filterField, newButton, repositoryRow, scrollView]
-			as [NSView] {
+		for view in [conflictBanner, repositoryRow, scrollView] as [NSView] {
 			addSubview(view)
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
 
-		let inset = Theme.current.scaled(8)
 		// Shut to nothing unless there is a conflict, so a clean repository
 		// pays nothing for it.
 		conflictHeight = conflictBanner.heightAnchor.constraint(equalToConstant: 0)
@@ -295,14 +282,11 @@ final class BranchesPane: NSView {
 			conflictBanner.leadingAnchor.constraint(equalTo: leadingAnchor),
 			conflictBanner.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-			filterField.topAnchor.constraint(equalTo: conflictBanner.bottomAnchor, constant: inset),
-			filterField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			filterField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-
-			newButton.topAnchor.constraint(equalTo: filterField.bottomAnchor, constant: inset / 2),
-			newButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-
-			repositoryRow.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: inset / 2),
+			// **Nothing between the conflict banner and the repository row.**
+			// The filter field and the New Branch button were 58 points of
+			// chrome above a list; the filter is on ⌘F and the new branch is a
+			// verb on the LOCAL row it belongs to.
+			repositoryRow.topAnchor.constraint(equalTo: conflictBanner.bottomAnchor),
 			repositoryRow.leadingAnchor.constraint(equalTo: leadingAnchor),
 			repositoryRow.trailingAnchor.constraint(equalTo: trailingAnchor),
 			repositoryRow.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24)),
@@ -1105,11 +1089,72 @@ final class BranchesPane: NSView {
 		if collapsed { tableView.collapseItem(node) } else { tableView.expandItem(node) }
 	}
 
-	/// Types into the filter, as somebody would.
+	/// Types into the filter, as somebody would — opening it first if it is
+	/// shut, because that is now a thing it can be.
 	func filterForTesting(_ text: String) {
-		filterField.stringValue = text
-		filterText = text.trimmingCharacters(in: .whitespaces)
+		if filterStrip == nil { showFilter() }
+		filterStrip?.setTextForTesting(text)
+	}
+
+	/// The outline itself, so a driven run can put the keyboard in it.
+	var tableViewForTesting: NSView { tableView }
+
+	/// Whether the filter is open, and what is in it.
+	func filterStateForTesting() -> String {
+		guard let strip = filterStrip else { return "shut · tree \(tableView.numberOfRows) rows" }
+		let focused = window?.firstResponder is NSText
+			&& (window?.firstResponder as? NSView)?.isDescendant(of: strip) != false
+		return "open · “\(strip.text)” · keyboard \(focused ? "in it" : "elsewhere")"
+			+ " · tree \(tableView.numberOfRows) rows"
+	}
+
+	/// `⌘F`, when this pane holds the keyboard.
+	///
+	/// **Claimed from the responder chain, not from a second menu item.** The
+	/// Find item targets nil, so the chain answers it: the editor's controller
+	/// gets it when the editor has the keyboard and this pane gets it when this
+	/// pane does, which is the arrangement rather than a fight over a key.
+	@objc func findInFile(_ sender: Any?) { showFilter() }
+
+	/// Opens the filter over the list and puts the keyboard in it.
+	func showFilter() {
+		if let strip = filterStrip {
+			strip.takeKeyboard()
+			return
+		}
+		let strip = PaneFilterStrip(placeholder: "Filter branches")
+		strip.translatesAutoresizingMaskIntoConstraints = false
+		strip.onTextChanged = { [weak self] text in
+			guard let self else { return }
+			self.filterText = text
+			self.rebuildRows()
+		}
+		strip.onClose = { [weak self] in self?.hideFilter() }
+		addSubview(strip)
+		guard let scrollView = tableView.enclosingScrollView else { return }
+		NSLayoutConstraint.activate([
+			strip.topAnchor.constraint(equalTo: scrollView.topAnchor),
+			strip.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+			strip.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+			strip.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30)),
+		])
+		filterStrip = strip
+		layoutSubtreeIfNeeded()
+		strip.takeKeyboard()
+	}
+
+	/// Shuts it, unfilters the tree, and hands the keyboard back to the list.
+	func hideFilter() {
+		guard let strip = filterStrip else { return }
+		strip.removeFromSuperview()
+		filterStrip = nil
+		guard !filterText.isEmpty else {
+			window?.makeFirstResponder(tableView)
+			return
+		}
+		filterText = ""
 		rebuildRows()
+		window?.makeFirstResponder(tableView)
 	}
 
 	func showMenuForTesting(row: Int) {
@@ -1729,7 +1774,7 @@ final class BranchesPane: NSView {
 
 	func applyThemeChange() {
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
-		filterField.font = Theme.current.uiFont(12)
+		filterStrip?.applyThemeChange()
 		tableView.reloadData()
 	}
 }
@@ -2008,13 +2053,6 @@ extension BranchesPane: NSMenuDelegate {
 			menu.addItem(.separator())
 			menu.addItem(item("Recreate…", #selector(recreateTag)))
 		}
-	}
-}
-
-extension BranchesPane: NSSearchFieldDelegate {
-	func controlTextDidChange(_ notification: Notification) {
-		filterText = filterField.stringValue.trimmingCharacters(in: .whitespaces)
-		rebuildRows()
 	}
 }
 

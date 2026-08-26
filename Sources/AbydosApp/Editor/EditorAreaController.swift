@@ -947,6 +947,7 @@ final class EditorAreaController: NSViewController {
 	}
 
 	func showFind() { activeGroup.showFind() }
+	var findBarIsShowingForTesting: Bool { activeGroup.findBarIsShowingForTesting }
 	func setFindQuery(_ query: String) { activeGroup.setFindQuery(query) }
 	func findNext() { activeGroup.findNext() }
 	func findNextFromEditor(_ times: Int) { activeGroup.findNextFromEditor(times) }

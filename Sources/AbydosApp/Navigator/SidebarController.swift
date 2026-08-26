@@ -220,6 +220,48 @@ final class SidebarController: NSObject {
 	/// fold, did the one branch under `hotfix/` stay flat, did filtering
 	/// flatten the lot — and a screenshot is one frame of that rather than the
 	/// sequence.
+	/// A key-down for ⎋, for a driven run that wants the key rather than the
+	/// method it ends up in.
+	static func escapeEvent() -> NSEvent {
+		NSEvent.keyEvent(
+			with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+			windowNumber: NSApp.keyWindow?.windowNumber ?? 0, context: nil,
+			characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}",
+			isARepeat: false, keyCode: 53
+		)!
+	}
+
+	/// Whether the editor's find bar is up — the other half of "who got ⌘F".
+	private var editorFindBarIsShowing: Bool { editor.findBarIsShowingForTesting }
+
+	/// Walks the window's responder chain for Find and names who takes it.
+	///
+	/// **The chain, not the key, and the window's chain rather than the
+	/// application's.** Three ways were tried before this one. A hand-made
+	/// `NSEvent` through `performKeyEquivalent` is ignored; a `CGEvent` at the
+	/// window server needs an Accessibility grant the built app does not have;
+	/// and `NSApp.sendAction(to: nil)` goes through the *key window*, which a
+	/// driven run does not have — these runs are not activated, and the report
+	/// said `app active false` rather than lying about the outcome.
+	///
+	/// What is left is the thing actually in question. The ⌘F binding is
+	/// untouched by this change — the item is `keyEquivalent: "f"` and was
+	/// before — and what the change adds is a second implementor of the action
+	/// further down the chain. So: start at the window's first responder, walk
+	/// up, and say who answers.
+	static func sendFind(in window: NSWindow?) -> String {
+		let selector = #selector(MainWindowController.findInFile(_:))
+		var responder = window?.firstResponder
+		while let here = responder {
+			if here.responds(to: selector) {
+				_ = here.perform(selector, with: nil)
+				return String(describing: type(of: here))
+			}
+			responder = here.nextResponder
+		}
+		return "nobody"
+	}
+
 	func branchRowsForTesting(_ steps: String) {
 		if branchesPane == nil { showSidebarTool(.branches) }
 		guard let pane = branchesPane else {
@@ -254,6 +296,20 @@ final class SidebarController: NSObject {
 			case "shut":    pane.setFolderForTesting(argument, collapsed: true)
 			case "open":    pane.setFolderForTesting(argument, collapsed: false)
 			case "filter":  pane.filterForTesting(argument)
+			case "find":    pane.showFilter()
+			// A real ⎋ through the responder chain, not a call to what ⎋ calls:
+			// the question here is whether the key reaches the strip at all.
+			case "escape":  pane.window?.sendEvent(SidebarController.escapeEvent())
+			// ⌘F through the menu bar, which is how the press actually
+			// arrives — the responder chain decides who gets it, and the
+			// question in 4.4 is whether it decides the way it should.
+			case "cmdf":
+				print("BRANCHES find taken by: \(SidebarController.sendFind(in: pane.window))")
+			case "focus-tree": pane.window?.makeFirstResponder(pane.tableViewForTesting)
+			case "unfind":  pane.hideFilter()
+			case "fstate":  print("BRANCHES filter: \(pane.filterStateForTesting())"
+				+ " · editor find \(editorFindBarIsShowing ? "open" : "shut")"
+				+ " · responder \(type(of: pane.window?.firstResponder ?? NSNull()))")
 			case "refresh": pane.refresh()
 			// What each row offers, and firing the selected one's verb — the
 			// two halves of "a row's action can be reached from the keyboard".

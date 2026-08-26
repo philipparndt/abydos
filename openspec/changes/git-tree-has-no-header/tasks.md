@@ -43,14 +43,20 @@
 
 ## 4. The filter, on `⌘F`
 
-- [ ] 4.1 `⌘F` while the pane holds the keyboard opens a filter strip over the
-      list, with the keyboard in it
-- [ ] 4.2 `esc` closes it; emptying it closes it; the tree is unfiltered after
-- [ ] 4.3 Filtering behaves exactly as it does today once open — the flattening
-      is untouched
-- [ ] 4.4 Confirm with the menu-key report that `⌘F` reaching the pane does not
-      take it from the editor when the editor has the keyboard
-- [ ] 4.5 Delete `filterField` and `newButton` and their constraints
+- [x] 4.1 `⌘F` while the pane holds the keyboard opens `PaneFilterStrip` over
+      the list, with the keyboard in it
+- [x] 4.2 A driven `⎋` closes it; emptying it closes it; the tree is unfiltered
+      after — `44 rows → “b1” 13 rows → shut, 44 rows`
+- [x] 4.3 Filtering behaves exactly as it does today once open — the flattening
+      is untouched, and the screenshot shows `feature/b1` full-named with no
+      `feature/` folder
+- [x] 4.4 Driven from both sides: keyboard in the tree, Find is taken by
+      `BranchesPane` and the strip opens; keyboard in the editor, Find is taken
+      by `MainWindowController` and the editor's find bar opens while the pane
+      stays shut. **Not the menu-key report** — that one is about which press
+      reaches a shortcut, and the ⌘F binding is untouched here; what changed is
+      who the responder chain hands the action to
+- [x] 4.5 Delete `filterField` and `newButton` and their constraints
 
 ## 5. A folder with verbs of its own keeps its row
 
