@@ -307,6 +307,9 @@ final class SidebarController: NSObject {
 				print("BRANCHES find taken by: \(SidebarController.sendFind(in: pane.window))")
 			case "focus-tree": pane.window?.makeFirstResponder(pane.tableViewForTesting)
 			case "unfind":  pane.hideFilter()
+			case "menu":
+				print("BRANCHES menu \(argument): "
+					+ pane.menuTitlesForTesting(row: Int(argument) ?? 0))
 			case "fstate":  print("BRANCHES filter: \(pane.filterStateForTesting())"
 				+ " · editor find \(editorFindBarIsShowing ? "open" : "shut")"
 				+ " · responder \(type(of: pane.window?.firstResponder ?? NSNull()))")

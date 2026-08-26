@@ -81,9 +81,70 @@ struct PathTreeTests {
 		let tree = PathTree.build(
 			items(["zebra", "main", "feature/x", "feature/y"]),
 			folding: true,
-			promoting: { $0 == "main" }
+			promoting: { $0 == "main" ? 0 : nil }
 		)
 		#expect(tree.first?.name == "main")
+	}
+
+	/// Two branches are looked for and they have an order between them: the one
+	/// you are on, then the one everything merges into. A flag could say *both
+	/// of these go first* and not *this one of them goes first*, which is why
+	/// the rank replaced it.
+	@Test func promotedLeavesKeepTheirOwnOrder() {
+		let tree = PathTree.build(
+			items(["zebra", "main", "alpha", "feature/x", "feature/y"]),
+			folding: true,
+			promoting: { name in
+				if name == "zebra" { return 0 }
+				if name == "main" { return 1 }
+				return nil
+			}
+		)
+		#expect(tree.map(\.name).prefix(2) == ["zebra", "main"])
+		// And everything else keeps the arrangement it had: folders, then names.
+		#expect(Array(tree.map(\.name).dropFirst(2)) == ["feature", "alpha"])
+	}
+
+	/// **A folder that is an object cannot be flattened, because its verbs go
+	/// with it.** `backup/` is made by this program and the refs tree gives it
+	/// a verb of its own — deleting the entries older than a given age. Folded
+	/// away, one backup ref meant no backup folder and no way to sweep it.
+	@Test func aFolderNamedInItsOwnRightKeepsItsRowWithOneChild() {
+		let tree = PathTree.build(
+			items(["backup/2026-08-25-1607-main", "main"]),
+			folding: true,
+			keeping: ["backup"]
+		)
+		#expect(shape(tree) == """
+			backup/ (1)
+			  2026-08-25-1607-main
+			main
+			""")
+	}
+
+	/// The rule it is an exception to, unchanged: a prefix that merely happened
+	/// to be shared turns one row into two and says nothing.
+	@Test func aPrefixThatIsOnlyAPrefixStillFolds() {
+		let tree = PathTree.build(
+			items(["hotfix/0472", "main"]),
+			folding: true,
+			keeping: ["backup"]
+		)
+		#expect(shape(tree) == "hotfix/0472\nmain")
+	}
+
+	/// Kept folders are matched by name, not by path, so one nested under
+	/// something else is still the folder the tree names.
+	@Test func aKeptFolderIsFoundWhereverItSits() {
+		let tree = PathTree.build(
+			items(["refs/backup/only"]),
+			folding: true,
+			keeping: ["backup"]
+		)
+		#expect(shape(tree) == """
+			refs/backup/ (1)
+			  only
+			""")
 	}
 
 	@Test func foldersComeBeforeLeavesAndThenNameOrder() {

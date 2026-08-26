@@ -31,6 +31,13 @@ final class BranchesPane: NSView {
 	/// Where this repository lives on the web, when it lives anywhere: read
 	/// from the remote, so GitHub and an Enterprise install are the same case.
 	private var forge: GitForge.Repository?
+	/// The branch everything merges into, read alongside the rest.
+	///
+	/// It pins `main` to the top of `LOCAL`, which is what the branch pill in
+	/// the titlebar already does — `BranchGrouping.arrange` pins the current
+	/// branch and then the default. Two lists of the same branches in one
+	/// window disagreeing about their order is the fault this avoids.
+	private var defaultBranch: String?
 	/// What origin points at, or nil when there is no origin at all.
 	private var remoteURL: String?
 	/// The branch currently being pushed, if one is.
@@ -318,6 +325,7 @@ final class BranchesPane: NSView {
 			let trees = await GitWorktrees.list(in: root)
 			let put = await GitStash.list(in: root)
 			remoteURL = await GitForge.remoteURL(in: root)
+			self.defaultBranch = await BranchGrouping.defaultBranch(in: root)
 			self.refreshTraffic()
 			self.refreshConflicts()
 			forge = remoteURL.flatMap { GitForge.repository(fromRemote: $0) }
@@ -692,12 +700,26 @@ final class BranchesPane: NSView {
 			return
 		}
 
-		// Current first is `promoting`: the branch you are on is the one you
-		// look for, and it should not be four rows down its own list.
+		// **Current first, then the default**, which is the order the branch
+		// pill pins them in — the branch you are on and the branch everything
+		// merges into are the two anybody looks for and the two worst to hunt
+		// for, the default especially: it is almost never the most recently
+		// touched and so sinks in any list ordered by anything else.
+		//
+		// `backup` keeps its row however few refs are under it. It is a folder
+		// this program makes and one the refs tree gives a verb of its own —
+		// sweeping the entries older than a given age — and folding it away
+		// takes the verb with it.
+		let main = defaultBranch
 		let tree = PathTree.build(
 			entries.map { (path: $0.name, payload: $0) },
 			folding: true,
-			promoting: { $0.isCurrent }
+			keeping: ["backup"],
+			promoting: { branch in
+				if branch.isCurrent { return 0 }
+				if let main, branch.name == main { return 1 }
+				return nil
+			}
 		)
 		add(refs: tree, under: title, to: section)
 	}
@@ -798,6 +820,11 @@ final class BranchesPane: NSView {
 	@objc private func collapseFolder() {
 		guard let node = selectedNode else { return }
 		tableView.collapseItem(node, collapseChildren: true)
+	}
+
+	/// Deletes the backup refs past a chosen age. See `BackupSweep`.
+	@objc private func sweepBackups() {
+		BackupSweep.run(in: root, over: window) { [weak self] in self?.refresh() }
 	}
 
 	@objc private func copyFolderPrefix() {
@@ -1155,6 +1182,22 @@ final class BranchesPane: NSView {
 		filterText = ""
 		rebuildRows()
 		window?.makeFirstResponder(tableView)
+	}
+
+	/// What a row's context menu offers, without opening it.
+	///
+	/// **Built, not popped.** `showMenuForTesting` puts a real menu on screen,
+	/// and a driven run that opens a menu is a driven run that stops — so the
+	/// question *does this folder carry its verb* had no way to be asked.
+	func menuTitlesForTesting(row: Int) -> String {
+		guard row >= 0, row < tableView.numberOfRows else { return "no such row" }
+		tableView.selectRowIndexes([row], byExtendingSelection: false)
+		let menu = NSMenu()
+		menu.delegate = self
+		menuNeedsUpdate(menu)
+		return menu.items
+			.map { $0.isSeparatorItem ? "—" : $0.title + ($0.isEnabled ? "" : " (off)") }
+			.joined(separator: " · ")
 	}
 
 	func showMenuForTesting(row: Int) {
@@ -1987,6 +2030,15 @@ extension BranchesPane: NSMenuDelegate {
 				shut ? #selector(expandFolder) : #selector(collapseFolder)
 			))
 			menu.addItem(.separator())
+			// **The verb that made this folder worth keeping.** `git-refs-tree`
+			// has said the backup folder carries deleting the entries older
+			// than a given age since it was written, and nothing offered it:
+			// the menu had the three verbs every folder has and no more. It is
+			// here now, and the folder it hangs off is here however few refs
+			// are under it — which is the other half of the same fix.
+			if selectedFolder?.display == "backup" {
+				menu.addItem(item("Delete Backups Older Than…", #selector(sweepBackups)))
+			}
 			menu.addItem(item("Copy Prefix", #selector(copyFolderPrefix)))
 			return
 		}

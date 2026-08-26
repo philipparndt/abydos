@@ -152,16 +152,59 @@ older than a given age. Fold it away and the verb goes with it: one backup ref
 means no backup folder, and no way to sweep the backups. The question is not how
 many children a folder has but whether the tree names it in its own right.
 
+**And the verb SHALL actually be on it.** This specification has said the backup
+folder carries deleting the entries older than a given age since it was written,
+and `GitBackup.sweep` has done it for as long; the folder's menu offered the
+three verbs every folder has and no more. A folder kept for a verb it does not
+carry is a row that costs and says nothing.
+
+**The count comes before the choice.** A backup ref is the only copy of what it
+holds — that is what it is for — so *delete everything older than a month* is a
+sentence nobody can weigh without being told whether it means four refs or forty.
+
 #### Scenario: a single backup ref
 
 - **GIVEN** a repository with exactly one ref under `backup/`
 - **THEN** there is a `backup/` folder row with that one ref under it
-- **AND** the folder's own verbs are on it
+- **AND** its menu offers deleting the backups older than a chosen age
+
+#### Scenario: choosing an age
+
+- **GIVEN** the backup folder's menu open
+- **THEN** each age offered says how many of the backups it would take
+- **AND** an age that would take none cannot be chosen
 
 #### Scenario: a prefix that is only a prefix
 
 - **GIVEN** `hotfix/0472` and no other branch beginning `hotfix/`
 - **THEN** `hotfix/0472` is one row and there is no `hotfix/` folder
+
+### Requirement: The branch everything merges into is pinned to the top
+
+The refs tree SHALL pin the current branch and then the repository's default
+branch above the rest of the local branches.
+
+This is the order `BranchGrouping.arrange` already pins for the branch pill in
+the titlebar, and the reason it gives holds here too: they are the two anybody
+is most likely to want and the two most annoying to hunt for — the default
+especially, since it is almost never the most recently touched and so sinks in
+any list ordered by anything else.
+
+**Two lists of the same branches in one window SHALL NOT disagree about their
+order.** The pill lists, groups and filters the same branches this pane does;
+somebody who has learnt where `main` is in one of them has learnt nothing if the
+other puts it elsewhere.
+
+#### Scenario: a branch other than the default checked out
+
+- **GIVEN** a repository on `zeta` whose default branch is `main`
+- **THEN** `zeta` is the first local row and `main` is the second
+- **AND** the rest follow in the order they had
+
+#### Scenario: the default branch checked out
+
+- **GIVEN** a repository on `main`, which is also its default
+- **THEN** `main` appears once, at the top
 
 ### Requirement: A branch whose work is already merged is dimmed
 

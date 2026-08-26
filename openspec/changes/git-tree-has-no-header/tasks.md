@@ -60,13 +60,19 @@
 
 ## 5. A folder with verbs of its own keeps its row
 
-- [ ] 5.1 `PathTree.build` takes the folder names that are never folded into
+- [x] 5.1 `PathTree.build` takes `keeping:`, the folder names never folded into
       their only child; the refs tree names `backup` among them
-- [ ] 5.2 `hotfix/0472` is unchanged — one row, no folder
-- [ ] 5.3 Tests over `PathTree` for both: one backup ref keeps its folder, one
-      hotfix branch does not gain one
-- [ ] 5.4 Driven: a repository with a single backup ref shows the folder, and
-      the folder's own verbs are on it
+- [x] 5.2 `hotfix/0472` is unchanged — one row, no folder
+- [x] 5.3 Tests over `PathTree` for both, and for a kept folder nested under
+      something else
+- [x] 5.4 Driven: a repository with a single backup ref shows the folder, and
+      the folder's own verbs are on it —
+      `Collapse All · — · Delete Backups Older Than… · Copy Prefix`
+- [x] 5.5 **The verb the folder was being kept for did not exist.**
+      `git-refs-tree` has said the backup folder carries deleting the entries
+      older than a given age since it was written, `GitBackup.sweep` has done
+      it since it was written, and the menu offered the three verbs every
+      folder has and no more. Wired, with the counts shown before the choice
 
 ## 6. A merged branch is dimmed
 
@@ -76,6 +82,47 @@
       dims, whatever the answer says
 - [ ] 6.3 A branch the reading has not covered draws as it does today
 - [ ] 6.4 Driven: a merged branch and an unmerged one, reported side by side
+
+## 8. The branch everything merges into is pinned
+
+- [x] 8.1 `PathTree.build`'s `promoting:` becomes a rank rather than a flag —
+      a flag can say *both of these go first* and not *this one of them goes
+      first*, and there are two winners with an order between them
+- [x] 8.2 The pane reads the default branch alongside its other reads and pins
+      current, then default — the order `BranchGrouping.arrange` already pins
+      for the branch pill, so the two lists of the same branches in one window
+      cannot disagree
+- [x] 8.3 Tests over `PathTree` for the ranked order
+- [x] 8.4 Driven: on `zeta`, the list reads `zeta *`, `main`, then the folders
+      and then the rest by name
+
+## 9. The repository row says only what the titlebar does not
+
+- [ ] 9.1 The row drops the project name and the branch. Both are in the
+      titlebar a few points above it, and on a repository with nothing to
+      report the row was those two words and nothing else
+- [ ] 9.2 What is left is the distance and the verb — `level` and `no remote`
+      still said out loud, so a pinned row always means something
+- [ ] 9.3 The width fallback goes with the name it was dropping
+- [ ] 9.4 Driven at 250 and 400 points, and the four states re-checked
+
+## 10. A branch says whether it has ever been published
+
+- [ ] 10.1 A local branch with no upstream reads `not published` beside its
+      name, where the ahead/behind arrows already are
+- [ ] 10.2 The current branch is no different — it is the row that says it now
+      that the repository row does not
+- [ ] 10.3 Driven: a published branch, an unpublished one, and one whose
+      upstream is gone, reported side by side
+
+## 11. The change counts line up
+
+- [ ] 11.1 `+n −m` and the file count are drawn in fixed columns in the changes
+      tree, so a folder's total and a file's own read down the page rather than
+      trailing whatever the name happened to be
+- [ ] 11.2 The columns hold at the widths the pane opens at, and give way in
+      the order that keeps the name readable
+- [ ] 11.3 Driven: a nested tree reported and shot at two widths
 
 ## 7. Proving it
 
