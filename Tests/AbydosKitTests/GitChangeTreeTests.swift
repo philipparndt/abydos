@@ -21,6 +21,186 @@ struct GitChangeTreeTests {
 		}
 	}
 
+	private func directory(_ path: String, staged: Bool = false) -> GitChange {
+		// What `-unormal` hands back for a wholly untracked folder: one entry,
+		// its path, and the flag that says it is a directory.
+		GitChange(path: path, kind: .untracked, isStaged: staged, isDirectory: true)
+	}
+
+	// MARK: - What a row is
+
+	/// The reported fault, at the level it is decided: an untracked directory
+	/// was drawn as a file because `isFolder` asks whether the row was invented,
+	/// and this one was not.
+	@Test func anUntrackedDirectoryHoldsFilesWithoutBeingAnInventedFolder() {
+		let tree = GitChangeTree.build([directory("PI-12")])
+		let row = try? #require(tree.first)
+
+		#expect(row?.holdsFiles == true, "it is a directory and must draw as one")
+		#expect(row?.isFolder == false, "git reported it; this tree did not invent it")
+	}
+
+	@Test func anUntrackedFileHoldsNothing() {
+		let tree = GitChangeTree.build([change("notes.md", .untracked)])
+		#expect(tree.first?.holdsFiles == false)
+		#expect(tree.first?.isFolder == false)
+	}
+
+	@Test func anInventedFolderBothHoldsFilesAndIsOne() {
+		let tree = GitChangeTree.build([change("Sources/AbydosKit/Git/GitBlame.swift")])
+		#expect(tree.first?.holdsFiles == true)
+		#expect(tree.first?.isFolder == true)
+	}
+
+	/// The reason `isFolder` was left alone. Git reports the whole directory as
+	/// one entry, so it counts as one change and is never partly staged — and
+	/// widening `isFolder` would have said "1 of 12" about a row that is wholly
+	/// unstaged.
+	@Test func anUntrackedDirectoryIsOneChangeAndNeverPartial() {
+		let tree = GitChangeTree.build([directory("PI-12")], against: [])
+		let row = try? #require(tree.first)
+		#expect(row?.count == 1)
+		#expect(row?.total == 1)
+		#expect(row?.isPartial == false)
+	}
+
+	/// Drawn as a folder, so it sorts with them.
+	@Test func anUntrackedDirectorySortsWithTheFolders() {
+		let tree = GitChangeTree.build([
+			change("apple.txt"),
+			directory("zebra"),
+		])
+		#expect(tree.map(\.name) == ["zebra", "apple.txt"])
+	}
+
+	// MARK: - How much changed
+
+	@Test func aFolderSumsTheLinesUnderIt() {
+		let tree = GitChangeTree.build([
+			change("Sources/A.swift"),
+			change("Sources/B.swift"),
+		])
+		tree.first?.applyLineCounts([
+			"Sources/A.swift": GitLineCount(added: 12, removed: 3),
+			"Sources/B.swift": GitLineCount(added: 4, removed: 1),
+		])
+		#expect(tree.first?.lines == GitLineCount(added: 16, removed: 4))
+		#expect(tree.first?.children.first?.lines == GitLineCount(added: 12, removed: 3))
+	}
+
+	/// Git gives no count for a binary file, and zero would be a claim that
+	/// nothing changed.
+	@Test func aRowGitWillNotCountSaysNothing() {
+		let tree = GitChangeTree.build([change("blob.bin")])
+		tree.first?.applyLineCounts([:])
+		#expect(tree.first?.lines == nil)
+	}
+
+	/// A folder holding one counted file and one uncounted one says what it
+	/// knows, rather than nothing or a zero for the binary.
+	@Test func aFolderSumsOnlyWhatItHasCountsFor() {
+		let tree = GitChangeTree.build([
+			change("Sources/A.swift"),
+			change("Sources/blob.bin"),
+		])
+		tree.first?.applyLineCounts(["Sources/A.swift": GitLineCount(added: 2, removed: 2)])
+		#expect(tree.first?.lines == GitLineCount(added: 2, removed: 2))
+		#expect(tree.first?.children.first { $0.name == "blob.bin" }?.lines == nil)
+	}
+
+	/// The walk being avoided: a directory nobody has opened cannot say how much
+	/// changed inside it, and working it out is exactly the cost `-unormal`
+	/// exists to refuse.
+	@Test func anUnopenedUntrackedDirectorySaysNothingAboutLines() {
+		let tree = GitChangeTree.build([directory("PI-12")])
+		tree.first?.applyLineCounts(["PI-12/notes.md": GitLineCount(added: 9, removed: 0)])
+		#expect(tree.first?.lines == nil, "it has not been opened, so it does not know")
+	}
+
+	@Test func anOpenedUntrackedDirectorySumsWhatTurnedUp() {
+		let tree = GitChangeTree.build([directory("PI-12")])
+		let row = tree.first!
+		row.fill(with: GitChangeTree.contents(
+			ofUntrackedDirectory: "PI-12",
+			files: ["PI-12/notes.md", "PI-12/src/main.swift"],
+			staged: false
+		))
+		row.applyLineCounts([
+			"PI-12/notes.md": GitLineCount(added: 9, removed: 0),
+			"PI-12/src/main.swift": GitLineCount(added: 4, removed: 0),
+		])
+		#expect(row.lines == GitLineCount(added: 13, removed: 0))
+	}
+
+	// MARK: - What is inside an untracked directory
+
+	@Test func openingAnUntrackedDirectoryGivesItsContentsAsATree() {
+		let rows = GitChangeTree.contents(
+			ofUntrackedDirectory: "PI-12",
+			files: ["PI-12/notes.md", "PI-12/src/main.swift", "PI-12/src/util.swift"],
+			staged: false
+		)
+		#expect(self.rows(rows) == [
+			"PI-12/src/",
+			"PI-12/src/main.swift",
+			"PI-12/src/util.swift",
+			"PI-12/notes.md",
+		], "the folders between are invented, as they are everywhere else")
+	}
+
+	@Test func everythingInsideAnUntrackedDirectoryIsUntracked() {
+		let rows = GitChangeTree.contents(
+			ofUntrackedDirectory: "PI-12", files: ["PI-12/a.txt"], staged: false
+		)
+		#expect(rows.first?.change?.kind == .untracked)
+		#expect(rows.first?.change?.isStaged == false)
+	}
+
+	/// The trap this was written around: filling the row must not change what
+	/// the row says about itself, or a wholly unstaged folder starts claiming to
+	/// be partly staged.
+	@Test func fillingAnUntrackedDirectoryLeavesItsOwnCountAlone() {
+		let tree = GitChangeTree.build([directory("PI-12")])
+		let row = tree.first!
+		#expect(row.isFilled == false)
+
+		row.fill(with: GitChangeTree.contents(
+			ofUntrackedDirectory: "PI-12",
+			files: (0..<12).map { "PI-12/file\($0).txt" },
+			staged: false
+		))
+
+		#expect(row.isFilled)
+		#expect(row.children.count == 12)
+		#expect(row.count == 1, "git reports the directory as one entry")
+		#expect(row.total == 1)
+		#expect(row.isPartial == false, "it is not 1 of 12")
+	}
+
+	/// Asking again replaces rather than appends: the tree is rebuilt on every
+	/// refresh and an open row is re-filled.
+	@Test func fillingTwiceDoesNotDoubleTheRows() {
+		let tree = GitChangeTree.build([directory("PI-12")])
+		let row = tree.first!
+		for _ in 0..<3 {
+			row.fill(with: GitChangeTree.contents(
+				ofUntrackedDirectory: "PI-12", files: ["PI-12/a.txt"], staged: false
+			))
+		}
+		#expect(row.children.count == 1)
+	}
+
+	/// An empty answer is an answer — `mkdir` and nothing else.
+	@Test func anEmptyUntrackedDirectoryIsFilledWithNothing() {
+		let tree = GitChangeTree.build([directory("PI-12")])
+		let row = tree.first!
+		row.fill(with: GitChangeTree.contents(
+			ofUntrackedDirectory: "PI-12", files: [], staged: false
+		))
+		#expect(row.isFilled, "asked and answered, so it is not asked again")
+		#expect(row.children.isEmpty)
+	}
+
 	// MARK: - Which folders exist
 
 	@Test func onlyFoldersWithAChangeUnderThemAreRows() {
