@@ -1172,7 +1172,9 @@ final class BranchesPane: NSView {
 				let tracking = marks.isEmpty ? "" : " [" + marks.joined(separator: " ") + "]"
 				return indent + display + (branch.isCurrent ? " *" : "") + tracking
 			case let .worktree(worktree):
-				return indent + "= \(worktree.name)"
+				let review = ReviewCheckouts.shared.number(of: worktree.path)
+					.map { " PR #\($0)" } ?? ""
+				return indent + "= \(worktree.name)\(review)"
 			case let .stash(entry):
 				let applies: String
 				switch stashApplies[entry.commit] {
@@ -3047,6 +3049,14 @@ private final class WorktreeRowView: NSView {
 		)
 
 		var note = worktree.branch ?? "detached"
+		// **Which ones this program made to read somebody else's work.** A
+		// checkout made for a review is temporary and belongs to a pull request
+		// rather than to a piece of work; saying so is what makes them
+		// collectable, and a reviewer who opens three a day would otherwise grow
+		// three checkouts a day named after strangers' branches.
+		if let number = ReviewCheckouts.shared.number(of: worktree.path) {
+			note += " · PR #\(number)"
+		}
 		if worktree.isMissing { note += " · missing" }
 		if worktree.isLocked { note += " · locked" }
 

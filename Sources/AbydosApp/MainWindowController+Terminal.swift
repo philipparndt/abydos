@@ -259,6 +259,7 @@ extension MainWindowController {
 			session.xcodeDestinations = run.xcodeDestinations
 			session.breakpoints = debug.breakpointsToRemember()
 			session.reviewTicks = sidebar.pullRequests.ticksToRemember()
+			session.reviewCheckouts = sidebar.pullRequests.checkoutsToRemember()
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
@@ -324,6 +325,7 @@ extension MainWindowController {
 		session.xcodeDestinations = run.xcodeDestinations
 		session.breakpoints = debug.breakpointsToRemember()
 		session.reviewTicks = sidebar.pullRequests.ticksToRemember()
+		session.reviewCheckouts = sidebar.pullRequests.checkoutsToRemember()
 		try? SessionStore.write(session, in: root)
 	}
 

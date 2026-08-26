@@ -131,6 +131,12 @@ public struct ProjectSession: Equatable, Sendable {
 	/// Additive: absent from every session written before it existed, which
 	/// reads as nobody having read anything — the safe direction.
 	public var reviewTicks: [String: [String: String]]
+	/// Which checkouts were made to read a pull request, by path.
+	///
+	/// The mark `ReviewCheckouts` holds, written down so tomorrow's window knows
+	/// too. Not in `.git`, for the reason that type gives: it is this program's
+	/// opinion about a directory rather than a fact about the repository.
+	public var reviewCheckouts: [String: Int]
 
 	public init(
 		files: [OpenFile] = [],
@@ -142,11 +148,13 @@ public struct ProjectSession: Equatable, Sendable {
 		selectedConfiguration: String? = nil,
 		xcodeDestinations: [String: String] = [:],
 		breakpoints: [String: [Breakpoint]] = [:],
-		reviewTicks: [String: [String: String]] = [:]
+		reviewTicks: [String: [String: String]] = [:],
+		reviewCheckouts: [String: Int] = [:]
 	) {
 		self.xcodeDestinations = xcodeDestinations
 		self.breakpoints = breakpoints
 		self.reviewTicks = reviewTicks
+		self.reviewCheckouts = reviewCheckouts
 		self.files = files
 		self.activePath = activePath
 		self.terminals = terminals
@@ -160,6 +168,7 @@ public struct ProjectSession: Equatable, Sendable {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
 			&& breakpoints.isEmpty && tmuxWindow == nil && reviewTicks.isEmpty
+			&& reviewCheckouts.isEmpty
 	}
 
 	/// Which window a project being left should be remembered in.

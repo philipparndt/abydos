@@ -65,6 +65,8 @@ final class SidebarController: NSObject {
 			self?.editor.activeGroup?.page(identifier: identifier)
 		}
 		pullRequests.rememberSession = { [weak self] in self?.rememberSession() }
+		pullRequests.openCheckout = { [weak self] path in self?.openProject(path) }
+		pullRequests.notify = { [weak self] title, body in self?.notify(title, body) }
 		pullRequests.openPage = { [weak self] page, title, identifier, symbol in
 			guard let self, let group = self.editor.activeGroup else { return }
 			self.leaveTerminalFullScreen()

@@ -27,6 +27,10 @@ final class PullRequestReview {
 	var openPage: (NSView, String, String, String) -> Void = { _, _, _, _ in }
 	/// Write what the project has open, so a tick outlives the window.
 	var rememberSession: () -> Void = {}
+	/// Open a checkout as a project, the way every other route to one does.
+	var openCheckout: (URL) -> Void = { _ in }
+	/// Say something that is neither a page nor a list — a checkout refusing.
+	var notify: (String, String?) -> Void = { _, _ in }
 
 	/// Which files of which pull request have been read, this window's copy.
 	///
@@ -54,6 +58,32 @@ final class PullRequestReview {
 		}
 		return remembered
 	}
+
+	/// The checkout marks worth writing beside this project.
+	///
+	/// Those under the directory the repository sits in, which is where
+	/// `GitWorktrees.suggestedPath` puts one — the marks are absolute paths and
+	/// a window may have been pointed at several projects, and another project's
+	/// checkouts are not this one's business to write down.
+	func checkoutsToRemember() -> [String: Int] {
+		guard let root = repositoryRoot() else { return [:] }
+		let beside = root.deletingLastPathComponent().standardizedFileURL.path
+		return ReviewCheckouts.shared.remembered.filter { $0.key.hasPrefix(beside) }
+	}
+
+	/// Puts back what this project remembered about its review checkouts.
+	///
+	/// Once per root: the marks are the window's for as long as it is open, and
+	/// re-reading the file on every list would be a read per keystroke.
+	func restoreMarks() {
+		guard let root = repositoryRoot() else { return }
+		let key = root.standardizedFileURL.path
+		guard !restoredRoots.contains(key) else { return }
+		restoredRoots.insert(key)
+		ReviewCheckouts.shared.restore(SessionStore.read(in: root)?.reviewCheckouts ?? [:])
+	}
+
+	private var restoredRoots: Set<String> = []
 
 	/// What the project remembered about one pull request.
 	private func remembered(_ number: Int) -> Checklist<String> {
@@ -87,6 +117,7 @@ final class PullRequestReview {
 	/// one called "pull-request" would make the second review replace the first.
 	@discardableResult
 	func open(_ request: PullRequest) -> PullRequestPage? {
+		restoreMarks()
 		guard let root = repositoryRoot() else { return nil }
 		let identifier = "pull-request-\(request.number)"
 		let page = (existingPage(identifier) as? PullRequestPage)
@@ -99,6 +130,13 @@ final class PullRequestReview {
 			self.ticks[number] = list
 			self.rememberSession()
 		}
+		page.onCheckOut = { [weak self] in self?.checkOut(request.number) }
+		page.onFinish = { [weak self] in self?.finish(with: request.number) }
+		page.isCheckedOut = { [weak self] in
+			guard let root = self?.repositoryRoot() else { return false }
+			let path = PullRequestCheckout.path(for: request.number, in: root)
+			return FileManager.default.fileExists(atPath: path.path)
+		}
 		pages[request.number] = WeakPage(page: page)
 		openPage(page, "PR #\(request.number)", identifier, "arrow.trianglehead.pull")
 		// Opened to be read, and read with the arrows.
@@ -108,6 +146,81 @@ final class PullRequestReview {
 
 	/// The page for a pull request, while one is open.
 	func page(of number: Int) -> PullRequestPage? { pages[number]?.page }
+
+	// MARK: - Reading it in place
+
+	/// Checks a pull request's branch out beside the project.
+	///
+	/// - Parameter opening: whether to point the window at it once it is there.
+	///   A person asking for a checkout means to read it; a driven run asks the
+	///   two questions separately.
+	func checkOut(_ number: Int, opening: Bool = true, then done: ((String) -> Void)? = nil) {
+		restoreMarks()
+		guard let root = repositoryRoot() else {
+			done?("no repository")
+			return
+		}
+		Task { @MainActor [weak self] in
+			let reply = await PullRequestCheckout.checkOut(number, in: root)
+			guard let self else { return }
+			switch reply {
+			case .answered(let path):
+				// **Marked before it is opened**, because opening it switches
+				// the window and the list that draws the mark is rebuilt on the
+				// way.
+				ReviewCheckouts.shared.mark(path, as: number)
+				self.rememberSession()
+				done?("checked out at \(path.lastPathComponent)")
+				if opening { self.openCheckout(path) }
+			case .unavailable, .failed:
+				let trouble = reply.trouble ?? "The checkout could not be made."
+				self.notify("Pull request #\(number)", trouble)
+				done?(trouble)
+			}
+		}
+	}
+
+	/// Removes the checkout made for a pull request.
+	func finish(with number: Int, then done: ((String) -> Void)? = nil) {
+		guard let root = repositoryRoot() else {
+			done?("no repository")
+			return
+		}
+		let path = PullRequestCheckout.path(for: number, in: root)
+		Task { @MainActor [weak self] in
+			let reply = await PullRequestCheckout.finish(with: number, in: root)
+			guard let self else { return }
+			switch reply {
+			case .answered:
+				ReviewCheckouts.shared.forget(path)
+				self.rememberSession()
+				done?("removed \(path.lastPathComponent)")
+			case .unavailable, .failed:
+				// **It refuses rather than discarding**, and says what is in
+				// there — the rule the branches pane already keeps, whoever made
+				// the checkout.
+				let trouble = reply.trouble ?? "The checkout could not be removed."
+				self.notify("Pull request #\(number)", trouble)
+				done?(trouble)
+			}
+		}
+	}
+
+	/// The checkouts of this repository, for a driven run to count.
+	func checkoutsForTesting(then said: @escaping (String) -> Void) {
+		restoreMarks()
+		guard let root = repositoryRoot() else {
+			said("no repository")
+			return
+		}
+		Task { @MainActor in
+			let listed = await GitWorktrees.list(in: root)
+			said(listed.map { tree in
+				let review = ReviewCheckouts.shared.number(of: tree.path).map { " PR #\($0)" } ?? ""
+				return tree.name + review
+			}.joined(separator: ", "))
+		}
+	}
 
 	/// What the pull request list says, row by row, and what the page it opens
 	/// holds.
@@ -129,6 +242,10 @@ final class PullRequestReview {
 	///   tokens as they are, which is a rebase that changed nothing
 	/// - `keys:down+down` — walk the file list, as `--log-page` does
 	/// - `diff` — the first lines of the diff on screen
+	/// - `checkout:123` — check its branch out beside the project
+	/// - `open-checkout:123` — point the window at that checkout
+	/// - `finish:123` — remove it again
+	/// - `checkouts` — what `git worktree list` holds, with the marks on it
 	/// - `settle` / `settle:2` — wait, because a network call is in flight
 	///
 	/// Every step that addresses the page waits for it to have answered, for
@@ -185,6 +302,19 @@ final class PullRequestReview {
 				lastOpened = opened ? number : nil
 				print("PULL-REQUESTS: open #\(number) \(opened ? "opened" : "no such row")")
 			case "rail": print("PULL-REQUESTS rail: \(rail())")
+			case "checkout":
+				checkOut(Int(argument) ?? lastOpened ?? 0, opening: false) {
+					print("PULL-REQUESTS checkout: \($0)")
+				}
+			case "open-checkout":
+				guard let root = repositoryRoot() else { break }
+				openCheckout(PullRequestCheckout.path(for: Int(argument) ?? 0, in: root))
+			case "finish":
+				finish(with: Int(argument) ?? lastOpened ?? 0) {
+					print("PULL-REQUESTS finish: \($0)")
+				}
+			case "checkouts":
+				checkoutsForTesting { print("PULL-REQUESTS checkouts: \($0)") }
 			case "page", "whole", "pick", "keys", "diff", "read", "next", "hide", "push":
 				// The page is a second round of network calls, so a step that
 				// addresses it waits — and takes the rest of the script with it

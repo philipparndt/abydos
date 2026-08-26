@@ -196,7 +196,9 @@ public enum SessionStore {
 				object["destinations"] as? [String: String] ?? [:]
 			),
 			breakpoints: readBreakpoints(object["breakpoints"]),
-			reviewTicks: readReviewTicks(object["review"])
+			reviewTicks: readReviewTicks(object["review"]),
+			reviewCheckouts: (object["reviewCheckouts"] as? [String: Any] ?? [:])
+				.compactMapValues { $0 as? Int }
 		)
 		return session.isEmpty ? nil : session
 	}
@@ -319,6 +321,9 @@ public enum SessionStore {
 		}
 		if !session.reviewTicks.isEmpty {
 			object["review"] = session.reviewTicks
+		}
+		if !session.reviewCheckouts.isEmpty {
+			object["reviewCheckouts"] = session.reviewCheckouts
 		}
 		if !session.terminals.isEmpty {
 			object["terminals"] = session.terminals.map { terminal -> [String: Any] in

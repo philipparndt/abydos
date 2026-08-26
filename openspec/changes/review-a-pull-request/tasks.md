@@ -63,14 +63,14 @@
 
 ## 6. Reading it in place
 
-- [ ] 6.1 Check the branch out as a worktree through `GitWorktrees.add`, marked
+- [x] 6.1 Check the branch out as a worktree through `GitWorktrees.add`, marked
       as belonging to this pull request
-- [ ] 6.2 The mark is this program's state, not written into `.git`
-- [ ] 6.3 The checkout list shows which ones are a pull request's, and the
+- [x] 6.2 The mark is this program's state, not written into `.git`
+- [x] 6.3 The checkout list shows which ones are a pull request's, and the
       titlebar switches to them as it does to any other
-- [ ] 6.4 Finishing with one removes it, and one holding changes refuses and
+- [x] 6.4 Finishing with one removes it, and one holding changes refuses and
       says what is in it
-- [ ] 6.5 Driven: check one out, confirm the project tree and the language
+- [x] 6.5 Driven: check one out, confirm the project tree and the language
       server are pointed at it, remove it, confirm the list is shorter
 
 ## 7. The conversation already on it

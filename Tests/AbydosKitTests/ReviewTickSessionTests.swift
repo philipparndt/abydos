@@ -52,6 +52,62 @@ struct ReviewTickSessionTests {
 		#expect(list.isDone("b.swift"))
 	}
 
+	/// **The mark is this program's state, not a fact about the repository.**
+	/// Writing it into `.git` would be writing somebody else's file: git has no
+	/// notion of a worktree belonging to anything, and a `git worktree remove`
+	/// from a terminal would leave the note behind.
+	@Test func theCheckoutMarksComeBackToo() throws {
+		let root = scratch()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try SessionStore.write(
+			ProjectSession(reviewCheckouts: ["/tmp/thing-pr-7": 7]), in: root, driven: false
+		)
+
+		let read = try #require(SessionStore.read(in: root, driven: false))
+		#expect(read.reviewCheckouts == ["/tmp/thing-pr-7": 7])
+		// And nothing at all is written into the repository's own state.
+		#expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".git").path))
+	}
+
+	@Test func aCheckoutMarkIsHeldByPathAndForgotten() {
+		let marks = ReviewCheckouts()
+		let path = URL(fileURLWithPath: "/tmp/abydos-pr-9")
+
+		marks.mark(path, as: 9)
+		#expect(marks.number(of: path) == 9)
+		// The same directory said a different way is the same directory.
+		#expect(marks.number(of: URL(fileURLWithPath: "/tmp/./abydos-pr-9")) == 9)
+
+		marks.forget(path)
+		#expect(marks.number(of: path) == nil)
+	}
+
+	/// Restoring keeps what the window already knows: a mark made a moment ago
+	/// is newer than one read off disk.
+	@Test func restoringDoesNotOverwriteWhatIsKnown() {
+		let marks = ReviewCheckouts()
+		marks.mark(URL(fileURLWithPath: "/tmp/a"), as: 1)
+		marks.restore(["/tmp/a": 2, "/tmp/b": 3])
+
+		#expect(marks.number(of: URL(fileURLWithPath: "/tmp/a")) == 1)
+		#expect(marks.number(of: URL(fileURLWithPath: "/tmp/b")) == 3)
+	}
+
+	/// The local branch is named for the number and not for the head branch: a
+	/// pull request from a fork is called `patch-1`, and so are the other four.
+	@Test func theBranchIsNamedForTheNumber() {
+		#expect(PullRequestCheckout.branchName(for: 41) == "pr-41")
+		let root = URL(fileURLWithPath: "/tmp/dev/thing")
+		#expect(PullRequestCheckout.path(for: 41, in: root).lastPathComponent == "thing-pr-41")
+		// Beside the repository, never inside it — a worktree within the work
+		// tree shows up as an untracked directory in its own status.
+		#expect(
+			PullRequestCheckout.path(for: 41, in: root).deletingLastPathComponent().path
+				== "/tmp/dev"
+		)
+	}
+
 	/// Ticks alone are worth writing a session file for: somebody who has read
 	/// half a pull request and closed every tab has still read half of it.
 	@Test func ticksAloneAreASessionWorthKeeping() {

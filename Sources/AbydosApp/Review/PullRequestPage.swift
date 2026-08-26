@@ -36,6 +36,7 @@ final class PullRequestPage: NSView {
 	private var arrangeControl: NSSegmentedControl!
 	private var wholeFileSwitch: NSButton!
 	private var hideReadSwitch: NSButton!
+	private var checkOutButton: NSButton!
 	private var progressLabel: NSTextField!
 	private var headingLabel: NSTextField!
 	private var subheadingLabel: NSTextField!
@@ -150,7 +151,21 @@ final class PullRequestPage: NSView {
 		progressLabel.font = Theme.current.uiFont(11)
 		progressLabel.textColor = Theme.current.gitIgnored
 
-		let controls = NSStackView(views: [progressLabel, hideReadSwitch, arrangeControl, wholeFileSwitch])
+		// **The point of reading a review in an editor**, one button along from
+		// the diff: the language server, go-to-definition, the outline and the
+		// tests all need the code on disk, and a worktree is how it gets there
+		// without moving the branch under whatever was half-done.
+		checkOutButton = NSButton(
+			title: "Check Out", target: self, action: #selector(checkOutPressed)
+		)
+		checkOutButton.controlSize = .small
+		checkOutButton.font = Theme.current.uiFont(11)
+		checkOutButton.bezelStyle = .rounded
+		checkOutButton.toolTip = "Check this branch out beside the project, to read it in place"
+
+		let controls = NSStackView(views: [
+			progressLabel, checkOutButton, hideReadSwitch, arrangeControl, wholeFileSwitch,
+		])
 		controls.orientation = .horizontal
 		controls.spacing = Theme.current.scaled(10)
 
@@ -266,6 +281,7 @@ final class PullRequestPage: NSView {
 				self.fileList.setFiles([])
 			}
 			self.subheadingLabel.stringValue = self.subheading()
+			self.showCheckOutState()
 		}
 	}
 
@@ -274,6 +290,13 @@ final class PullRequestPage: NSView {
 
 	/// Somebody ticked a file, so whatever remembers ticks should.
 	var onTicksChanged: ((Int, Checklist<String>) -> Void)?
+
+	/// Check the branch out beside the project, so it can be read in place.
+	var onCheckOut: (() -> Void)?
+	/// Finish with that checkout.
+	var onFinish: (() -> Void)?
+	/// Whether there is one to finish with.
+	var isCheckedOut: () -> Bool = { false }
 
 	/// Which ticks the last read cleared, for the report to say.
 	private(set) var clearedByThePush: Set<String> = []
@@ -332,6 +355,26 @@ final class PullRequestPage: NSView {
 	@objc private func arrangementChanged() {
 		Settings.shared.commitFilesByFolder = arrangeControl.selectedSegment == 1
 		fileList.arrangesByFolder = Settings.shared.commitFilesByFolder
+	}
+
+	/// One button with two verbs, because there are only ever two states and the
+	/// second is the one somebody forgets: a checkout nobody finishes with is
+	/// how a repository grows a directory a day.
+	@objc private func checkOutPressed() {
+		if isCheckedOut() {
+			onFinish?()
+		} else {
+			onCheckOut?()
+		}
+		// After the work, which is asynchronous — so the title catches up on the
+		// next pass rather than lying about what the button now does.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+			self?.showCheckOutState()
+		}
+	}
+
+	private func showCheckOutState() {
+		checkOutButton.title = isCheckedOut() ? "Finish With It" : "Check Out"
 	}
 
 	@objc private func hideReadChanged() {
