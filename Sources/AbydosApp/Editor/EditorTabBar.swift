@@ -100,6 +100,28 @@ final class EditorTabBar: NSView {
 	private var previewMode: PreviewMode = .source
 	private var previewButtonFrame: NSRect = .zero
 	private var isPreviewHovered = false
+	/// Gives the editor the whole window, or gives it back.
+	///
+	/// Here rather than in the window's toolbar, where it started: it is about
+	/// the editor, it sits with the other things that act on this strip, and up
+	/// in the titlebar it read as a window control of macOS's own — beside the
+	/// traffic lights, doing something none of them do.
+	private var maximizeButtonFrame: NSRect = .zero
+	private var isMaximizeHovered = false
+	/// Which way the arrows point. The icon is the state: a button that looked
+	/// the same either way leaves somebody in a maximised window with no way of
+	/// knowing that the way out is the button they just pressed.
+	private var isMaximized = false
+
+	/// A square, like the chevron beside it.
+	private static var maximizeWidth: CGFloat { Theme.current.scaled(26) }
+
+	func setMaximized(_ maximized: Bool) {
+		guard maximized != isMaximized else { return }
+		isMaximized = maximized
+		needsDisplay = true
+	}
+
 	/// The chevron offering the tabs there was no room for.
 	private var overflowButtonFrame: NSRect = .zero
 	private var visibleRun: Range<Int> = 0..<0
@@ -189,16 +211,25 @@ final class EditorTabBar: NSView {
 		// which is how tabs came to run underneath it — the comment there said
 		// so and called it a trade. It was the right trade for the drawing and
 		// the wrong one for reaching a tab, which is what the chevron below is.
+		let controlHeight = Theme.current.scaled(20)
+		// Outermost of the trailing controls, because it is the one about the
+		// window rather than about what is in the strip.
+		maximizeButtonFrame = NSRect(
+			x: max(0, bounds.width - Self.maximizeWidth - Theme.current.scaled(8)),
+			y: (bounds.height - controlHeight) / 2,
+			width: Self.maximizeWidth,
+			height: controlHeight
+		)
+
 		if previewModes.isEmpty {
 			previewButtonFrame = .zero
 		} else {
 			let width = previewControlWidth()
-			let height = Theme.current.scaled(20)
 			previewButtonFrame = NSRect(
-				x: max(0, bounds.width - width - Theme.current.scaled(8)),
-				y: (bounds.height - height) / 2,
+				x: max(0, maximizeButtonFrame.minX - width - Theme.current.scaled(8)),
+				y: (bounds.height - controlHeight) / 2,
 				width: width,
-				height: height
+				height: controlHeight
 			)
 		}
 
@@ -239,7 +270,7 @@ final class EditorTabBar: NSView {
 	private func tabRoom(overflowing: Bool) -> CGFloat {
 		var room = previewButtonFrame.width > 0
 			? previewButtonFrame.minX - Theme.current.scaled(8)
-			: bounds.width
+			: maximizeButtonFrame.minX - Theme.current.scaled(8)
 		if overflowing { room -= Self.overflowWidth }
 		return max(0, room)
 	}
@@ -347,6 +378,12 @@ final class EditorTabBar: NSView {
 			needsDisplay = true
 		}
 
+		let overMaximize = maximizeButtonFrame.contains(point)
+		if overMaximize != isMaximizeHovered {
+			isMaximizeHovered = overMaximize
+			needsDisplay = true
+		}
+
 		let index = index(at: point)
 		let overClose = index.map { closeRect(for: frames[$0]).contains(point) } ?? false
 
@@ -365,6 +402,7 @@ final class EditorTabBar: NSView {
 		hoveredIndex = nil
 		hoveredClose = false
 		isPreviewHovered = false
+		isMaximizeHovered = false
 		needsDisplay = true
 	}
 
@@ -480,6 +518,10 @@ final class EditorTabBar: NSView {
 		}
 		if !previewModes.isEmpty, previewButtonFrame.contains(point) {
 			showPreviewMenu()
+			return
+		}
+		if maximizeButtonFrame.contains(point) {
+			onMaximize?()
 			return
 		}
 
@@ -641,6 +683,7 @@ final class EditorTabBar: NSView {
 
 		drawOverflowControl()
 		drawPreviewControl()
+		drawMaximizeControl()
 		drawDropCaret()
 	}
 
@@ -705,6 +748,42 @@ final class EditorTabBar: NSView {
 	@objc private func selectFromOverflow(_ sender: NSMenuItem) {
 		guard let index = sender.representedObject as? Int else { return }
 		onSelect?(index)
+	}
+
+	/// The window-shape control at the trailing edge.
+	private func drawMaximizeControl() {
+		guard maximizeButtonFrame.width > 0 else { return }
+
+		// Opaque, because tabs are allowed to scroll underneath it.
+		Theme.current.sidebarBackground.setFill()
+		maximizeButtonFrame
+			.insetBy(dx: -Theme.current.scaled(6), dy: -Theme.current.scaled(6))
+			.fill()
+
+		if isMaximizeHovered {
+			let path = NSBezierPath(
+				roundedRect: maximizeButtonFrame,
+				xRadius: Theme.current.scaled(5),
+				yRadius: Theme.current.scaled(5)
+			)
+			NSColor.white.withAlphaComponent(0.14).setFill()
+			path.fill()
+		}
+
+		let name = isMaximized
+			? "arrow.down.right.and.arrow.up.left"
+			: "arrow.up.left.and.arrow.down.right"
+		guard let icon = Theme.symbol(
+			name, size: 11 * Theme.current.scale,
+			color: Theme.current.sidebarHeaderText, weight: .medium
+		) else { return }
+		let size = icon.size
+		icon.draw(in: NSRect(
+			x: maximizeButtonFrame.midX - size.width / 2,
+			y: maximizeButtonFrame.midY - size.height / 2,
+			width: size.width,
+			height: size.height
+		))
 	}
 
 	/// The mode control at the trailing edge.

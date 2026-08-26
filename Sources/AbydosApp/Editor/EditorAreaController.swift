@@ -851,6 +851,11 @@ final class EditorAreaController: NSViewController {
 	/// A tab was double-clicked and it was already permanent: the editor is
 	/// asking for the window.
 	var onMaximize: (() -> Void)?
+
+	/// Every group's strip draws the control, so every one is told.
+	func setMaximized(_ maximized: Bool) {
+		groups.forEach { $0.setMaximized(maximized) }
+	}
 	var onNavigated: ((NavigationHistory.Place?, NavigationHistory.Place) -> Void)?
 
 	/// Suspended while a session is restored, or opening yesterday's twelve

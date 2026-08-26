@@ -332,8 +332,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		bar.onShowAllWorktrees = { [weak self] in self?.toggleBranchesView(nil) }
 		bar.onOpenFile = { [weak self] url in self?.openFile(at: url) }
-		bar.isEditorMaximized = { [weak self] in self?.isEditorMaximized ?? false }
-		bar.onToggleEditorMaximized = { [weak self] in self?.toggleEditorMaximized(nil) }
 		return bar
 	}()
 
