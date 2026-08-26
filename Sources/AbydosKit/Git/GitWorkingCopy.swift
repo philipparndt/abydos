@@ -354,6 +354,33 @@ public enum GitWorkingCopy {
 		return untracked.stdout
 	}
 
+	/// The files inside a wholly untracked directory, as paths relative to the
+	/// work tree root, sorted.
+	///
+	/// **This is the whole reason such a row can be opened at all.** The listing
+	/// asks git for `-unormal`, so a wholly untracked directory arrives as one
+	/// record — measured, and the measurement is in `status` above: `-uall` over
+	/// the work tree was seven seconds against 0.11 s on a tree with 69,829
+	/// untracked files, on a path that runs on every filesystem event. Scoped to
+	/// one directory the same flag walks one subtree, so it costs what that
+	/// directory holds and is asked only when somebody opens the row.
+	public static func untrackedFiles(inDirectory path: String, in root: URL) async -> [String] {
+		let result = await GitRepository.run(
+			["status", "--porcelain=v1", "-uall", "--no-renames", "-z", "--", path],
+			in: root
+		)
+		guard result.exitCode == 0 else { return [] }
+
+		return result.stdout
+			.split(separator: "\0", omittingEmptySubsequences: true)
+			.compactMap { record -> String? in
+				guard record.count > 3 else { return nil }
+				let name = unquote(String(record.dropFirst(3)))
+				return name.isEmpty ? nil : name
+			}
+			.sorted()
+	}
+
 	/// What is inside a directory git reported as a whole, as a list.
 	///
 	/// Not a diff, because there is no such thing for a directory — asking git
@@ -365,20 +392,7 @@ public enum GitWorkingCopy {
 	/// the split: scoped to one directory it walks one subtree, not the work
 	/// tree, so it costs what that directory holds.
 	private static func contents(ofUntrackedDirectory path: String, in root: URL) async -> String {
-		let result = await GitRepository.run(
-			["status", "--porcelain=v1", "-uall", "--no-renames", "-z", "--", path],
-			in: root
-		)
-		guard result.exitCode == 0 else { return "" }
-
-		let files = result.stdout
-			.split(separator: "\0", omittingEmptySubsequences: true)
-			.compactMap { record -> String? in
-				guard record.count > 3 else { return nil }
-				let name = unquote(String(record.dropFirst(3)))
-				return name.isEmpty ? nil : name
-			}
-			.sorted()
+		let files = await untrackedFiles(inDirectory: path, in: root)
 
 		guard !files.isEmpty else { return "\(path)/ — an empty folder\n" }
 		let heading = files.count == 1

@@ -71,6 +71,18 @@ final class ChangesPane: NSView {
 		/// Where the selection goes when everything selected has been staged
 		/// away. See `rememberWhereTheSelectionGoes`.
 		var fallback: String?
+		/// What an untracked directory turned out to hold, by its path.
+		///
+		/// Kept across a rebuild, which is what stops an open folder collapsing
+		/// under whoever is reading it: the tree is built from scratch on every
+		/// filesystem event, so the rows that were under it are new objects and
+		/// the answer has to be put back before the view asks.
+		var untrackedContents: [String: [GitChangeNode]] = [:]
+		/// Untracked directories somebody has opened. Held the positive way
+		/// round, unlike `collapsed`: these arrive shut and cost a git call to
+		/// open, so the default is closed and only a deliberate gesture changes
+		/// it.
+		var opened: Set<String> = []
 	}
 
 	private var unstagedSide = Side()
@@ -455,12 +467,52 @@ final class ChangesPane: NSView {
 	private func reload() {
 		rebuild(unstagedTable, staged: false, changes: status.unstaged, against: status.staged)
 		rebuild(stagedTable, staged: true, changes: status.staged, against: status.unstaged)
+		// **Once per set of changes, and only when the set has moved.** `refresh`
+		// above returns early on a status equal to the last one, which is every
+		// answer over a clean working copy and most of them during a build — so
+		// this is not on the per-filesystem-event path even though `reload` is
+		// what that path calls. One `--numstat` per side, not one diff per row:
+		// the row count is the size of somebody's commit.
+		askForLineCounts()
 		// Files, not rows: "Commit 7 Files" has to keep meaning seven files
 		// however many folders they are spread over.
 		unstagedHeader.setCount(status.unstaged.count)
 		stagedHeader.setCount(status.staged.count)
 		updateCommitButton()
 	}
+
+	/// How much each changed file changed, from one `git diff --numstat` a side.
+	///
+	/// After the trees are built and drawn rather than before: the counts are
+	/// something a row says about itself, not something that decides whether the
+	/// row exists, and waiting for them would hold the whole pane behind a
+	/// second git call.
+	private func askForLineCounts() {
+		for staged in [false, true] {
+			let outline = staged ? stagedTable! : unstagedTable!
+			Task { @MainActor in
+				let counts = await GitLineCounts.workingCopy(staged: staged, in: root)
+				// The tree may have been rebuilt while this was out; the roots
+				// read here are whichever ones are on screen now.
+				for root in self.side(for: outline).roots { root.applyLineCounts(counts) }
+				self.lineCounts[staged] = counts
+				outline.reloadData()
+				// A reload throws the expansion away, so it goes back the way it
+				// does everywhere else in this pane.
+				self.isRestoring = true
+				self.expand(
+					self.side(for: outline).roots, in: outline,
+					collapsed: self.side(for: outline).collapsed
+				)
+				self.isRestoring = false
+			}
+		}
+	}
+
+	/// What the last `--numstat` said, by side, so a row filled later — an
+	/// untracked directory somebody opens — can be given its counts without
+	/// asking git again.
+	private var lineCounts: [Bool: [String: GitLineCount]] = [:]
 
 	/// Builds one side's tree again and puts back what was on screen.
 	///
@@ -485,15 +537,31 @@ final class ChangesPane: NSView {
 			stagedSide.roots = roots
 			stagedSide.byPath = byPath
 			stagedSide.collapsed = collapsed
+			// Anything that has gone away since stops being remembered, or the
+			// set grows for the life of the window.
+			stagedSide.opened.formIntersection(byPath.keys)
+			stagedSide.untrackedContents = stagedSide.untrackedContents.filter { byPath[$0.key] != nil }
 		} else {
 			unstagedSide.roots = roots
 			unstagedSide.byPath = byPath
 			unstagedSide.collapsed = collapsed
+			unstagedSide.opened.formIntersection(byPath.keys)
+			unstagedSide.untrackedContents = unstagedSide.untrackedContents.filter { byPath[$0.key] != nil }
 		}
+
+		// Before `reloadData`, so the rows are under the open directories by the
+		// time the view asks for them.
+		refill(side(for: outline), in: outline, staged: staged)
 
 		isRestoring = true
 		outline.reloadData()
 		expand(roots, in: outline, collapsed: collapsed)
+		// The auto-expansion above deliberately skips untracked directories —
+		// opening one costs a git call, so it is never done on anybody's behalf.
+		// These are the ones somebody opened by hand.
+		for path in side(for: outline).opened {
+			if let node = byPath[path] { outline.expandItem(node) }
+		}
 		restore(selection: selected, in: outline, staged: staged)
 		isRestoring = false
 	}
@@ -629,6 +697,55 @@ final class ChangesPane: NSView {
 	/// The side an outline view belongs to.
 	private func side(for outline: NSOutlineView) -> Side {
 		outline === stagedTable ? stagedSide : unstagedSide
+	}
+
+	/// Notes that an untracked directory is open, so a rebuild puts it back.
+	private func remember(opened path: String, staged: Bool) {
+		if staged { stagedSide.opened.insert(path) } else { unstagedSide.opened.insert(path) }
+	}
+
+	/// Asks git what one untracked directory holds, and puts the answer under
+	/// the row.
+	///
+	/// `-uall` scoped to one path: it costs what that directory holds rather
+	/// than what the work tree holds, which is the difference between 0.11 s and
+	/// the seven seconds `GitWorkingCopy.status` measured and refused.
+	private func fill(_ node: GitChangeNode, in outline: ChangesOutlineView, staged: Bool) {
+		let path = node.path
+		Task { @MainActor in
+			let files = await GitWorkingCopy.untrackedFiles(inDirectory: path, in: root)
+			let rows = GitChangeTree.contents(
+				ofUntrackedDirectory: path, files: files, staged: staged
+			)
+			// The tree may have been rebuilt while this was out, in which case
+			// the row it was asked about is not the row on screen any more. The
+			// answer is kept against the path either way, and the current row —
+			// if there still is one — is the one filled.
+			if staged {
+				stagedSide.untrackedContents[path] = rows
+			} else {
+				unstagedSide.untrackedContents[path] = rows
+			}
+			guard let current = self.side(for: outline).byPath[path] else { return }
+			current.fill(with: rows)
+			if let counts = self.lineCounts[staged] { current.applyLineCounts(counts) }
+			outline.reloadItem(current, reloadChildren: true)
+			outline.expandItem(current)
+		}
+	}
+
+	/// Puts back what open untracked directories held, before the view asks.
+	///
+	/// The tree is rebuilt from scratch on every filesystem event, so every row
+	/// under an open directory is a new object with nothing in it. Filling from
+	/// what is already known keeps the row open without a git call; the call
+	/// goes out afterwards, because the directory may have gained a file since.
+	private func refill(_ side: Side, in outline: ChangesOutlineView, staged: Bool) {
+		for path in side.opened {
+			guard let node = side.byPath[path] else { continue }
+			if let known = side.untrackedContents[path] { node.fill(with: known) }
+			fill(node, in: outline, staged: staged)
+		}
 	}
 
 
@@ -1255,6 +1372,13 @@ final class ChangesPane: NSView {
 		return said.joined(separator: "\n")
 	}
 
+	/// How much changed, for a driven report — and nothing at all when git gave
+	/// no answer, which is the distinction the whole thing turns on.
+	private func said(_ lines: GitLineCount?) -> String {
+		guard let lines else { return "" }
+		return "  +\(lines.added)/-\(lines.removed)"
+	}
+
 	func changesTreeForTesting() -> String {
 		var lines: [String] = []
 		for (title, outline) in [("Unstaged", unstagedTable!), ("Staged", stagedTable!)] {
@@ -1263,12 +1387,18 @@ final class ChangesPane: NSView {
 				guard let node = outline.item(atRow: row) as? GitChangeNode else { continue }
 				let indent = String(repeating: "  ", count: outline.level(forRow: row) + 1)
 				let selected = outline.selectedRowIndexes.contains(row) ? " <-" : ""
-				if node.isFolder {
-					let tally = node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)"
+				if node.holdsFiles {
+					// A folder this pane invented says how much of it is on this
+					// side. A wholly untracked directory says what it is instead:
+					// git reports it as one entry, so a count would be a 1 that
+					// means something different from every other 1 in this tree.
+					let tally = node.isFolder
+						? (node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)")
+						: (node.isFilled ? "untracked folder" : "untracked folder, not opened")
 					let shut = outline.isItemExpanded(node) ? "" : " [shut]"
-					lines.append("\(indent)\(node.name)/  \(tally)\(shut)\(selected)")
+					lines.append("\(indent)\(node.name)/  \(tally)\(said(node.lines))\(shut)\(selected)")
 				} else {
-					lines.append("\(indent)\(node.name)\(selected)")
+					lines.append("\(indent)\(node.name)\(said(node.lines))\(selected)")
 				}
 			}
 		}
@@ -1384,9 +1514,15 @@ extension ChangesPane: NSMenuDelegate {
 		menu.addItem(item(title, clicked.isStaged ? #selector(unstageClicked) : #selector(stageClicked)))
 		menu.addItem(.separator())
 		// Only for something git is not already tracking: ignoring a tracked
-		// file does nothing, which is a confusing thing to offer. Never for a
-		// folder — `-uall` reports the files inside an untracked directory
-		// individually, so a folder row here is always one this pane invented.
+		// file does nothing, which is a confusing thing to offer.
+		//
+		// The condition is `change?.kind`, so it covers an untracked *directory*
+		// as well — which is right, and is what somebody who has just made a
+		// folder of build output wants. The comment here used to say the
+		// opposite: that `-uall` reports the files inside such a directory
+		// individually and a folder row is therefore always one this pane
+		// invented. That stopped being true when the listing became `-unormal`,
+		// and it is doubly untrue now that such a row has children of its own.
 		if clicked.node.change?.kind == .untracked {
 			menu.addItem(item("Add to .gitignore\u{2026}", #selector(ignoreClicked)))
 		}
@@ -1429,7 +1565,35 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-		(item as? GitChangeNode)?.isFolder ?? false
+		// `holdsFiles`, so an untracked directory gets a triangle. It has one
+		// entry as far as git is concerned and a folder's worth of work inside,
+		// and until now it was drawn as a file with nothing under it.
+		(item as? GitChangeNode)?.holdsFiles ?? false
+	}
+
+	/// Fills an untracked directory the first time it is opened.
+	///
+	/// Nothing is asked for until this happens, which is the whole arrangement:
+	/// the listing runs on every filesystem event and cannot afford `-uall`,
+	/// while one directory's worth of it is what that directory holds.
+	func outlineViewItemWillExpand(_ notification: Notification) {
+		guard let node = notification.userInfo?["NSObject"] as? GitChangeNode,
+		      let outline = notification.object as? ChangesOutlineView,
+		      node.change?.isDirectory == true
+		else { return }
+
+		let staged = outline === stagedTable
+		remember(opened: node.path, staged: staged)
+		guard !node.isFilled else { return }
+
+		// From what is already known, if this row has been opened before in this
+		// session — so a rebuild does not blink.
+		if let known = side(for: outline).untrackedContents[node.path] {
+			node.fill(with: known)
+			outline.reloadItem(node, reloadChildren: true)
+			return
+		}
+		fill(node, in: outline, staged: staged)
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
@@ -1441,7 +1605,11 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		guard let change = node.change else {
 			return ChangeFolderRowView(node: node, isStaged: outlineView === stagedTable)
 		}
-		return ChangeRowView(change: change)
+		// A change that is a whole directory keeps its badge — it is untracked,
+		// and that is what the badge says — and gains a folder beside it, rather
+		// than becoming a folder row: a folder row says how much of it is on
+		// this side, and this one is a single entry to git.
+		return ChangeRowView(node: node, change: change)
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor column: NSTableColumn?, item: Any) -> String? {
@@ -1595,12 +1763,49 @@ private final class SectionHeaderView: NSView {
 /// in, so repeating them on every row would be the flat list drawn inside the
 /// tree — and it was only ever there because there was nowhere else to say
 /// which of three `GitBlame.swift` was which.
+/// `+12 −3`, in the colours added and removed already have.
+///
+/// One place, because two views draw it and they would drift on the dash: a
+/// hyphen-minus is narrower than the digits beside it and reads as a hyphen in a
+/// filename, so this uses a real minus sign.
+private enum LineCountLabel {
+	static func make(_ lines: GitLineCount?) -> NSAttributedString? {
+		guard let lines else { return nil }
+		let font = Theme.current.uiFont(10.5)
+		let text = NSMutableAttributedString()
+		if lines.added > 0 {
+			text.append(NSAttributedString(string: "+\(lines.added)", attributes: [
+				.font: font, .foregroundColor: Theme.current.gitAdded,
+			]))
+		}
+		if lines.removed > 0 {
+			if text.length > 0 {
+				text.append(NSAttributedString(string: " ", attributes: [.font: font]))
+			}
+			text.append(NSAttributedString(string: "\u{2212}\(lines.removed)", attributes: [
+				.font: font, .foregroundColor: Theme.current.gitConflict,
+			]))
+		}
+		// A file git counted as nothing changed — a mode change it did count, a
+		// rename with no edit — has a count and it is zero. Saying "0" is
+		// clearer than an empty gap where every other row has numbers.
+		if text.length == 0 {
+			text.append(NSAttributedString(string: "0", attributes: [
+				.font: font, .foregroundColor: Theme.current.gitIgnored,
+			]))
+		}
+		return text
+	}
+}
+
 private final class ChangeRowView: NSView {
+	private let node: GitChangeNode
 	private let change: GitChange
 
 	override var isFlipped: Bool { true }
 
-	init(change: GitChange) {
+	init(node: GitChangeNode, change: GitChange) {
+		self.node = node
 		self.change = change
 		super.init(frame: .zero)
 	}
@@ -1627,12 +1832,41 @@ private final class ChangeRowView: NSView {
 		))
 		x = badge.maxX + Theme.current.scaled(6)
 
+		// A whole untracked directory keeps the badge — it is untracked, and
+		// that is what the badge says — and gains a folder beside it. Both,
+		// because neither alone is the truth: `.abydos` and `PI-12` were drawn
+		// with the badge and nothing else, and read as files.
+		if change.isDirectory,
+		   let folder = Theme.symbol(
+		   	"folder", size: badgeSize, color: Theme.current.gitUnversioned
+		   ) {
+			folder.drawFitted(in: NSRect(
+				x: x, y: bounds.midY - badgeSize / 2, width: badgeSize, height: badgeSize
+			))
+			x += badgeSize + Theme.current.scaled(5)
+		}
+
+		// **The counts are measured first and the name is given what is left.**
+		// A long path and `+1234 −567` do not both fit in a sidebar, and of the
+		// two it is the name that can be cut and still be recognised — the
+		// counts are three characters and the answer to the question the row is
+		// being read for.
+		let counts = LineCountLabel.make(node.lines)
+		let countsWidth = counts?.size().width ?? 0
+		let trailing = RowMetrics.trailingInset
 		RowMetrics.draw(
 			change.name,
 			font: Theme.current.uiFont(12),
 			colour: Theme.current.sidebarText,
-			at: x, in: bounds, limit: bounds.maxX - RowMetrics.trailingInset
+			at: x, in: bounds,
+			limit: bounds.maxX - trailing - (counts == nil ? 0 : countsWidth + Theme.current.scaled(8))
 		)
+		if let counts {
+			counts.draw(at: NSPoint(
+				x: bounds.maxX - trailing - countsWidth,
+				y: bounds.midY - counts.size().height / 2
+			))
+		}
 	}
 
 	private func letter(for kind: GitChange.Kind) -> String {
@@ -1719,11 +1953,23 @@ private final class ChangeFolderRowView: NSView {
 		let right = bounds.maxX - RowMetrics.trailingInset
 		tally.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
 
+		// The sum of what is under it, inside the tally: how many changed, and
+		// then how much. Two numbers that answer different questions, which is
+		// why the folder keeps both.
+		var limit = right - size.width - Theme.current.scaled(6)
+		if let counts = LineCountLabel.make(node.lines) {
+			let width = counts.size().width
+			counts.draw(at: NSPoint(
+				x: limit - width, y: bounds.midY - counts.size().height / 2
+			))
+			limit -= width + Theme.current.scaled(6)
+		}
+
 		RowMetrics.draw(
 			node.name,
 			font: Theme.current.uiFont(12, weight: .medium),
 			colour: Theme.current.sidebarText,
-			at: x, in: bounds, limit: right - size.width - Theme.current.scaled(6)
+			at: x, in: bounds, limit: limit
 		)
 	}
 }

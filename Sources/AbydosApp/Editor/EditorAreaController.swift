@@ -147,6 +147,7 @@ final class EditorAreaController: NSViewController {
 		group.onActiveFileChanged = { [weak self] url in
 			self?.onActiveFileChanged?(url)
 		}
+		group.onMaximize = { [weak self] in self?.onMaximize?() }
 		group.onNavigated = { [weak self] departure, arrival in
 			guard let self, self.recordsNavigation else { return }
 			self.onNavigated?(departure, arrival)
@@ -358,6 +359,10 @@ final class EditorAreaController: NSViewController {
 	var activeTabCount: Int { (activeGroup ?? groups.first)?.tabCount ?? 0 }
 
 	/// Tears a tab off as a drag ending outside every window would.
+	func doubleClickTabForTesting(index: Int) -> String {
+		activeGroup?.doubleClickTabForTesting(index: index) ?? "no group"
+	}
+
 	func tearOffForTesting(index: Int, at screenPoint: NSPoint) {
 		guard let group = activeGroup ?? groups.first else { return }
 		tearOff(from: group, index: index, at: screenPoint)
@@ -839,6 +844,9 @@ final class EditorAreaController: NSViewController {
 	///
 	/// Both halves matter: going back should return to the line somebody was
 	/// reading, which is not where they arrived at that file.
+	/// A tab was double-clicked and it was already permanent: the editor is
+	/// asking for the window.
+	var onMaximize: (() -> Void)?
 	var onNavigated: ((NavigationHistory.Place?, NavigationHistory.Place) -> Void)?
 
 	/// Suspended while a session is restored, or opening yesterday's twelve

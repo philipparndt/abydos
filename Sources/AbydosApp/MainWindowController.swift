@@ -302,6 +302,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Which of those windows is the active one.
 	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
 
+	/// Which panes the window is giving its room to.
+	///
+	/// The one thing a screenshot of a maximised editor cannot settle: an editor
+	/// filling the window looks the same whether the tree is hidden or merely
+	/// dragged to nothing, and "the panel is down" and "the panel is up behind
+	/// the editor" are the same picture.
+	var windowLayoutReportForTesting: String {
+		let navigator = (navigatorContainer?.isHidden ?? true)
+			|| (navigatorContainer?.frame.width ?? 0) < 2
+			? "hidden" : "\(Int(navigatorContainer?.frame.width ?? 0))pt"
+		return "navigator=\(navigator) "
+			+ "panel=\(bottomPanel.isHidden ? "hidden" : "\(Int(bottomPanel.frame.height))pt") "
+			+ "editorMaximized=\(isEditorMaximized) "
+			+ "panelMaximized=\(isPanelMaximized)"
+	}
+
+	/// Double-clicks a tab, and says what the window looks like afterwards.
+	func doubleClickTabForTesting(_ index: Int) -> String {
+		let took = editor.doubleClickTabForTesting(index: index)
+		return "\(took) — \(windowLayoutReportForTesting)"
+	}
+
 	/// What the rail is showing, for `--rail`.
 	///
 	/// The panel's own state leads, because the rail's rule is written in terms
@@ -482,6 +504,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// apply it.
 		takeServerEdits()
 
+		editor.onMaximize = { [weak self] in self?.toggleEditorMaximized(nil) }
 		editor.onNavigated = { [weak self] departure, arrival in
 			guard let self, !self.isNavigatingHistory else { return }
 			// The place being left is recorded first, and at the line the caret
@@ -2062,6 +2085,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Whether the editor has the window, and what to put back when it gives it
+	/// up.
+	///
+	/// The two answers are remembered rather than assumed: somebody who was
+	/// working with the sidebar already shut does not want it opened for them by
+	/// un-maximising, and the panel is the same. Nil while nothing is maximised,
+	/// so a stale pair cannot be restored over a window somebody has since
+	/// rearranged by hand.
+	private var beforeEditorMaximized: (navigator: Bool, panel: Bool)?
+
+	var isEditorMaximized: Bool { beforeEditorMaximized != nil }
+
+	/// Gives the editor the whole window, or gives it back.
+	///
+	/// A double-click on a tab that is already permanent, and the mirror of
+	/// `togglePanelMaximized` — which does the same for the terminal, from the
+	/// other side. Both hide rather than resize, for the reason that one records:
+	/// a split view will not put a pane fully away, and a sliver of tree left
+	/// showing is not what "give the editor the window" means.
+	@objc func toggleEditorMaximized(_ sender: Any? = nil) {
+		if let before = beforeEditorMaximized {
+			beforeEditorMaximized = nil
+			if before.navigator { openNavigator() }
+			if before.panel { setPanelVisible(true) }
+			updateTopInsets()
+			return
+		}
+
+		// The terminal cannot have the window at the same moment. Un-maximising
+		// it first, rather than refusing, because the gesture says what somebody
+		// wants and the two states are exclusive.
+		if isPanelMaximized { togglePanelMaximized(nil) }
+
+		let navigatorShowing = !(navigatorContainer?.isHidden ?? true)
+			&& (navigatorContainer?.frame.width ?? 0) >= 2
+		beforeEditorMaximized = (navigator: navigatorShowing, panel: isPanelVisible)
+		if navigatorShowing { toggleNavigator(nil) }
+		if isPanelVisible { setPanelVisible(false) }
+		updateTopInsets()
+	}
+
 	@objc func togglePanelMaximized(_ sender: Any? = nil) {
 		if isPanelMaximized {
 			toolPopover?.performClose(nil)
@@ -2326,6 +2390,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Writes text into the active terminal, as though typed.
 	func sendToTerminal(_ text: String) {
 		bottomPanel.showTerminal()?.terminalView.send(text)
+	}
+
+	/// `--select fromRow,fromColumn,toRow,toColumn[,option]` — a drag in the
+	/// terminal grid, and what it selected.
+	func selectInTerminalForTesting(_ spec: String) {
+		let parts = spec.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+		guard parts.count >= 4, let fromRow = Int(parts[0]), let fromColumn = Int(parts[1]),
+		      let toRow = Int(parts[2]), let toColumn = Int(parts[3])
+		else {
+			print("TERM select: want fromRow,fromColumn,toRow,toColumn[,option], got \(spec)")
+			return
+		}
+		guard let terminal = bottomPanel.showTerminal()?.terminalView else {
+			print("TERM select: no terminal")
+			return
+		}
+		// `option` holds it throughout; `option-mid` presses without it and takes
+		// it up during the drag, which is the half that says the modifier is
+		// read on every event rather than remembered from the press.
+		let modifier = parts.count > 4 ? parts[4] : ""
+		print("TERM select \(spec): " + terminal.dragForTesting(
+			fromRow: fromRow, fromColumn: fromColumn,
+			toRow: toRow, toColumn: toColumn,
+			optionOnPress: modifier == "option",
+			optionOnDrag: modifier == "option" || modifier == "option-mid"
+		))
 	}
 
 	@objc func findInFile(_ sender: Any?) {
@@ -6605,6 +6695,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				print("TREE session-right-click:\n    \(navigator.sessionRightClicksForTesting())")
 			case "session-menu":
 				print("TREE session-menu: \(navigator.sessionMenuForTesting())")
+			case "sessions-rebuild": navigator.rebuildSessionsForTesting()
 			case "sessions-open": navigator.openSessionsForTesting(files: false)
 			case "sessions-open-all": navigator.openSessionsForTesting(files: true)
 			case "deps-open": navigator.openDependenciesForTesting(groups: false)
@@ -9977,6 +10068,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "file":
 				page.selectCommitForTesting(0)
 				page.selectFileForTesting(Int(argument) ?? 0)
+			// The changes view's own rows, which `report` does not carry: how a
+			// commit's files are arranged is the question, and the flat
+			// arrangement has to match what the page drew before it was an
+			// outline at all.
+			case "files":
+				print("LOG-PAGE files:\n  " + page.fileRowsForTesting().joined(separator: "\n  "))
+			case "arrange": page.toggleFileArrangementForTesting()
+			case "star":    page.pressStarForTesting()
+			case "shut":    page.collapseEveryFolderForTesting()
 			default:       print("LOG-PAGE: unknown step \(step)")
 			}
 		}
@@ -10714,6 +10814,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc func toggleBlame(_ sender: Any?) {
 		editor.toggleBlame()
+	}
+
+	/// Flips how the git page arranges a commit's files, and ticks itself.
+	@objc func toggleCommitFilesByFolder(_ sender: Any?) {
+		Settings.shared.commitFilesByFolder.toggle()
+		logPage?.applyFileArrangement()
+		(sender as? NSMenuItem)?.state = Settings.shared.commitFilesByFolder ? .on : .off
 	}
 
 	@objc func toggleWordWrap(_ sender: Any?) {

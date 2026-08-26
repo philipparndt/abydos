@@ -172,6 +172,113 @@ struct GitStatusCostTests {
 		#expect(await repo.needsIgnoredRefresh())
 	}
 
+	/// **An uncommitted `.gitignore` is still an ignore rule.** Git honours the
+	/// file on disk whether or not it has ever been committed, and the first
+	/// thing anybody does in a new repository is write one — so the case where
+	/// it is untracked is the case a project spends its first hour in.
+	///
+	/// The fingerprint found the ignore files with `ls-files --cached`, which
+	/// lists only tracked ones, so writing rules into an uncommitted
+	/// `.gitignore` changed nothing the app could see and the greying-out never
+	/// arrived. The comment above it argued that an untracked `.gitignore` needs
+	/// no watching, because the directory holding one is itself untracked and
+	/// everything under it inherits that. True of a subdirectory. Not true of the
+	/// work tree root, which is never untracked — and that is where a project's
+	/// `.gitignore` lives.
+	@Test func rulesInAnUncommittedGitignoreAreNoticed() async throws {
+		let root = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		try await initialise(root)
+
+		try FileManager.default.createDirectory(
+			at: root.appendingPathComponent("build"), withIntermediateDirectories: true
+		)
+		try "x\n".write(
+			to: root.appendingPathComponent("build/out.o"), atomically: true, encoding: .utf8
+		)
+
+        let repo = GitRepository(root: root)
+		await repo.refresh()
+		await repo.refreshIgnored()
+		#expect(
+			await repo.status(forRelativePath: "build", isDirectory: true) == .unversioned,
+			"nothing ignores it yet"
+		)
+
+		// Written and *not* committed, which is what git honours anyway.
+		try "build/\n".write(
+			to: root.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8
+		)
+		await repo.refresh()
+
+		#expect(
+			await repo.needsIgnoredRefresh(),
+			"an uncommitted .gitignore was saved; the rules have moved"
+		)
+		await repo.refreshIgnored()
+		#expect(
+			await repo.status(forRelativePath: "build", isDirectory: true) == .ignored,
+			"git ignores it, so the tree should grey it out"
+		)
+	}
+
+	/// **An ignored directory inside an untracked one is ignored, not untracked.**
+	///
+	/// The reported fault, and it is about precedence rather than about reading.
+	/// `-unormal` collapses the untracked parent to one `project/` entry, and
+	/// `--ignored=traditional` still names `project/build/` inside it — so both
+	/// answers are in hand. The lookup consulted them in the wrong order: it
+	/// walked up to the collapsed ancestor and returned *untracked* before ever
+	/// asking whether git had said something about this very path.
+	///
+	/// So a folder git ignores was drawn in the colour of uncommitted work,
+	/// which is the one thing the tint is for.
+	@Test func anIgnoredFolderInsideAnUntrackedOneIsGreyNotOrange() async throws {
+		let root = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		try await initialise(root)
+
+		// A folder nothing tracks, holding its own ignore rules — a checkout
+		// somebody has dropped into the work tree, or a new module.
+		let project = root.appendingPathComponent("project")
+		try FileManager.default.createDirectory(
+			at: project.appendingPathComponent("build"), withIntermediateDirectories: true
+		)
+		try FileManager.default.createDirectory(
+			at: project.appendingPathComponent("src"), withIntermediateDirectories: true
+		)
+		try "build/\n".write(
+			to: project.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8
+		)
+		try "o\n".write(
+			to: project.appendingPathComponent("build/out.o"), atomically: true, encoding: .utf8
+		)
+		try "s\n".write(
+			to: project.appendingPathComponent("src/main.swift"), atomically: true, encoding: .utf8
+		)
+
+		let repo = GitRepository(root: root)
+		await repo.refresh()
+		await repo.refreshIgnored()
+
+		#expect(
+			await repo.status(forRelativePath: "project", isDirectory: true) == .unversioned,
+			"the folder itself is untracked, which git says and is true"
+		)
+		#expect(
+			await repo.status(forRelativePath: "project/build", isDirectory: true) == .ignored,
+			"git named it `!! project/build/`; it is not uncommitted work"
+		)
+		#expect(
+			await repo.status(forRelativePath: "project/build/out.o", isDirectory: false) == .ignored,
+			"and what is inside an ignored folder is ignored"
+		)
+		#expect(
+			await repo.status(forRelativePath: "project/src", isDirectory: true) == .unversioned,
+			"while a folder git did *not* ignore still inherits from the parent"
+		)
+	}
+
 	/// And what it reads is used: an ignored file gets its colour from the
 	/// separate read, not from the one on the event path.
 	@Test func theSeparateReadIsWhatColoursIgnoredFiles() async throws {

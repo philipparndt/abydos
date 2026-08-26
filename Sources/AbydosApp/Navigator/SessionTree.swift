@@ -35,6 +35,20 @@ final class SessionNode {
 		self.fileRoot = fileRoot
 	}
 
+	/// A name for this row that survives a rebuild.
+	///
+	/// The section is the only one of its kind and a session has an id, so
+	/// neither needs anything cleverer — and both need *something*, because the
+	/// root rebuilds whenever a session's size changes and `reloadData` throws
+	/// away every row's identity. Expansion is put back by this, the way the
+	/// Dependencies section's own rows are put back by theirs.
+	var identity: String {
+		switch row {
+		case .section: return "sessions"
+		case let .session(session, _): return session.id
+		}
+	}
+
 	var title: String {
 		switch row {
 		case .section: return "Claude Sessions"

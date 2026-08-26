@@ -832,10 +832,10 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 
 		var overlays: [TerminalMetalRenderer.Overlay] = []
-		if let selection {
+		if selection != nil {
 			for index in first..<last {
 				guard let line = screen.line(at: index),
-				      let range = selection.columnRange(onRow: index, columns: line.cells.count)
+				      let range = selectionRange(on: line, atRow: index)
 				else { continue }
 				overlays.append(.init(
 					row: index,
@@ -1398,15 +1398,24 @@ final class TerminalView: NSView, NSTextInputClient {
 		outline.stroke()
 	}
 
+	/// The columns a row is highlighted across, or nil when it is not selected.
+	///
+	/// **One place, asked by both renderers.** The Core Text path draws a rect
+	/// from it and the Metal path builds an overlay from it, and two copies of
+	/// this expression would disagree first on exactly the rows this is about —
+	/// the short ones, where the answer changed from the width of the grid to
+	/// the width of the text.
+	private func selectionRange(on line: TerminalLine, atRow index: Int) -> Range<Int>? {
+		selection?.columnRange(onRow: index, columns: line.usedColumns)
+	}
+
 	/// Tints the selected cells.
 	///
 	/// Drawn over the text rather than behind it, so the characters keep their
 	/// own colours — a terminal's palette carries meaning, and repainting a
 	/// selected region in system selection colours would throw that away.
 	private func drawSelection(on line: TerminalLine, atRow index: Int, y: CGFloat) {
-		guard let selection,
-		      let range = selection.columnRange(onRow: index, columns: line.cells.count)
-		else { return }
+		guard let range = selectionRange(on: line, atRow: index) else { return }
 
 		let x = (Self.horizontalInset + CGFloat(range.lowerBound) * cellWidth).rounded()
 		let endX = (Self.horizontalInset + CGFloat(range.upperBound) * cellWidth).rounded()
@@ -2336,6 +2345,95 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 	}
 
+	/// Drags in the grid the way a pointer does, and says what came of it.
+	///
+	/// **Through `mouseDown` and `mouseDragged` with real events**, rather than
+	/// by setting a selection directly, because where a press *lands* is the
+	/// thing worth asking about: `position(for:)` reads a pixel, works out a
+	/// column and clamps it to the row's own text, and a check that assembled a
+	/// `TerminalSelection` by hand could not be wrong about any of that. It is
+	/// the same reason `pressKeyForTesting` goes through `keyDown`.
+	///
+	/// Columns are addressed at their left edge, which is the boundary a
+	/// selection rounds to; rows at their middle, which is what a row means.
+	/// `optionOnPress` and `optionOnDrag` are separate so the modifier can be
+	/// taken up *during* a drag, which is its own requirement: Option is read on
+	/// every event rather than remembered from the press, so pressing it without
+	/// releasing the button turns a run of lines into a rectangle.
+	func dragForTesting(
+		fromRow: Int, fromColumn: Int, toRow: Int, toColumn: Int,
+		optionOnPress: Bool, optionOnDrag: Bool
+	) -> String {
+		func event(_ type: NSEvent.EventType, row: Int, column: Int, option: Bool) -> NSEvent? {
+			let point = NSPoint(
+				x: Self.horizontalInset + CGFloat(column) * cellWidth,
+				y: Self.verticalInset + (CGFloat(row) + 0.5) * cellHeight
+			)
+			// **Shift is always held**, because the pane a drag is being driven
+			// over is nearly always running tmux, and a program that has asked
+			// for the mouse gets the events instead — `selects=false` in the
+			// report below. Shift is the escape hatch a person uses for exactly
+			// this, so it is the gesture worth driving.
+			return NSEvent.mouseEvent(
+				with: type,
+				location: convert(point, to: nil),
+				modifierFlags: option ? [.option, .shift] : [.shift],
+				timestamp: ProcessInfo.processInfo.systemUptime,
+				windowNumber: window?.windowNumber ?? 0,
+				context: nil,
+				eventNumber: 0,
+				clickCount: 1,
+				pressure: 1
+			)
+		}
+		guard let down = event(.leftMouseDown, row: fromRow, column: fromColumn, option: optionOnPress),
+		      let drag = event(.leftMouseDragged, row: toRow, column: toColumn, option: optionOnDrag),
+		      let up = event(.leftMouseUp, row: toRow, column: toColumn, option: optionOnDrag)
+		else { return "no events" }
+
+		mouseDown(with: down)
+		let anchored = selection?.anchor
+		let pressedAs = selection?.isBlock
+		mouseDragged(with: drag)
+		// The selection is read before the release, which is what clears one
+		// that never moved — a click is a click and not an empty selection.
+		let report = selectionReportForTesting
+		mouseUp(with: up)
+
+		// **A drag that selected nothing has to say why it selected nothing.**
+		// A program that has asked for the mouse gets the events instead, a
+		// pane that has not been laid out has no cells to land in, and both come
+		// back as "selection=none" if the report only describes the selection.
+		return "tracking=\(emulator.mouseTracking) selects=\(mouseSelects) "
+			+ "cell=\(Int(cellWidth))x\(Int(cellHeight)) rows=\(shownLineCount) "
+			+ "anchored=\(anchored.map { "\($0.row),\($0.column)" } ?? "nothing") "
+			+ "pressedAsBlock=\(pressedAs.map(String.init) ?? "nothing") "
+			+ report
+	}
+
+	/// What is selected, what each row of it is highlighted across, and what it
+	/// would copy.
+	///
+	/// The per-row ranges are the half a screenshot cannot be read for: an
+	/// overlay of translucent colour over ragged text is exactly the thing this
+	/// change is about, and "does it stop at the text" is a number.
+	var selectionReportForTesting: String {
+		guard let selection, !selection.isEmpty else { return "selection=none" }
+		let (start, end) = selection.ordered
+		var rows: [String] = []
+		for row in start.row...end.row {
+			guard let line = emulator.grid.line(at: row) else { continue }
+			let range = selectionRange(on: line, atRow: row)
+			rows.append("\(row):" + (range.map { "\($0.lowerBound)..<\($0.upperBound)" } ?? "none")
+				+ "/\(line.usedColumns)")
+		}
+		let copied = emulator.grid.text(in: selection)
+			.replacingOccurrences(of: "\n", with: "⏎")
+		return "block=\(selection.isBlock) "
+			+ "from=\(start.row),\(start.column) to=\(end.row),\(end.column) "
+			+ "rows=[\(rows.joined(separator: " "))] copied=\"\(copied)\""
+	}
+
 	/// Presses keys by their key code and says what each one did.
 	///
 	/// Through `keyDown`, not through the encoder: what was wrong was never the
@@ -2490,9 +2588,19 @@ final class TerminalView: NSView, NSTextInputClient {
 		let exact = (point.x - Self.horizontalInset) / max(1, cellWidth)
 		let column = Int(roundingToBoundary ? exact.rounded() : exact.rounded(.down))
 		let lastRow = max(0, shownLineCount - 1)
+		let onRow = max(0, min(row, lastRow))
+		// The row's own text rather than the grid's width. Anchoring out in the
+		// blank space past the end of a line anchors at a place with nothing in
+		// it: the drag begins somewhere the highlight cannot show and the copied
+		// text does not include, so what is drawn and what is copied disagree
+		// with where the pointer was pressed.
+		//
+		// Falls back to the grid when the row cannot be read at all, which is
+		// the old behaviour and the only answer available.
+		let limit = emulator.grid.line(at: onRow)?.usedColumns ?? emulator.metrics.columns
 		return TerminalPosition(
-			row: max(0, min(row, lastRow)),
-			column: max(0, min(column, emulator.metrics.columns))
+			row: onRow,
+			column: max(0, min(column, limit))
 		)
 	}
 
@@ -2669,7 +2777,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		default:
 			let position = selectionPosition(for: event)
 			isSelecting = true
-			setSelection(TerminalSelection(anchor: position, head: position))
+			setSelection(TerminalSelection(
+				anchor: position, head: position, isBlock: event.modifierFlags.contains(.option)
+			))
 		}
 	}
 
@@ -2758,6 +2868,16 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 		guard var updated = selection else { return }
 		updated.head = selectionPosition(for: event)
+		// Read again rather than remembered from the press, so pressing or
+		// releasing Option mid-drag switches the selection between a rectangle
+		// and a run of lines under the pointer. Both reference terminals do
+		// this, and it is the only behaviour that does not require deciding
+		// which kind of selection this is before starting one.
+		//
+		// Nothing to resolve against `forwardMouse`: a drag either selects
+		// (mouse tracking off) or is forwarded, never both, and this branch is
+		// only reached while selecting.
+		updated.isBlock = event.modifierFlags.contains(.option)
 		setSelection(updated)
 
 		// Dragging past an edge should keep going, the way it does in a list.

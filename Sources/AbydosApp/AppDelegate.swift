@@ -2215,6 +2215,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if !options.tabDoubleClicks.isEmpty {
+			let after = max(1.0, options.screenshotDelay - 1.2)
+			for (index, tab) in options.tabDoubleClicks.enumerated() {
+				DispatchQueue.main.asyncAfter(deadline: .now() + after + Double(index) * 0.3) {
+					print("TAB double-click \(tab): "
+						+ (controller?.doubleClickTabForTesting(tab) ?? "no window"))
+				}
+			}
+		}
+
+		// After whatever `--run` put on the screen, and before the shot: a
+		// selection is drawn over output, so there has to be output first.
+		if !options.terminalSelections.isEmpty {
+			let after = max(1.0, options.screenshotDelay - 1.0)
+			for (index, drag) in options.terminalSelections.enumerated() {
+				DispatchQueue.main.asyncAfter(deadline: .now() + after + Double(index) * 0.2) {
+					controller?.selectInTerminalForTesting(drag)
+				}
+			}
+		}
+
 		if options.typeText != nil || options.collapseFolds || options.markdownPreview {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.5)) {
 				if let text = options.typeText { controller?.simulateTyping(text) }
@@ -3274,6 +3295,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		preview.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(preview)
+
+		// Where the other view preferences are, and not in the git page's own
+		// header — the page is a split of scroll views and its own comment says
+		// why nothing else may go in one: a stack view in there argued with the
+		// terminal panel once per frame and the divider could not be dragged.
+		let commitFolders = NSMenuItem(
+			title: "Arrange Commit Files by Folder",
+			action: #selector(MainWindowController.toggleCommitFilesByFolder(_:)),
+			keyEquivalent: ""
+		)
+		viewMenu.addItem(commitFolders)
 		viewMenu.addItem(.separator())
 		let splitRight = NSMenuItem(
 			title: "Split Right",

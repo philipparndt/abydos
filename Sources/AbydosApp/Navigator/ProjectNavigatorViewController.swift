@@ -934,7 +934,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// was looking at it, which is the kind of fault nobody reports precisely.
 	private func selectedPaths() -> [String] {
 		TreeSelection.paths(rows: Array(outlineView.selectedRowIndexes)) { row in
-			(outlineView.item(atRow: row) as? FileNode)?.url.path
+			let item = outlineView.item(atRow: row)
+			if let node = item as? FileNode { return node.url.path }
+			// A session's own row is a selection too, and it is not a file. Held
+			// the way its expansion is, so the one set carries both.
+			if let node = item as? SessionNode { return "session:" + node.identity }
+			return nil
 		}
 	}
 
@@ -958,8 +963,31 @@ final class ProjectNavigatorViewController: NSViewController {
 		// directory to prove it has no row is work for nothing on the queue the
 		// watcher runs this from.
 		let rows = TreeSelection.rows(for: paths) { path in
-			guard let node = rootNode.loadedNode(for: URL(fileURLWithPath: path)) else { return -1 }
-			return outlineView.row(forItem: node)
+			// **Whichever root holds it.** This asked `rootNode` alone, so a
+			// selected file under a Claude session — which lives outside the
+			// project, in `/tmp/claude-…` — was looked for in the project tree,
+			// not found, and dropped. Every rebuild of that section therefore
+			// lost the selection entirely, and the section rebuilds on every
+			// file an agent writes.
+			if path.hasPrefix("session:") {
+				guard let node = self.sessionNode(withIdentity: String(path.dropFirst(8))) else {
+					return -1
+				}
+				return outlineView.row(forItem: node)
+			}
+			let url = URL(fileURLWithPath: path)
+			if let node = rootNode.loadedNode(for: url) { return outlineView.row(forItem: node) }
+			if let located = dependencies?.locate(url) {
+				return outlineView.row(forItem: located.node)
+			}
+			// Through open directories only, as above: `loadedNode` gives up
+			// rather than reading a directory to prove a row does not exist.
+			if let session = sessions?.session(containing: url),
+			   let fileRoot = session.fileRoot,
+			   let node = fileRoot.loadedNode(for: url) {
+				return outlineView.row(forItem: node)
+			}
+			return -1
 		}
 		guard !rows.isEmpty else { return }
 
@@ -969,6 +997,19 @@ final class ProjectNavigatorViewController: NSViewController {
 		isSelectingSilently = true
 		outlineView.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
 		isSelectingSilently = wasSilent
+	}
+
+	/// A session row by the name its selection was held under.
+	private func sessionNode(withIdentity identity: String) -> SessionNode? {
+		func find(_ node: SessionNode) -> SessionNode? {
+			if node.identity == identity { return node }
+			for child in node.childNodes {
+				if let found = find(child) { return found }
+			}
+			return nil
+		}
+		guard let sessions else { return nil }
+		return find(sessions)
 	}
 
 	// MARK: - Expansion state
@@ -988,6 +1029,14 @@ final class ProjectNavigatorViewController: NSViewController {
 				paths.insert(node.url.path)
 			} else if let node = item as? DependencyNode, outlineView.isItemExpanded(node) {
 				paths.insert("dep:" + node.identity)
+			} else if let node = item as? SessionNode, outlineView.isItemExpanded(node) {
+				// **The third root was missing from here, and that is item 0540.**
+				// A session's row rebuilds whenever the session's size changes —
+				// which, while an agent is working in it, is every file it
+				// writes — and nothing recorded that the row had been open. So
+				// the section folded shut under whoever was reading it, dozens of
+				// times a minute.
+				paths.insert("session:" + node.identity)
 			}
 		}
 		return paths
@@ -1004,8 +1053,22 @@ final class ProjectNavigatorViewController: NSViewController {
 			outlineView.expandItem(rootNode)
 			expand(node: rootNode, matching: paths)
 		}
-		guard let dependencies else { return }
-		expand(dependency: dependencies.root, matching: paths)
+		// **Each root, and no early return between them.** This used to `guard
+		// let dependencies else { return }`, so a project without a Dependencies
+		// section never reached the sessions below it — and one with a section
+		// never reached them either, because nothing here walked them at all.
+		if let dependencies { expand(dependency: dependencies.root, matching: paths) }
+		if let sessions { expand(session: sessions, matching: paths) }
+	}
+
+	/// The same for the Claude Sessions root and its own rows, and then on into
+	/// the session's directory, where the rows are files again and
+	/// `expand(node:matching:)` takes over.
+	private func expand(session node: SessionNode, matching paths: Set<String>) {
+		guard paths.contains("session:" + node.identity) else { return }
+		outlineView.expandItem(node)
+		for child in node.childNodes { expand(session: child, matching: paths) }
+		if let fileRoot = node.fileRoot { expand(node: fileRoot, matching: paths) }
 	}
 
 	private func expand(node: FileNode, matching paths: Set<String>) {
@@ -2818,13 +2881,31 @@ final class ProjectNavigatorViewController: NSViewController {
 		(0..<outlineView.numberOfRows).map { row in
 			let item = outlineView.item(atRow: row)
 			let indent = String(repeating: "  ", count: outlineView.level(forRow: row))
+			// Which row is selected, because "the selection survived a rebuild"
+			// is the claim and a list of names cannot make it.
+			let mark = outlineView.selectedRowIndexes.contains(row) ? "  <-" : ""
 			if let node = item as? DependencyNode {
-				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "")
+				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "") + mark
 			}
 			if let node = item as? SessionNode {
-				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "")
+				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "") + mark
 			}
-			return indent + ((item as? FileNode).map { title(for: $0) } ?? "?")
+			guard let node = item as? FileNode else { return indent + "?" }
+			// **And the colour it is drawn in.** A report that says which rows
+			// exist cannot catch a row that exists in the wrong colour, which is
+			// the whole of what a git tint is — `.gitignore` rules going
+			// unnoticed looks exactly like a tree that is working.
+			let tint: String
+			switch node.gitStatus {
+			case .unmodified:  tint = ""
+			case .ignored:     tint = "  ignored"
+			case .unversioned: tint = "  untracked"
+			case .added:       tint = "  added"
+			case .modified:    tint = "  modified"
+			case .deleted:     tint = "  deleted"
+			case .conflicted:  tint = "  conflicted"
+			}
+			return indent + title(for: node) + tint + mark
 		}
 	}
 
@@ -2957,6 +3038,22 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// Opens the section down to a file and selects it, the way activating a tab
 	/// on a file outside the project does.
+	/// Rebuilds the Claude Sessions root from the sessions it already holds, so
+	/// what a rebuild costs can be asked for on purpose.
+	///
+	/// **New node objects, which is the whole point.** `refreshSessions` returns
+	/// early unless a session's size or liveness has moved, and what breaks when
+	/// it does *not* return early is that `reloadData` throws away every row's
+	/// identity. This is that moment, without having to make an agent write a
+	/// file to get it.
+	func rebuildSessionsForTesting() {
+		guard let sessions else {
+			print("TREE sessions-rebuild: no sessions")
+			return
+		}
+		show(SessionNode.build(sessions.sessions))
+	}
+
 	func revealForTesting(_ path: String) {
 		let url = URL(fileURLWithPath: path)
 		selectWithoutOpening(url: url)

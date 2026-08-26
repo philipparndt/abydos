@@ -66,6 +66,14 @@ final class BranchesPane: NSView {
 	private var working = GitWorkingCopyStatus()
 	private var unstagedRoots: [GitChangeNode] = []
 	private var stagedRoots: [GitChangeNode] = []
+	/// What a wholly untracked directory turned out to hold, by path.
+	///
+	/// The rows are rebuilt from scratch on every filesystem event, so an open
+	/// folder's insides are new objects each time and have to be put back before
+	/// the tree is built — otherwise a folder somebody is reading closes under
+	/// them. Asked for again afterwards, because the directory may have gained a
+	/// file since.
+	private var untrackedContents: [String: [GitChangeNode]] = [:]
 	/// **Shut to begin with.** Every change in the repository unrolled under
 	/// the first row pushes the branches off the bottom of a 300 pt column, and
 	/// the question the tree is usually asked is not "what have I changed" —
@@ -307,6 +315,12 @@ final class BranchesPane: NSView {
 		Task { @MainActor in
 			let fresh = await GitBranches.list(in: root)
 			self.working = await GitWorkingCopy.status(in: root)
+			// Before the trees are built, so `add(changes:)` fills from a cache
+			// that holds only directories git still reports.
+			let directories = Set(
+				(self.working.unstaged + self.working.staged).filter(\.isDirectory).map(\.path)
+			)
+			self.untrackedContents = self.untrackedContents.filter { directories.contains($0.key) }
 			self.unstagedRoots = GitChangeTree.build(self.working.unstaged, against: self.working.staged)
 			self.stagedRoots = GitChangeTree.build(self.working.staged, against: self.working.unstaged)
 			// Only the repository's own checkouts, and only when there is more
@@ -617,12 +631,20 @@ final class BranchesPane: NSView {
 
 	private func add(changes: [GitChangeNode], staged: Bool, to parent: GitNode) {
 		for change in changes {
+			// An open untracked directory gets what it held put back, so the row
+			// the outline is about to be handed has its children already.
+			if change.change?.isDirectory == true, !change.isFilled,
+			   let known = untrackedContents[change.path] {
+				change.fill(with: known)
+			}
 			let node = GitNode(
 				key: "change:\(staged):\(change.path)",
 				row: .change(change, staged: staged, depth: 0)
 			)
 			parent.add(node)
-			guard change.isFolder else { continue }
+			// `holdsFiles`, not `isFolder`: an untracked directory has children
+			// once it has been opened, and they are rows like any others.
+			guard change.holdsFiles else { continue }
 			add(changes: change.children, staged: staged, to: node)
 		}
 	}
@@ -1638,7 +1660,43 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-		!((item as? GitNode)?.children.isEmpty ?? true)
+		guard let node = item as? GitNode else { return false }
+		if !node.children.isEmpty { return true }
+		// A wholly untracked directory has nothing under it until somebody asks,
+		// and it needs the triangle in order to be asked. Before this it was
+		// drawn as a file with no way in.
+		if case let .change(change, _, _) = node.row { return change.holdsFiles }
+		return false
+	}
+
+	/// Fills an untracked directory the first time it is opened.
+	func outlineViewItemWillExpand(_ notification: Notification) {
+		guard let node = notification.userInfo?["NSObject"] as? GitNode,
+		      case let .change(change, staged, _) = node.row,
+		      change.change?.isDirectory == true, !change.isFilled
+		else { return }
+
+		if let known = untrackedContents[change.path] {
+			change.fill(with: known)
+			add(changes: change.children, staged: staged, to: node)
+			tableView.reloadItem(node, reloadChildren: true)
+			return
+		}
+
+		let path = change.path
+		Task { @MainActor in
+			// Scoped to one directory, which is what makes it affordable at all:
+			// `GitWorkingCopy.status` refuses `-uall` over the work tree because
+			// it measured seven seconds there against 0.11 s.
+			let files = await GitWorkingCopy.untrackedFiles(inDirectory: path, in: self.root)
+			self.untrackedContents[path] = GitChangeTree.contents(
+				ofUntrackedDirectory: path, files: files, staged: staged
+			)
+			// Rebuilt rather than patched: the rows may have been thrown away
+			// and remade while this was out, and `rebuildRows` puts the contents
+			// back on the way through.
+			self.rebuildRows()
+		}
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
@@ -2264,8 +2322,17 @@ private final class WorkingCopyChangeRowView: NSView {
 
 		// A folder of changes gets a folder, like a folder of branches; a file
 		// gets the letter for what happened to it, in the same column.
-		if node.isFolder {
-			RowMetrics.glyph("folder", colour: Theme.current.gitIgnored, in: bounds)
+		//
+		// `holdsFiles`, so a wholly untracked directory gets one too — in the
+		// colour its own kind is drawn in, which is what tells it apart from a
+		// folder this tree invented. There is one column and it cannot hold both
+		// a folder and a letter, so the tint carries the `?`.
+		if node.holdsFiles {
+			RowMetrics.glyph(
+				"folder",
+				colour: node.isFolder ? Theme.current.gitIgnored : colour,
+				in: bounds
+			)
 		} else if !letter.isEmpty {
 			RowMetrics.draw(
 				letter, font: Theme.current.uiFont(11, weight: .semibold), colour: colour,
