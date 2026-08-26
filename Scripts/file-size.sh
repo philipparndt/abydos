@@ -45,11 +45,16 @@
 # obliged to edit a manifest to stay green. Tightening the number is a choice
 # somebody makes.
 #
-# **A merge is the one time a listed file may be re-recorded upward.** Work done
-# on another branch grew nine of these while this list was being kept, and that
-# growth is not the branch's to refuse. Re-record it in the merge commit, say
-# which files and by how much, and the ratchet goes on holding from there. Doing
-# it in any other commit is turning the check off one line at a time.
+# **A listed file that grows fails, and the way past it is to raise the number
+# and say why in the same commit.** This first said growth was never allowed,
+# and the first ordinary bug fix to touch a listed file could not be written: a
+# terminal bug, fixed in the terminal, blocked by a rule about file lengths with
+# nothing to do but drop the fix or refactor somebody else's afternoon into it.
+# A rule like that gets switched off, which is what this list exists to avoid.
+#
+# So the number may go up, and it is never silent: the check fails, somebody
+# edits the entry, and the diff carries the new length and the reason beside it.
+# What is ruled out is a file drifting upward while nobody notices.
 #
 # ## What is not checked
 #

@@ -57,10 +57,22 @@ switched off is worse than one that was never written: it teaches that the
 checks in this repository are advisory.
 
 So the list is the debt, written down. A file on it may shrink freely and may
-be removed from the list when it comes under the aim. It SHALL NOT grow,
-and it SHALL NOT be put back on the list once removed. An entry SHALL carry the
-length it was recorded at, so that the direction of travel is visible in a
-diff rather than inferred.
+be removed from the list when it comes under the aim. It SHALL NOT be put back
+on the list once removed. An entry SHALL carry the length it was recorded at,
+so that the direction of travel is visible in a diff rather than inferred.
+
+**Growing one SHALL fail, and the way past it is to raise the number and say
+why in the same commit.** The first wording forbade growth outright, and the
+first ordinary bug fix to touch a listed file could not be written: a fix in
+`TerminalView.swift` — a terminal bug, in the terminal — was blocked by a rule
+about file lengths, with nothing to do but abandon the fix or refactor 3,590
+lines of somebody else's afternoon into it. That is a rule that gets switched
+off, which is the thing this whole list exists to avoid.
+
+A number that goes up is therefore allowed and is never silent: the check
+fails, somebody edits the entry, and the diff carries both the new length and
+the reason beside it. What is ruled out is a file drifting upward while nobody
+notices, which is what it was ever for.
 
 The list is empty when the work is done, and at that point the check needs no
 list at all.
@@ -76,6 +88,12 @@ list at all.
 - **GIVEN** a file recorded at 4,051 lines
 - **WHEN** it is 4,100 lines and the check runs
 - **THEN** the check names the file, both lengths, and fails
+
+#### Scenario: the growth was meant
+
+- **GIVEN** a file recorded at 4,051 lines that a change has taken to 4,100
+- **WHEN** the entry is raised to 4,100 in the same commit
+- **THEN** the check passes, and the diff shows the number that moved
 
 #### Scenario: a recorded file coming under the aim
 

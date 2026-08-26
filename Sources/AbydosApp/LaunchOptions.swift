@@ -525,6 +525,8 @@ struct LaunchOptions {
 	/// list of presses — `3@editor,4@terminal` — with where the editor landed
 	/// after each.
 	var mouseSteps: String?
+	/// How far an unsteady click wobbles, in points, for `--wobble`.
+	var wobblePixels: Int?
 	/// Drop these files on the editor the way the Finder would.
 	var dropFiles: [String] = []
 	/// Drag a tab onto the group's right-hand zone, which must still split.
@@ -1109,6 +1111,7 @@ struct LaunchOptions {
 			case "--card-report": options.cardReport = true
 			case "--draw-report": options.drawReport = true
 			case "--mouse":      options.mouseSteps = next() ?? "report"
+			case "--wobble":     options.wobblePixels = next().flatMap(Int.init) ?? 3
 			case "--engine-switch": options.engineSwitchAt = next().flatMap(Double.init) ?? 5
 			case "--engine-refuses": options.engineRefuses = true
 			case "--engines": options.engineReportsAt = (next() ?? "4")
