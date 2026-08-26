@@ -2215,6 +2215,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.quickLook {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(1.0, options.screenshotDelay - 1.2)) {
+				print("QUICKLOOK: " + (controller?.quickLookForTesting() ?? "no window"))
+			}
+		}
+
 		if !options.tabDoubleClicks.isEmpty {
 			let after = max(1.0, options.screenshotDelay - 1.2)
 			for (index, tab) in options.tabDoubleClicks.enumerated() {

@@ -359,6 +359,10 @@ final class EditorAreaController: NSViewController {
 	var activeTabCount: Int { (activeGroup ?? groups.first)?.tabCount ?? 0 }
 
 	/// Tears a tab off as a drag ending outside every window would.
+	func quickLookForTesting() -> String {
+		activeGroup?.quickLookForTesting() ?? "no group"
+	}
+
 	func doubleClickTabForTesting(index: Int) -> String {
 		activeGroup?.doubleClickTabForTesting(index: index) ?? "no group"
 	}

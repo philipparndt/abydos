@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import GoSTL
 import AbydosKit
 import SwiftUI
@@ -2954,6 +2955,30 @@ final class EditorViewController: NSViewController {
 	/// with the tab it was asked about, the mode that tab is in, and the classes
 	/// in its content view, which between them say *which* of the possible reasons
 	/// it is.
+	/// Opens Quick Look on a binary-file notice, and says whether the panel came
+	/// up — which is the half that cannot be photographed, since the panel is a
+	/// window of its own and the shot is of this one.
+	func quickLookForTesting() -> String {
+		guard let tab = activeTab else { return "no tab" }
+		guard let notice: FileNoticeView = Self.pane(in: tab.contentView) else {
+			return "no notice view in \(tab.url.lastPathComponent)"
+		}
+		notice.showQuickLook()
+		// **Asked a moment later, not in this turn.** `makeKeyAndOrderFront`
+		// starts the handshake — the panel becomes key, then walks the responder
+		// chain asking who wants to control it — and none of that has happened
+		// by the time this line runs. Read synchronously it says `dataSource=none`
+		// about a panel that is about to be handed over perfectly well.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak notice] in
+			let panel = QLPreviewPanel.sharedPreviewPanelExists() ? QLPreviewPanel.shared() : nil
+			print("QUICKLOOK settled: panel=\(panel?.isVisible == true ? "open" : "not open") "
+				+ "controlling=\(panel?.dataSource === notice ? "the notice" : "somebody else") "
+				+ "showing=\((panel?.currentPreviewItem?.previewItemURL?.lastPathComponent) ?? "nothing")")
+			fflush(stdout)
+		}
+		return "asked for \(notice.urlForTesting.lastPathComponent)"
+	}
+
 	func doubleClickTabForTesting(index: Int) -> String {
 		tabBar.doubleClickForTesting(index: index)
 	}

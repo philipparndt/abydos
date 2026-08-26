@@ -358,6 +358,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			+ "panelMaximized=\(isPanelMaximized)"
 	}
 
+	func quickLookForTesting() -> String { editor.quickLookForTesting() }
+
 	/// Double-clicks a tab, and says what the window looks like afterwards.
 	func doubleClickTabForTesting(_ index: Int) -> String {
 		let took = editor.doubleClickTabForTesting(index: index)

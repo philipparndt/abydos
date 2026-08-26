@@ -67,4 +67,75 @@ struct FileNoticeTests {
 		defer { try? FileManager.default.removeItem(at: present) }
 		#expect(FileNotice.content(for: present, reason: "not text").offersActions)
 	}
+
+	// MARK: - How big it is, and whether the system can show it
+
+	/// "This looks like a binary file" says nothing about whether it is a
+	/// nine-byte marker or a gigabyte of video, and the second is what somebody
+	/// wants to know before opening a hex editor on it.
+	@Test func aFileThatIsThereSaysHowBigItIs() {
+		let content = FileNotice.content(
+			for: URL(fileURLWithPath: "/tmp/file-storage.mp4"),
+			reason: "This looks like a binary file.",
+			exists: true,
+			byteCount: 25_400_000
+		)
+		#expect(content.size == "24 MiB")
+		#expect(content.detail == "This looks like a binary file.", "the sentence is unchanged")
+	}
+
+	@Test func aSizeTooSmallToRoundKeepsItsDecimal() {
+		let content = FileNotice.content(
+			for: URL(fileURLWithPath: "/tmp/a.mp4"), reason: "x", exists: true, byteCount: 1_536
+		)
+		#expect(content.size == "1.5 KiB")
+	}
+
+	@Test func aFileWithNothingToMeasureSaysNothingAboutSize() {
+		let content = FileNotice.content(
+			for: URL(fileURLWithPath: "/tmp/a.mp4"), reason: "x", exists: true, byteCount: nil
+		)
+		#expect(content.size == nil)
+	}
+
+	/// A file that is gone has no size and nothing to preview — the same
+	/// argument that takes its buttons away.
+	@Test func aMissingFileOffersNothingAtAll() {
+		let content = FileNotice.content(
+			for: URL(fileURLWithPath: "/tmp/gone.mp4"), reason: "x", exists: false, byteCount: 900
+		)
+		#expect(content.size == nil)
+		#expect(content.offersQuickLook == false)
+		#expect(content.offersActions == false)
+	}
+
+	/// The kinds the system genuinely previews. A button that usually does
+	/// nothing reads as an offer to do something.
+	@Test func quickLookIsOfferedForWhatQuickLookCanShow() {
+		for shown in ["mp4", "mov", "m4a", "png", "jpg", "heic", "pdf", "ttf", "key"] {
+			#expect(FileNotice.offersQuickLook(forExtension: shown), "\(shown) should be previewable")
+		}
+	}
+
+	@Test func quickLookIsNotOfferedForWhatItCannotShow() {
+		// `zip` among them: Quick Look shows an archive as a large icon with its
+		// name under it, which is what this notice already shows.
+		for hidden in ["o", "a", "dylib", "bin", "zip", "class", "pyc", ""] {
+			#expect(
+				!FileNotice.offersQuickLook(forExtension: hidden),
+				"\(hidden) would open a panel showing a generic icon"
+			)
+		}
+	}
+
+	@Test func aVideoOffersQuickLookAndAnObjectFileDoesNot() {
+		let video = FileNotice.content(
+			for: URL(fileURLWithPath: "/tmp/file-storage.mp4"), reason: "x", exists: true
+		)
+		let object = FileNotice.content(
+			for: URL(fileURLWithPath: "/tmp/main.o"), reason: "x", exists: true
+		)
+		#expect(video.offersQuickLook)
+		#expect(!object.offersQuickLook)
+	}
 }
