@@ -1,13 +1,13 @@
 ## 1. Share the commit page's file list before anything is built on it
 
-- [ ] 1.1 Pull the changed-file list out of `HistoryPane` — the outline, the two
+- [x] 1.1 Pull the changed-file list out of `HistoryPane` — the outline, the two
       arrangements, the line counts, the keyboard, the selection held by path —
       into something a second page can host
-- [ ] 1.2 The commit page uses it, and nothing about it changes: same rows, same
+- [x] 1.2 The commit page uses it, and nothing about it changes: same rows, same
       arrangement, same `*` and same selection across a rebuild
-- [ ] 1.3 Drive `--log-page` and `--commit-page` before and after and compare the
+- [x] 1.3 Drive `--log-page` and `--commit-page` before and after and compare the
       reports line for line; this is the check that the extraction was a move
-- [ ] 1.4 `make test` and `make warnings` green, and the recorded lengths updated
+- [x] 1.4 `make test` and `make warnings` green, and the recorded lengths updated
 
 ## 2. Talking to GitHub
 

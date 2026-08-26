@@ -69,7 +69,10 @@ final class HistoryPane: NSView {
 	private var searchField: NSSearchField!
 	private var scopeControl: NSSegmentedControl!
 	private var commitTable: HistoryTableView!
-	private var fileTable: FileOutlineView!
+	/// The changed files of the selected commit — the list a pull request page
+	/// hosts too, which is why it is a view of its own rather than an outline
+	/// wired up in here. See `ChangedFileList`.
+	private var fileList: ChangedFileList!
 
 	/// The pane is a container, and the keyboard has nothing to do in one.
 	///
@@ -97,19 +100,9 @@ final class HistoryPane: NSView {
 		guard let window, window.firstResponder === self else { return }
 		window.makeFirstResponder(commitTable)
 	}
-	/// The rows of the changes view, in whichever arrangement is in force.
-	///
-	/// `files` stays the source of truth — it is what git answered — and this is
-	/// the shape it is drawn in. A flat arrangement is childless nodes in the
-	/// order git gave them, which is exactly the rows the table drew before this
-	/// view was an outline at all.
-	private var fileRoots: [GitChangeNode] = []
 	/// The two arrangements, as a control. Only the page has one — see
-	/// `rebuildFileRows` for why the column does not.
+	/// `arrangesFilesByFolder` for why the column does not.
 	private var arrangeControl: NSSegmentedControl?
-	/// What `--numstat` said about the commit on screen, so a rebuild — a change
-	/// of arrangement — does not have to ask again.
-	private var lineCounts: [String: GitLineCount] = [:]
 	private var detailLabel: NSTextField!
 	/// The diff of the selected file, in `.page` only.
 	private var diffView: DiffView?
@@ -213,9 +206,11 @@ final class HistoryPane: NSView {
 			self.toggleCollapse(at: row)
 		}
 
-		fileTable = makeFileOutline(rowHeight: Theme.current.scaled(22))
-		fileTable.onSelectionChange = { [weak self] in self?.fileSelected() }
-		fileTable.onExpandAll = { [weak self] in self?.expandEveryFolder() }
+		fileList = ChangedFileList(
+			rowHeight: Theme.current.scaled(22),
+			arrangedByFolder: arrangesFilesByFolder
+		)
+		fileList.onSelect = { [weak self] file in self?.fileSelected(file) }
 
 		detailLabel = NSTextField(labelWithString: "")
 		// Left, like everything else it sits above. A wrapping label defaults
@@ -234,7 +229,7 @@ final class HistoryPane: NSView {
 		detailLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
 		let commitScroll = scrollView(around: commitTable)
-		let fileScroll = scrollView(around: fileTable)
+		let fileScroll: NSView = fileList
 
 		if arrangement == .page {
 			buildPage(commits: commitScroll, files: fileScroll)
@@ -281,7 +276,7 @@ final class HistoryPane: NSView {
 	///
 	/// A split rather than a fixed fraction: how much room a diff wants depends
 	/// entirely on the diff, and a log is read by moving between the two.
-	private func buildPage(commits: NSScrollView, files: NSScrollView) {
+	private func buildPage(commits: NSScrollView, files: NSView) {
 		diffView = DiffView()
 		let diffScroll = NSScrollView()
 		diffScroll.documentView = diffView
@@ -388,21 +383,9 @@ final class HistoryPane: NSView {
 		//
 		// Two segments rather than a button that flips, so the arrangement in
 		// force is on screen rather than remembered.
-		let arrange = NSSegmentedControl(
-			images: [
-				Theme.symbol("list.bullet", size: 11, color: Theme.current.sidebarText)
-					?? NSImage(),
-				Theme.symbol("folder", size: 11, color: Theme.current.sidebarText)
-					?? NSImage(),
-			],
-			trackingMode: .selectOne,
-			target: self,
-			action: #selector(fileArrangementChanged)
+		let arrange = ChangedFileList.makeArrangeControl(
+			target: self, action: #selector(fileArrangementChanged)
 		)
-		arrange.controlSize = .small
-		arrange.translatesAutoresizingMaskIntoConstraints = false
-		arrange.setToolTip("List the files a commit touched", forSegment: 0)
-		arrange.setToolTip("Group them under the folders holding them", forSegment: 1)
 		arrange.selectedSegment = Settings.shared.commitFilesByFolder ? 1 : 0
 		arrangeControl = arrange
 
@@ -485,103 +468,15 @@ final class HistoryPane: NSView {
 		detailSplit?.setPosition(bounds.height * 0.3, ofDividerAt: 0)
 	}
 
-	/// The changes view: an outline in both arrangements.
+	/// Whether this pane's file list groups its rows under folders.
 	///
-	/// One view and not two. A table for files and an outline for folders is two
-	/// data sources, two selection paths and two sets of row-view code, and the
-	/// arrangement nobody had chosen would be the one nobody exercised. An
-	/// outline over childless nodes draws what a table draws.
-	private func makeFileOutline(rowHeight: CGFloat) -> FileOutlineView {
-		let outline = FileOutlineView()
-		outline.headerView = nil
-		outline.backgroundColor = Theme.current.sidebarBackground
-		outline.selectionHighlightStyle = .regular
-		outline.rowSizeStyle = .custom
-		outline.rowHeightOverride = rowHeight
-		outline.intercellSpacing = .zero
-		outline.gridStyleMask = []
-		let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("column"))
-		outline.addTableColumn(column)
-		outline.outlineTableColumn = column
-		// A flat arrangement has no folders, so the indent would be a margin
-		// down the left of every row for nothing.
-		outline.indentationPerLevel = Theme.current.scaled(14)
-		outline.delegate = self
-		outline.dataSource = self
-		return outline
-	}
-
-	/// Builds the rows for the file list from what git answered.
-	private func rebuildFileRows() {
-		let previous = selectedFilePath
-		// **The page only.** The other tense of this pane is a 300 pt sidebar
-		// column that hands its diffs to the editor area; a tree of folders in
-		// it is mostly indent, and the four rows of `Sources/AbydosKit/Git`
-		// above one file would leave nothing for the name. The preference is
-		// named for commit files, which is the page's list.
-		fileRoots = Self.rows(
-			for: files,
-			byFolder: arrangement == .page && Settings.shared.commitFilesByFolder
-		)
-		for row in fileRoots { row.applyLineCounts(lineCounts) }
-		fileTable.reloadData()
-		expandEveryFolder(keepingSelection: false)
-		// By path, because the two arrangements put the same file at different
-		// depths and different indices — so a row number means a *different*
-		// file after a change of arrangement, which looks like it worked.
-		if let previous { select(filePath: previous) }
-	}
-
-	/// One arrangement or the other, from the same files.
-	static func rows(for files: [GitCommitFile], byFolder: Bool) -> [GitChangeNode] {
-		let changes = files.map {
-			GitChange(path: $0.path, kind: $0.kind, isStaged: true)
-		}
-		guard byFolder else {
-			// Childless nodes in git's own order. `GitChangeTree.build` sorts and
-			// groups, which is the other arrangement; this one is the list the
-			// page has always drawn.
-			return changes.map { GitChangeNode(path: $0.path, change: $0) }
-		}
-		return GitChangeTree.build(changes)
-	}
-
-	/// The path of the selected row, which is how a selection is held here.
-	private var selectedFilePath: String? {
-		(fileTable.item(atRow: fileTable.selectedRow) as? GitChangeNode)?.path
-	}
-
-	private func select(filePath path: String) {
-		guard let node = Self.find(path: path, in: fileRoots) else { return }
-		let row = fileTable.row(forItem: node)
-		guard row >= 0 else { return }
-		fileTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-	}
-
-	static func find(path: String, in nodes: [GitChangeNode]) -> GitChangeNode? {
-		for node in nodes {
-			if node.path == path, !node.holdsFiles { return node }
-			if let found = find(path: path, in: node.children) { return found }
-		}
-		return nil
-	}
-
-	/// `*`: every folder open, from wherever the selection is.
-	///
-	/// Row by row from the top, re-reading `numberOfRows` as it goes, because
-	/// rows appear beneath the one just opened. Recursing the model and calling
-	/// `expandItem` on each node would visit rows the view has never been
-	/// handed.
-	private func expandEveryFolder(keepingSelection: Bool = true) {
-		let held = keepingSelection ? selectedFilePath : nil
-		var row = 0
-		while row < fileTable.numberOfRows {
-			if let item = fileTable.item(atRow: row), fileTable.isExpandable(item) {
-				fileTable.expandItem(item)
-			}
-			row += 1
-		}
-		if let held { select(filePath: held) }
+	/// **The page only.** The other tense of this pane is a 300 pt sidebar
+	/// column that hands its diffs to the editor area; a tree of folders in it
+	/// is mostly indent, and the four rows of `Sources/AbydosKit/Git` above one
+	/// file would leave nothing for the name. The preference is named for
+	/// commit files, which is the page's list.
+	private var arrangesFilesByFolder: Bool {
+		arrangement == .page && Settings.shared.commitFilesByFolder
 	}
 
 	private func makeTable(rowHeight: CGFloat) -> HistoryTableView {
@@ -676,7 +571,7 @@ final class HistoryPane: NSView {
 				let nothing = search.isEmpty ? "No commits." : "Nothing matches “\(search)”."
 				messageView?.string = nothing
 				detailLabel.stringValue = nothing
-				rebuildFileRows()
+				fileList.setFiles([])
 			}
 		}
 	}
@@ -813,21 +708,15 @@ final class HistoryPane: NSView {
 			// One `git show --numstat` for the whole commit, beside the file list
 			// rather than before it: the rows are what somebody is waiting for
 			// and the counts are something they say about themselves.
-			lineCounts = [:]
-			rebuildFileRows()
+			fileList.setFiles(loaded)
 			let counts = await GitLineCounts.commit(commit.hash, in: root)
 			guard selectedCommit?.hash == commit.hash else { return }
-			lineCounts = counts
-			for row in fileRoots { row.applyLineCounts(counts) }
-			fileTable.reloadData()
-			expandEveryFolder()
+			fileList.setLineCounts(counts)
 		}
 	}
 
-	private func fileSelected() {
-		guard let path = selectedFilePath, let commit = selectedCommit,
-		      let file = files.first(where: { $0.path == path })
-		else { return }
+	private func fileSelected(_ file: GitCommitFile) {
+		guard let commit = selectedCommit else { return }
 
 		// A column has nowhere to put a diff, so it hands it to the editor
 		// area — which is the journey this whole change is finishing. A page
@@ -1129,30 +1018,17 @@ final class HistoryPane: NSView {
 	}
 
 	func selectFileForTesting(_ index: Int) {
-		guard files.indices.contains(index) else { return }
-		select(filePath: files[index].path)
+		fileList.select(index: index)
 	}
 
 	/// The rows as they are drawn, top to bottom, so a driven run can compare
 	/// the two arrangements — and compare the flat one against what the page
 	/// drew when its file list was a table.
-	func fileRowsForTesting() -> [String] {
-		(0..<fileTable.numberOfRows).compactMap { row in
-			guard let node = fileTable.item(atRow: row) as? GitChangeNode else { return nil }
-			let indent = String(repeating: "  ", count: fileTable.level(forRow: row))
-			let shut = fileTable.isExpandable(node) && !fileTable.isItemExpanded(node)
-				? " [shut]" : ""
-			let selected = fileTable.selectedRow == row ? " <-" : ""
-			// The path for a file, because two commits' worth of `spec.md` and
-			// `design.md` are indistinguishable by name in the flat arrangement.
-			let said = node.holdsFiles ? node.name + "/" : node.path
-			return indent + said + shut + selected
-		}
-	}
+	func fileRowsForTesting() -> [String] { fileList.rowsForTesting() }
 
 	@objc private func fileArrangementChanged() {
 		Settings.shared.commitFilesByFolder = arrangeControl?.selectedSegment == 1
-		rebuildFileRows()
+		fileList.arrangesByFolder = arrangesFilesByFolder
 	}
 
 	/// Draws the file list in whichever arrangement the preference now names.
@@ -1161,7 +1037,7 @@ final class HistoryPane: NSView {
 	/// because the window owns the menu and the page owns the rows.
 	func applyFileArrangement() {
 		arrangeControl?.selectedSegment = Settings.shared.commitFilesByFolder ? 1 : 0
-		rebuildFileRows()
+		fileList.arrangesByFolder = arrangesFilesByFolder
 	}
 
 	/// Flips the arrangement, the way the menu item does.
@@ -1170,142 +1046,16 @@ final class HistoryPane: NSView {
 		applyFileArrangement()
 	}
 
-	func pressStarForTesting() { expandEveryFolder() }
+	func pressStarForTesting() { fileList.expandEveryFolder() }
 
 	/// Works the commit's file list from the keyboard, and says what happened.
-	///
-	/// Three claims in one report, because they fail together: a click gives the
-	/// list the keyboard, the arrows move the selection, and ← and → shut and
-	/// open a folder without losing the row that was selected.
-	///
-	/// The events are synthesised and handed to the view, so what is exercised
-	/// is the view's own `mouseDown` and `keyDown` rather than a shortcut past
-	/// them.
-	func fileKeysForTesting(_ steps: String) -> String {
-		var said: [String] = []
-		func who() -> String {
-			guard let responder = fileTable.window?.firstResponder else { return "nobody" }
-			return responder === fileTable ? "the file list" : String(describing: type(of: responder))
-		}
-		func selection() -> String {
-			let row = fileTable.selectedRow
-			guard row >= 0, let node = fileTable.item(atRow: row) as? GitChangeNode else {
-				return "nothing"
-			}
-			return node.holdsFiles ? node.name + "/" : node.path
-		}
-		/// **The characters matter, not only the key code.** A table maps arrows
-		/// through the key-binding manager, which reads what the key produced —
-		/// `NSUpArrowFunctionKey` and its three neighbours — so an event with an
-		/// empty string moves nothing however right its key code is. A first
-		/// attempt at this report said the arrows did not work and the fault was
-		/// here.
-		func key(_ code: UInt16, _ scalar: UnicodeScalar) {
-			let characters = String(Character(scalar))
-			guard let event = NSEvent.keyEvent(
-				with: .keyDown, location: .zero, modifierFlags: .function,
-				timestamp: ProcessInfo.processInfo.systemUptime,
-				windowNumber: fileTable.window?.windowNumber ?? 0, context: nil,
-				characters: characters, charactersIgnoringModifiers: characters,
-				isARepeat: false, keyCode: code
-			) else { return }
-			fileTable.keyDown(with: event)
-		}
+	func fileKeysForTesting(_ steps: String) -> String { fileList.keysForTesting(steps) }
 
-		// `+` and not a comma: the step arrives as one field of a
-		// comma-separated script, and a colon already means "and its argument".
-		for step in steps.split(separator: "+").map(String.init) {
-			switch step {
-			case let step where step.hasPrefix("click"):
-				let row = Int(step.dropFirst("click".count)) ?? 0
-				guard row < fileTable.numberOfRows else { said.append("click\(row) no such row"); break }
-				// Posted through the window server rather than handed to the
-				// view. A table's `mouseDown` runs a tracking loop waiting for
-				// the release, so a synthesised press on its own selects
-				// nothing — which a first version of this did, and it read as
-				// the click being broken when the instrument was.
-				let rect = fileTable.rect(ofRow: row)
-				let inWindow = fileTable.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
-				guard let screen = fileTable.window?.convertPoint(toScreen: inWindow) else { break }
-				let flipped = CGPoint(
-					x: screen.x,
-					y: (NSScreen.screens.first?.frame.height ?? 0) - screen.y
-				)
-				NSApp.activate(ignoringOtherApps: true)
-				for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-					CGEvent(
-						mouseEventSource: nil, mouseType: type,
-						mouseCursorPosition: flipped, mouseButton: .left
-					)?.post(tap: .cghidEventTap)
-				}
-				// The loop above returns before AppKit has delivered them.
-				RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-				said.append("click\(row) keyboard=\(who()) selected=\(selection())")
-			case "down":  key(125, UnicodeScalar(0xF701)!); said.append("down selected=\(selection())")
-			case "up":    key(126, UnicodeScalar(0xF700)!); said.append("up selected=\(selection())")
-			case "left":  key(123, UnicodeScalar(0xF702)!); said.append("left selected=\(selection())")
-			case "right": key(124, UnicodeScalar(0xF703)!); said.append("right selected=\(selection())")
-			case "focus":
-				fileTable.window?.makeFirstResponder(fileTable)
-				said.append("focus keyboard=\(who())")
-			case "select0":
-				fileTable.selectRowIndexes([0], byExtendingSelection: false)
-				said.append("select0 selected=\(selection())")
-			case "who":   said.append("keyboard=\(who())")
-			case "rows":  said.append("rows=\(fileTable.numberOfRows)")
-			default:      said.append("unknown step \(step)")
-			}
-		}
-		return said.joined(separator: " | ")
-	}
-
-	/// Shuts every folder, so `*` has something to do. A driven run needs this
-	/// because the arrangement arrives open — a tree of folders with nothing
-	/// showing under them has told you less than the flat list did.
-	func collapseEveryFolderForTesting() {
-		let held = selectedFilePath
-		for row in stride(from: fileTable.numberOfRows - 1, through: 0, by: -1) {
-			if let item = fileTable.item(atRow: row), fileTable.isExpandable(item) {
-				fileTable.collapseItem(item)
-			}
-		}
-		if let held { select(filePath: held) }
-	}
+	/// Shuts every folder, so `*` has something to do.
+	func collapseEveryFolderForTesting() { fileList.collapseEveryFolder() }
 }
 
 // MARK: - Tables
-
-extension HistoryPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
-	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-		guard let node = item as? GitChangeNode else { return fileRoots.count }
-		return node.children.count
-	}
-
-	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-		guard let node = item as? GitChangeNode else { return fileRoots[index] }
-		return node.children[index]
-	}
-
-	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-		(item as? GitChangeNode)?.holdsFiles ?? false
-	}
-
-	func outlineView(_ outlineView: NSOutlineView, viewFor column: NSTableColumn?, item: Any) -> NSView? {
-		guard let node = item as? GitChangeNode else { return nil }
-		guard let file = files.first(where: { $0.path == node.path }) else {
-			return CommitFolderRowView(node: node)
-		}
-		return CommitFileRowView(file: file, lines: node.lines)
-	}
-
-	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-		ThemedRowView()
-	}
-
-	func outlineViewSelectionDidChange(_ notification: Notification) {
-		(notification.object as? FileOutlineView)?.onSelectionChange?()
-	}
-}
 
 extension HistoryPane: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int {
@@ -1430,46 +1180,6 @@ extension HistoryPane: NSSearchFieldDelegate {
 }
 
 /// A table that says when its selection changed and when it ran out of rows.
-/// The changes view of the git page: an outline in both arrangements.
-///
-/// Its own class rather than `HistoryTableView`, which the commit list is: the
-/// two answer different keys. A commit folds with ← and → because a merge brings
-/// a branch in; a list of files opens all of itself with `*` and has no merges.
-private final class FileOutlineView: NSOutlineView {
-	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-	/// AppKit posts nothing when the first responder changes, and the editor's
-	/// tab strip draws which tab holds the keyboard. Without this a click here
-	/// moved the keyboard and the tab went on looking unfocused.
-	override func becomeFirstResponder() -> Bool {
-		needsDisplay = true
-		announceKeyboardFocusChange()
-		return super.becomeFirstResponder()
-	}
-
-	override func resignFirstResponder() -> Bool {
-		needsDisplay = true
-		announceKeyboardFocusChange()
-		return super.resignFirstResponder()
-	}
-
-	var onSelectionChange: (() -> Void)?
-	var rowHeightOverride: CGFloat?
-	/// `*` — open everything.
-	var onExpandAll: (() -> Void)?
-
-	override func keyDown(with event: NSEvent) {
-		// The character, not the key code: `*` is shift-8 on an ANSI layout and
-		// somewhere else on every other one, and this is the key people press in
-		// a file manager to mean "all of it".
-		if event.charactersIgnoringModifiers == "*" {
-			onExpandAll?()
-			return
-		}
-		super.keyDown(with: event)
-	}
-}
-
 private final class HistoryTableView: NSTableView {
 	/// A click from an inactive window lands on the row, rather than being
 	/// spent activating the app.
@@ -1879,172 +1589,5 @@ enum GraphMetrics {
 			width: Theme.current.scaled(9),
 			height: Theme.current.scaled(9)
 		)
-	}
-}
-
-/// A file a commit touched, marked by what happened to it.
-/// `+12 −3` for a row of the git page.
-///
-/// Its own copy of what `ChangesPane` draws, deliberately: that one is `private`
-/// to its file, and the two panes are the two halves of item 0537's split. If a
-/// third appears, they belong in one place — two is not yet a pattern.
-private enum CommitLineCountLabel {
-	static func make(_ lines: GitLineCount?) -> NSAttributedString? {
-		guard let lines else { return nil }
-		let font = Theme.current.uiFont(10)
-		let text = NSMutableAttributedString()
-		if lines.added > 0 {
-			text.append(NSAttributedString(string: "+\(lines.added)", attributes: [
-				.font: font, .foregroundColor: Theme.current.gitAdded,
-			]))
-		}
-		if lines.removed > 0 {
-			if text.length > 0 {
-				text.append(NSAttributedString(string: " ", attributes: [.font: font]))
-			}
-			// A real minus, not a hyphen: a hyphen is narrower than the digits
-			// beside it and reads as part of a filename.
-			text.append(NSAttributedString(string: "\u{2212}\(lines.removed)", attributes: [
-				.font: font, .foregroundColor: Theme.current.gitConflict,
-			]))
-		}
-		guard text.length > 0 else { return nil }
-		return text
-	}
-}
-
-/// A folder in the log page's changes view, when it is arranged by folder.
-///
-/// Only the folder arrangement makes these: the flat one is childless nodes and
-/// every row is a file.
-private final class CommitFolderRowView: NSView {
-	private let node: GitChangeNode
-	override var isFlipped: Bool { true }
-
-	init(node: GitChangeNode) {
-		self.node = node
-		super.init(frame: .zero)
-		toolTip = node.path
-	}
-
-	required init?(coder: NSCoder) { fatalError("not used") }
-
-	override func draw(_ dirtyRect: NSRect) {
-		var x = Theme.current.scaled(6)
-		let glyph = Theme.current.scaled(13)
-		FileIcon.folder()?.drawFitted(
-			in: NSRect(x: x, y: bounds.midY - glyph / 2, width: glyph, height: glyph)
-		)
-		x += glyph + Theme.current.scaled(6)
-
-		// How many files are under it, and — since `git-changes-detail` — how
-		// much of them changed. Two numbers answering two questions, the way the
-		// changes pane's folders say both.
-		let right = bounds.maxX - Theme.current.scaled(8)
-		var limit = right
-		if let counts = CommitLineCountLabel.make(node.lines) {
-			let size = counts.size()
-			counts.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
-			limit -= size.width + Theme.current.scaled(8)
-		}
-		let tally = NSAttributedString(string: "\(node.count)", attributes: [
-			.font: Theme.current.uiFont(10.5),
-			.foregroundColor: Theme.current.gitIgnored,
-		])
-		tally.draw(at: NSPoint(x: limit - tally.size().width, y: bounds.midY - tally.size().height / 2))
-		limit -= tally.size().width + Theme.current.scaled(6)
-
-		RowMetrics.draw(
-			node.name,
-			font: Theme.current.uiFont(12, weight: .medium),
-			colour: Theme.current.sidebarText,
-			at: x, in: bounds, limit: limit
-		)
-	}
-}
-
-private final class CommitFileRowView: NSView {
-	private let file: GitCommitFile
-	override var isFlipped: Bool { true }
-
-	private let lines: GitLineCount?
-
-	init(file: GitCommitFile, lines: GitLineCount?) {
-		self.file = file
-		self.lines = lines
-		super.init(frame: .zero)
-		toolTip = file.originalPath.map { "\($0) → \(file.path)" } ?? file.path
-	}
-
-	required init?(coder: NSCoder) { fatalError("not used") }
-
-	override func draw(_ dirtyRect: NSRect) {
-		let left = Theme.current.scaled(10)
-		let colour = Self.color(for: file.kind)
-
-		// Noted before the measuring, not after: this row is where the CoreText
-		// abort has twice been raised, and a note written afterwards would never
-		// be written at all.
-		LastDrawn.note("commit file row \(file.path)", font: Theme.current.uiFont(11.5))
-
-		let letter = NSAttributedString(string: Self.letter(for: file.kind), attributes: [
-			// Through the guard, not straight to `NSFont`: this is the row the
-			// abort has been raised in three times, and a nullable font is what
-			// it was.
-			.font: Theme.current.monoFont(10, weight: .bold),
-			.foregroundColor: colour,
-		])
-		letter.draw(at: NSPoint(x: left, y: bounds.midY - letter.size().height / 2))
-
-		var x = left + Theme.current.scaled(16)
-		let name = NSAttributedString(string: file.name, attributes: [
-			.font: Theme.current.uiFont(11.5),
-			.foregroundColor: Theme.current.sidebarText,
-		])
-		name.draw(at: NSPoint(x: x, y: bounds.midY - name.size().height / 2))
-		x += name.size().width + Theme.current.scaled(6)
-
-		// How much of it changed, at the far end of the row — the answer somebody
-		// scanning a commit's files is scanning for, and the reason they would
-		// otherwise open each one to find out it was a one-line change.
-		var right = bounds.maxX - Theme.current.scaled(8)
-		if let counts = CommitLineCountLabel.make(lines) {
-			let size = counts.size()
-			counts.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
-			right -= size.width + Theme.current.scaled(8)
-		}
-
-		guard !file.directory.isEmpty else { return }
-		let directory = NSAttributedString(string: file.directory, attributes: [
-			.font: Theme.current.uiFont(10),
-			.foregroundColor: Theme.current.gitIgnored,
-		])
-		directory.draw(in: NSRect(
-			x: x,
-			y: bounds.midY - directory.size().height / 2,
-			width: max(0, right - x),
-			height: directory.size().height
-		))
-	}
-
-	private static func letter(for kind: GitChange.Kind) -> String {
-		switch kind {
-		case .added: return "A"
-		case .deleted: return "D"
-		case .renamed: return "R"
-		case .copied: return "C"
-		case .untracked: return "?"
-		case .conflicted: return "!"
-		case .modified: return "M"
-		}
-	}
-
-	private static func color(for kind: GitChange.Kind) -> NSColor {
-		switch kind {
-		case .added, .copied: return Theme.current.gitAdded
-		case .deleted: return Theme.current.gitUnversioned
-		case .conflicted: return Theme.current.gitConflict
-		default: return Theme.current.gitModified
-		}
 	}
 }
