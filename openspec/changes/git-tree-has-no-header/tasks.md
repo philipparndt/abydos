@@ -14,12 +14,12 @@
 
 ## 2. The working copy's verb
 
-- [ ] 2.1 The working copy row offers `Review 1 change…` — the count in words,
+- [x] 2.1 The working copy row offers `Review 1 change…` — the count in words,
       pluralised — whenever it has anything to commit, and nothing when clean
-- [ ] 2.2 The context menu entry and `⇧⌘K` say the same words
-- [ ] 2.3 Driven: a dirty working copy offers it, pressing it opens the commit
+- [x] 2.2 The context menu entry and `⇧⌘K` say the same words
+- [x] 2.3 Driven: a dirty working copy offers it, pressing it opens the commit
       view, and nothing is committed by pressing it
-- [ ] 2.4 Driven: a clean working copy offers nothing
+- [x] 2.4 Driven: a clean working copy offers nothing
 
 ## 3. The repository row
 

@@ -908,6 +908,20 @@ final class BranchesPane: NSView {
 	/// Opens the commit page, where a message with a body gets written.
 	@objc private func openCommitPage() { onOpenCommitPage?() }
 
+	/// The menu's way to the commit view, saying what the row's verb says.
+	private var commitEntryTitle: String {
+		let changed = working.staged.count + working.unstaged.count
+		return "\(Self.reviewChangesTitle(max(1, changed))) ⇧⌘K"
+	}
+
+	/// What the three ways to the commit view all say.
+	///
+	/// One place, because a row, a menu entry and a shortcut that disagree about
+	/// what they open are three things somebody has to try.
+	static func reviewChangesTitle(_ changed: Int) -> String {
+		changed == 1 ? "Review 1 change\u{2026}" : "Review \(changed) changes\u{2026}"
+	}
+
 	/// The selected row's own verb, for `⌘⏎`.
 	///
 	/// Asked of the row's view rather than of a table kept beside the model: the
@@ -1764,7 +1778,21 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			}
 			return view
 		case let .workingCopy(changed):
-			return WorkingCopyRowView(changed: changed)
+			let view = WorkingCopyRowView(changed: changed)
+			// **Not `Commit…`**, which reads as *commit now, after a
+			// confirmation*. Nothing is committed by pressing it: it opens the
+			// view where hunks are chosen and a message written, and committing
+			// happens there, later, by a different press.
+			if changed > 0 {
+				view.action = RowAction(
+					title: Self.reviewChangesTitle(changed),
+					shortTitle: "Review\u{2026}",
+					help: "Open the commit view",
+					isAlwaysShown: true
+				)
+				view.onAction = { [weak self] in self?.openCommitPage() }
+			}
+			return view
 		case let .side(title, _, count):
 			return BranchFolderRowView(display: title, count: count)
 		case let .change(change, staged, _):
@@ -1832,12 +1860,12 @@ extension BranchesPane: NSMenuDelegate {
 				: verb
 			menu.addItem(item(title, #selector(stageClicked)))
 			menu.addItem(.separator())
-			menu.addItem(item("Commit\u{2026} ⇧⌘K", #selector(openCommitPage)))
+			menu.addItem(item(commitEntryTitle, #selector(openCommitPage)))
 			return
 		}
 
 		if case .workingCopy = clickedRow {
-			menu.addItem(item("Commit\u{2026} ⇧⌘K", #selector(openCommitPage)))
+			menu.addItem(item(commitEntryTitle, #selector(openCommitPage)))
 			return
 		}
 
@@ -2292,9 +2320,8 @@ private final class BranchRowView: NSView {
 
 /// One file inside an opened stash.
 /// The working copy: what you are doing, and how much of it there is.
-private final class WorkingCopyRowView: NSView {
+private final class WorkingCopyRowView: ActionableRowView {
 	private let changed: Int
-	override var isFlipped: Bool { true }
 
 	init(changed: Int) {
 		self.changed = changed
@@ -2311,20 +2338,24 @@ private final class WorkingCopyRowView: NSView {
 		RowMetrics.glyph(
 			changed > 0 ? "pencil.circle" : "checkmark.circle", colour: colour, in: bounds
 		)
+		// Measured first: the row's own text has to be laid out inside what the
+		// action leaves, or the two are drawn over each other.
+		let taken = actionWidth
 		let after = RowMetrics.draw(
 			"Working copy",
 			font: Theme.current.uiFont(12, weight: .semibold),
 			colour: colour,
 			at: RowMetrics.textInset, in: bounds,
-			limit: bounds.maxX - RowMetrics.trailingInset
+			limit: bounds.maxX - RowMetrics.trailingInset - taken
 		)
 		RowMetrics.draw(
 			changed == 0 ? "clean" : "\(changed)",
 			font: Theme.current.uiFont(10.5),
 			colour: Theme.current.gitIgnored,
 			at: after + Theme.current.scaled(8), in: bounds,
-			limit: bounds.maxX - RowMetrics.trailingInset
+			limit: bounds.maxX - RowMetrics.trailingInset - taken
 		)
+		drawAction()
 	}
 }
 

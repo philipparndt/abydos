@@ -20,6 +20,11 @@ import AbydosKit
 struct RowAction {
 	/// The words, for an action that has room for them.
 	var title: String?
+	/// The words for a row too narrow to hold the first set.
+	///
+	/// A verb that takes half a 300-point pane leaves `Working copy` reading
+	/// `Wor…`, which is the row saying less than it did before it had a verb.
+	var shortTitle: String?
 	/// The glyph, for one that does not. One of the two is set.
 	var symbol: String?
 	/// What it is, for a tooltip and for a driven run to report.
@@ -97,28 +102,56 @@ class ActionableRowView: NSView {
 		onAction?()
 	}
 
-	/// Draws the action and answers how much room it took, so a row can lay its
-	/// own text out inside what is left.
-	@discardableResult
-	func drawAction() -> CGFloat {
-		actionFrame = .zero
-		guard let action, showsAction else { return 0 }
+	private var padding: CGFloat { Theme.current.scaled(7) }
 
-		let font = Theme.current.uiFont(11, weight: .medium)
-		let colour = Theme.current.gitIgnored
-		let padding = Theme.current.scaled(7)
-		let height = Theme.current.scaled(17)
+	private func text(_ title: String) -> NSAttributedString {
+		NSAttributedString(string: title, attributes: [
+			.font: Theme.current.uiFont(11, weight: .medium),
+			.foregroundColor: Theme.current.sidebarHeaderText,
+		])
+	}
 
-		var width = Theme.current.scaled(20)
-		var label: NSAttributedString?
-		if let title = action.title {
-			let text = NSAttributedString(string: title, attributes: [
-				.font: font,
-				.foregroundColor: Theme.current.sidebarHeaderText,
-			])
-			label = text
-			width = ceil(text.size().width) + padding * 2
+	/// The longest of the action's spellings that leaves the row's own text a
+	/// readable amount of room.
+	///
+	/// **The row comes first.** A row whose name has been truncated to make
+	/// space for a button has been made worse by the button.
+	private func label(for action: RowAction) -> NSAttributedString? {
+		let spellings = [action.title, action.shortTitle].compactMap { $0 }
+		guard !spellings.isEmpty else { return nil }
+		let forTheRow = Theme.current.scaled(96)
+		for spelling in spellings {
+			let drawn = text(spelling)
+			let width = ceil(drawn.size().width) + padding * 2 + RowMetrics.trailingInset
+			if bounds.width - width >= forTheRow { return drawn }
 		}
+		return text(spellings[spellings.count - 1])
+	}
+
+	/// How much of the trailing edge the action will take, **measured before
+	/// anything is drawn**.
+	///
+	/// A row draws its own text first, so it has to know what is left before it
+	/// starts. The first version of this returned the width from the drawing
+	/// call and the rows asked afterwards, which is too late: `Working copy` was
+	/// drawn to the full width and `Review 2 changes…` was then drawn on top of
+	/// it, and in a narrow pane the two were one unreadable row.
+	var actionWidth: CGFloat {
+		guard let action, showsAction else { return 0 }
+		let width = label(for: action).map { ceil($0.size().width) + padding * 2 }
+			?? Theme.current.scaled(20)
+		return width + RowMetrics.trailingInset
+	}
+
+	/// Draws the action, at the width `actionWidth` promised.
+	func drawAction() {
+		actionFrame = .zero
+		guard let action, showsAction else { return }
+
+		let colour = Theme.current.gitIgnored
+		let height = Theme.current.scaled(17)
+		let label = label(for: action)
+		let width = actionWidth - RowMetrics.trailingInset
 
 		let frame = NSRect(
 			x: bounds.maxX - RowMetrics.trailingInset - width,
@@ -126,7 +159,7 @@ class ActionableRowView: NSView {
 			width: width,
 			height: height
 		)
-		guard frame.minX > RowMetrics.textInset else { return 0 }
+		guard frame.minX > RowMetrics.textInset else { return }
 		actionFrame = frame
 
 		let path = NSBezierPath(
@@ -155,7 +188,6 @@ class ActionableRowView: NSView {
 		}
 
 		toolTip = action.help
-		return width + RowMetrics.trailingInset
 	}
 
 	/// What a driven run reads: whether this row offers anything, and what.
