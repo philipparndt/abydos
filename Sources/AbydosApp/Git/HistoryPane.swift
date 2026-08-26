@@ -70,6 +70,33 @@ final class HistoryPane: NSView {
 	private var scopeControl: NSSegmentedControl!
 	private var commitTable: HistoryTableView!
 	private var fileTable: FileOutlineView!
+
+	/// The pane is a container, and the keyboard has nothing to do in one.
+	///
+	/// It was where the keyboard came to rest — opened as a page, the first
+	/// responder was this view — so the arrows had nothing to move and every
+	/// row of both lists was unreachable without a mouse. A container that
+	/// accepts the keyboard and does nothing with it is worse than one that
+	/// refuses: the focus ring is somewhere, and nothing answers.
+	override var acceptsFirstResponder: Bool { true }
+
+	override func becomeFirstResponder() -> Bool {
+		// After this call, not during it: the window is still assigning the
+		// responder it was asked for, and asking it to assign another one from
+		// inside that is how AppKit is made to recurse.
+		DispatchQueue.main.async { [weak self] in self?.focusList() }
+		return super.becomeFirstResponder()
+	}
+
+	/// Puts the keyboard in the list somebody would arrow through.
+	///
+	/// The commits, because that is what a log is; the files follow from
+	/// whichever commit is selected, and clicking one gives it the keyboard the
+	/// way any table does.
+	func focusList() {
+		guard let window, window.firstResponder === self else { return }
+		window.makeFirstResponder(commitTable)
+	}
 	/// The rows of the changes view, in whichever arrangement is in force.
 	///
 	/// `files` stays the source of truth — it is what git answered — and this is
@@ -1145,6 +1172,93 @@ final class HistoryPane: NSView {
 
 	func pressStarForTesting() { expandEveryFolder() }
 
+	/// Works the commit's file list from the keyboard, and says what happened.
+	///
+	/// Three claims in one report, because they fail together: a click gives the
+	/// list the keyboard, the arrows move the selection, and ← and → shut and
+	/// open a folder without losing the row that was selected.
+	///
+	/// The events are synthesised and handed to the view, so what is exercised
+	/// is the view's own `mouseDown` and `keyDown` rather than a shortcut past
+	/// them.
+	func fileKeysForTesting(_ steps: String) -> String {
+		var said: [String] = []
+		func who() -> String {
+			guard let responder = fileTable.window?.firstResponder else { return "nobody" }
+			return responder === fileTable ? "the file list" : String(describing: type(of: responder))
+		}
+		func selection() -> String {
+			let row = fileTable.selectedRow
+			guard row >= 0, let node = fileTable.item(atRow: row) as? GitChangeNode else {
+				return "nothing"
+			}
+			return node.holdsFiles ? node.name + "/" : node.path
+		}
+		/// **The characters matter, not only the key code.** A table maps arrows
+		/// through the key-binding manager, which reads what the key produced —
+		/// `NSUpArrowFunctionKey` and its three neighbours — so an event with an
+		/// empty string moves nothing however right its key code is. A first
+		/// attempt at this report said the arrows did not work and the fault was
+		/// here.
+		func key(_ code: UInt16, _ scalar: UnicodeScalar) {
+			let characters = String(Character(scalar))
+			guard let event = NSEvent.keyEvent(
+				with: .keyDown, location: .zero, modifierFlags: .function,
+				timestamp: ProcessInfo.processInfo.systemUptime,
+				windowNumber: fileTable.window?.windowNumber ?? 0, context: nil,
+				characters: characters, charactersIgnoringModifiers: characters,
+				isARepeat: false, keyCode: code
+			) else { return }
+			fileTable.keyDown(with: event)
+		}
+
+		// `+` and not a comma: the step arrives as one field of a
+		// comma-separated script, and a colon already means "and its argument".
+		for step in steps.split(separator: "+").map(String.init) {
+			switch step {
+			case let step where step.hasPrefix("click"):
+				let row = Int(step.dropFirst("click".count)) ?? 0
+				guard row < fileTable.numberOfRows else { said.append("click\(row) no such row"); break }
+				// Posted through the window server rather than handed to the
+				// view. A table's `mouseDown` runs a tracking loop waiting for
+				// the release, so a synthesised press on its own selects
+				// nothing — which a first version of this did, and it read as
+				// the click being broken when the instrument was.
+				let rect = fileTable.rect(ofRow: row)
+				let inWindow = fileTable.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+				guard let screen = fileTable.window?.convertPoint(toScreen: inWindow) else { break }
+				let flipped = CGPoint(
+					x: screen.x,
+					y: (NSScreen.screens.first?.frame.height ?? 0) - screen.y
+				)
+				NSApp.activate(ignoringOtherApps: true)
+				for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+					CGEvent(
+						mouseEventSource: nil, mouseType: type,
+						mouseCursorPosition: flipped, mouseButton: .left
+					)?.post(tap: .cghidEventTap)
+				}
+				// The loop above returns before AppKit has delivered them.
+				RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+				said.append("click\(row) keyboard=\(who()) selected=\(selection())")
+			case "down":  key(125, UnicodeScalar(0xF701)!); said.append("down selected=\(selection())")
+			case "up":    key(126, UnicodeScalar(0xF700)!); said.append("up selected=\(selection())")
+			case "left":  key(123, UnicodeScalar(0xF702)!); said.append("left selected=\(selection())")
+			case "right": key(124, UnicodeScalar(0xF703)!); said.append("right selected=\(selection())")
+			case "focus":
+				fileTable.window?.makeFirstResponder(fileTable)
+				said.append("focus keyboard=\(who())")
+			case "select0":
+				fileTable.selectRowIndexes([0], byExtendingSelection: false)
+				said.append("select0 selected=\(selection())")
+			case "who":   said.append("keyboard=\(who())")
+			case "rows":  said.append("rows=\(fileTable.numberOfRows)")
+			default:      said.append("unknown step \(step)")
+			}
+		}
+		return said.joined(separator: " | ")
+	}
+
 	/// Shuts every folder, so `*` has something to do. A driven run needs this
 	/// because the arrangement arrives open — a tree of folders with nothing
 	/// showing under them has told you less than the flat list did.
@@ -1324,6 +1438,21 @@ extension HistoryPane: NSSearchFieldDelegate {
 private final class FileOutlineView: NSOutlineView {
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+	/// AppKit posts nothing when the first responder changes, and the editor's
+	/// tab strip draws which tab holds the keyboard. Without this a click here
+	/// moved the keyboard and the tab went on looking unfocused.
+	override func becomeFirstResponder() -> Bool {
+		needsDisplay = true
+		announceKeyboardFocusChange()
+		return super.becomeFirstResponder()
+	}
+
+	override func resignFirstResponder() -> Bool {
+		needsDisplay = true
+		announceKeyboardFocusChange()
+		return super.resignFirstResponder()
+	}
+
 	var onSelectionChange: (() -> Void)?
 	var rowHeightOverride: CGFloat?
 	/// `*` — open everything.
@@ -1345,6 +1474,18 @@ private final class HistoryTableView: NSTableView {
 	/// A click from an inactive window lands on the row, rather than being
 	/// spent activating the app.
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+	override func becomeFirstResponder() -> Bool {
+		needsDisplay = true
+		announceKeyboardFocusChange()
+		return super.becomeFirstResponder()
+	}
+
+	override func resignFirstResponder() -> Bool {
+		needsDisplay = true
+		announceKeyboardFocusChange()
+		return super.resignFirstResponder()
+	}
 
 	var onSelectionChange: (() -> Void)?
 	var onScrolledToEnd: (() -> Void)?

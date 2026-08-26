@@ -726,6 +726,9 @@ final class SidebarController: NSObject {
 			symbol: "clock.arrow.circlepath"
 		)
 		giveTheEditorTheWindow()
+		// Opened to be read, and read with the arrows: a page whose keyboard is
+		// still in whatever opened it needs a click before it can be walked.
+		DispatchQueue.main.async { [weak page] in page?.focusList() }
 		page.setRef(ref)
 	}
 
@@ -761,6 +764,7 @@ final class SidebarController: NSObject {
 		commitPage = page
 		group.openPage(page, title: "Commit", identifier: "commit", symbol: "checkmark.circle")
 		giveTheEditorTheWindow()
+		DispatchQueue.main.async { [weak page] in page?.focusList() }
 
 		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
 		page.refresh()
@@ -791,6 +795,8 @@ final class SidebarController: NSObject {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("COMMIT-PAGE:\n\(page.pageReportForTesting())")
+			case "who":    print("COMMIT-PAGE \(page.keyboardReportForTesting())")
+			case "keys":   print("COMMIT-PAGE keys: " + page.keysForTesting(argument))
 			case "select": page.selectChangeForTesting(argument)
 			case "type":   page.carrySummaryForTesting(argument)
 			default:       print("COMMIT-PAGE: unknown step \(step)")
@@ -844,6 +850,11 @@ final class SidebarController: NSObject {
 			// commit's files are arranged is the question, and the flat
 			// arrangement has to match what the page drew before it was an
 			// outline at all.
+			// The keyboard's own claims: a click gives the list focus, the
+			// arrows move, and ← and → shut and open without losing the row.
+			case "keys":
+				print("LOG-PAGE keys: " + page.fileKeysForTesting(argument))
+				fflush(stdout)
 			case "files":
 				print("LOG-PAGE files:\n  " + page.fileRowsForTesting().joined(separator: "\n  "))
 			case "arrange": page.toggleFileArrangementForTesting()

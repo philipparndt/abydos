@@ -49,6 +49,98 @@ final class ChangesPane: NSView {
 	private var status = GitWorkingCopyStatus()
 	private var unstagedTable: ChangesOutlineView!
 	private var stagedTable: ChangesOutlineView!
+
+	/// The keyboard belongs in a list, not in the box around it — see the same
+	/// override on `HistoryPane`, which is where this was found.
+	override var acceptsFirstResponder: Bool { true }
+
+	override func becomeFirstResponder() -> Bool {
+		DispatchQueue.main.async { [weak self] in self?.focusList() }
+		return super.becomeFirstResponder()
+	}
+
+	/// Which list the keyboard is in, and what it has selected, for a driven
+	/// run — the same three claims the log page's `keys` step makes.
+	func keyboardReportForTesting() -> String {
+		guard let responder = window?.firstResponder else { return "keyboard=nobody" }
+		let where_: String
+		if responder === unstagedTable { where_ = "the unstaged list" }
+		else if responder === stagedTable { where_ = "the staged list" }
+		else if responder === self { where_ = "the pane itself" }
+		else { where_ = String(describing: type(of: responder)) }
+		let table = responder === stagedTable ? stagedTable : unstagedTable
+		let row = table?.selectedRow ?? -1
+		let selected = row >= 0
+			? ((table?.item(atRow: row) as? GitChangeNode).map { $0.holdsFiles ? $0.name + "/" : $0.path } ?? "?")
+			: "nothing"
+		return "keyboard=\(where_) rows=\(table?.numberOfRows ?? 0) selected=\(selected)"
+	}
+
+	/// Works the list from the keyboard and says what happened, the way the log
+	/// page's `keys` step does. The characters matter as well as the key codes:
+	/// a table maps arrows through the key-binding manager, which reads what the
+	/// key produced.
+	func keysForTesting(_ steps: String) -> String {
+		guard let window else { return "no window" }
+		var said: [String] = []
+		func table() -> ChangesOutlineView? {
+			window.firstResponder as? ChangesOutlineView
+		}
+		func key(_ code: UInt16, _ scalar: UnicodeScalar) {
+			let characters = String(Character(scalar))
+			guard let table = table(), let event = NSEvent.keyEvent(
+				with: .keyDown, location: .zero, modifierFlags: .function,
+				timestamp: ProcessInfo.processInfo.systemUptime,
+				windowNumber: window.windowNumber, context: nil,
+				characters: characters, charactersIgnoringModifiers: characters,
+				isARepeat: false, keyCode: code
+			) else { return }
+			table.keyDown(with: event)
+		}
+		func selection() -> String {
+			guard let table = table(), table.selectedRow >= 0,
+			      let node = table.item(atRow: table.selectedRow) as? GitChangeNode
+			else { return "nothing" }
+			return node.holdsFiles ? node.name + "/" : node.path
+		}
+		for step in steps.split(separator: "+").map(String.init) {
+			switch step {
+			case "down":  key(125, UnicodeScalar(0xF701)!); said.append("down \(selection())")
+			case "up":    key(126, UnicodeScalar(0xF700)!); said.append("up \(selection())")
+			case "left":  key(123, UnicodeScalar(0xF702)!); said.append("left \(selection())")
+			case "right": key(124, UnicodeScalar(0xF703)!); said.append("right \(selection())")
+			case "who":   said.append(keyboardReportForTesting())
+			default:      said.append("unknown step \(step)")
+			}
+		}
+		return said.joined(separator: " | ")
+	}
+
+	/// Puts the keyboard in whichever list has rows, unstaged first: that is
+	/// the one somebody is working through.
+	func focusList() {
+		guard let window, window.firstResponder === self else { return }
+		window.makeFirstResponder(listWithRows())
+	}
+
+	private func listWithRows() -> ChangesOutlineView {
+		(unstagedTable?.numberOfRows ?? 0) > 0 ? unstagedTable : stagedTable
+	}
+
+	/// The keyboard is in one of our lists and that list is empty.
+	private func moveKeyboardOffAnEmptyList() {
+		guard let window else { return }
+		let responder = window.firstResponder
+		let ours = responder === unstagedTable || responder === stagedTable || responder === self
+		guard ours else { return }
+		if let table = responder as? ChangesOutlineView, table.numberOfRows > 0 { return }
+		let wanted = listWithRows()
+		guard wanted.numberOfRows > 0, responder !== wanted else { return }
+		window.makeFirstResponder(wanted)
+		if wanted.selectedRow < 0, wanted.numberOfRows > 0 {
+			wanted.selectRowIndexes([0], byExtendingSelection: false)
+		}
+	}
 	private var unstagedHeader: SectionHeaderView!
 	private var stagedHeader: SectionHeaderView!
 
@@ -564,6 +656,12 @@ final class ChangesPane: NSView {
 		}
 		restore(selection: selected, in: outline, staged: staged)
 		isRestoring = false
+		// Rows arrive after the page opens, so the keyboard may have been put
+		// into a list that was empty at the time. Now that there are rows, move
+		// it to one that has some — but only if it is still sitting somewhere
+		// with nothing in it, so a list somebody is actually working in is never
+		// taken from them.
+		moveKeyboardOffAnEmptyList()
 	}
 
 	/// Which folders are folded shut, read off the tree rather than remembered
@@ -1686,6 +1784,24 @@ private final class ChangesOutlineView: NSOutlineView {
 	/// The row under the pointer for a click, and -1 from the keyboard, where
 	/// the selection is what counts rather than any one row.
 	var onActivate: ((Int) -> Void)?
+
+	/// A click from an inactive window lands on the row rather than being spent
+	/// activating the app, as the branches tree and the project tree do.
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+	/// The editor's tab strip draws which tab holds the keyboard, and AppKit
+	/// posts nothing when the first responder changes.
+	override func becomeFirstResponder() -> Bool {
+		needsDisplay = true
+		announceKeyboardFocusChange()
+		return super.becomeFirstResponder()
+	}
+
+	override func resignFirstResponder() -> Bool {
+		needsDisplay = true
+		announceKeyboardFocusChange()
+		return super.resignFirstResponder()
+	}
 
 	override func keyDown(with event: NSEvent) {
 		// 36 is Return, 76 the numeric keypad's.
