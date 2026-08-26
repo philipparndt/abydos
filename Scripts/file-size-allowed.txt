@@ -1,11 +1,11 @@
-3364 Sources/AbydosApp/AppDelegate.swift
+3370 Sources/AbydosApp/AppDelegate.swift
 3941 Sources/AbydosApp/Editor/CodeView.swift
-4360 Sources/AbydosApp/Editor/EditorViewController.swift
+4385 Sources/AbydosApp/Editor/EditorViewController.swift
 3606 Sources/AbydosApp/Editor/LanguageService.swift
 2595 Sources/AbydosApp/Git/BranchesPane.swift
 2017 Sources/AbydosApp/Git/ChangesPane.swift
 1909 Sources/AbydosApp/Git/HistoryPane.swift
-1361 Sources/AbydosApp/LaunchOptions.swift
+1364 Sources/AbydosApp/LaunchOptions.swift
 3602 Sources/AbydosApp/MainWindowController.swift
 4148 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift
 2591 Sources/AbydosApp/Panel/BacklogPane.swift

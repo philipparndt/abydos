@@ -215,15 +215,8 @@ final class SessionNode {
 		return formatter.string(from: date)
 	}
 
-	/// A size, in the units somebody reads.
-	private static func said(_ bytes: Int64) -> String {
-		let units = ["KiB", "MiB", "GiB"]
-		guard bytes >= 1024 else { return "\(bytes) B" }
-		var value = Double(bytes) / 1024
-		var unit = 0
-		while value >= 1024, unit < units.count - 1 { value /= 1024; unit += 1 }
-		return value >= 10
-			? "\(Int(value.rounded())) \(units[unit])"
-			: String(format: "%.1f %@", value, units[unit])
-	}
+	/// A size, in the units somebody reads. `FileSize` holds the one copy — the
+	/// binary-file notice says it too, and two roundings of the same number
+	/// looking different is the sort of thing nobody can explain afterwards.
+	private static func said(_ bytes: Int64) -> String { FileSize.said(bytes) }
 }

@@ -51,6 +51,8 @@ struct LaunchOptions {
 	/// Tabs to double-click before capture, by index — one per `--tab-double`.
 	/// Two of them is the toggle, which is the half a single one cannot show.
 	var tabDoubleClicks: [Int] = []
+	/// Open Quick Look on the notice in front, before capture.
+	var quickLook = false
 	/// Start an agent review before capture.
 	var startReview = false
 	/// Show the backlog dashboard before capture. `list` for the list, anything
@@ -860,6 +862,7 @@ struct LaunchOptions {
 			case "--run":        if let line = next() { options.terminalInput.append(line) }
 			case "--select":     if let drag = next() { options.terminalSelections.append(drag) }
 			case "--tab-double": options.tabDoubleClicks.append(next().flatMap(Int.init) ?? 0)
+			case "--quick-look": options.quickLook = true
 			case "--review":     options.startReview = true
 			case "--backlog":
 				// The mode is optional, so peek rather than consume: without
