@@ -2824,7 +2824,22 @@ final class ProjectNavigatorViewController: NSViewController {
 			if let node = item as? SessionNode {
 				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "")
 			}
-			return indent + ((item as? FileNode).map { title(for: $0) } ?? "?")
+			guard let node = item as? FileNode else { return indent + "?" }
+			// **And the colour it is drawn in.** A report that says which rows
+			// exist cannot catch a row that exists in the wrong colour, which is
+			// the whole of what a git tint is — `.gitignore` rules going
+			// unnoticed looks exactly like a tree that is working.
+			let tint: String
+			switch node.gitStatus {
+			case .unmodified:  tint = ""
+			case .ignored:     tint = "  ignored"
+			case .unversioned: tint = "  untracked"
+			case .added:       tint = "  added"
+			case .modified:    tint = "  modified"
+			case .deleted:     tint = "  deleted"
+			case .conflicted:  tint = "  conflicted"
+			}
+			return indent + title(for: node) + tint
 		}
 	}
 

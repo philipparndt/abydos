@@ -56,6 +56,14 @@ public actor GitRepository {
 	private var ignoredCache: [String: GitFileStatus] = [:]
 	/// The ignored entries that are directories, for inheriting down.
 	private var ignoredDirectories: Set<String> = []
+	/// `.gitignore` files the status read has named — which is how an
+	/// *uncommitted* one is noticed at all. See `parse(porcelain:)`.
+	///
+	/// Added to and never cleared, deliberately: a rule file that is deleted has
+	/// to keep being stat'd, because its going missing is exactly the change the
+	/// fingerprint has to notice. A missing file stats as `-1:-1`, which differs
+	/// from whatever it was.
+	private var ignoreFilesSeen: Set<String> = []
 	/// What the ignore rules looked like when `ignoredCache` was filled, or nil
 	/// when it never has been.
 	private var ignoreRulesFingerprint: String?
@@ -258,7 +266,13 @@ public actor GitRepository {
 	/// modification date, and a build writing ten thousand class files changes
 	/// neither.
 	public func needsIgnoredRefresh() async -> Bool {
-		await Self.ignoreRulesFingerprint(in: root) != ignoreRulesFingerprint
+		await fingerprint() != ignoreRulesFingerprint
+	}
+
+	/// The fingerprint for this repository, including the uncommitted ignore
+	/// files the status read has seen.
+	private func fingerprint() async -> String {
+		await Self.ignoreRulesFingerprint(in: root, alsoWatching: ignoreFilesSeen)
 	}
 
 	/// Re-reads which paths git ignores.
@@ -276,7 +290,7 @@ public actor GitRepository {
 		// while this is running, the fingerprint stored is the one this answer
 		// belongs to, and the next refresh notices the difference and asks
 		// again. Stored the other way round, that edit would be swallowed.
-		let fingerprint = await Self.ignoreRulesFingerprint(in: root)
+		let fingerprint = await self.fingerprint()
 
 		let result = await Self.run(
 			["status", "--porcelain=v1", "-unormal", "--ignored=traditional",
@@ -313,11 +327,26 @@ public actor GitRepository {
 	/// the index and never touches the work tree, so finding them costs
 	/// milliseconds even where there are more than a thousand.
 	///
-	/// Untracked `.gitignore` files are deliberately left out. One only affects
-	/// its own directory and below, and a directory holding an untracked
-	/// `.gitignore` is itself untracked — so everything under it is already
-	/// coloured by inheriting from it, whatever the rules inside say.
-	private static func ignoreRulesFingerprint(in root: URL) async -> String {
+	/// **Uncommitted `.gitignore` files come in through `alsoWatching`**, which is
+	/// the set the status read has named. They used to be left out, on the
+	/// argument that one only affects its own directory and below and that a
+	/// directory holding an untracked `.gitignore` is itself untracked — so
+	/// everything under it inherits that colour whatever the rules inside say.
+	///
+	/// That is true of a subdirectory and false of the work tree root, which is
+	/// never untracked and is where a project's `.gitignore` lives. Git honours
+	/// the file on disk whether it has been committed or not, so writing rules
+	/// into a new one changed what git ignored and nothing the app could see:
+	/// the greying-out never arrived, and the first hour of every new repository
+	/// is spent in exactly that state.
+	///
+	/// The one case still outside this is a `.gitignore` inside a wholly
+	/// untracked directory, which the status read collapses to one `dir/` entry
+	/// and never names. That is the case the old argument does cover: everything
+	/// under such a directory is untracked by definition and inherits from it.
+	private static func ignoreRulesFingerprint(
+		in root: URL, alsoWatching seen: Set<String> = []
+	) async -> String {
 		let listed = await run(
 			["ls-files", "-z", "--cached", "--", "*.gitignore", ".gitignore"],
 			in: root
@@ -326,6 +355,7 @@ public actor GitRepository {
 			? listed.stdout.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
 			: []
 		paths.append(".git/info/exclude")
+		paths.append(contentsOf: seen)
 
 		var files = paths.map { root.appendingPathComponent($0) }
 		let global = await run(["config", "--get", "core.excludesFile"], in: root)
@@ -376,6 +406,14 @@ public actor GitRepository {
 			files[path] = status
 			if isDirectory {
 				directories[path] = status
+			}
+			// **Ignore files git has named here, whether it tracks them or not.**
+			// Free: this record is already in hand, and it is the only cheap way
+			// to know that an *uncommitted* `.gitignore` exists — `ls-files
+			// --cached` cannot see one and `ls-files --others` walks the work
+			// tree, which is the cost this whole arrangement exists to avoid.
+			if (path as NSString).lastPathComponent == ".gitignore" {
+				ignoreFilesSeen.insert(path)
 			}
 		}
 
@@ -463,21 +501,37 @@ public actor GitRepository {
 	public func status(forRelativePath path: String, isDirectory: Bool) -> GitFileStatus {
 		if !isDirectory {
 			if let direct = statusCache[path] { return direct }
+			// **What git said about this very path beats what it said about a
+			// folder above it.** Both answers can be in hand at once and the
+			// specific one is the true one; see the directory case below, which
+			// is where this was reported from.
+			if let ignored = ignoredCache[path] { return ignored }
 			// A file inside a directory git collapsed has no entry of its own.
 			if let inherited = inherited(for: path) { return inherited }
-			return ignoredCache[path] ?? .unmodified
+			return .unmodified
 		}
 
 		// An explicit entry first: a collapsed `dir/` is git saying the whole
 		// directory is one thing, and that is more specific than a rollup.
 		if let explicit = directoryCache[path] { return explicit }
 		if let rolled = rollupCache[path] { return rolled }
+		// **Before inheritance, and that ordering is the whole of item 0538.**
+		// An ignored folder inside an untracked one has both answers to hand:
+		// `-unormal` collapses the untracked parent to one `project/` entry, and
+		// `--ignored=traditional` still names `project/build/` inside it. Asking
+		// the ancestor first returned *untracked* — so a folder git ignores was
+		// drawn in the colour of uncommitted work, which is the one thing the
+		// tint exists to say. An entry for this exact path is not a guess about
+		// it.
+		//
+		// Still after the rollup, which is the other half and unchanged: a
+		// directory with a real change under it is not ignored however many
+		// ignored files sit beside that change. Almost every project keeps its
+		// build output inside a tracked directory, and greying those would grey
+		// out the tree.
+		if let ignored = ignoredCache[path] { return ignored }
 		if let inherited = inherited(for: path) { return inherited }
-		// Last, and only where nothing else had anything to say. A directory
-		// with a change under it is not ignored however many ignored files sit
-		// beside that change — almost every project keeps its build output
-		// inside a tracked directory, and dimming those would grey out the tree.
-		return ignoredCache[path] ?? .unmodified
+		return .unmodified
 	}
 
 	/// Status for many paths, answered in one visit.
