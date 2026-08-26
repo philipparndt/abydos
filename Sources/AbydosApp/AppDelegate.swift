@@ -835,7 +835,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// The sheet itself, for a capture run: it is drawn by hand and a
 			// hand-drawn thing cannot be checked by reading it.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-				controller?.editBreakpointForTesting(line: line)
+				controller?.debugForTesting.editBreakpointForTesting(line: line)
 			}
 		}
 
@@ -843,7 +843,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// Before anything is running, which is when conditions are really
 			// set: while writing the code, not while stopped in it.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-				controller?.setBreakpointConditionForTesting(line: line, condition: condition)
+				controller?.debugForTesting.setBreakpointConditionForTesting(line: line, condition: condition)
 			}
 		}
 
@@ -1191,7 +1191,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// Once it has built and stopped, look at what is there — and do not
 			// step, or the values belong to somewhere else.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
-				controller?.inspectDebugStateForTesting()
+				controller?.debugForTesting.inspectDebugStateForTesting()
 			}
 			// Then let it finish, so there is an exit code to report.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) {
@@ -1207,7 +1207,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// Delve builds the program first, which takes a moment.
 			for (index, delay) in [6.0, 7.5, 9.0, 10.5, 12.0].enumerated() {
 				DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-					controller?.reportDebugStepForTesting(step: index)
+					controller?.debugForTesting.reportDebugStepForTesting(step: index)
 				}
 			}
 		}
@@ -1533,7 +1533,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let line = options.disabledBreakpointLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-				controller?.disableBreakpointForTesting(line: line)
+				controller?.debugForTesting.disableBreakpointForTesting(line: line)
 			}
 		}
 
@@ -1967,14 +1967,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let line = options.breakpointLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				controller?.toggleBreakpointForTesting(line: line)
+				controller?.debugForTesting.toggleBreakpointForTesting(line: line)
 			}
 		}
 
 		for delay in options.breakpointReports {
 			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
 				print("BREAKPOINTS at \(delay)s:")
-				print(controller?.breakpointReportForTesting() ?? "no window")
+				print(controller?.debugForTesting.breakpointReportForTesting() ?? "no window")
 			}
 		}
 

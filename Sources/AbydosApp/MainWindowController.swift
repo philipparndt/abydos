@@ -172,6 +172,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	var sidebarForTesting: SidebarController { sidebar }
 
+	/// Breakpoints and the stopped line, which outlive any one session.
+	private lazy var debug: DebugCoordinator = {
+		let coordinator = DebugCoordinator(editor: editor, panel: bottomPanel)
+		coordinator.debugSession = { [weak self] in self?.debugSession ?? nil }
+		coordinator.hostWindow = { [weak self] in self?.window }
+		coordinator.onRememberBreakpoints = { [weak self] in self?.rememberBreakpoints() }
+		coordinator.onDebugContinue = { [weak self] in self?.debugContinue($0) }
+		coordinator.onDebugStepOver = { [weak self] in self?.debugStepOver($0) }
+		coordinator.onDebugStepInto = { [weak self] in self?.debugStepInto($0) }
+		coordinator.onDebugStepOut = { [weak self] in self?.debugStepOut($0) }
+		coordinator.onWatchFromEditor = { [weak self] expression in self?.watchFromEditor(expression) }
+		return coordinator
+	}()
+
+	var debugForTesting: DebugCoordinator { debug }
+
 	// Menu-bar items find their target through the responder chain, and this
 	// class is on it while `SidebarController` is not. So the actions stay
 	// here, one line each, and the work is the sidebar's.
@@ -913,25 +929,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self?.copyLink(to: url, form: form, line: line, endLine: endLine)
 		}
 		editor.onEditBreakpoint = { [weak self] url, line in
-			self?.editBreakpoint(file: url, line: line)
+			self?.debug.editBreakpoint(file: url, line: line)
 		}
 		editor.onToggleBreakpoint = { [weak self] url, line in
-			self?.toggleBreakpoint(file: url, line: line)
+			self?.debug.toggleBreakpoint(file: url, line: line)
 		}
 		editor.onSetBreakpointEnabled = { [weak self] url, line, enabled in
-			self?.setBreakpoint(file: url, line: line, enabled: enabled)
+			self?.debug.setBreakpoint(file: url, line: line, enabled: enabled)
 		}
 		editor.onDeleteBreakpoint = { [weak self] url, line in
-			self?.deleteBreakpoint(file: url, line: line)
+			self?.debug.deleteBreakpoint(file: url, line: line)
 		}
 		editor.onSetOtherBreakpointsEnabled = { [weak self] url, line, enabled in
-			self?.setOtherBreakpoints(file: url, line: line, enabled: enabled)
+			self?.debug.setOtherBreakpoints(file: url, line: line, enabled: enabled)
 		}
 		editor.onLinesChanged = { [weak self] url, first, removed, inserted in
 			self?.moveBreakpoints(inFile: url, editedFrom: first, removed: removed, inserted: inserted)
 		}
 		editor.onFileReloaded = { [weak self] url in
-			self?.reanchorBreakpoints(inFile: url)
+			self?.debug.reanchorBreakpoints(inFile: url)
 		}
 		editor.onRunLine = { [weak self] url, line in
 			self?.runConfiguration(forFile: url, line: line)
@@ -1274,12 +1290,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			xcodeDestinations = remembered.xcodeDestinations
 
 			// The gutter, from what was there last time. Only when nothing has
-			// set any yet: a window that already has breakpoints is one where
+			// set any yet: a window that already has debug.breakpoints is one where
 			// somebody has been working, and a file restored over that would
 			// take them away.
-			if pendingBreakpoints.isEmpty, !remembered.breakpoints.isEmpty {
-				pendingBreakpoints = remembered.breakpoints
-				showPendingBreakpoints()
+			if debug.pendingBreakpoints.isEmpty, !remembered.breakpoints.isEmpty {
+				debug.pendingBreakpoints = remembered.breakpoints
+				debug.showPendingBreakpoints()
 			}
 		}
 
@@ -1553,7 +1569,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				adapter: adapter,
 				executable: executable,
 				start: .launch(program: FilePath.canonical(url), arguments: []),
-				breakpoints: self.pendingBreakpoints
+				breakpoints: self.debug.pendingBreakpoints
 			) else { return }
 			self.wire(session)
 		}
@@ -1597,7 +1613,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			adapter: adapter,
 			executable: executable,
 			start: .attach(pid: process.pid),
-			breakpoints: pendingBreakpoints
+			breakpoints: debug.pendingBreakpoints
 		) else { return }
 		wire(session)
 	}
@@ -1606,9 +1622,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// The session the debug commands act on, if one is running.
 	private var debugSession: DebugSession? { bottomPanel.activeDebugSession }
-
-	/// Where execution is stopped, for saying so.
-	private var executionMarker: (file: String, line: Int)?
 
 	@objc func debugContinue(_ sender: Any?) { debugSession?.resume() }
 	@objc func debugPause(_ sender: Any?) { debugSession?.pause() }
@@ -1765,7 +1778,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			adapter: adapter,
 			executable: executable,
 			start: .launch(program: FilePath.canonical(URL(fileURLWithPath: path)), arguments: []),
-			breakpoints: pendingBreakpoints
+			breakpoints: debug.pendingBreakpoints
 		) else { return }
 		wire(session)
 	}
@@ -1779,73 +1792,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let state = self.debugSession.map { String(describing: $0.state) } ?? "none"
 			print("EXIT: code=\(self.debugSession?.exitCode.map(String.init) ?? "none") state=\(state)")
 			fflush(stdout)
-		}
-	}
-
-	/// Looks at where the debugger stopped, without moving it.
-	func inspectDebugStateForTesting() {
-		let stoppedAt = executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" }
-			?? "not stopped"
-		print("INSPECT: stopped at \(stoppedAt)")
-		// What the editor is drawing beside the code, which is the half of a
-		// stop that used to be readable only in the panel.
-		print("VALUES:\n\(editor.inlineValueReportForTesting())")
-		bottomPanel.exerciseDebugExtrasForTesting()
-
-		// And the editor's way in, which is the one somebody actually uses:
-		// select an expression, ask to watch it, and the answer should be in
-		// front of them rather than behind the console tab.
-		watchFromEditor("answer * 3")
-		let pane = bottomPanel.activeDebugPane
-		let added = pane?.debugSession.watches.contains { $0.expression == "answer * 3" } ?? false
-		print("EDITORWATCH: added=\(added) showsConsole=\(pane?.showsConsoleForTesting ?? true)")
-	}
-
-	/// Puts a condition on a breakpoint before the program runs.
-	func setBreakpointConditionForTesting(line: Int, condition: String) {
-		guard let url = editor.activeGroup?.activeTabURL else { return }
-		setBreakpointOptions(
-			file: FilePath.canonical(url), line: line,
-			condition: condition, hitCondition: nil, logMessage: nil
-		)
-		print("COND: \(condition) on line \(line)")
-	}
-
-	/// Walks the debugger a step at a time, saying where it stopped.
-	func reportDebugStepForTesting(step: Int) {
-		guard let session = debugSession else {
-			print("DEBUG: no session yet (step \(step))")
-			return
-		}
-		let where_ = executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" }
-			?? "not stopped"
-		print("DEBUG: step \(step) state=\(session.isActive ? "active" : "inactive") at \(where_)")
-		// What is beside the code at this step, which is the claim that the
-		// values follow execution rather than being drawn once and left.
-		print("VALUES:\n\(editor.inlineValueReportForTesting())")
-
-		if step == 0 {
-			bottomPanel.writeDebugToolbarImageForTesting(to: "build/debug-toolbar.png")
-		}
-
-		// Menu commands, the same ones the function keys send.
-		switch step {
-		case 0, 1: debugStepOver(nil)
-		case 2: debugStepInto(nil)
-		case 3: debugStepOut(nil)
-		// The last step lets it run to the end, so there is an exit code to
-		// report rather than one we killed before it had one.
-		default: debugContinue(nil)
-		}
-
-		if step >= 3 {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-				guard let self else { return }
-				self.bottomPanel.writeDebugToolbarImageForTesting(to: "build/exit-toolbar.png")
-				let state = self.debugSession.map { String(describing: $0.state) } ?? "none"
-				print("EXIT: code=\(self.debugSession?.exitCode.map(String.init) ?? "none") state=\(state)")
-			fflush(stdout)
-			}
 		}
 	}
 
@@ -2262,7 +2208,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			session.selectedConfiguration = selectedConfigurationName
 			session.xcodeDestinations = xcodeDestinations
-			session.breakpoints = breakpointsToRemember()
+			session.breakpoints = debug.breakpointsToRemember()
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
@@ -2326,7 +2272,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
 		session.selectedConfiguration = selectedConfigurationName
 		session.xcodeDestinations = xcodeDestinations
-		session.breakpoints = breakpointsToRemember()
+		session.breakpoints = debug.breakpointsToRemember()
 		try? SessionStore.write(session, in: root)
 	}
 
@@ -2623,21 +2569,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func goProfile(_ sender: Any?) { runGo(.profile) }
 	@objc func goDebug(_ sender: Any?) { runGo(.debug) }
 
-	/// Breakpoints set before a session exists, so they survive between runs.
-	/// Breakpoints set before a session exists, with whatever conditions they
-	/// were given. Whole breakpoints rather than line numbers, or a condition
-	/// put on one before launching — which is when somebody actually sets them
-	/// — would be dropped on the way in.
-	private var pendingBreakpoints: [String: [Breakpoint]] = [:]
-
-	/// The breakpoints worth writing down: the running session's if there is
-	/// one, since it holds what the adapter has confirmed, and the pending set
-	/// otherwise.
-	private func breakpointsToRemember() -> [String: [Breakpoint]] {
-		bottomPanel.activeDebugSession?.breakpoints ?? pendingBreakpoints
-	}
-
-	/// Draws the pending breakpoints in the gutter, which is what makes a
+	/// Draws the pending debug.breakpoints in the gutter, which is what makes a
 	/// restored one visible rather than merely remembered.
 	/// Writes them down as soon as they change, the way the terminals do.
 	///
@@ -2649,73 +2581,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		rememberOpenEditors()
 	}
 
-	private func showPendingBreakpoints() {
-		var marks: [String: [Int: CodeView.BreakpointMark]] = [:]
-		var conditional: [String: Set<Int>] = [:]
-		for (file, list) in pendingBreakpoints {
-			marks[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, Self.mark(for: $0)) })
-			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
-		}
-		editor.setBreakpoints(marks)
-		editor.setConditionalBreakpoints(conditional)
-	}
-
-	private func toggleBreakpoint(file: URL, line: Int) {
-		// The debugger reports files by their real path, so breakpoints are
-		// keyed the same way or they are set against a name nothing else uses.
-		let path = FilePath.canonical(file)
-
-		// Anchored either way: what it was put on is only knowable now, while the
-		// file still looks the way it did when it was clicked.
-		defer { scheduleAnchoring(inFile: file) }
-
-		if let session = bottomPanel.activeDebugSession {
-			session.toggleBreakpoint(file: path, line: line)
-			syncBreakpointsToEditor(from: session)
-			rememberBreakpoints()
-			return
-		}
-
-		// No session yet: remember it, and hand the set over when one starts.
-		var list = pendingBreakpoints[path] ?? []
-		if let index = list.firstIndex(where: { $0.line == line }) {
-			list.remove(at: index)
-		} else {
-			list.append(Breakpoint(file: path, line: line))
-			list.sort { $0.line < $1.line }
-		}
-		pendingBreakpoints[path] = list.isEmpty ? nil : list
-		publishPendingBreakpoints()
-		rememberBreakpoints()
-	}
-
-	/// A file's breakpoints, from the session when one is running and from the
-	/// pending set otherwise — the two are kept in step, so either answers.
-	private func breakpoints(inFile path: String) -> [Breakpoint] {
-		bottomPanel.activeDebugSession?.breakpoints(inFile: path) ?? pendingBreakpoints[path] ?? []
-	}
-
-	/// Puts a file's breakpoints back, wherever they are being kept.
-	private func replaceBreakpoints(inFile path: String, with list: [Breakpoint]) {
-		if let session = bottomPanel.activeDebugSession {
-			session.replaceBreakpoints(inFile: path, with: list)
-			syncBreakpointsToEditor(from: session)
-			return
-		}
-		pendingBreakpoints[path] = list.isEmpty ? nil : list
-		publishPendingBreakpoints()
-	}
-
-	/// What the gutter needs to know about a breakpoint.
-	private static func mark(for breakpoint: Breakpoint) -> CodeView.BreakpointMark {
-		CodeView.BreakpointMark(
-			isEnabled: breakpoint.isEnabled,
-			isVerified: breakpoint.isVerified,
-			isConditional: breakpoint.isConditional
-		)
-	}
-
-	/// Moves the breakpoints in a file with the text they were put on.
+	/// Moves the debug.breakpoints in a file with the text they were put on.
 	///
 	/// Typing above a breakpoint used to leave it on its line number while the
 	/// code moved out from under it — so it stopped somewhere nobody had asked
@@ -2723,10 +2589,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func moveBreakpoints(inFile url: URL, editedFrom first: Int, removed: Int, inserted: Int) {
 		guard removed != inserted else { return }
 		let path = FilePath.canonical(url)
-		let list = breakpoints(inFile: path)
+		let list = debug.breakpoints(inFile: path)
 		guard !list.isEmpty else { return }
 
-		replaceBreakpoints(inFile: path, with: list.compactMap { breakpoint in
+		debug.replaceBreakpoints(inFile: path, with: list.compactMap { breakpoint in
 			guard let line = BreakpointAnchors.moved(
 				line: breakpoint.line, editedFrom: first, removed: removed, inserted: inserted
 			) else { return nil }
@@ -2748,249 +2614,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		// The anchors now describe where these were before the edit. Taking them
 		// again is a query over the whole file, so it waits for typing to stop.
-		scheduleAnchoring(inFile: url)
-	}
-
-	/// Anchoring waiting for the file to stop changing, per file.
-	private var anchoringWork: [String: DispatchWorkItem] = [:]
-
-	private func scheduleAnchoring(inFile url: URL) {
-		let path = FilePath.canonical(url)
-		anchoringWork[path]?.cancel()
-		let work = DispatchWorkItem { [weak self] in
-			self?.anchoringWork[path] = nil
-			self?.anchorBreakpoints(inFile: url)
-		}
-		anchoringWork[path] = work
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
-	}
-
-	/// Records where a file's breakpoints sit in its code.
-	///
-	/// A line number is enough right up until something rewrites the file
-	/// without saying what it changed. What survives that is the symbol the
-	/// breakpoint is inside and the line it is on, which can only be read while
-	/// the file still looks the way the breakpoint was set against.
-	private func anchorBreakpoints(inFile url: URL) {
-		let path = FilePath.canonical(url)
-		let lines = breakpoints(inFile: path).map(\.line)
-		guard !lines.isEmpty, let document = editor.document(for: url) else { return }
-
-		// The symbols come off the parser's own queue, behind whatever reparse
-		// the last edit left running, so this sees the tree for the text as it
-		// is now rather than an outline that is one edit behind.
-		document.symbols { [weak self] symbols in
-			var anchors: [Int: BreakpointAnchors.Anchor] = [:]
-			for line in lines where line <= document.lineCount {
-				anchors[line] = BreakpointAnchors.anchor(
-					line: line,
-					text: document.lineText(line - 1),
-					in: symbols,
-					lineCount: document.lineCount
-				)
-			}
-			self?.applyAnchors(anchors, inFile: path)
-		}
-	}
-
-	private func applyAnchors(_ anchors: [Int: BreakpointAnchors.Anchor], inFile path: String) {
-		if let session = bottomPanel.activeDebugSession {
-			session.setBreakpointAnchors(inFile: path, anchors)
-			pendingBreakpoints = session.breakpoints
-			return
-		}
-		guard var list = pendingBreakpoints[path] else { return }
-		for index in list.indices {
-			guard let anchor = anchors[list[index].line] else { continue }
-			list[index].anchor = anchor
-		}
-		pendingBreakpoints[path] = list
-	}
-
-	/// Puts a file's breakpoints back on the code they were set on, after
-	/// something else rewrote the file.
-	///
-	/// Nothing reported an edit — an agent, a `git checkout` and a formatter all
-	/// just leave a different file behind — so there is nothing to shift the
-	/// lines by. Each breakpoint goes to wherever its anchor now points.
-	private func reanchorBreakpoints(inFile url: URL) {
-		let path = FilePath.canonical(url)
-		guard !breakpoints(inFile: path).isEmpty, let document = editor.document(for: url) else {
-			return
-		}
-
-		// Any anchoring still pending was scheduled against the text this file
-		// has just stopped holding; letting it run would pin the breakpoints to
-		// the new file at the old lines, which is the thing being undone here.
-		anchoringWork[path]?.cancel()
-		anchoringWork[path] = nil
-
-		// The reload abandoned the old tree and queued a parse of the new text;
-		// this query is behind it on the same queue, so it waits for the parse
-		// rather than reading an empty outline and concluding every breakpoint
-		// has lost its symbol.
-		document.symbols { [weak self] symbols in
-			guard let self else { return }
-			let lines = (0..<document.lineCount).map { document.lineText($0) }
-			self.replaceBreakpoints(
-				inFile: path,
-				with: BreakpointAnchors.resolve(
-					// Read again rather than captured: the parse took a moment,
-					// and a breakpoint set in it is one somebody just clicked.
-					breakpoints: self.breakpoints(inFile: path), in: symbols, lines: lines
-				)
-			)
-		}
-	}
-
-	/// Turns a breakpoint off, or on again, wherever it is kept.
-	func setBreakpoint(file: URL, line: Int, enabled: Bool) {
-		let path = FilePath.canonical(file)
-		if let session = bottomPanel.activeDebugSession {
-			session.setBreakpoint(file: path, line: line, enabled: enabled)
-			syncBreakpointsToEditor(from: session)
-			return
-		}
-		guard var list = pendingBreakpoints[path],
-		      let index = list.firstIndex(where: { $0.line == line })
-		else { return }
-		list[index].isEnabled = enabled
-		if !enabled { list[index].isVerified = false }
-		pendingBreakpoints[path] = list
-		publishPendingBreakpoints()
-	}
-
-	/// Takes a breakpoint away — dragging it out of the gutter, or Delete.
-	func deleteBreakpoint(file: URL, line: Int) {
-		let path = FilePath.canonical(file)
-		if let session = bottomPanel.activeDebugSession {
-			session.removeBreakpoint(file: path, line: line)
-			syncBreakpointsToEditor(from: session)
-			return
-		}
-		guard var list = pendingBreakpoints[path] else { return }
-		list.removeAll { $0.line == line }
-		pendingBreakpoints[path] = list.isEmpty ? nil : list
-		publishPendingBreakpoints()
-	}
-
-	/// Silences every breakpoint but one, or brings them all back.
-	func setOtherBreakpoints(file: URL, line: Int, enabled: Bool) {
-		let path = FilePath.canonical(file)
-		if let session = bottomPanel.activeDebugSession {
-			session.setOtherBreakpoints(file: path, line: line, enabled: enabled)
-			syncBreakpointsToEditor(from: session)
-			return
-		}
-		for (candidate, list) in pendingBreakpoints {
-			var updated = list
-			for index in updated.indices where !(candidate == path && updated[index].line == line) {
-				updated[index].isEnabled = enabled
-				if !enabled { updated[index].isVerified = false }
-			}
-			pendingBreakpoints[candidate] = updated
-		}
-		publishPendingBreakpoints()
-	}
-
-	/// Draws the breakpoints that exist before anything is running.
-	private func publishPendingBreakpoints() {
-		var mapped: [String: [Int: CodeView.BreakpointMark]] = [:]
-		var conditional: [String: Set<Int>] = [:]
-		for (file, list) in pendingBreakpoints {
-			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, Self.mark(for: $0)) })
-			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
-		}
-		editor.setBreakpoints(mapped)
-		editor.setConditionalBreakpoints(conditional)
-	}
-
-	private func syncBreakpointsToEditor(from session: DebugSession) {
-		var mapped: [String: [Int: CodeView.BreakpointMark]] = [:]
-		var conditional: [String: Set<Int>] = [:]
-		for (file, list) in session.breakpoints {
-			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, Self.mark(for: $0)) })
-			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
-		}
-		// Kept, so they survive the session ending and are there for the next
-		// one — conditions included.
-		pendingBreakpoints = session.breakpoints
-		editor.setBreakpoints(mapped)
-		editor.setConditionalBreakpoints(conditional)
-	}
-
-	/// Applies breakpoint options, to the session if there is one and to the
-	/// pending set either way.
-	func setBreakpointOptions(
-		file path: String,
-		line: Int,
-		condition: String?,
-		hitCondition: String?,
-		logMessage: String?
-	) {
-		if let session = bottomPanel.activeDebugSession {
-			session.setBreakpointOptions(
-				file: path, line: line,
-				condition: condition, hitCondition: hitCondition, logMessage: logMessage
-			)
-			syncBreakpointsToEditor(from: session)
-			return
-		}
-
-		var list = pendingBreakpoints[path] ?? []
-		if let index = list.firstIndex(where: { $0.line == line }) {
-			list[index].condition = condition?.isEmpty == true ? nil : condition
-			list[index].hitCondition = hitCondition?.isEmpty == true ? nil : hitCondition
-			list[index].logMessage = logMessage?.isEmpty == true ? nil : logMessage
-			pendingBreakpoints[path] = list
-			publishPendingBreakpoints()
-		}
-	}
-
-	/// Asks what a breakpoint should do, and tells the session.
-	///
-	/// A breakpoint you have to sit and press Continue at four hundred times
-	/// because the interesting case is the last one is not much of a
-	/// breakpoint; a condition is what makes it one.
-	private func editBreakpoint(file: URL, line: Int) {
-		let path = FilePath.canonical(file)
-
-		// Works whether or not anything is running: conditions are nearly always
-		// set while writing the code, before the first launch.
-		let session = bottomPanel.activeDebugSession
-		let existing = session?.breakpoint(file: path, line: line)
-			?? pendingBreakpoints[path]?.first { $0.line == line }
-			?? {
-				// Right-clicking a line with no breakpoint sets one there
-				// first: it is plainly what was meant.
-				toggleBreakpoint(file: file, line: line)
-				return session?.breakpoint(file: path, line: line)
-					?? pendingBreakpoints[path]?.first { $0.line == line }
-					?? Breakpoint(file: path, line: line)
-			}()
-
-		let sheet = BreakpointOptionsSheet(
-			line: line,
-			fileName: file.lastPathComponent,
-			// The file's own language, so a Go condition is coloured as Go and
-			// a Swift one as Swift.
-			languageId: LanguageRegistry.shared.languageId(for: file) ?? "",
-			existing: existing
-		) { [weak self] condition, hits, message in
-			self?.setBreakpointOptions(
-				file: path,
-				line: line,
-				condition: condition,
-				hitCondition: hits,
-				logMessage: message
-			)
-		}
-		// A window of its own, begun on this one. `presentAsSheet` needs a view
-		// controller to present from and this window has a content view rather
-		// than a controller — asking for one returns nil, and the sheet simply
-		// never appeared.
-		guard let window else { return }
-		window.beginSheet(NSWindow(contentViewController: sheet), completionHandler: nil)
+		debug.scheduleAnchoring(inFile: url)
 	}
 
 	private enum GoAction { case run, build, test, trace, profile, debug }
@@ -3058,7 +2682,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let session = bottomPanel.startDebugging(
 			delve: delve,
 			package: package,
-			breakpoints: pendingBreakpoints
+			breakpoints: debug.pendingBreakpoints
 		) else { return }
 		wire(session)
 	}
@@ -3075,7 +2699,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		session.onBreakpointsChanged = { [weak self, weak session] in
 			guard let self, let session else { return }
-			self.syncBreakpointsToEditor(from: session)
+			self.debug.syncBreakpointsToEditor(from: session)
 		}
 		// The values, on every stop and every frame change — the pane rebuilds
 		// its tree from the same callback, and the editor draws the same numbers
@@ -3095,7 +2719,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// moment the editor has to be visible, and the panel is often not
 			// merely tall but the whole window.
 			self.makeRoomForTheEditor()
-			self.executionMarker = (file, line)
+			self.debug.executionMarker = (file, line)
 			self.editor.open(fileURL: URL(fileURLWithPath: file), atLine: line)
 			self.editor.setExecutionLocation(file: file, line: line)
 		}
@@ -3106,7 +2730,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// The marker must go when execution resumes or the process ends.
 			switch state {
 			case .running, .terminated, .idle:
-				self?.executionMarker = nil
+				self?.debug.executionMarker = nil
 				self?.editor.setExecutionLocation(file: nil, line: nil)
 				// A value that was true at the last breakpoint is not true a
 				// microsecond after `continue`, and it is drawn in the same grey
@@ -3116,7 +2740,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				break
 			}
 		}
-		syncBreakpointsToEditor(from: session)
+		debug.syncBreakpointsToEditor(from: session)
 	}
 
 	/// Picks the main package, prompting only when there is more than one.
@@ -7877,7 +7501,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				adapter: DebugAdapters.java,
 				executable: DebugAdapters.java.command,
 				start: .java(host: "127.0.0.1", port: target.port, request: request),
-				breakpoints: pendingBreakpoints,
+				breakpoints: debug.pendingBreakpoints,
 				location: label(for: pod)
 			) else { return }
 			wire(session)
@@ -7900,7 +7524,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				start: .nativeRemote(
 					host: "127.0.0.1", port: debugForward.localPort, binary: nativeBinary
 				),
-				breakpoints: pendingBreakpoints,
+				breakpoints: debug.pendingBreakpoints,
 				location: label(for: pod)
 			) else { return }
 			wire(session)
@@ -7919,7 +7543,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				workingDirectory: "/app",
 				environment: environment
 			),
-			breakpoints: pendingBreakpoints,
+			breakpoints: debug.pendingBreakpoints,
 			location: label(for: pod)
 		) else { return }
 		wire(session)
@@ -8351,7 +7975,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				adapter: DebugAdapters.java,
 				executable: DebugAdapters.java.command,
 				start: .java(host: "127.0.0.1", port: target.port, request: request),
-				breakpoints: pendingBreakpoints
+				breakpoints: debug.pendingBreakpoints
 			) else { return }
 			wire(session)
 		}
@@ -8450,7 +8074,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				),
 				environment: environment
 			),
-			breakpoints: pendingBreakpoints
+			breakpoints: debug.pendingBreakpoints
 		) else { return }
 		wire(session)
 	}
@@ -8545,7 +8169,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				adapter: DebugAdapters.java,
 				executable: DebugAdapters.java.command,
 				start: .java(host: "127.0.0.1", port: target.port, request: request),
-				breakpoints: pendingBreakpoints
+				breakpoints: debug.pendingBreakpoints
 			) else { return }
 			wire(session)
 		}
@@ -9353,19 +8977,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Presses stop, as the titlebar button does.
 	func stopRunningForTesting() { stopRunning() }
 
-	/// Sets a breakpoint and turns it off, as clicking its marker does.
-	func disableBreakpointForTesting(line: Int) {
-		guard let url = editor.activeGroup.activeTabURL else { return }
-		toggleBreakpoint(file: url, line: line)
-		setBreakpoint(file: url, line: line, enabled: false)
-	}
-
-	/// Opens the breakpoint options sheet, as right-clicking the gutter does.
-	func editBreakpointForTesting(line: Int) {
-		guard let url = editor.activeGroup.activeTabURL else { return }
-		editBreakpoint(file: url, line: line)
-	}
-
 	/// Presses a key with Option held in the terminal, and says what it sent.
 	func optionKeyForTesting(bare: String, composed: String) -> String {
 		setPanelVisible(true)
@@ -9382,29 +8993,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func deadKeyForTesting(presses: [(code: UInt16, shift: Bool)]) -> String {
 		setPanelVisible(true)
 		return bottomPanel.deadKeyForTesting(presses: presses)
-	}
-
-	func toggleBreakpointForTesting(line: Int) {
-		guard let url = editor.activeGroup.activeTabURL else { return }
-		toggleBreakpoint(file: url, line: line)
-	}
-
-	/// Where the open file's breakpoints are and what each is anchored to.
-	///
-	/// Anchoring is invisible until a file is rewritten under it, and the gutter
-	/// only says which line — not what the breakpoint believes it is on. This
-	/// says both, so a rewrite can be checked rather than looked at.
-	func breakpointReportForTesting() -> String {
-		guard let url = editor.activeGroup.activeTabURL else { return "no file open" }
-		let list = breakpoints(inFile: FilePath.canonical(url))
-		guard !list.isEmpty else { return "no breakpoints" }
-
-		return list.map { breakpoint in
-			guard let anchor = breakpoint.anchor else { return "line \(breakpoint.line): unanchored" }
-			let symbol = anchor.path.isEmpty ? "(no symbol)" : anchor.path.joined(separator: ".")
-			return "line \(breakpoint.line): \(symbol)+\(anchor.offset) \"\(anchor.text)\""
-		}
-		.joined(separator: "\n")
 	}
 
 	/// Invokes the gutter's run action, for verifying it end to end.

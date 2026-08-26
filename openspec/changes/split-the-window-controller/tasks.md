@@ -105,13 +105,13 @@
 
 ## 6. DebugCoordinator
 
-- [ ] 6.1 New `DebugCoordinator` owning `pendingBreakpoints`,
+- [x] 6.1 New `DebugCoordinator` owning `pendingBreakpoints`,
       `executionMarker` and `anchoringWork`
-- [ ] 6.2 Move breakpoint management, the execution marker and going to a place
+- [x] 6.2 Move breakpoint management, the execution marker and going to a place
       in the code, with their driving verbs
-- [ ] 6.3 Keep the terminal-shortcut half of `validateMenuItem` on the window —
+- [x] 6.3 Keep the terminal-shortcut half of `validateMenuItem` on the window —
       it is about keyboard focus, not about debugging
-- [ ] 6.4 `make test`, `make warnings`, and the driven debug flags including
+- [x] 6.4 `make test`, `make warnings`, and the driven debug flags including
       `--debug-stop` and `--debug-finish`
 
 ## 7. The run cluster
