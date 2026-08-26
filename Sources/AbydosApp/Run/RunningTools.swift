@@ -287,9 +287,14 @@ enum RunningTools {
 	// MARK: - Saying the numbers
 
 	/// Memory, in the units somebody reads a machine in.
+	///
+	/// `ByteSize` rather than `ByteCountFormatter`'s `.memory` style, which
+	/// divides by 1024 and then labels the answer `MB`. It was the only place
+	/// left in this window saying `MB` about a 1024-based number, next to
+	/// sessions and file notices saying `MiB` about the same arithmetic.
 	static func memory(_ bytes: Int64?) -> String {
 		guard let bytes else { return "—" }
-		return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
+		return ByteSize.said(bytes)
 	}
 
 	/// How long, short enough for a column: `41s`, `12m`, `3h 04m`, `2d 07h`.

@@ -48,7 +48,7 @@ public enum FileNotice {
 			for: url,
 			reason: reason,
 			exists: FileManager.default.fileExists(atPath: url.path),
-			byteCount: FileSize.ofFile(at: url)
+			byteCount: ByteSize.ofFile(at: url)
 		)
 	}
 
@@ -122,7 +122,7 @@ public enum FileNotice {
 				detail: reason,
 				path: nil,
 				offersActions: true,
-				size: byteCount.map(FileSize.said),
+				size: byteCount.map(ByteSize.said),
 				offersQuickLook: offersQuickLook(forExtension: url.pathExtension)
 			)
 		}

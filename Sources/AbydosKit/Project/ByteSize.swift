@@ -1,12 +1,19 @@
 import Foundation
 
-/// A size, in the units somebody reads.
+/// A number of bytes, in the units somebody reads.
 ///
 /// One implementation, because two would drift on the boundary: the sessions
 /// section rounds `10.0 MiB` to `10 MiB` and anything smaller keeps a decimal,
 /// and a second copy written from the same description would put `9.95` where
 /// this puts `10.0`.
-public enum FileSize {
+///
+/// **MiB and not MB, everywhere.** A binary-file notice once said `405,7 MB` in
+/// its sentence and `387 MiB` beside it — the same number in two conventions,
+/// which reads as a mistake because it is one. `ByteCountFormatter` is where
+/// both came from: its `.file` style divides by 1000 and its `.memory` style
+/// divides by 1024 and labels the result `MB` anyway. So neither is used, and
+/// this is what a size looks like in this app.
+public enum ByteSize {
 	public static func said(_ bytes: Int64) -> String {
 		let units = ["KiB", "MiB", "GiB"]
 		guard bytes >= 1024 else { return "\(bytes) B" }
