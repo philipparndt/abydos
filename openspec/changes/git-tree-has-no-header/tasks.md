@@ -120,17 +120,19 @@
 
 ## 11. The change counts line up
 
-- [ ] 11.1 `+n −m` and the file count are drawn in fixed columns in the changes
-      tree, so a folder's total and a file's own read down the page rather than
-      trailing whatever the name happened to be
-- [ ] 11.2 The columns hold at the widths the pane opens at, and give way in
-      the order that keeps the name readable
-- [ ] 11.3 Driven: a nested tree reported and shot at two widths
+- [x] 11.1 `ChangeColumns` measures the widest `+n`, `−m` and tally on each side
+      once per reload; both row views draw right-aligned on those three x's
+- [x] 11.2 The name takes what is left, as it already did — a file row now also
+      reserves the tally column it never draws in, which is what alignment costs
+- [x] 11.3 Driven at 420 and 250 points, reporting the columns themselves and
+      not only the values: a report of the values would have read the same
+      before they lined up as after
 
 ## 7. Proving it
 
-- [ ] 7.1 The tree begins at the top of the pane, under the repository row, and
-      nothing else takes height above it — measured in a driven run, not by eye
+- [x] 7.1 The tree begins at the top of the pane, under the repository row, and
+      nothing else takes height above it — `row at 683–707 of 707`, measured in
+      a driven run
 - [ ] 7.2 Every action reachable by pointer is reachable by `⌘⏎` or a context
       menu, and the driven report says which
 - [ ] 7.3 `make test` and `make warnings` green
