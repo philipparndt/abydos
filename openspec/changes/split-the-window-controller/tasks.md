@@ -86,16 +86,22 @@
 
 ## 5. SidebarController
 
-- [ ] 5.1 New `SidebarController` as an `NSViewController`, owning the tool
+- [x] 5.1 New `SidebarController` as an `NSViewController`, owning the tool
       strip, the five panes, the popover and the sidebar split
-- [ ] 5.2 Answer the open question from the design: one view controller, or a
-      host plus the panes it already has
-- [ ] 5.3 Move the git log and commit pages and the diff apply, stash and
+- [x] 5.2 **Answered: neither — it is not an `NSViewController` at all.** The
+      rail is a subview of the window's root and the tool it opens lives inside
+      `navigatorContainer`, on the far side of a split view. There is no one
+      view for it to control, so it owns the pieces and the window keeps
+      building the hierarchy — which also means 5.4's assumption fails.
+- [x] 5.3 Move the git log and commit pages and the diff apply, stash and
       discard verbs, and with them the git-pane driving verbs deferred from 2.4
       — they need `showSidebarTool`, which arrives here
-- [ ] 5.4 Its `@objc` actions go on it, not on the window — it is in the
-      responder chain by construction; confirm each menu item still enables
-- [ ] 5.5 `make test`, `make warnings`, and the driven sidebar and git flags
+- [x] 5.4 ~~Its `@objc` actions go on it~~ — **wrong, and 5.2 is why.** It is
+      not in the responder chain, so `showLogPage`, `showCommitPage` and
+      `toggleCommitFilesByFolder` stay on the window as one-line forwards, the
+      same as the titlebar's. The menu bar reaches them by selector and would
+      have gone grey otherwise.
+- [x] 5.5 `make test`, `make warnings`, and the driven sidebar and git flags
 
 ## 6. DebugCoordinator
 

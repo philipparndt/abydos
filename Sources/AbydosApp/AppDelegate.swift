@@ -727,7 +727,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let text = options.commitBody {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-				print("COMMITBODY \(controller?.typeInCommitBodyForTesting(text) ?? "no window")")
+				print("COMMITBODY \(controller?.sidebarForTesting.typeInCommitBodyForTesting(text) ?? "no window")")
 				fflush(stdout)
 				if options.writesACapture { return }
 				exit(0)
@@ -1098,7 +1098,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// a default delay of 1.5, so the run had already exited and the line
 			// never printed.
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.2)) {
-				print("RAIL: \(controller?.railReportForTesting() ?? "no window")")
+				print("RAIL: \(controller?.sidebarForTesting.railReportForTesting() ?? "no window")")
 			}
 		}
 
@@ -1271,18 +1271,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let row = options.historyCommit {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				controller?.showSidebarTool(.history)
+				controller?.sidebarForTesting.showSidebarTool(.history)
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.selectHistoryForTesting(commit: row, file: 0)
+				controller?.sidebarForTesting.selectHistoryForTesting(commit: row, file: 0)
 			}
 		}
 
 		if let search = options.scratchSearch {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				controller?.showSidebarTool(.scratches)
-				controller?.searchScratchesForTesting(search)
-				if options.openScratch { controller?.openFirstScratchForTesting() }
+				controller?.sidebarForTesting.showSidebarTool(.scratches)
+				controller?.sidebarForTesting.searchScratchesForTesting(search)
+				if options.openScratch { controller?.sidebarForTesting.openFirstScratchForTesting() }
 			}
 		}
 
@@ -1301,12 +1301,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let tool = options.sidebarTool {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				switch tool {
-				case "changes":   controller?.showSidebarTool(.changes)
-				case "branches":  controller?.showSidebarTool(.branches)
-				case "structure": controller?.showSidebarTool(.structure)
-				case "history":   controller?.showSidebarTool(.history)
-				case "scratches": controller?.showSidebarTool(.scratches)
-				default:          controller?.showSidebarTool(.project)
+				case "changes":   controller?.sidebarForTesting.showSidebarTool(.changes)
+				case "branches":  controller?.sidebarForTesting.showSidebarTool(.branches)
+				case "structure": controller?.sidebarForTesting.showSidebarTool(.structure)
+				case "history":   controller?.sidebarForTesting.showSidebarTool(.history)
+				case "scratches": controller?.sidebarForTesting.showSidebarTool(.scratches)
+				default:          controller?.sidebarForTesting.showSidebarTool(.project)
 				}
 			}
 		}
@@ -1316,7 +1316,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.toggleChanges(nil)
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-				controller?.selectFirstChangeForTesting()
+				controller?.sidebarForTesting.selectFirstChangeForTesting()
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
 				controller?.editorForTesting.selectDiffHunkForTesting(0)
@@ -1474,31 +1474,31 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// runs for several seconds, which the shot is timed to outlast.
 		if let steps = options.changesSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.changesStepsForTesting(steps)
+				controller?.sidebarForTesting.changesStepsForTesting(steps)
 			}
 		}
 
 		if let steps = options.branchRowSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.branchRowsForTesting(steps)
+				controller?.sidebarForTesting.branchRowsForTesting(steps)
 			}
 		}
 
 		if let row = options.commitMenuRow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.commitMenuForTesting(row: row)
+				controller?.sidebarForTesting.commitMenuForTesting(row: row)
 			}
 		}
 
 		if let steps = options.logPageSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.logPageForTesting(steps)
+				controller?.sidebarForTesting.logPageForTesting(steps)
 			}
 		}
 
 		if let steps = options.commitPageSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.commitPageForTesting(steps)
+				controller?.sidebarForTesting.commitPageForTesting(steps)
 			}
 		}
 
@@ -1722,13 +1722,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let branch = options.pushBranch {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-				controller?.pushBranchForTesting(branch)
+				controller?.sidebarForTesting.pushBranchForTesting(branch)
 			}
 		}
 
 		if let row = options.branchMenuRow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.branchMenuForTesting(row: row)
+				controller?.sidebarForTesting.branchMenuForTesting(row: row)
 			}
 		}
 
@@ -1748,7 +1748,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let row = options.collapseRow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.collapseHistoryRowForTesting(row)
+				controller?.sidebarForTesting.collapseHistoryRowForTesting(row)
 			}
 		}
 
@@ -1760,7 +1760,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				// exited, so every driven use of it was a `timeout` away from
 				// looking like a hang — and a run killed by `timeout` reports
 				// 124 whether or not the picture was written.
-				let ok = controller?.snapshotSidebarForTesting(to: path) ?? false
+				let ok = controller?.sidebarForTesting.snapshotSidebarForTesting(to: path) ?? false
 				if !ok {
 					FileHandle.standardError.write(Data("sidebar capture failed: \(path)\n".utf8))
 				}
@@ -1980,10 +1980,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.sidebarCycle {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-				controller?.showSidebarTool(.changes)
+				controller?.sidebarForTesting.showSidebarTool(.changes)
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-				controller?.showSidebarTool(.project)
+				controller?.sidebarForTesting.showSidebarTool(.project)
 			}
 		}
 
