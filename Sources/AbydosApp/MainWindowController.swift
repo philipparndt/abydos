@@ -7957,6 +7957,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				print("TREE session-right-click:\n    \(navigator.sessionRightClicksForTesting())")
 			case "session-menu":
 				print("TREE session-menu: \(navigator.sessionMenuForTesting())")
+			case "sessions-rebuild": navigator.rebuildSessionsForTesting()
 			case "sessions-open": navigator.openSessionsForTesting(files: false)
 			case "sessions-open-all": navigator.openSessionsForTesting(files: true)
 			case "deps-open": navigator.openDependenciesForTesting(groups: false)
