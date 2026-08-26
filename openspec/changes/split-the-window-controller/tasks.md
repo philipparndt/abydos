@@ -138,22 +138,22 @@
 
 ## 10. Server edit actions
 
-- [ ] 10.1 New `Editor/ServerActions.swift` owning renaming a symbol, offering
+- [x] 10.1 New `Editor/ServerActions.swift` owning renaming a symbol, offering
       and taking code actions, and applying a workspace edit — `renameSymbol`,
       `offerCodeActions`, `takeServerEdits`, `apply`, `remember`,
       `workspaceEditFiles`, `completeAtCaret`, `symbolName`
-- [ ] 10.2 It is handed the editor and the navigator; `findUsages`, `symbols`
+- [x] 10.2 It is handed the editor and the navigator; `findUsages`, `symbols`
       and `reasonForNoSymbols` come with it, and `ResultsPresenter`'s three
       closures are wired to it rather than to the window
-- [ ] 10.3 `make test`, `make warnings`, and the driven rename and code-action
+- [x] 10.3 `make test`, `make warnings`, and the driven rename and code-action
       flags
 
 ## 11. Code links
 
-- [ ] 11.1 New `CodeLinks.swift` owning copying and following a place —
+- [x] 11.1 New `CodeLinks.swift` owning copying and following a place —
       `copyLink`, `copyReference`, `copyPermalink`, `goToCopiedPlace`, `follow`,
       `copyToPasteboard`, and their driving verbs
-- [ ] 11.2 `make test`, `make warnings`, and the driven copy-link and
+- [x] 11.2 `make test`, `make warnings`, and the driven copy-link and
       follow-link flags
 
 ## 8. The window controller itself

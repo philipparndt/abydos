@@ -463,4 +463,342 @@ extension EditorAreaController {
 			+ "keyboard=\(responder.map { String(describing: type(of: $0)) } ?? "nothing")")
 		fflush(stdout)
 	}
+
+
+	/// Whether ⌘/ is wired up, which is a different question from whether the
+	/// toggle works and the only one the suite cannot answer.
+	///
+	/// **Not by pressing the key**, and that was tried first. A menu's key
+	/// equivalent is matched against the *key window's* responder chain, and a
+	/// binary launched from a terminal never becomes key — activation is a request
+	/// to the window server that this process is not granted, and it must not be:
+	/// stealing focus from whoever is working is worse than not being tested. So a
+	/// synthesised ⌘/ came back unhandled with no key window, which is
+	/// indistinguishable from a shortcut that is not there. The command palette is
+	/// blank in the same launch for the same reason, for every item in the menu.
+	///
+	/// So the three things that can actually be wrong are checked directly: that
+	/// an item carries `/` with ⌘ and nothing else, that its action is the one this
+	/// class implements, and that walking up from the first responder reaches
+	/// something that answers to it. Given those three, AppKit's own routing is
+	/// what carries the press, and it carries every other item in the same menu.
+	///
+	/// **Those three were not enough**, and 0479 is what they missed. All three
+	/// were satisfied on a German keyboard — the item was there, the mask was ⌘
+	/// alone, the chain answered — while no press a person could make reached it:
+	/// the system had moved the shortcut from `/` to ß, and this report printed
+	/// `key=ß` without anybody reading it as a shortcut nobody would find. So it
+	/// now also says which press matches, from `MenuKeyReport`, because *which key*
+	/// is the question and the wiring was never the part that was wrong.
+	func commentKeyReportForTesting() {
+		let selector = #selector(MainWindowController.toggleLineComment(_:))
+		let items = (NSApp.mainMenu?.items ?? [])
+			.compactMap(\.submenu)
+			.flatMap(\.items)
+			.filter { $0.action == selector }
+
+		var chain: [String] = []
+		var responder: NSResponder? = view.window?.firstResponder
+		var answers = false
+		while let current = responder {
+			chain.append("\(type(of: current))")
+			if current.responds(to: selector) { answers = true; break }
+			responder = current.nextResponder
+		}
+
+		for item in items {
+			print("COMMENTKEY item “\(item.title)” in “\(item.menu?.title ?? "?")” "
+				+ "key=\(item.keyEquivalent) modifiers=\(item.keyEquivalentModifierMask.rawValue) "
+				+ "command-only=\(item.keyEquivalentModifierMask == [.command])")
+		}
+		if items.isEmpty { print("COMMENTKEY no menu item performs toggleLineComment:") }
+		print("COMMENTKEY responder chain answers=\(answers) via \(chain.joined(separator: " → "))")
+		if let layout = KeyboardLayout.current() {
+			let sweep = MenuKeyReport.findings(in: NSApp.mainMenu, layout: layout)
+				.filter { finding in items.contains { $0.title == finding.title } }
+			for finding in sweep {
+				print("COMMENTKEY on “\(layout.name)” the menu says \(finding.shortcut), "
+					+ "and it is pressed as "
+					+ (finding.presses.isEmpty ? "NOTHING" : finding.presses.joined(separator: " or ")))
+			}
+		}
+
+		// And then each of those presses, at the real menu bar, with the text watched
+		// either side of it. The sweep says a press *matches*; this says the match
+		// reaches the editor and changes the file, which is the question somebody
+		// asking "does ⌘/ work" is actually asking. Everything but the window
+		// server's own delivery is in this path.
+		//
+		// Every press rather than the first, because they are not the same key: on a
+		// German keyboard ⌘⇧7 is the slash on the main block and ⌘/ is the one on the
+		// numeric keypad, and somebody who reaches for the keypad is asking a
+		// question the first press cannot answer.
+		if let item = items.first {
+			for (name, event) in MenuKeyReport.presses(reaching: item) {
+				let before = editorTextForTesting()
+				let handled = NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+				let after = editorTextForTesting()
+				print("COMMENTKEY \(name) at the real menu: answered "
+					+ "\(handled ? "it" : "NOTHING") and the text "
+					+ "\(before == after ? "DID NOT CHANGE" : "changed")")
+			}
+		}
+		fflush(stdout)
+	}
+
+	/// Presses ↑ on the first line and ↓ on the last, the page keys, and ⌘↑ and
+	/// ⌘↓ from the middle — each with Shift and without — and says where the
+	/// caret and the selection ended up every time.
+	///
+	/// Started from the middle of a line rather than from its edge, or the
+	/// selection ⇧↑ makes would be empty and the run would read the same
+	/// whether the caret had moved or not.
+	///
+	/// Worth running twice, the second time with `--wrap`: the rows a vertical
+	/// key moves by are then segments of a line rather than lines, and a caret
+	/// partway along a wrapped first line has a row above it to go to even
+	/// though it has no line above it. So the run says which mode it is in
+	/// rather than leaving it to be worked out from the offsets — and the
+	/// setting persists between launches, which is exactly how a run gets read
+	/// as the wrong one of the two.
+	func exerciseVerticalNavigationForTesting() {
+		// Flushed line by line: the app has to be killed to end a run, and a
+		// report still sitting in stdout's buffer when the signal arrives is a
+		// run that looks like it never happened. `--word-nav` reads as silent
+		// for that reason and not because it does nothing.
+		func say(_ label: String) {
+			let padded = label.padding(toLength: 12, withPad: " ", startingAt: 0)
+			print("VERT: \(padded)\(caretReportForTesting)")
+			fflush(stdout)
+		}
+		func place(_ label: String, line: Int, column: Int) {
+			setCaretForTesting(line: line, column: column)
+			say(label)
+		}
+		func press(_ key: String, _ label: String, _ modifiers: NSEvent.ModifierFlags) {
+			simulateKey(key, modifiers: modifiers)
+			say(label)
+		}
+
+		print("VERT: word wrap is \(Settings.shared.wordWrap ? "on" : "off")")
+		fflush(stdout)
+
+		place("at 0@8", line: 0, column: 8)
+		press("up", "⇧↑", .shift)
+		place("at 0@8", line: 0, column: 8)
+		press("up", "↑", [])
+
+		place("at last@4", line: -1, column: 4)
+		press("down", "⇧↓", .shift)
+		place("at last@4", line: -1, column: 4)
+		press("down", "↓", [])
+
+		// The column has to survive the jump: ⇧↓ to the end of the file and then
+		// ↑ belongs back at the column the run started from, and not at whatever
+		// column the last line happens to end at.
+		place("at last@4", line: -1, column: 4)
+		press("down", "⇧↓", .shift)
+		press("up", "then ↑", [])
+
+		// The page keys are the same motion with a screenful as the step, and a
+		// file shorter than the window is all edge: both of these overshoot.
+		place("at 0@8", line: 0, column: 8)
+		press("pageup", "⇞", [])
+		place("at last@4", line: -1, column: 4)
+		press("pagedown", "⇧⇟", .shift)
+
+		// Partway along the first line, which the file this is pointed at wants
+		// to make a long one. Wrapped, the first ↑ is the row above and still
+		// inside line 0, and only the second one runs out of rows and goes to
+		// the start of the file; unwrapped there is no row above at all and the
+		// first ↑ is already the start of the file. The column stops at the end
+		// of the line, so a short first line makes this its end rather than
+		// nothing.
+		place("at 0@400", line: 0, column: 400)
+		press("up", "↑", [])
+		press("up", "↑ again", [])
+		place("at 0@400", line: 0, column: 400)
+		press("down", "↓", [])
+		press("down", "↓ again", [])
+
+		// ⌘↑ and ⌘↓ and their shifted twins, from the middle of the file so that
+		// both directions have something to select — from either edge one of the
+		// four would select nothing and read the same as the dead key it used to
+		// be. Before 0495 the shifted pair were selectors `doCommand` had no case
+		// for, so they printed the line placing the caret, unchanged.
+		place("at 3@4", line: 3, column: 4)
+		press("up", "⌘↑", .command)
+		place("at 3@4", line: 3, column: 4)
+		press("up", "⌘⇧↑", [.command, .shift])
+		place("at 3@4", line: 3, column: 4)
+		press("down", "⌘↓", .command)
+		place("at 3@4", line: 3, column: 4)
+		press("down", "⌘⇧↓", [.command, .shift])
+	}
+
+	/// Presses the emacs motions — ⌃B, ⌃F and their shifted twins, with ⌃P and
+	/// ⌃N as the control — and says where the caret and the selection landed.
+	///
+	/// A separate driver from `--vertical-nav` rather than four more lines in
+	/// it: these are letter keys with a modifier, they need a file with
+	/// ordinary short lines rather than one 723 characters long, and the run
+	/// people will want to read is the four keystrokes together.
+	///
+	/// The caret goes back to the same place before each press, so every line
+	/// is an independent keystroke and not a run — a ⌃B after a ⌃F would land
+	/// back where it started and say nothing about either.
+	func exerciseEmacsNavigationForTesting() {
+		func say(_ label: String) {
+			let padded = label.padding(toLength: 12, withPad: " ", startingAt: 0)
+			print("EMACS: \(padded)\(caretReportForTesting)")
+			fflush(stdout)
+		}
+		func place(_ label: String, line: Int, column: Int) {
+			setCaretForTesting(line: line, column: column)
+			say(label)
+		}
+		func press(_ key: String, _ label: String, _ modifiers: NSEvent.ModifierFlags) {
+			simulateKey(key, modifiers: modifiers)
+			say(label)
+		}
+
+		// Said out loud because the setting persists between launches and has
+		// twice now made a run read as the wrong one of two. It makes no
+		// difference to anything below — every motion here is `caret ± 1` in
+		// document offsets, and none of them asks what row it is on.
+		print("EMACS: word wrap is \(Settings.shared.wordWrap ? "on" : "off")")
+		// Which document the offsets below are offsets into. The first run of
+		// this driver reported a caret in a file nobody had asked for — the
+		// app opens `--file` some time after launch, and until it lands the
+		// active tab is whatever the last session left. A report of caret=26
+		// is unfalsifiable without this line, and looks exactly like a motion
+		// gone wrong.
+		print("EMACS: the file ends \(textTailForTesting)")
+		fflush(stdout)
+
+		// Mid-line, so both directions have somewhere to go and the shifted
+		// pair have something to select.
+		place("at 2@6", line: 2, column: 6)
+		press("f", "⌃F", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("b", "⌃B", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("f", "⇧⌃F", [.control, .shift])
+		place("at 2@6", line: 2, column: 6)
+		press("b", "⇧⌃B", [.control, .shift])
+
+		// The edges. At column 0 the character before the caret is the newline
+		// that ended the line above, so ⌃B goes to the end of that line rather
+		// than staying put — the same step, over a character that happens not
+		// to be printable. At offset 0 there is nothing behind the caret at
+		// all and the clamp keeps it there.
+		place("at 2@0", line: 2, column: 0)
+		press("b", "⌃B", .control)
+		place("at 0@0", line: 0, column: 0)
+		press("b", "⌃B", .control)
+
+		// The control the whole item is built on: the vertical half of the
+		// same family, which arrives as plain `moveUp:`/`moveDown:` and has
+		// always worked.
+		place("at 2@6", line: 2, column: 6)
+		press("p", "⌃P", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("n", "⌃N", .control)
+
+		// The paragraph family: ⌃A, ⌃E and their shifted twins, the two ⌥
+		// arrows whose second selector is one of them, and ⌥⇧↑/⌥⇧↓, which are
+		// `moveParagraph…AndModifySelection:` and not a pair at all.
+		place("at 2@6", line: 2, column: 6)
+		press("a", "⌃A", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("e", "⌃E", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("a", "⇧⌃A", [.control, .shift])
+		place("at 2@6", line: 2, column: 6)
+		press("e", "⇧⌃E", [.control, .shift])
+
+		// An indented line, because a paragraph motion that went to the first
+		// non-blank instead of to column zero would be right here and wrong
+		// below: 3@4 is the first non-blank of a line indented four spaces,
+		// and it is where the ⌥↑ two lines further on starts from.
+		place("at 3@11", line: 3, column: 11)
+		press("a", "⌃A", .control)
+		place("at 3@4", line: 3, column: 4)
+		press("a", "⌃A", .control)
+
+		// ⌥↑ and ⌥↓ are `['moveBackward:', 'moveToBeginningOfParagraph:']` and
+		// `['moveForward:', 'moveToEndOfParagraph:']` — two selectors sent in
+		// order. Mid-line the leading nudge makes no difference; at a boundary
+		// it is the whole point, and it is why the second selector must be a
+		// plain "go to the hard edge" rather than anything that reads where
+		// the caret already is.
+		place("at 2@6", line: 2, column: 6)
+		press("up", "⌥↑", .option)
+		place("at 2@6", line: 2, column: 6)
+		press("down", "⌥↓", .option)
+		place("at 2@0", line: 2, column: 0)
+		press("up", "⌥↑ at start", .option)
+		place("at 2@end", line: 2, column: 999)
+		press("down", "⌥↓ at end", .option)
+		place("at 3@4", line: 3, column: 4)
+		press("up", "⌥↑ indent", .option)
+
+		// The shifted pair are *not* the shifted version of the two above.
+		// `StandardKeyBinding.dict` sends ⌥⇧↑ as the single selector
+		// `moveParagraphBackwardAndModifySelection:`, with no nudge in front
+		// of it, so that one selector has to step to the previous paragraph
+		// by itself when the caret is already at a boundary.
+		place("at 2@6", line: 2, column: 6)
+		press("up", "⌥⇧↑", [.option, .shift])
+		place("at 2@6", line: 2, column: 6)
+		press("down", "⌥⇧↓", [.option, .shift])
+		place("at 2@0", line: 2, column: 0)
+		press("up", "⌥⇧↑ start", [.option, .shift])
+
+		// ⌃K last, and with the line printed either side of it, because a
+		// caret report cannot show a deletion — the caret does not move. It
+		// is last because it edits the document and the app autosaves, so
+		// everything above would be reading a file this run had changed.
+		// Regenerate the scratch file between runs.
+		place("at 2@6", line: 2, column: 6)
+		print("EMACS: line 2 is “\(lineTextForTesting(2))”")
+		press("k", "⌃K", .control)
+		print("EMACS: line 2 is “\(lineTextForTesting(2))”")
+		// At the end of a line there is nothing left of the paragraph to
+		// take, and the newline is the boundary rather than part of it, so
+		// this is a no-op and does not join the two lines.
+		place("at 3@end", line: 3, column: 999)
+		press("k", "⌃K", .control)
+		print("EMACS: lines 3-4 are “\(lineTextForTesting(3))” / “\(lineTextForTesting(4))”")
+		fflush(stdout)
+		// ⌃O — open-line, and the one key here that edits the file. macOS
+		// sends it as a *pair* of selectors, `insertNewlineIgnoringFieldEditor:`
+		// and then `moveBackward:`, so the caret ends where it started with
+		// the line split under it — and the caret report alone cannot tell
+		// that apart from a key that did nothing, since both say the caret is
+		// where it was put. Each press prints the lines as well as the caret.
+		//
+		// Bottom of the file upwards, because unlike every motion above these
+		// presses do not undo themselves: each one adds a line, and going up
+		// leaves the line numbers underneath still the ones written here.
+		func open(_ label: String, line: Int, column: Int) {
+			setCaretForTesting(line: line, column: column)
+			say(label)
+			print("EMACS:             \(caretLinesForTesting)")
+			simulateKey("o", modifiers: .control)
+			say("⌃O")
+			print("EMACS:             \(caretLinesForTesting)")
+			fflush(stdout)
+		}
+		// An empty line: nothing on either side of the caret, so what ⌃O
+		// leaves behind is two empty lines with the caret still on the first.
+		open("at 5@0", line: 5, column: 0)
+		// The end of an indented line, which is where copying the indent and
+		// not copying it differ: the caret does not go to the new line, so a
+		// copied indent would be whitespace on a line nobody is on.
+		open("at 4@end", line: 4, column: 999)
+		// Mid-word, the ordinary case: the word is split and the caret stays
+		// in front of the newline, at the end of the first half.
+		open("at 2@8", line: 2, column: 8)
+	}
 }

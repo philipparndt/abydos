@@ -673,7 +673,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.commentKey {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-				controller?.commentKeyReportForTesting()
+				controller?.editorForTesting.commentKeyReportForTesting()
 			}
 		}
 
@@ -923,7 +923,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let branch = options.checkoutBranch {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-				controller?.checkoutBranchForTesting(branch, pressing: options.pressOffer)
+				controller?.codeLinksForTesting.checkoutBranchForTesting(branch, pressing: options.pressOffer)
 			}
 		}
 
@@ -935,7 +935,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				let form = parts.first ?? "reference"
 				let lines = (parts.count > 1 ? parts[1] : "1")
 					.split(separator: "-").compactMap { Int($0) }
-				controller?.copyLinkForTesting(
+				controller?.codeLinksForTesting.copyLinkForTesting(
 					form, line: lines.first ?? 1, endLine: lines.count > 1 ? lines[1] : nil
 				)
 			}
@@ -943,13 +943,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let link = options.followLink {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-				controller?.followLinkForTesting(link)
+				controller?.codeLinksForTesting.followLinkForTesting(link)
 			}
 		}
 
 		if let asked = options.codeActionsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + asked.after) {
-				controller?.reportCodeActionsForTesting(
+				controller?.serverActionsForTesting.reportCodeActionsForTesting(
 					line: asked.line, character: asked.character, take: options.codeActionTake
 				)
 			}
@@ -1026,7 +1026,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let parts = spec.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
 				guard parts.count == 2 else { return }
-				controller?.exerciseFindUsagesForTesting(line: parts[0] - 1, character: parts[1])
+				controller?.serverActionsForTesting.exerciseFindUsagesForTesting(line: parts[0] - 1, character: parts[1])
 			}
 			// After the list is there and has said what is in it: the report above
 			// runs three seconds behind the request, and a script that pressed ↓
@@ -1043,7 +1043,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let parts = halves.first.map { $0.split(separator: ":").compactMap { Int($0) } } ?? []
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
 				guard parts.count == 2, halves.count == 2 else { return }
-				controller?.exerciseRenameForTesting(
+				controller?.serverActionsForTesting.exerciseRenameForTesting(
 					line: parts[0] - 1, character: parts[1], to: String(halves[1])
 				)
 			}
@@ -1247,13 +1247,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.verticalNavigation {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.exerciseVerticalNavigationForTesting()
+				controller?.editorForTesting.exerciseVerticalNavigationForTesting()
 			}
 		}
 
 		if options.emacsNavigation {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.exerciseEmacsNavigationForTesting()
+				controller?.editorForTesting.exerciseEmacsNavigationForTesting()
 			}
 		}
 
