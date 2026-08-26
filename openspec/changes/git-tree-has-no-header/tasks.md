@@ -98,22 +98,25 @@
 
 ## 9. The repository row says only what the titlebar does not
 
-- [ ] 9.1 The row drops the project name and the branch. Both are in the
+- [x] 9.1 The row drops the project name and the branch. Both are in the
       titlebar a few points above it, and on a repository with nothing to
       report the row was those two words and nothing else
-- [ ] 9.2 What is left is the distance and the verb — `level` and `no remote`
+- [x] 9.2 What is left is the distance and the verb — `level` and `no remote`
       still said out loud, so a pinned row always means something
-- [ ] 9.3 The width fallback goes with the name it was dropping
-- [ ] 9.4 Driven at 250 and 400 points, and the four states re-checked
+- [x] 9.3 The width fallback and the short `↓2 ↑1` spelling go with the name
+      they were making room for. Nothing is left that could need to give way
+- [x] 9.4 Driven, and the four states re-checked
 
 ## 10. A branch says whether it has ever been published
 
-- [ ] 10.1 A local branch with no upstream reads `not published` beside its
-      name, where the ahead/behind arrows already are
-- [ ] 10.2 The current branch is no different — it is the row that says it now
+- [x] 10.1 `GitBranch` gains `upstreamIsGone` and `isUnpublished`, parsed the
+      same way `GitPush.State` learnt it; the row reads `not published` where
+      the arrows go, and says it quietly — a count is news, this is a standing
+      fact
+- [x] 10.2 The current branch is no different — it is the row that says it now
       that the repository row does not
-- [ ] 10.3 Driven: a published branch, an unpublished one, and one whose
-      upstream is gone, reported side by side
+- [x] 10.3 Driven, side by side: `main *`, `feature [upstream gone]`,
+      `never-pushed [not published]`
 
 ## 11. The change counts line up
 

@@ -211,7 +211,7 @@ final class BranchesPane: NSView {
 		// Its own comment gave the reason it was a button — *a verb here hangs
 		// off the row that draws its object, and nothing drew the repository*.
 		// Something does now, so the verb is on it and the button is gone.
-		repositoryRow = RepositoryRowView(name: root.lastPathComponent)
+		repositoryRow = RepositoryRowView()
 		repositoryRow.translatesAutoresizingMaskIntoConstraints = false
 		repositoryRow.onAction = { [weak self] in self?.trafficPressed() }
 		repositoryRow.onDownArrow = { [weak self] in self?.moveKeyboardIntoTree() }
@@ -1069,7 +1069,15 @@ final class BranchesPane: NSView {
 			case let .folder(_, display, count, _):
 				return indent + mark + "\(display)/ (\(count))"
 			case let .branch(branch, _, display):
-				return indent + display + (branch.isCurrent ? " *" : "")
+				// What the row says on its right-hand end, which is now
+				// sometimes words rather than counts.
+				let tracking: String
+				if branch.upstreamIsGone { tracking = " [upstream gone]" }
+				else if branch.isUnpublished { tracking = " [not published]" }
+				else if branch.ahead > 0 || branch.behind > 0 {
+					tracking = " [↑\(branch.ahead) ↓\(branch.behind)]"
+				} else { tracking = "" }
+				return indent + display + (branch.isCurrent ? " *" : "") + tracking
 			case let .worktree(worktree):
 				return indent + "= \(worktree.name)"
 			case let .stash(entry):
@@ -2429,9 +2437,26 @@ private final class BranchRowView: NSView {
 		// Ahead/behind counts, which are the reason to look at this list at all
 		// when deciding whether to push or pull. Reserved first: they are the
 		// short part and the part worth keeping when a name is too long.
+		//
+		// **A branch with no upstream says so instead**, in words, because the
+		// counts cannot: nought ahead and nought behind is what a branch level
+		// with its remote reads, and a branch that has never been anywhere near
+		// a remote is the opposite of that. It used to be readable only on the
+		// repository row and only for the branch you were standing on; the
+		// repository row does not say it any more, and this row is where the
+		// branch is.
 		var tracking = ""
-		if branch.ahead > 0 { tracking += "↑\(branch.ahead)" }
-		if branch.behind > 0 { tracking += (tracking.isEmpty ? "" : " ") + "↓\(branch.behind)" }
+		var trackingIsWords = false
+		if branch.upstreamIsGone {
+			tracking = "upstream gone"
+			trackingIsWords = true
+		} else if branch.isUnpublished {
+			tracking = "not published"
+			trackingIsWords = true
+		} else {
+			if branch.ahead > 0 { tracking += "↑\(branch.ahead)" }
+			if branch.behind > 0 { tracking += (tracking.isEmpty ? "" : " ") + "↓\(branch.behind)" }
+		}
 
 		let countsFont = Theme.current.uiFont(10.5)
 		let countsWidth = tracking.isEmpty ? 0 : NSAttributedString(
@@ -2448,7 +2473,10 @@ private final class BranchRowView: NSView {
 		guard !tracking.isEmpty else { return }
 
 		RowMetrics.draw(
-			tracking, font: countsFont, colour: Theme.current.gitModified,
+			tracking, font: countsFont,
+			// Said quietly. A count is news — somebody moved — and a branch
+			// having no upstream is a standing fact about it.
+			colour: trackingIsWords ? Theme.current.gitIgnored : Theme.current.gitModified,
 			at: x + Theme.current.scaled(6), in: bounds, limit: limit
 		)
 	}

@@ -7,15 +7,17 @@
 The tree SHALL begin with a row for the repository, and that row SHALL stay at
 the top of the pane while the rest of the tree scrolls.
 
-It says which project, which branch the work tree is on, and how far that branch
-is from its upstream in words — `3 behind · 1 ahead`, `level`, `upstream gone`,
-or that there is no remote.
+It says how far the branch the work tree is on is from its upstream, in words —
+`3 behind · 1 ahead`, `level`, `upstream gone`, or that there is no remote — and
+it is the control that follows from that: fetch when level, pull when behind,
+push when ahead.
 
-**When the pane is too narrow for all of it, the project name goes first.** The
-titlebar already names the project and nothing else says how far the branch is
-from its upstream, which is what this row is pinned for.
+**It SHALL NOT name the project or the branch.** Both are written in the
+titlebar a few points above it, so a repository with nothing to report drew a
+glyph and two words already on screen. What is left is the one thing nothing
+else in the window says and the thing this row is pinned for.
 
-**An upstream that is gone SHALL not read as level.** `%(upstream:track)` says
+**An upstream that is gone SHALL NOT read as level.** `%(upstream:track)` says
 `[gone]` in place of the counts, so the naive reading is nought behind and
 nought ahead — a sentence about a ref that is not there. It is also the control: fetch when level, pull when behind, push when
 ahead, which is what the button above the tree used to be.
@@ -55,11 +57,43 @@ fault the header was avoiding, reintroduced.
 - **THEN** the row says the upstream is gone rather than that it is level
 - **AND** pressing it fetches
 
-#### Scenario: a pane too narrow for the whole row
+#### Scenario: nothing to report
 
-- **GIVEN** the pane at 250 points and a branch two behind and one ahead
-- **THEN** the distance is still said in words
-- **AND** the project name is what gives way
+- **GIVEN** a branch level with its upstream
+- **THEN** the row says `level` and offers `Fetch`
+- **AND** it does not repeat the project or the branch the titlebar names
+
+### Requirement: A branch says whether it has ever been published
+
+A local branch with no upstream SHALL say so on its own row, in words, where the
+ahead and behind counts are drawn.
+
+**The counts cannot say it.** Nought ahead and nought behind is what a branch
+level with its remote reads, and a branch that has never been near a remote is
+the opposite of that — the same confusion `upstream` was given a doc comment
+about, drawn rather than typed.
+
+It was readable before only on the repository row and only for the branch the
+work tree was on. That row no longer names a branch, and this is the row the
+branch is on.
+
+A branch tracking an upstream that has gone SHALL say that instead, for the
+reason the repository row gives.
+
+#### Scenario: a branch that has never been pushed
+
+- **GIVEN** a local branch with no upstream
+- **THEN** its row reads `not published` beside its name
+
+#### Scenario: a branch whose remote branch was deleted
+
+- **GIVEN** a local branch tracking a ref that no longer exists
+- **THEN** its row reads `upstream gone`
+
+#### Scenario: a branch in step with its upstream
+
+- **GIVEN** a local branch level with the remote
+- **THEN** its row says nothing beside its name, as it does today
 
 ### Requirement: The working copy row carries the verb that acts on it
 

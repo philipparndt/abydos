@@ -24,6 +24,26 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 	/// and a branch that has no upstream both count nothing, and only one of
 	/// them has somewhere to push to.
 	public let upstream: String?
+	/// The branch tracks an upstream that no longer exists — the ordinary end
+	/// of a branch whose pull request was merged and whose remote branch went
+	/// with it.
+	///
+	/// **Not the same as level, and it parses as level.**
+	/// `%(upstream:track)` says `[gone]` where it would otherwise say the
+	/// counts, so both come back nought and a row reading only the counts calls
+	/// the branch in step with a ref that is not there.
+	public let upstreamIsGone: Bool
+
+	/// Never pushed anywhere: a local branch with no upstream at all.
+	///
+	/// Told apart from level for the reason `upstream` already gives, and said
+	/// out loud on the row because nothing else does. A tag has no upstream by
+	/// definition and a remote-tracking branch is the upstream, so neither is
+	/// ever unpublished.
+	public var isUnpublished: Bool {
+		guard case .local = kind else { return false }
+		return upstream == nil
+	}
 
 	public var id: String {
 		switch kind {
@@ -48,7 +68,8 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		subject: String = "",
 		ahead: Int = 0,
 		behind: Int = 0,
-		upstream: String? = nil
+		upstream: String? = nil,
+		upstreamIsGone: Bool = false
 	) {
 		self.name = name
 		self.kind = kind
@@ -57,6 +78,7 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		self.ahead = ahead
 		self.behind = behind
 		self.upstream = upstream
+		self.upstreamIsGone = upstreamIsGone
 	}
 }
 
@@ -112,6 +134,7 @@ public enum GitBranches {
 
 			guard let (name, kind) = classify(refname: refname) else { continue }
 			let counts = parseTracking(track)
+			let isGone = upstream != nil && track.contains("gone")
 
 			result.append(GitBranch(
 				name: name,
@@ -120,7 +143,8 @@ public enum GitBranches {
 				subject: subject,
 				ahead: counts.ahead,
 				behind: counts.behind,
-				upstream: upstream
+				upstream: upstream,
+				upstreamIsGone: isGone
 			))
 		}
 		return result
