@@ -66,7 +66,7 @@ public enum GitLineCounts {
 		var counts: [String: GitLineCount] = [:]
 		// Split on NUL, then on tab: the record separator is NUL and the field
 		// separator inside a record is still a tab.
-		var fields = output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+		let fields = output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
 		var index = 0
 		while index < fields.count {
 			let record = fields[index]

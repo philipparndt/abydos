@@ -32,12 +32,12 @@ struct GitChangeTreeTests {
 	/// The reported fault, at the level it is decided: an untracked directory
 	/// was drawn as a file because `isFolder` asks whether the row was invented,
 	/// and this one was not.
-	@Test func anUntrackedDirectoryHoldsFilesWithoutBeingAnInventedFolder() {
+	@Test func anUntrackedDirectoryHoldsFilesWithoutBeingAnInventedFolder() throws {
 		let tree = GitChangeTree.build([directory("PI-12")])
-		let row = try? #require(tree.first)
+		let row = try #require(tree.first)
 
-		#expect(row?.holdsFiles == true, "it is a directory and must draw as one")
-		#expect(row?.isFolder == false, "git reported it; this tree did not invent it")
+		#expect(row.holdsFiles == true, "it is a directory and must draw as one")
+		#expect(row.isFolder == false, "git reported it; this tree did not invent it")
 	}
 
 	@Test func anUntrackedFileHoldsNothing() {
@@ -56,12 +56,12 @@ struct GitChangeTreeTests {
 	/// one entry, so it counts as one change and is never partly staged — and
 	/// widening `isFolder` would have said "1 of 12" about a row that is wholly
 	/// unstaged.
-	@Test func anUntrackedDirectoryIsOneChangeAndNeverPartial() {
+	@Test func anUntrackedDirectoryIsOneChangeAndNeverPartial() throws {
 		let tree = GitChangeTree.build([directory("PI-12")], against: [])
-		let row = try? #require(tree.first)
-		#expect(row?.count == 1)
-		#expect(row?.total == 1)
-		#expect(row?.isPartial == false)
+		let row = try #require(tree.first)
+		#expect(row.count == 1)
+		#expect(row.total == 1)
+		#expect(row.isPartial == false)
 	}
 
 	/// Drawn as a folder, so it sorts with them.

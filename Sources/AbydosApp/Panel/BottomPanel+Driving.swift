@@ -182,4 +182,30 @@ extension BottomPanel {
 		let here = view as? (any TabCloseHovering)
 		return (here.map { [$0] } ?? []) + view.subviews.flatMap { tabStrips(under: $0) }
 	}
+
+	/// `--select fromRow,fromColumn,toRow,toColumn[,option]` — a drag in the
+	/// terminal grid, and what it selected.
+	func selectInTerminalForTesting(_ spec: String) {
+		let parts = spec.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+		guard parts.count >= 4, let fromRow = Int(parts[0]), let fromColumn = Int(parts[1]),
+		      let toRow = Int(parts[2]), let toColumn = Int(parts[3])
+		else {
+			print("TERM select: want fromRow,fromColumn,toRow,toColumn[,option], got \(spec)")
+			return
+		}
+		guard let terminal = showTerminal()?.terminalView else {
+			print("TERM select: no terminal")
+			return
+		}
+		// `option` holds it throughout; `option-mid` presses without it and takes
+		// it up during the drag, which is the half that says the modifier is
+		// read on every event rather than remembered from the press.
+		let modifier = parts.count > 4 ? parts[4] : ""
+		print("TERM select \(spec): " + terminal.dragForTesting(
+			fromRow: fromRow, fromColumn: fromColumn,
+			toRow: toRow, toColumn: toColumn,
+			optionOnPress: modifier == "option",
+			optionOnDrag: modifier == "option" || modifier == "option-mid"
+		))
+	}
 }

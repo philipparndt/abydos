@@ -45,6 +45,12 @@
 # obliged to edit a manifest to stay green. Tightening the number is a choice
 # somebody makes.
 #
+# **A merge is the one time a listed file may be re-recorded upward.** Work done
+# on another branch grew nine of these while this list was being kept, and that
+# growth is not the branch's to refuse. Re-record it in the merge commit, say
+# which files and by how much, and the ratchet goes on holding from there. Doing
+# it in any other commit is turning the check off one line at a time.
+#
 # ## What is not checked
 #
 # `Tests` is left out. A test file is a list of claims rather than a machine, and

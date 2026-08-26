@@ -2231,7 +2231,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let after = max(1.0, options.screenshotDelay - 1.0)
 			for (index, drag) in options.terminalSelections.enumerated() {
 				DispatchQueue.main.asyncAfter(deadline: .now() + after + Double(index) * 0.2) {
-					controller?.selectInTerminalForTesting(drag)
+					controller?.panelForTesting.selectInTerminalForTesting(drag)
 				}
 			}
 		}
