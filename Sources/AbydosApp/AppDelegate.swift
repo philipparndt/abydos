@@ -2215,6 +2215,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// After whatever `--run` put on the screen, and before the shot: a
+		// selection is drawn over output, so there has to be output first.
+		if !options.terminalSelections.isEmpty {
+			let after = max(1.0, options.screenshotDelay - 1.0)
+			for (index, drag) in options.terminalSelections.enumerated() {
+				DispatchQueue.main.asyncAfter(deadline: .now() + after + Double(index) * 0.2) {
+					controller?.selectInTerminalForTesting(drag)
+				}
+			}
+		}
+
 		if options.typeText != nil || options.collapseFolds || options.markdownPreview {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.5)) {
 				if let text = options.typeText { controller?.simulateTyping(text) }

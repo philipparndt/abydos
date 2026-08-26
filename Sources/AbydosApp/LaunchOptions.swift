@@ -40,6 +40,14 @@ struct LaunchOptions {
 	/// command and three swallowed lines. 0468 is the case that needs four
 	/// `icat` in a row, and it needed them paced.
 	var terminalInput: [String] = []
+	/// Drags in the terminal grid before capture, as
+	/// `fromRow,fromColumn,toRow,toColumn[,option]` — one per `--select`.
+	///
+	/// What a drag *lands on* is the whole question a selection change raises,
+	/// and it is the half a screenshot cannot answer: translucent colour over
+	/// ragged text is the thing being changed, so "does the highlight stop at
+	/// the text" has to come back as numbers.
+	var terminalSelections: [String] = []
 	/// Start an agent review before capture.
 	var startReview = false
 	/// Show the backlog dashboard before capture. `list` for the list, anything
@@ -847,6 +855,7 @@ struct LaunchOptions {
 			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			case "--terminal":   options.openTerminal = true
 			case "--run":        if let line = next() { options.terminalInput.append(line) }
+			case "--select":     if let drag = next() { options.terminalSelections.append(drag) }
 			case "--review":     options.startReview = true
 			case "--backlog":
 				// The mode is optional, so peek rather than consume: without

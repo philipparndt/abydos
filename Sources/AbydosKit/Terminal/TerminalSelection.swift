@@ -23,10 +23,21 @@ public struct TerminalPosition: Equatable, Comparable, Sendable {
 public struct TerminalSelection: Equatable, Sendable {
 	public var anchor: TerminalPosition
 	public var head: TerminalPosition
+	/// Whether this is a rectangle — the same columns on every row it covers —
+	/// rather than a run of lines. Option, held while dragging.
+	///
+	/// A flag rather than a second type, and that is the whole of what makes
+	/// this affordable: everything downstream — both renderers, `text(in:)`, the
+	/// scrollback fix-up that follows a selection as lines fall off the top —
+	/// takes a `TerminalSelection` and is correct for either kind without
+	/// knowing which it holds. A `TerminalBlockSelection` would have had to be
+	/// threaded through every one of them.
+	public var isBlock: Bool
 
-	public init(anchor: TerminalPosition, head: TerminalPosition) {
+	public init(anchor: TerminalPosition, head: TerminalPosition, isBlock: Bool = false) {
 		self.anchor = anchor
 		self.head = head
+		self.isBlock = isBlock
 	}
 
 	public var isEmpty: Bool { anchor == head }
@@ -38,9 +49,12 @@ public struct TerminalSelection: Equatable, Sendable {
 
 	/// The selected column range on one row, or nil when the row is outside it.
 	///
-	/// The upper bound is exclusive, and rows in the middle of a multi-row
-	/// selection run to `columns` so the highlight reaches the right edge the
-	/// way a text selection does.
+	/// The upper bound is exclusive. **`columns` is the width of the row's own
+	/// text — `TerminalLine.usedColumns` — and not the width of the grid.** It
+	/// used to be handed `cells.count`, which is why the highlight ran to the
+	/// right margin whatever the row said: eighty columns of nothing beside a
+	/// two-word prompt, and a solid rectangle across several rows with the text
+	/// somewhere inside it.
 	public func columnRange(onRow row: Int, columns: Int) -> Range<Int>? {
 		let (start, end) = ordered
 		guard row >= start.row, row <= end.row, !isEmpty else { return nil }
@@ -48,9 +62,33 @@ public struct TerminalSelection: Equatable, Sendable {
 		// Clamped before the range is formed, not after: a selection made while
 		// the grid was wider outlives the resize, and `from > columns` would
 		// otherwise build a range with its bounds the wrong way round and trap.
-		let from = min(max(0, row == start.row ? start.column : 0), columns)
-		let to = min(max(0, row == end.row ? end.column : columns), columns)
-		guard from < to else { return nil }
+		// `usedColumns` makes that clamp tighter rather than different in kind.
+		let from: Int
+		let to: Int
+		if isBlock {
+			// The same two columns on every row, then clamped to what the row
+			// actually has on it — so a rectangle drawn over ragged output gives
+			// back what is on each row and no padding.
+			from = min(max(0, min(anchor.column, head.column)), columns)
+			to = min(max(0, max(anchor.column, head.column)), columns)
+		} else {
+			from = min(max(0, row == start.row ? start.column : 0), columns)
+			to = min(max(0, row == end.row ? end.column : columns), columns)
+		}
+		guard from < to else {
+			// A blank row *strictly between* the ends contributes no columns, so
+			// it would draw nothing and a selection over a paragraph break would
+			// look as though it had stopped there. One cell of mark keeps it
+			// continuous.
+			//
+			// Not the end rows: a first row anchored past its text, or a last
+			// row reached at column zero, contribute nothing and should show
+			// nothing. And not a block, whose own requirement is that a row
+			// gives back what is in its columns and no padding — a mark at
+			// column 0 would sit off on its own, nowhere near the rectangle.
+			if !isBlock, row > start.row, row < end.row { return 0..<1 }
+			return nil
+		}
 		return from..<to
 	}
 }
@@ -124,7 +162,7 @@ public extension TerminalGridReading {
 		var rows: [String] = []
 		for row in start.row...end.row {
 			guard let line = line(at: row) else { continue }
-			guard let range = selection.columnRange(onRow: row, columns: line.cells.count) else {
+			guard let range = selection.columnRange(onRow: row, columns: line.usedColumns) else {
 				rows.append("")
 				continue
 			}

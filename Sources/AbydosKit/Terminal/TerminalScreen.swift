@@ -143,6 +143,63 @@ public struct TerminalLine: Equatable, Sendable {
 		cells.allSatisfy { $0 == .blank }
 	}
 
+	/// One past the last cell that is not blank, and zero for a row nothing has
+	/// been written to.
+	///
+	/// Where a selection's highlight stops. The grid is as wide as the window
+	/// and a row of output usually is not, so `cells.count` — which is what the
+	/// highlight used to run to — lights up eighty columns of nothing beside a
+	/// two-word prompt.
+	///
+	/// Two things fall out of comparing against `.blank` rather than against a
+	/// space, and both are wanted. A space carrying a background colour is not
+	/// blank, so a coloured bar drawn out of spaces is text as far as this is
+	/// concerned and can be selected — it is painted, so it is there. And the
+	/// trailing cell of a wide glyph is not blank either, so a row ending in an
+	/// emoji measures to the end of it rather than to its middle.
+	///
+	/// Backwards, so a row of ordinary text stops on the first comparison. This
+	/// is on the redraw path — once per visible row, and only while a selection
+	/// exists.
+	public var usedColumns: Int {
+		// **Not `cells[index - 1] == .blank`**, which is what this was until it
+		// was measured. The synthesised `==` compares `combining` — a `String?`
+		// — through the resilient String machinery on every cell it walks past,
+		// and a two-hundred-column row with four characters on it walks past a
+		// hundred and ninety-six of them.
+		//
+		// One fully selected 40 × 200 screen, per frame, in **release** — which
+		// is the only build whose numbers mean anything here, and a debug run
+		// says something four times as alarming and just as irrelevant:
+		//
+		//     cells.count, as it was                  0.3 µs
+		//     whole-cell `== .blank`                175 µs
+		//     field by field, through the subscript  33 µs
+		//     field by field, through the buffer     15 µs
+		//
+		// Both steps earn their place, and neither is a cache: the listing is
+		// not stored, so there is nothing to keep true. It is paid only while a
+		// selection exists, which is while somebody is holding the mouse down.
+		//
+		// The order of the fields is the point. A written cell is nearly always
+		// a different scalar, so almost every row stops on the first
+		// comparison; the string is nil in essentially every cell a terminal
+		// ever holds; and the attributes — which is what makes a coloured space
+		// count as text — are reached only for a cell that is otherwise a plain
+		// space.
+		let plain = TerminalAttributes()
+		return cells.withUnsafeBufferPointer { buffer in
+			var index = buffer.count
+			while index > 0, let cell = buffer.baseAddress.map({ $0 + (index - 1) }) {
+				if cell.pointee.scalar != 0x20 || cell.pointee.isWideTrailer { break }
+				if cell.pointee.combining != nil { break }
+				if cell.pointee.attributes != plain { break }
+				index -= 1
+			}
+			return index
+		}
+	}
+
 	/// Trailing blanks trimmed, for text extraction and selection.
 	public var text: String {
 		var result = ""

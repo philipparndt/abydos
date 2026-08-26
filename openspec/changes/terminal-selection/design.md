@@ -110,6 +110,21 @@ list of values rather than as padded fixed-width fields.
   deliberately not done first, because a cache nobody needed would be a second
   thing to keep true.
 
+  **Measured, and it showed up.** One fully selected 40 × 200 screen, per frame,
+  in release: 0.3 µs for the `cells.count` this replaces, and **175 µs** for the
+  obvious `cells[index - 1] == .blank`. The synthesised `==` compares
+  `combining`, a `String?`, through the resilient String machinery on every one
+  of the blank cells it walks past — the same fault, in the same type, that
+  `TerminalCell.write` was written for. Comparing field by field with the
+  cheapest discriminator first is **33 µs**, and doing that through an unsafe
+  buffer pointer rather than the subscript is **15 µs**. That is where it
+  landed: fifty times the old figure and still a fiftieth of a frame, paid only
+  while somebody is holding the mouse down. No cache, so nothing to keep true.
+
+  A note for the next measurement: the debug build says 736 µs and is worthless
+  here. It was believed for two rounds of "optimisation" before anybody ran it
+  in release.
+
 - **A selection made before a resize is clamped by the new width.** → Already
   true and already commented in `columnRange`; `usedColumns` makes the clamp
   tighter, not different in kind.
@@ -125,8 +140,21 @@ list of values rather than as padded fixed-width fields.
   Both reference terminals stop at the text, and the report is that this one
   does not.
 
+### A block is drawn like any other selection
+
+The open question — whether a rectangle should be drawn differently from a run
+of lines while a drag is in flight — is answered no, for now.
+
+A rectangle over more than one row does not look like a run of lines: every row
+starts at the same column, which is a shape nothing else in the terminal makes,
+and the picture in task 6.1 shows it reads at a glance. The modifier is also
+held down while it is in flight, so the person seeing it is the person holding
+Option. A border would be a second selection appearance to keep in step across
+both renderers, and it would be doing the work the shape already does.
+
+Worth revisiting if a keyboard route to a block selection is ever added, where
+nothing is being held and the shape is the only signal left.
+
 ## Open Questions
 
-- Should a block selection be drawn differently from a line selection — a
-  border, say — so the two are told apart while a drag is in flight? The
-  modifier is the only signal today, and it is not on screen.
+None. The one above is decided in `Decisions`.
