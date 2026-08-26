@@ -31,8 +31,49 @@ final class DiffView: NSView {
 	/// Anchor for shift-click range selection.
 	private var anchorRow: Int?
 
+	/// A remark somebody left on a line of this diff.
+	///
+	/// The view's own shape rather than `ReviewComment`: what it needs is three
+	/// strings and a flag, and a diff view that knew what a pull request was
+	/// would be a diff view the changes pane could not use.
+	struct Comment: Equatable {
+		let author: String
+		let when: String
+		let body: String
+		/// Whether the code it was about has been written over since.
+		let isOutdated: Bool
+
+		init(author: String, when: String, body: String, isOutdated: Bool = false) {
+			self.author = author
+			self.when = when
+			self.body = body
+			self.isOutdated = isOutdated
+		}
+	}
+
+	/// Remarks against the lines they were left on, by line number on the new
+	/// side — which is the side that still exists.
+	private var comments: [Int: [Comment]] = [:]
+	/// Remarks whose line has gone, shown against the file instead.
+	private var outdatedComments: [Comment] = []
+
+	/// Puts the conversation on the diff.
+	///
+	/// **A reviewer who cannot see the existing comments reviews what somebody
+	/// has already reviewed and says it again**, which is worse than saying
+	/// nothing: the author now has two conversations about one line.
+	func setComments(at lines: [Int: [Comment]], andOutdated outdated: [Comment]) {
+		comments = lines
+		outdatedComments = outdated
+		rebuildRows()
+		invalidateIntrinsicContentSize()
+		needsDisplay = true
+	}
+
 	private enum Row {
 		case header(String)
+		/// One line of a remark, drawn under the line it is about.
+		case comment(Comment, text: String, isFirst: Bool)
 		case hunkHeader(index: Int, text: String)
 		/// A line, and where it sits in each side of the file.
 		///
@@ -84,7 +125,20 @@ final class DiffView: NSView {
 
 	/// How much of a diff is on screen, for a driver that cannot photograph it.
 	var reportForTesting: String {
-		rows.isEmpty ? "empty" : "\(rows.count) rows"
+		guard !rows.isEmpty else { return "empty" }
+		let remarks = rows.filter {
+			if case .comment(_, _, true) = $0 { return true }
+			return false
+		}.count
+		return remarks == 0 ? "\(rows.count) rows" : "\(rows.count) rows, \(remarks) comments"
+	}
+
+	/// The conversation as it is drawn, for a run that cannot photograph it.
+	func commentsForTesting() -> [String] {
+		rows.compactMap { row in
+			guard case let .comment(comment, text, isFirst) = row, isFirst else { return nil }
+			return (comment.isOutdated ? "outdated: " : "at a line: ") + text
+		}
 	}
 
 	func setDiff(_ text: String, staged: Bool, url: URL? = nil) {
@@ -93,6 +147,11 @@ final class DiffView: NSView {
 		// diff that took a second says it was a diff.
 		StallWatch.mark("diff render") {
 			isStaged = staged
+			// The conversation belongs to the file that was on screen, and this
+			// is a different file — or the same one at a different head. The
+			// caller puts them back.
+			comments = [:]
+			outdatedComments = []
 			patch = GitPatch.parse(text)
 			selection = []
 			anchorRow = nil
@@ -117,8 +176,53 @@ final class DiffView: NSView {
 		return DiffHighlighter.highlight(patch, languageId: languageId)
 	}
 
+	/// How many lines of one remark are drawn before it is cut short.
+	///
+	/// A comment is prose and a diff is a list of lines; four is enough for the
+	/// remarks people actually leave, and the rest is one click away in the
+	/// browser. Cutting it is said out loud rather than done silently.
+	private static let commentLineLimit = 4
+
+	private func commentRows(for comment: Comment) -> [Row] {
+		let heading = comment.isOutdated
+			? "\(comment.author) · \(comment.when) · on an earlier version"
+			: "\(comment.author) · \(comment.when)"
+		var made: [Row] = [.comment(comment, text: heading, isFirst: true)]
+		// **Every line ending, not only `\n`.** GitHub hands these back with
+		// CRLF in them, and a lone `\r` inside a string drawn by Core Text moves
+		// the pen back to the start of the row — so a remark written on a
+		// Windows machine drew its second paragraph on top of its first.
+		let body = comment.body
+			.replacingOccurrences(of: "\r\n", with: "\n")
+			.replacingOccurrences(of: "\r", with: "\n")
+			.split(separator: "\n", omittingEmptySubsequences: false)
+			// A row is a row. A paragraph of prose is longer than any line of
+			// code beside it, and one running the width of three windows is not
+			// something anybody reads to the end of.
+			.map { $0.count > 160 ? $0.prefix(159) + "…" : $0 }
+		for line in body.prefix(Self.commentLineLimit) {
+			made.append(.comment(comment, text: String(line), isFirst: false))
+		}
+		if body.count > Self.commentLineLimit {
+			made.append(.comment(
+				comment,
+				text: "… and \(body.count - Self.commentLineLimit) more lines",
+				isFirst: false
+			))
+		}
+		return made
+	}
+
 	private func rebuildRows() {
 		rows = patch.header.map { Row.header($0) }
+
+		// **A comment whose line has gone is shown, not dropped.** GitHub calls
+		// these outdated; a reviewer still needs to know a conversation happened
+		// even when the code it was about is not there any more. Against the
+		// file, at the top, because there is no line left to put it against.
+		for comment in outdatedComments {
+			rows += commentRows(for: comment)
+		}
 
 		var index = 0
 		for (position, hunk) in patch.hunks.enumerated() {
@@ -129,17 +233,26 @@ final class DiffView: NSView {
 			var old = hunk.oldStart
 			var new = hunk.newStart
 			for line in hunk.lines {
+				var commentedLine: Int?
 				switch line.kind {
 				case .added:
 					rows.append(.line(index: index, line: line, old: nil, new: new))
+					commentedLine = new
 					new += 1
 				case .removed:
 					rows.append(.line(index: index, line: line, old: old, new: nil))
 					old += 1
 				default:
 					rows.append(.line(index: index, line: line, old: old, new: new))
+					commentedLine = new
 					old += 1
 					new += 1
+				}
+				// Under the line rather than beside it: a diff is as wide as the
+				// code and a remark is prose, and prose in a margin is a column
+				// four words across.
+				if let commentedLine, let left = comments[commentedLine] {
+					for comment in left { rows += commentRows(for: comment) }
 				}
 				index += 1
 			}
@@ -330,6 +443,23 @@ final class DiffView: NSView {
 		case .header(let text):
 			guard !text.isEmpty else { return }
 			text.draw(at: NSPoint(x: textX, y: y), font: font, color: Theme.current.gitIgnored)
+
+		case let .comment(comment, text, isFirst):
+			// A tint of its own down the whole row, so a conversation reads as
+			// something other than code at a glance.
+			Theme.current.gitModified.withAlphaComponent(comment.isOutdated ? 0.05 : 0.10).setFill()
+			NSRect(x: 0, y: y, width: bounds.width, height: lineHeight).fill()
+			let colour = comment.isOutdated
+				? Theme.current.gitIgnored
+				: (isFirst ? Theme.current.gitModified : Theme.current.sidebarText)
+			let marked = isFirst ? "💬 " + text : "   " + text
+			marked.draw(
+				at: NSPoint(x: textX, y: y),
+				font: isFirst
+					? NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+					: font,
+				color: colour
+			)
 
 		case .hunkHeader(_, let text):
 			NSColor.white.withAlphaComponent(0.05).setFill()

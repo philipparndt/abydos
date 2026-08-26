@@ -75,11 +75,11 @@
 
 ## 7. The conversation already on it
 
-- [ ] 7.1 Fetch the review comments and show them at their lines, with author
+- [x] 7.1 Fetch the review comments and show them at their lines, with author
       and time
-- [ ] 7.2 A comment whose line has gone is shown against its file, marked as
+- [x] 7.2 A comment whose line has gone is shown against its file, marked as
       being about an earlier version, rather than dropped
-- [ ] 7.3 Driven: a pull request with a comment on a line, and one whose line a
+- [x] 7.3 Driven: a pull request with a comment on a line, and one whose line a
       later push removed
 
 ## 8. Answering

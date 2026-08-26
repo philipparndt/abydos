@@ -147,6 +147,29 @@ final class PullRequestReview {
 	/// The page for a pull request, while one is open.
 	func page(of number: Int) -> PullRequestPage? { pages[number]?.page }
 
+	/// Opens one by number rather than from a row.
+	///
+	/// The list holds what is open; a pull request somebody has a number for —
+	/// from a link, from a colleague, from a closed one worth reading again —
+	/// is not always in it.
+	func open(number: Int, then done: ((String) -> Void)? = nil) {
+		guard let root = repositoryRoot() else {
+			done?("no repository")
+			return
+		}
+		Task { @MainActor [weak self] in
+			let reply = await GitHubPullRequests.view(number: number, in: root)
+			guard let self else { return }
+			guard let request = reply.value else {
+				done?(reply.trouble ?? "no such pull request")
+				return
+			}
+			self.open(request)
+			self.lastOpened = number
+			done?("opened #\(number)")
+		}
+	}
+
 	// MARK: - Reading it in place
 
 	/// Checks a pull request's branch out beside the project.
@@ -230,7 +253,8 @@ final class PullRequestReview {
 	/// - `report` — the `gh` version, the scope, and one line per row
 	/// - `scope:me` / `scope:meOrMyTeams` — the "waiting on me" question
 	/// - `refresh` — ask GitHub again
-	/// - `open:123` — open one as a page
+	/// - `open:123` — open one as a page, from its row
+	/// - `number:123` — open one by number, whether or not it is in the list
 	/// - `page` — what the open page holds: files, rows, diff
 	/// - `whole:on` / `whole:off` — the whole-file view of the diff
 	/// - `pick:2` — select the file at that index
@@ -242,6 +266,7 @@ final class PullRequestReview {
 	///   tokens as they are, which is a rebase that changed nothing
 	/// - `keys:down+down` — walk the file list, as `--log-page` does
 	/// - `diff` — the first lines of the diff on screen
+	/// - `comments` — every remark on it, whichever file it is on
 	/// - `checkout:123` — check its branch out beside the project
 	/// - `open-checkout:123` — point the window at that checkout
 	/// - `finish:123` — remove it again
@@ -315,7 +340,10 @@ final class PullRequestReview {
 				}
 			case "checkouts":
 				checkoutsForTesting { print("PULL-REQUESTS checkouts: \($0)") }
-			case "page", "whole", "pick", "keys", "diff", "read", "next", "hide", "push":
+			case "number":
+				open(number: Int(argument) ?? 0) { print("PULL-REQUESTS: \($0)") }
+			case "page", "whole", "pick", "keys", "diff", "read", "next", "hide", "push",
+			     "comments":
 				// The page is a second round of network calls, so a step that
 				// addresses it waits — and takes the rest of the script with it
 				// rather than running the tail against a page that is not there.
@@ -335,6 +363,7 @@ final class PullRequestReview {
 					return
 				}
 				switch step.prefix(while: { $0 != ":" }) {
+				case "comments": print("PULL-REQUEST PAGE comments:\n\(page.commentsForTesting())")
 				case "push":  print("PULL-REQUEST PAGE: " + page.pretendPushForTesting(argument))
 				case "read":  page.toggleReadForTesting()
 				case "next":  print("PULL-REQUEST PAGE: next unread \(page.nextUnreadForTesting())")

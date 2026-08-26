@@ -25,6 +25,8 @@ final class PullRequestPage: NSView {
 	/// What each file's diff hashes to at the head this page was read at, which
 	/// is what a tick is recorded against.
 	private var tokens: [String: String] = [:]
+	/// The conversation already on it, by file.
+	private var comments: [String: [ReviewComment]] = [:]
 	/// The file text at the head, for the whole-file view — asked for once per
 	/// file and kept, because turning the switch off and on again should not be
 	/// a second network call.
@@ -242,12 +244,20 @@ final class PullRequestPage: NSView {
 			let head = await GitHubPullRequests.head(of: self.request.number, in: self.root)
 			let files = await GitHubPullRequests.files(of: self.request.number, in: self.root)
 			let diff = await GitHubPullRequests.diff(of: self.request.number, in: self.root)
+			let conversation = await GitHubPullRequests.comments(
+				of: self.request.number, in: self.root
+			)
 
 			self.activity?.finish()
 			self.activity = nil
 			self.head = head
 			self.diffs = FileDiffs.split(diff.value ?? "")
 			self.contents = [:]
+			// **A file that is not in the list still has its comments read.** A
+			// remark left on a file the author has since taken out of the pull
+			// request is a conversation that happened, and grouping by path
+			// keeps it findable rather than dropping it on the floor.
+			self.comments = Dictionary(grouping: conversation.value ?? [], by: \.path)
 
 			// **What a tick was made against is that file's diff at that head.**
 			// Not the head commit: a rebase moves the head without changing a
@@ -311,6 +321,40 @@ final class PullRequestPage: NSView {
 	/// The diff of one file at the head this page was opened at.
 	func diff(of path: String) -> String? { diffs[path] }
 
+	private static let commentDates: DateFormatter = {
+		let formatter = DateFormatter()
+		// The date and not the time: a review comment is a thing somebody said,
+		// and which minute they said it in has never been the question.
+		formatter.dateStyle = .medium
+		formatter.timeStyle = .none
+		return formatter
+	}()
+
+	/// Puts this file's conversation on the diff.
+	///
+	/// After every `setDiff`, which clears them: they belong to the file that
+	/// was on screen, and switching files or widening the view is a different
+	/// diff with the same conversation to put back.
+	private func showComments(of path: String) {
+		let left = comments[path] ?? []
+		var atLines: [Int: [DiffView.Comment]] = [:]
+		var outdated: [DiffView.Comment] = []
+		for comment in left {
+			let drawn = DiffView.Comment(
+				author: comment.author,
+				when: comment.createdAt.map { Self.commentDates.string(from: $0) } ?? "",
+				body: comment.body,
+				isOutdated: comment.isOutdated
+			)
+			if let line = comment.line {
+				atLines[line, default: []].append(drawn)
+			} else {
+				outdated.append(drawn)
+			}
+		}
+		diffView.setComments(at: atLines, andOutdated: outdated)
+	}
+
 	private func show(file: GitCommitFile) {
 		guard let diff = diffs[file.path] else {
 			diffView.setDiff("", staged: false)
@@ -320,6 +364,7 @@ final class PullRequestPage: NSView {
 
 		guard Settings.shared.reviewShowsWholeFile, let head else {
 			diffView.setDiff(diff, staged: false, url: root.appendingPathComponent(file.path))
+			showComments(of: file.path)
 			return
 		}
 
@@ -327,6 +372,7 @@ final class PullRequestPage: NSView {
 		// call is not something to leave a pane blank for, and the two draw the
 		// same change.
 		diffView.setDiff(diff, staged: false, url: root.appendingPathComponent(file.path))
+		showComments(of: file.path)
 		if let text = contents[file.path] {
 			showWholeFile(diff: diff, contents: text, path: file.path)
 			return
@@ -347,6 +393,7 @@ final class PullRequestPage: NSView {
 		// other; the hunks are then what is drawn, which is never wrong.
 		guard let wide = WholeFileDiff.expand(diff: diff, contents: contents) else { return }
 		diffView.setDiff(wide, staged: false, url: root.appendingPathComponent(path))
+		showComments(of: path)
 	}
 
 	/// Which file the diff is showing — for whatever is built on top of it.
@@ -409,6 +456,7 @@ final class PullRequestPage: NSView {
 		said.append("files=\(fileList.files.count)")
 		said += fileList.rowsForTesting().prefix(12).map { "  " + $0 }
 		said.append("diff=\(diffView.reportForTesting)")
+		said += diffView.commentsForTesting().map { "  " + $0 }
 		return said.joined(separator: "\n")
 	}
 
@@ -459,6 +507,19 @@ final class PullRequestPage: NSView {
 	func setWholeFileForTesting(_ on: Bool) {
 		wholeFileSwitch.state = on ? .on : .off
 		wholeFileChanged()
+	}
+
+	/// Every remark on the pull request, whichever file it is on — so a run can
+	/// show the two cases without having to find the right file first.
+	func commentsForTesting() -> String {
+		let all = comments.values.flatMap { $0 }.sorted { $0.id < $1.id }
+		guard !all.isEmpty else { return "no comments" }
+		return all.map { comment in
+			let line = comment.line.map { "line \($0)" } ?? "an earlier version"
+			let first = comment.body.split(separator: "\n").first.map(String.init) ?? ""
+			let said = first.count > 60 ? String(first.prefix(59)) + "…" : first
+			return "  \(comment.path) · \(line) · \(comment.author): \(said)"
+		}.joined(separator: "\n")
 	}
 
 	/// The first lines of the diff on screen, so a run can show what changed
