@@ -16,6 +16,11 @@ final class DiffView: NSView {
 	/// Put just these lines aside. Nil where the caller cannot do it — an old
 	/// git, or a staged hunk, which is already where a stash would take it.
 	var onStashSelection: ((Set<Int>) -> Void)?
+	/// Leave a remark on a line, by its number on the new side.
+	///
+	/// The new side because that is the only position a forge can resolve: a
+	/// comment is anchored to the file as it is now, not as it was.
+	var onCommentOnLine: ((Int) -> Void)?
 
 	private var patch = GitPatch()
 	private(set) var isStaged = false
@@ -354,8 +359,10 @@ final class DiffView: NSView {
 
 	override func menu(for event: NSEvent) -> NSMenu? {
 		// A commit's diff has nothing to stage or throw away; it has already
-		// happened, and offering to undo part of it here would be a lie.
-		guard !isReadOnly else { return nil }
+		// happened, and offering to undo part of it here would be a lie. A pull
+		// request's has nothing to stage either — it is somebody else's branch —
+		// but it does have somewhere to leave a remark.
+		guard !isReadOnly else { return commentMenu(for: event) }
 
 		// Right-clicking outside the selection moves it there first, so the
 		// command acts on what was aimed at.
@@ -405,6 +412,49 @@ final class DiffView: NSView {
 			menu.addItem(discard)
 		}
 		return menu
+	}
+
+	/// The one thing a read-only diff offers: a remark on the line under the
+	/// pointer.
+	private func commentMenu(for event: NSEvent) -> NSMenu? {
+		guard onCommentOnLine != nil else { return nil }
+		guard let row = row(at: convert(event.locationInWindow, from: nil)) else { return nil }
+		guard case let .line(_, _, _, new) = rows[row], let line = new else { return nil }
+
+		commentLine = line
+		let menu = NSMenu()
+		let item = NSMenuItem(
+			title: "Comment on Line \(line)…", action: #selector(commentOnLine), keyEquivalent: ""
+		)
+		item.target = self
+		menu.addItem(item)
+		return menu
+	}
+
+	/// Which line the menu was opened over.
+	private var commentLine: Int?
+
+	@objc private func commentOnLine() {
+		guard let commentLine else { return }
+		onCommentOnLine?(commentLine)
+	}
+
+	/// Leaves a remark on a line, for a driven run that has no pointer.
+	func commentOnLineForTesting(_ line: Int) -> Bool {
+		guard rows.contains(where: {
+			if case let .line(_, _, _, new) = $0 { return new == line }
+			return false
+		}) else { return false }
+		onCommentOnLine?(line)
+		return true
+	}
+
+	/// The line numbers a remark could be left on, so a run can name one.
+	func commentableLinesForTesting() -> [Int] {
+		rows.compactMap {
+			guard case let .line(_, _, _, new) = $0 else { return nil }
+			return new
+		}
 	}
 
 	@objc private func applySelection() { onApplySelection?(selection) }

@@ -131,6 +131,7 @@ final class PullRequestReview {
 			self.rememberSession()
 		}
 		page.onCheckOut = { [weak self] in self?.checkOut(request.number) }
+		page.onSubmitted = { [weak self] title, detail in self?.notify(title, detail) }
 		page.onFinish = { [weak self] in self?.finish(with: request.number) }
 		page.isCheckedOut = { [weak self] in
 			guard let root = self?.repositoryRoot() else { return false }
@@ -267,6 +268,9 @@ final class PullRequestReview {
 	/// - `keys:down+down` — walk the file list, as `--log-page` does
 	/// - `diff` — the first lines of the diff on screen
 	/// - `comments` — every remark on it, whichever file it is on
+	/// - `write:40=what to say` — leave a remark on a line of the file on screen
+	/// - `submit:APPROVE` — send what is written, as that verdict
+	/// - `moved:<sha>` — what the submission would say about a head that moved
 	/// - `checkout:123` — check its branch out beside the project
 	/// - `open-checkout:123` — point the window at that checkout
 	/// - `finish:123` — remove it again
@@ -343,7 +347,7 @@ final class PullRequestReview {
 			case "number":
 				open(number: Int(argument) ?? 0) { print("PULL-REQUESTS: \($0)") }
 			case "page", "whole", "pick", "keys", "diff", "read", "next", "hide", "push",
-			     "comments":
+			     "comments", "write", "submit", "moved":
 				// The page is a second round of network calls, so a step that
 				// addresses it waits — and takes the rest of the script with it
 				// rather than running the tail against a page that is not there.
@@ -364,6 +368,22 @@ final class PullRequestReview {
 				}
 				switch step.prefix(while: { $0 != ":" }) {
 				case "comments": print("PULL-REQUEST PAGE comments:\n\(page.commentsForTesting())")
+				case "write":
+					// `line=what was written`, the two things a remark is.
+					let parts = argument.split(separator: "=", maxSplits: 1).map(String.init)
+					let line = Int(parts.first ?? "") ?? 0
+					print("PULL-REQUEST PAGE: " + page.writeCommentForTesting(
+						line: line, body: parts.count > 1 ? parts[1] : ""
+					))
+				case "submit":
+					guard let verdict = ReviewVerdict(rawValue: argument) else {
+						print("PULL-REQUEST PAGE: no such verdict \(argument)")
+						break
+					}
+					page.submitForTesting(verdict, body: "Read in Abydos.")
+				case "moved":
+					print("PULL-REQUEST PAGE moved: "
+						+ (page.headWarningForTesting(now: argument) ?? "nothing has moved"))
 				case "push":  print("PULL-REQUEST PAGE: " + page.pretendPushForTesting(argument))
 				case "read":  page.toggleReadForTesting()
 				case "next":  print("PULL-REQUEST PAGE: next unread \(page.nextUnreadForTesting())")

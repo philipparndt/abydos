@@ -27,6 +27,8 @@ final class PullRequestPage: NSView {
 	private var tokens: [String: String] = [:]
 	/// The conversation already on it, by file.
 	private var comments: [String: [ReviewComment]] = [:]
+	/// What is being written here and has not been sent.
+	private var pending = PendingReview()
 	/// The file text at the head, for the whole-file view — asked for once per
 	/// file and kept, because turning the switch off and on again should not be
 	/// a second network call.
@@ -39,6 +41,7 @@ final class PullRequestPage: NSView {
 	private var wholeFileSwitch: NSButton!
 	private var hideReadSwitch: NSButton!
 	private var checkOutButton: NSButton!
+	private var reviewButton: NSButton!
 	private var progressLabel: NSTextField!
 	private var headingLabel: NSTextField!
 	private var subheadingLabel: NSTextField!
@@ -108,6 +111,7 @@ final class PullRequestPage: NSView {
 		// than none. The design left this open and this is the answer: not
 		// offered — and what the page gains instead is the switch below.
 		diffView.isReadOnly = true
+		diffView.onCommentOnLine = { [weak self] line in self?.writeComment(on: line) }
 
 		diffScroll = NSScrollView()
 		diffScroll.documentView = diffView
@@ -165,8 +169,21 @@ final class PullRequestPage: NSView {
 		checkOutButton.bezelStyle = .rounded
 		checkOutButton.toolTip = "Check this branch out beside the project, to read it in place"
 
+		// **The point at which a review is finished** is the point at which it
+		// is worth doing here at all. Everything up to saying something happens
+		// on this page; without this the app is a viewer and the reviewer opens
+		// a browser, finds the pull request again, and finds the line again.
+		reviewButton = NSButton(
+			title: "Review…", target: self, action: #selector(reviewPressed)
+		)
+		reviewButton.controlSize = .small
+		reviewButton.font = Theme.current.uiFont(11)
+		reviewButton.bezelStyle = .rounded
+		reviewButton.toolTip = "Submit what has been written as one review"
+
 		let controls = NSStackView(views: [
-			progressLabel, checkOutButton, hideReadSwitch, arrangeControl, wholeFileSwitch,
+			progressLabel, reviewButton, checkOutButton, hideReadSwitch,
+			arrangeControl, wholeFileSwitch,
 		])
 		controls.orientation = .horizontal
 		controls.spacing = Theme.current.scaled(10)
@@ -290,8 +307,12 @@ final class PullRequestPage: NSView {
 				self.trouble = files.trouble
 				self.fileList.setFiles([])
 			}
+			// The remarks were written against the head that was read; keeping
+			// that is what lets the submission say the pull request has moved.
+			if self.pending.head == nil { self.pending.head = head }
 			self.subheadingLabel.stringValue = self.subheading()
 			self.showCheckOutState()
+			self.showReviewState()
 		}
 	}
 
@@ -339,6 +360,14 @@ final class PullRequestPage: NSView {
 		let left = comments[path] ?? []
 		var atLines: [Int: [DiffView.Comment]] = [:]
 		var outdated: [DiffView.Comment] = []
+		// What has been written here and not sent, beside what is already
+		// there — because a reviewer halfway down a file needs to see what they
+		// have said as much as what anybody else has.
+		for (line, remark) in pending.comments(on: path) {
+			atLines[line, default: []].append(DiffView.Comment(
+				author: "you · not sent yet", when: "", body: remark.body
+			))
+		}
 		for comment in left {
 			let drawn = DiffView.Comment(
 				author: comment.author,
@@ -424,6 +453,90 @@ final class PullRequestPage: NSView {
 		checkOutButton.title = isCheckedOut() ? "Finish With It" : "Check Out"
 	}
 
+	/// Writes, replaces or clears a remark on one line of the file on screen.
+	private func writeComment(on line: Int) {
+		guard let path = fileList.selectedPath else { return }
+		ReviewSheet.askForComment(
+			on: path,
+			line: line,
+			existing: pending.comment(on: path, line: line)?.body ?? "",
+			over: window
+		) { [weak self] written in
+			guard let self else { return }
+			self.pending.write(PendingComment(path: path, line: line, body: written))
+			self.showComments(of: path)
+			self.showReviewState()
+		}
+	}
+
+	@objc private func reviewPressed() {
+		// **Read again, at the moment of sending.** The head this page was
+		// opened at is what the remarks are positioned against, and a pull
+		// request pushed to while it was being read is the case this must not
+		// send into.
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let now = await GitHubPullRequests.head(of: self.request.number, in: self.root)
+			let warning = PendingReview.headHasMoved(from: self.pending.head ?? self.head, to: now)
+			ReviewSheet.askForVerdict(
+				remarks: self.pending.comments.count,
+				body: self.pending.body,
+				warning: warning,
+				over: self.window
+			) { [weak self] verdict, body in
+				self?.pending.body = body
+				self?.submit(verdict)
+			}
+		}
+	}
+
+	/// Sends what has been written, and says what happened.
+	///
+	/// **What is written stays written until the submission succeeds.** The
+	/// failure that matters is a review that looks sent and is not, because the
+	/// author is waiting on it.
+	private func submit(_ verdict: ReviewVerdict) {
+		let sending = pending
+		reviewButton.isEnabled = false
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let reply = await GitHubPullRequests.submit(
+				review: verdict,
+				on: self.request.number,
+				body: sending.body,
+				comments: sending.comments,
+				at: sending.head ?? self.head,
+				in: self.root
+			)
+			self.reviewButton.isEnabled = true
+			switch reply {
+			case .answered:
+				self.pending.clear()
+				self.lastSubmission = "sent as \(verdict.rawValue)"
+				self.onSubmitted?("Review sent", "#\(self.request.number) · \(verdict.title)")
+				// Read back, so the page shows the remarks as the forge has
+				// them rather than as this program believes it sent them.
+				self.reload()
+			case .unavailable, .failed:
+				let trouble = reply.trouble ?? "The review did not send."
+				self.lastSubmission = "not sent: \(trouble)"
+				self.onSubmitted?("The review did not send", trouble)
+			}
+			self.showReviewState()
+		}
+	}
+
+	/// What the last submission did, for a driven run and for the report.
+	private(set) var lastSubmission: String?
+
+	/// Told when a review was sent, or was not.
+	var onSubmitted: ((String, String) -> Void)?
+
+	private func showReviewState() {
+		let remarks = pending.comments.count
+		reviewButton.title = remarks == 0 ? "Review…" : "Review… (\(remarks))"
+	}
+
 	@objc private func hideReadChanged() {
 		fileList.setHidesDone(hideReadSwitch.state == .on)
 	}
@@ -455,6 +568,13 @@ final class PullRequestPage: NSView {
 		}
 		said.append("files=\(fileList.files.count)")
 		said += fileList.rowsForTesting().prefix(12).map { "  " + $0 }
+		if !pending.isEmpty || lastSubmission != nil {
+			said.append(
+				"pending=\(pending.comments.count)"
+					+ (lastSubmission.map { " · \($0)" } ?? "")
+			)
+			said += pending.comments.map { "  wrote on \($0.path):\($0.line) — \($0.body)" }
+		}
 		said.append("diff=\(diffView.reportForTesting)")
 		said += diffView.commentsForTesting().map { "  " + $0 }
 		return said.joined(separator: "\n")
@@ -497,6 +617,31 @@ final class PullRequestPage: NSView {
 		return cleared.isEmpty
 			? "nothing cleared, \(done) of \(total) still read"
 			: "cleared " + cleared.sorted().joined(separator: ", ") + ", \(done) of \(total) still read"
+	}
+
+	/// Writes a remark on a line, the way the sheet does when it is answered.
+	func writeCommentForTesting(line: Int, body: String) -> String {
+		guard let path = fileList.selectedPath else { return "nothing selected" }
+		pending.write(PendingComment(path: path, line: line, body: body))
+		showComments(of: path)
+		showReviewState()
+		return "wrote on \(path):\(line)"
+	}
+
+	/// Whether the diff on screen has that line to comment on at all.
+	func canCommentForTesting(line: Int) -> Bool {
+		diffView.commentableLinesForTesting().contains(line)
+	}
+
+	/// Submits without the sheet, which is the half a driven run cannot click.
+	func submitForTesting(_ verdict: ReviewVerdict, body: String) {
+		pending.body = body
+		submit(verdict)
+	}
+
+	/// What the submission would be told about a head that has moved.
+	func headWarningForTesting(now: String?) -> String? {
+		PendingReview.headHasMoved(from: pending.head ?? head, to: now)
 	}
 
 	func setHideReadForTesting(_ on: Bool) {

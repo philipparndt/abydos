@@ -84,12 +84,12 @@
 
 ## 8. Answering
 
-- [ ] 8.1 A comment written on a line of a diff, held as part of a pending
+- [x] 8.1 A comment written on a line of a diff, held as part of a pending
       review rather than sent one at a time
-- [ ] 8.2 Submit as approved, commenting, or requesting changes
-- [ ] 8.3 The head the page was opened at travels with the pending review; a
+- [x] 8.2 Submit as approved, commenting, or requesting changes
+- [x] 8.3 The head the page was opened at travels with the pending review; a
       head that has moved by submission time is said before anything is sent
-- [ ] 8.4 A submission that fails says so and leaves what was written where it
+- [x] 8.4 A submission that fails says so and leaves what was written where it
       is — the failure that matters is one that looks like success
 - [ ] 8.5 Driven, against a real pull request on a scratch repository: leave a
       comment, submit, read it back
