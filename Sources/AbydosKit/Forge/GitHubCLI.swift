@@ -25,7 +25,18 @@ public enum GitHubCLI {
 	/// from the Finder has `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, and `gh` is in
 	/// none of the four on any machine. A hard-coded `/opt/homebrew/bin/gh`
 	/// would work here and be missing for whoever installed it elsewhere.
-	public static func locate() -> String? { Executables.locate("gh") }
+	public static func locate() -> String? {
+		// **`ABYDOS_GH` names the one to run.** It is here for somebody whose
+		// `gh` is somewhere no search would guess, and it is also the only way
+		// a driven run can produce the first of the three absences: a machine
+		// with no `gh` on it cannot be arranged for by a script, and the answer
+		// that says so is the one most easily got wrong, because it is the one
+		// nobody developing this ever sees.
+		if let named = ProcessInfo.processInfo.environment["ABYDOS_GH"], !named.isEmpty {
+			return FileManager.default.isExecutableFile(atPath: named) ? named : nil
+		}
+		return Executables.locate("gh")
+	}
 
 	/// Runs `gh` and answers with what it said.
 	///

@@ -118,6 +118,7 @@ extension MainWindowController {
 		toolStrip.onToggleStructure = { [weak self] in self?.sidebar.showSidebarTool(.structure) }
 		toolStrip.onToggleScratches = { [weak self] in self?.sidebar.showSidebarTool(.scratches) }
 		toolStrip.onToggleHistory = { [weak self] in self?.sidebar.showSidebarTool(.history) }
+		toolStrip.onTogglePullRequests = { [weak self] in self?.sidebar.showSidebarTool(.pullRequests) }
 		toolStrip.onToggleBacklog = { [weak self] in self?.showBacklog(nil) }
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(toastPosted(_:)), name: .abydosToast, object: nil
@@ -683,6 +684,8 @@ extension MainWindowController {
 	@objc func toggleScratchesView(_ sender: Any?) { sidebar.showSidebarTool(.scratches) }
 
 	@objc func toggleHistoryView(_ sender: Any?) { sidebar.showSidebarTool(.history) }
+
+	@objc func togglePullRequestsView(_ sender: Any?) { sidebar.showSidebarTool(.pullRequests) }
 
 	/// A key that used to open something and now opens the git tool.
 	///

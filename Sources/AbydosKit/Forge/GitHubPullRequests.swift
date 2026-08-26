@@ -44,20 +44,13 @@ public enum GitHubPullRequests {
 		)
 		guard listed.exitCode == 0 else { return .failed(complaint(listed)) }
 
-		var requests = pullRequests(fromJSON: listed.stdout)
+		let requests = pullRequests(fromJSON: listed.stdout)
 
 		// A failure here is not a failure of the list: the rows are still worth
 		// showing without the mark, which is the whole reason it is a second
 		// call.
 		let waiting = await waitingOnMe(in: root, scope: scope)
-		if !waiting.isEmpty {
-			requests = requests.map {
-				var request = $0
-				request.isWaitingOnMe = waiting.contains($0.number)
-				return request
-			}
-		}
-		return .answered(requests)
+		return .answered(marking(requests, waiting: waiting))
 	}
 
 	/// The numbers of the open pull requests asking for this account's review.
@@ -71,6 +64,21 @@ public enum GitHubPullRequests {
 		)
 		guard result.exitCode == 0 else { return [] }
 		return Set(numbers(fromJSON: result.stdout))
+	}
+
+	/// Marks the rows the search named, and leaves the rest alone.
+	///
+	/// Its own function because it is the whole of what the second call is for,
+	/// and because a live proof of it needs somebody to have asked this account
+	/// for a review — which is not something a test can arrange for on anybody
+	/// else's repository.
+	public static func marking(_ requests: [PullRequest], waiting: Set<Int>) -> [PullRequest] {
+		guard !waiting.isEmpty else { return requests }
+		return requests.map {
+			var request = $0
+			request.isWaitingOnMe = waiting.contains($0.number)
+			return request
+		}
 	}
 
 	/// `gh pr list --json` — an array of objects, one per pull request.

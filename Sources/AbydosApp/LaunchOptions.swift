@@ -336,6 +336,8 @@ struct LaunchOptions {
 	var logPageSteps: String?
 	/// Drive the commit page and print what it holds.
 	var commitPageSteps: String?
+	/// Drive the pull request list and print what each row says.
+	var pullRequestSteps: String?
 	/// How many keystrokes to time in the terminal.
 	var typingPresses: Int?
 	/// Print what opening this project cost, at each of these many seconds in.
@@ -895,6 +897,7 @@ struct LaunchOptions {
 			case "--commit-menu": options.commitMenuRow = next().flatMap(Int.init)
 			case "--log-page": options.logPageSteps = next()
 			case "--commit-page": options.commitPageSteps = next()
+			case "--pull-requests": options.pullRequestSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--report-open":
 				options.openReportsAt = (next() ?? "10")

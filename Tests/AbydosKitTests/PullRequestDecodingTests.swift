@@ -61,6 +61,34 @@ struct PullRequestDecodingTests {
 		#expect(numbers == [7, 9])
 	}
 
+	/// **The mark is the second call's whole purpose.** Which pull requests are
+	/// waiting on the reader is a question GitHub's search answers — the list
+	/// call cannot know it, and a scan of `reviewRequests` cannot answer "a team
+	/// I am in" at all.
+	///
+	/// Proved here rather than in a driven run, and that is a real limit rather
+	/// than a preference: a live proof needs somebody to have asked this account
+	/// for a review, which is not something a test may arrange on a repository
+	/// belonging to somebody else.
+	@Test func theSearchMarksTheRowsItNamed() throws {
+		let requests = GitHubPullRequests.pullRequests(fromJSON: try fixture("gh-pr-list"))
+		let marked = GitHubPullRequests.marking(requests, waiting: [14264, 99])
+
+		#expect(marked.filter(\.isWaitingOnMe).map(\.number) == [14264])
+		#expect(marked.count == requests.count)
+		// Nothing named, nothing marked — which is what an account with no
+		// review requests sees, and it must not be an empty list.
+		#expect(GitHubPullRequests.marking(requests, waiting: []).allSatisfy { !$0.isWaitingOnMe })
+	}
+
+	/// The two questions are different questions, which is the point of the
+	/// switch: one is what GitHub calls a direct request, the other includes a
+	/// team this account belongs to.
+	@Test func theScopeChoosesWhichQuestionIsAsked() {
+		#expect(ReviewRequestScope.me.searchQualifier == "user-review-requested:@me")
+		#expect(ReviewRequestScope.meOrMyTeams.searchQualifier == "review-requested:@me")
+	}
+
 	// MARK: - A row that is missing things
 
 	/// **A missing field costs its row a word, not the list its rows.** A

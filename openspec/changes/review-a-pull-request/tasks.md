@@ -11,7 +11,7 @@
 
 ## 2. Talking to GitHub
 
-- [ ] 2.1 New `Sources/AbydosKit/Forge/GitHubCLI.swift`: run `gh` the way
+- [x] 2.1 New `Sources/AbydosKit/Forge/GitHubCLI.swift`: run `gh` the way
       `GitRepository` runs `git` — a process, both pipes drained, exit code and
       output — with the `gh` version reported for a driven run
 - [x] 2.2 Three answers that are not errors: no `gh` on the path, `gh` not
@@ -27,14 +27,14 @@
 
 ## 3. Browsing them
 
-- [ ] 3.1 A list of open pull requests: number, title, author, branch, draft,
+- [x] 3.1 A list of open pull requests: number, title, author, branch, draft,
       checks
-- [ ] 3.2 The ones requesting this account's review are marked, without having
+- [x] 3.2 The ones requesting this account's review are marked, without having
       to read every row
-- [ ] 3.3 A way in from the left rail, and a refresh that somebody asks for
+- [x] 3.3 A way in from the left rail, and a refresh that somebody asks for
       rather than a poll
-- [ ] 3.4 The three non-error answers from 2.2 render as themselves in the list
-- [ ] 3.5 Driven: a flag that lists them and prints what each row says
+- [x] 3.4 The three non-error answers from 2.2 render as themselves in the list
+- [x] 3.5 Driven: a flag that lists them and prints what each row says
 
 ## 4. Reading one
 

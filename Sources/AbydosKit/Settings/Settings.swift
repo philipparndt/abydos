@@ -78,6 +78,7 @@ public final class Settings {
 			Key.editorLineHeight: 1.4,
 			Key.tabWidth: 4,
 			Key.showHiddenFiles: true,
+			Key.reviewRequestsIncludeTeams: true,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
 			Key.uiScale: 1.0,
 			// Big enough to read from the back of a room, and light, because a
@@ -131,6 +132,7 @@ public final class Settings {
 		static let showHiddenFiles = "showHiddenFiles"
 		static let compactsPackages = "compactsPackages"
 		static let commitFilesByFolder = "commitFilesByFolder"
+		static let reviewRequestsIncludeTeams = "reviewRequestsIncludeTeams"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let agentPermissions = "agentPermissions"
@@ -701,6 +703,18 @@ public final class Settings {
 	public var commitFilesByFolder: Bool {
 		get { defaults.bool(forKey: Key.commitFilesByFolder) }
 		set { set(newValue, Key.commitFilesByFolder) }
+	}
+
+	/// Whether "waiting on me" counts a review asked of a team this account is
+	/// in, or only one asked of it by name.
+	///
+	/// On, because a repository that assigns reviews to teams is the case where
+	/// the narrow answer is silently empty — somebody would open the list, see
+	/// nothing marked, and conclude nothing was waiting on them. The other way
+	/// round is merely a longer list, which is visibly a longer list.
+	public var reviewRequestsIncludeTeams: Bool {
+		get { defaults.bool(forKey: Key.reviewRequestsIncludeTeams) }
+		set { set(newValue, Key.reviewRequestsIncludeTeams) }
 	}
 
 	/// Whether choosing another project opens a window or replaces this one.

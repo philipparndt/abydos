@@ -51,6 +51,10 @@ final class SidebarController: NSObject {
 		self.editor = editor
 		self.navigator = navigator
 		super.init()
+
+		pullRequests.pane = { [weak self] in self?.pullRequestsPane }
+		pullRequests.showList = { [weak self] in self?.showSidebarTool(.pullRequests) }
+		pullRequests.rail = { [weak self] in self?.railReportForTesting() ?? "" }
 	}
 
 	/// The rail itself, which the window puts down its left edge.
@@ -70,6 +74,18 @@ final class SidebarController: NSObject {
 	var scratchesPane: ScratchesPane?
 
 	private(set) var historyPane: HistoryPane?
+
+	private(set) var pullRequestsPane: PullRequestsPane?
+
+	/// Reviewing: the list, the page it opens, and the run that drives them.
+	///
+	/// **A collaborator rather than more of this class.** This one is already at
+	/// the length where a file stops being read and starts being appended to,
+	/// and what a pull request needs — a page of its own, ticks, a checkout, a
+	/// pending review — is a lot more than a `case` in `makeToolView`. It owns
+	/// its own state and asks this object for the two things only the sidebar
+	/// knows.
+	let pullRequests = PullRequestReview()
 
 	var primaryToolView: NSView?
 
@@ -637,6 +653,7 @@ final class SidebarController: NSObject {
 		structurePane = nil
 		scratchesPane = nil
 		historyPane = nil
+		pullRequestsPane = nil
 
 		// Built before anything is taken down. The panes that need a repository
 		// cannot be built until it has been read, and tearing the sidebar down
@@ -736,6 +753,14 @@ final class SidebarController: NSObject {
 				self?.showCommitDiff(commit: commit, file: file)
 			}
 			historyPane = pane
+			view = pane
+		case .pullRequests:
+			// Nothing to show until the project's repository has been read: a
+			// pull request is asked about by remote, and the remote is
+			// something only the repository knows.
+			guard let project = project(), project.git != nil else { return nil }
+			let pane = PullRequestsPane(root: gitCommandRoot() ?? project.root)
+			pullRequestsPane = pane
 			view = pane
 		case .scratches:
 			let pane = ScratchesPane(projectRoot: project()?.root)
@@ -883,6 +908,9 @@ final class SidebarController: NSObject {
 			}
 		}
 	}
+
+	/// What the pull request list says, row by row — see `PullRequestReview`.
+	func pullRequestsForTesting(_ steps: String) { pullRequests.driveForTesting(steps) }
 
 	/// What the log page holds, and what its menu over a commit offers.
 	func logPageForTesting(_ steps: String, waiting: Int = 8) {
