@@ -255,6 +255,12 @@ final class SidebarController: NSObject {
 			case "open":    pane.setFolderForTesting(argument, collapsed: false)
 			case "filter":  pane.filterForTesting(argument)
 			case "refresh": pane.refresh()
+			// What each row offers, and firing the selected one's verb — the
+			// two halves of "a row's action can be reached from the keyboard".
+			case "actions": print("BRANCHES actions:\n  "
+				+ pane.rowActionsForTesting().joined(separator: "\n  "))
+			case "select":  pane.selectRowForTesting(Int(argument) ?? 0)
+			case "fire":    pane.fireSelectedRowActionForTesting()
 			default:        print("BRANCHES: unknown step \(step)")
 			}
 		}

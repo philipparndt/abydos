@@ -117,6 +117,61 @@ remains the place where everything is named.
 - **THEN** `⏎` checks it out, and the row's other verbs are reachable by their
   own gesture and from the context menu
 
+### Requirement: A folder the tree names in its own right is never folded away
+
+A folder that carries verbs of its own SHALL keep its row however few branches
+are under it.
+
+The rule that a folder holding exactly one branch stays flat is right for a
+prefix that happened to be shared: `hotfix/0472` is one row, and a folder made
+to hold it would have turned one row into two and said nothing.
+
+**It is wrong for a folder that is an object.** `backup/` is made by this
+program, and this specification already gives it a verb — deleting the entries
+older than a given age. Fold it away and the verb goes with it: one backup ref
+means no backup folder, and no way to sweep the backups. The question is not how
+many children a folder has but whether the tree names it in its own right.
+
+#### Scenario: a single backup ref
+
+- **GIVEN** a repository with exactly one ref under `backup/`
+- **THEN** there is a `backup/` folder row with that one ref under it
+- **AND** the folder's own verbs are on it
+
+#### Scenario: a prefix that is only a prefix
+
+- **GIVEN** `hotfix/0472` and no other branch beginning `hotfix/`
+- **THEN** `hotfix/0472` is one row and there is no `hotfix/` folder
+
+### Requirement: A branch whose work is already merged is dimmed
+
+A local branch merged into the default branch SHALL be drawn dimmed.
+
+A merged branch is finished: there is nothing on it that is not somewhere else.
+Saying so where the branch already is beats the two alternatives — moving it,
+which means somebody hunts for a branch that was where they left it until it
+merged, and hiding it, which means a branch disappears at the moment it becomes
+safe to delete.
+
+It is drawn from one reading of what is merged, taken with the reads the pane
+already does. A branch the reading has not covered SHALL draw as it does now,
+so a slow or failed answer costs appearance rather than correctness.
+
+#### Scenario: a branch that has been merged
+
+- **GIVEN** a local branch whose commits are all in the default branch
+- **THEN** its row is dimmed
+
+#### Scenario: a branch with work still on it
+
+- **GIVEN** a local branch with a commit the default branch does not have
+- **THEN** its row is drawn as it is today
+
+#### Scenario: the branch that is checked out
+
+- **GIVEN** the default branch itself, checked out
+- **THEN** it is not dimmed, whatever the reading says
+
 ## MODIFIED Requirements
 
 ### Requirement: Filtering flattens the tree

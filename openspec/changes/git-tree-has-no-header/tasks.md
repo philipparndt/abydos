@@ -1,15 +1,16 @@
 ## 1. A row can carry a verb
 
-- [ ] 1.1 A trailing action rect on the branch row view — computed at draw time,
+- [x] 1.1 A trailing action rect on the branch row view — computed at draw time,
       drawn when the row has one, hit-tested in `mouseDown` before the row's own
       gesture, as the tab bar's trailing controls already are
-- [ ] 1.2 Shown always, or on hover-and-selection, per row; selection counts as
+- [x] 1.2 Shown always, or on hover-and-selection, per row; selection counts as
       hover so a row arrowed to shows what it offers
-- [ ] 1.3 `⌘⏎` fires the selected row's action; `⏎` still checks a branch out
-- [ ] 1.4 `LOCAL` is its first user: a `+` that opens the same dialog the
+- [x] 1.3 `⌘⏎` fires the selected row's action; `⏎` still checks a branch out
+- [x] 1.4 `LOCAL` is its first user: a `+` that opens the same dialog the
       `New Branch…` button opens. The button stays for now
-- [ ] 1.5 Driven: report which rows offer an action, and fire one from the
-      keyboard
+- [x] 1.5 Driven: report which rows offer an action. Firing one is driven in
+      2.3 instead — `Local`'s verb opens a sheet, and a driven run that opens a
+      sheet is a driven run that stops
 
 ## 2. The working copy's verb
 
@@ -44,12 +45,31 @@
       take it from the editor when the editor has the keyboard
 - [ ] 4.5 Delete `filterField` and `newButton` and their constraints
 
-## 5. Proving it
+## 5. A folder with verbs of its own keeps its row
 
-- [ ] 5.1 The tree begins at the top of the pane, under the repository row, and
+- [ ] 5.1 `PathTree.build` takes the folder names that are never folded into
+      their only child; the refs tree names `backup` among them
+- [ ] 5.2 `hotfix/0472` is unchanged — one row, no folder
+- [ ] 5.3 Tests over `PathTree` for both: one backup ref keeps its folder, one
+      hotfix branch does not gain one
+- [ ] 5.4 Driven: a repository with a single backup ref shows the folder, and
+      the folder's own verbs are on it
+
+## 6. A merged branch is dimmed
+
+- [ ] 6.1 `GitBranches` answers which local branches are merged into the default
+      branch, read alongside what the pane already reads
+- [ ] 6.2 `BranchRowView` draws a merged branch dimmed; the current branch never
+      dims, whatever the answer says
+- [ ] 6.3 A branch the reading has not covered draws as it does today
+- [ ] 6.4 Driven: a merged branch and an unmerged one, reported side by side
+
+## 7. Proving it
+
+- [ ] 7.1 The tree begins at the top of the pane, under the repository row, and
       nothing else takes height above it — measured in a driven run, not by eye
-- [ ] 5.2 Every action reachable by pointer is reachable by `⌘⏎` or a context
+- [ ] 7.2 Every action reachable by pointer is reachable by `⌘⏎` or a context
       menu, and the driven report says which
-- [ ] 5.3 `make test` and `make warnings` green
-- [ ] 5.4 A screenshot at 300 and at 250 points wide, compared against the
+- [ ] 7.3 `make test` and `make warnings` green
+- [ ] 7.4 A screenshot at 300 and at 250 points wide, compared against the
       header the change removes

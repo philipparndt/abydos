@@ -63,9 +63,16 @@ This is how the tab bar's trailing controls already work — `previewButtonFrame
 control sits over them. Following it means one pattern for "a control drawn into
 a custom row" rather than a second one.
 
-*Alternative considered:* an `NSButton` subview per row. Rejected — outline rows
-are recycled, so buttons have to be attached and detached as rows scroll, and
-the pane already draws everything else by hand.
+*Alternative considered:* an `NSButton` subview per row. Rejected because every
+row in this pane is drawn through `RowMetrics` and a button would be the one
+control in the tree that did not match the rest of it.
+
+**This first said rows are recycled and buttons would have to be attached and
+detached as they scroll. That is not true here** —
+`outlineView(_:viewFor:item:)` builds a fresh view per row and never calls
+`makeView(withIdentifier:)`, so a subview would have been perfectly workable.
+The conclusion stands and the reason given for it did not; leaving the wrong one
+in would have misled whoever read it next.
 
 ### When an action shows
 
@@ -105,6 +112,32 @@ The pane keeps its filter *state* exactly as now; only how the text gets there
 changes. That keeps `Filtering flattens the tree` true without touching the code
 that implements it.
 
+### A folder with verbs of its own is never folded away
+
+`PathTree` merges a folder holding exactly one child into that child, which is
+right for a prefix that happened to be shared — `hotfix/0472` as one row — and
+wrong for `backup/`, which this program creates and which this specification
+already gives a verb of its own: deleting the entries older than a given age.
+
+**A folder that is an object cannot be flattened, because its verbs go with it.**
+One backup ref today means the backup folder is not there, and neither is the
+only way to sweep it. The distinction is not how many children a folder has but
+whether the tree names the folder in its own right.
+
+So `PathTree.build` takes the folders that are never folded, and the refs tree
+names `backup` among them. `hotfix/0472` is unchanged.
+
+### Merged is drawn, not listed
+
+A branch already merged into the default branch is one whose work is done. It is
+dimmed rather than moved or hidden: where a branch sits in the list is how it is
+found, and a branch that moves when it merges is one somebody hunts for. Dimming
+says "nothing here" without saying "gone".
+
+It costs one `git branch --merged` per refresh, alongside the reads the pane
+already does, and it is a set of names rather than a fact per branch — so a
+branch with no answer yet simply draws as it does today.
+
 ## Risks / Trade-offs
 
 **A pinned row is a second outline, and two outlines can disagree.** → They share
@@ -127,13 +160,15 @@ which exists for exactly this.
 
 ## Migration Plan
 
-Four commits, each green and each leaving the pane usable:
+Six commits, each green and each leaving the pane usable:
 
 1. The row action affordance, with `LOCAL`'s `+` as its first user.
 2. The working copy's `Review N change…`, and the renaming in the menu and the
    shortcut.
 3. The repository row, pinned, taking the traffic control; the button goes.
 4. `⌘F`; the field goes.
+5. A folder with verbs of its own is not folded away.
+6. A merged branch is dimmed.
 
 Nothing is removed before its replacement works, so the pane never has less than
 it has today.

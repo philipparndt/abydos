@@ -238,6 +238,7 @@ final class BranchesPane: NSView {
 		tableView.dataSource = self
 		tableView.menu = makeMenu()
 		tableView.onActivate = { [weak self] in self?.checkoutSelected() }
+		tableView.onRowAction = { [weak self] in self?.fireSelectedRowAction() }
 
 		conflictBanner = ConflictBanner()
 		conflictBanner.onOpenFiles = { [weak self] in
@@ -906,6 +907,39 @@ final class BranchesPane: NSView {
 
 	/// Opens the commit page, where a message with a body gets written.
 	@objc private func openCommitPage() { onOpenCommitPage?() }
+
+	/// The selected row's own verb, for `⌘⏎`.
+	///
+	/// Asked of the row's view rather than of a table kept beside the model: the
+	/// view is where the action was put, and a second table saying which rows
+	/// have one is a second thing to keep in step.
+	private func fireSelectedRowAction() {
+		let row = tableView.selectedRow
+		guard row >= 0,
+		      let view = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+		      	as? ActionableRowView
+		else { return }
+		view.fireAction()
+	}
+
+	/// Selects a row by its position, for a driven run.
+	func selectRowForTesting(_ row: Int) {
+		guard row >= 0, row < tableView.numberOfRows else { return }
+		tableView.selectRowIndexes([row], byExtendingSelection: false)
+	}
+
+	/// Fires the selected row's verb, as `⌘⏎` does.
+	func fireSelectedRowActionForTesting() { fireSelectedRowAction() }
+
+	/// What each visible row offers, for a driven run.
+	func rowActionsForTesting() -> [String] {
+		(0..<tableView.numberOfRows).compactMap { row in
+			guard let node = tableView.item(atRow: row) as? GitNode else { return nil }
+			let view = tableView.view(atColumn: 0, row: row, makeIfNecessary: true)
+			let offer = (view as? ActionableRowView)?.actionReportForTesting ?? "-"
+			return "\(node.key): \(offer)"
+		}
+	}
 
 	/// Makes a tag at a branch's tip.
 	///
@@ -1719,7 +1753,16 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		guard let node = item as? GitNode else { return nil }
 		switch node.row {
 		case .header(let title):
-			return BranchSectionView(title: title)
+			let view = BranchSectionView(title: title)
+			// The verb that belongs to a set of local branches is the one that
+			// adds to it — which is what the button above the tree was.
+			if title == "Local" {
+				view.action = RowAction(
+					symbol: "plus", help: "New branch from here", isAlwaysShown: false
+				)
+				view.onAction = { [weak self] in self?.newBranch() }
+			}
+			return view
 		case let .workingCopy(changed):
 			return WorkingCopyRowView(changed: changed)
 		case let .side(title, _, count):
@@ -1971,6 +2014,8 @@ private final class TagSourceWatcher: NSObject, NSComboBoxDelegate {
 /// them was written out by hand here first, and each was reported broken.
 private final class BranchesOutlineView: NSOutlineView {
 	var onActivate: (() -> Void)?
+	/// `⌘⏎` — the selected row's own verb, whatever that row is.
+	var onRowAction: (() -> Void)?
 
 	/// A click from an inactive window lands on the row rather than being spent
 	/// activating the app, which is what the project tree has always done.
@@ -1988,8 +2033,16 @@ private final class BranchesOutlineView: NSOutlineView {
 	}
 
 	override func keyDown(with event: NSEvent) {
+		// **⌘⏎ before ⏎.** A row's verb needs a key of its own, or it is a
+		// mouse-only feature — which these panes were fixed not to be. ⏎ is
+		// taken: on a branch it checks it out, and one key meaning two things on
+		// two rows is the overload this avoids.
 		if event.keyCode == 36 || event.keyCode == 76 {
-			onActivate?()
+			if event.modifierFlags.contains(.command) {
+				onRowAction?()
+			} else {
+				onActivate?()
+			}
 			return
 		}
 
@@ -2097,9 +2150,8 @@ private final class ConflictBanner: NSView {
 	@objc private func copyPrompt() { onCopyPrompt?() }
 }
 
-private final class BranchSectionView: NSView {
+private final class BranchSectionView: ActionableRowView {
 	private let title: String
-	override var isFlipped: Bool { true }
 
 	init(title: String) {
 		self.title = title
@@ -2137,6 +2189,8 @@ private final class BranchSectionView: NSView {
 			x: RowMetrics.textInset,
 			y: bounds.midY - label.size().height / 2
 		))
+
+		drawAction()
 	}
 }
 

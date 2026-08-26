@@ -68,6 +68,18 @@ already states about folder rows applied to a section row.
 bar does, closing on `esc` and when emptied. Filtering behaves exactly as it
 does today once open — flattening the tree, which is already spec'd.
 
+**Two things found while changing this component, folded in because it is open.**
+
+`backup/2026-08-25-1607-main` draws as a flat branch rather than under a
+`backup/` folder. That is the documented one-child rule doing what it says — and
+it is wrong here, because `backup` is a folder this program makes and one this
+specification already gives a verb to. A folder with verbs of its own cannot be
+folded away; its verbs go with it.
+
+**A branch already merged into the default branch is dimmed.** Its work is done
+and the row should say so without moving or hiding it — where a branch sits is
+how it is found.
+
 ## Capabilities
 
 ### Modified Capabilities
