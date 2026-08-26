@@ -158,15 +158,18 @@
 
 ## 8. The window controller itself
 
-- [ ] 8.1 Move `NSSplitViewDelegate` and the panel geometry to
+- [x] 8.1 Move `NSSplitViewDelegate` and the panel geometry to
       `MainWindowController+Layout.swift`
-- [ ] 8.2 Move the 108 forwarding actions and `validateMenuItem` to
-      `MainWindowController+MenuActions.swift`
-- [ ] 8.3 Confirm the only members left at internal visibility are the
+- [x] 8.2 ~~Move the 108 forwarding actions to `+MenuActions.swift`~~ — split
+      by subject instead. The actions went with the work they forward to
+      (`+Running`, `+Layout`, `+Terminal`), because an action and the thing it
+      calls read better together than 82 one-line forwards in a file of their
+      own.
+- [x] 8.3 Confirm the only members left at internal visibility are the
       collaborators — no field widened from `private` to make a split work
-- [ ] 8.4 `MainWindowController.swift` under 1,000 lines; strike it from
+- [x] 8.4 `MainWindowController.swift` under 1,000 lines; strike it from
       `Scripts/file-size-allowed.txt`
-- [ ] 8.5 `make test` and `make warnings` green
+- [x] 8.5 `make test` and `make warnings` green
 
 ## 9. Proving nothing changed
 
