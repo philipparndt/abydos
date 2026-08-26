@@ -38,6 +38,14 @@ final class BranchesPane: NSView {
 	/// branch and then the default. Two lists of the same branches in one
 	/// window disagreeing about their order is the fault this avoids.
 	private var defaultBranch: String?
+	/// Local branches whose work is already in the default branch.
+	///
+	/// Drawn dimmed rather than moved or hidden: where a branch sits in this
+	/// list is how it is found, so a branch that moves when it merges is one
+	/// somebody hunts for, and one that disappears vanishes at the moment it
+	/// becomes safe to delete. Dimming says *nothing here* without saying
+	/// *gone*.
+	private var mergedBranches: Set<String> = []
 	/// What origin points at, or nil when there is no origin at all.
 	private var remoteURL: String?
 	/// The branch currently being pushed, if one is.
@@ -326,6 +334,11 @@ final class BranchesPane: NSView {
 			let put = await GitStash.list(in: root)
 			remoteURL = await GitForge.remoteURL(in: root)
 			self.defaultBranch = await BranchGrouping.defaultBranch(in: root)
+			if let main = self.defaultBranch {
+				self.mergedBranches = await GitBranches.merged(into: main, in: root)
+			} else {
+				self.mergedBranches = []
+			}
 			self.refreshTraffic()
 			self.refreshConflicts()
 			forge = remoteURL.flatMap { GitForge.repository(fromRemote: $0) }
@@ -423,6 +436,7 @@ final class BranchesPane: NSView {
 			+ " · row at \(Int(row.minY))–\(Int(row.maxY)) of \(Int(bounds.height))"
 			+ " · tree from \(Int(tree.minY))"
 			+ " · scrolled \(Int(scroll?.contentView.bounds.minY ?? 0))"
+			+ " · fired \(repositoryRow.firesForTesting)"
 	}
 
 	@objc private func trafficPressed() {
@@ -1077,7 +1091,10 @@ final class BranchesPane: NSView {
 				else if branch.ahead > 0 || branch.behind > 0 {
 					tracking = " [↑\(branch.ahead) ↓\(branch.behind)]"
 				} else { tracking = "" }
-				return indent + display + (branch.isCurrent ? " *" : "") + tracking
+				let merged = branch.kind == .local
+					&& !branch.isCurrent
+					&& mergedBranches.contains(branch.name) ? " (merged)" : ""
+				return indent + display + (branch.isCurrent ? " *" : "") + tracking + merged
 			case let .worktree(worktree):
 				return indent + "= \(worktree.name)"
 			case let .stash(entry):
@@ -1129,6 +1146,13 @@ final class BranchesPane: NSView {
 	func filterForTesting(_ text: String) {
 		if filterStrip == nil { showFilter() }
 		filterStrip?.setTextForTesting(text)
+	}
+
+	/// Puts the keyboard on the pinned row and presses ⌘⏎ on it, which is the
+	/// one action in this pane the tree's own `fire` cannot reach.
+	func fireRepositoryRowForTesting() {
+		window?.makeFirstResponder(repositoryRow)
+		repositoryRow.keyDown(with: SidebarController.commandReturnEvent())
 	}
 
 	/// The outline itself, so a driven run can put the keyboard in it.
@@ -1935,7 +1959,10 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			return BranchFolderRowView(display: display, count: count)
 		case let .branch(branch, _, display):
 			return BranchRowView(
-				branch: branch, display: display, isPushing: branch.name == pushingBranch
+				branch: branch,
+				display: display,
+				isPushing: branch.name == pushingBranch,
+				isMerged: branch.kind == .local && mergedBranches.contains(branch.name)
 			)
 		case .worktree(let worktree):
 			return WorktreeRowView(worktree: worktree)
@@ -2373,18 +2400,36 @@ private final class BranchRowView: NSView {
 	private let display: String
 	private let depth: Int
 	private let isPushing: Bool
+	/// Its work is already in the default branch: nothing on it that is not
+	/// somewhere else. Drawn faded, and never for the branch you are on.
+	private let isMerged: Bool
 	private var spinner: NSProgressIndicator?
 	override var isFlipped: Bool { true }
 
-	init(branch: GitBranch, display: String? = nil, depth: Int = 0, isPushing: Bool = false) {
+	init(
+		branch: GitBranch,
+		display: String? = nil,
+		depth: Int = 0,
+		isPushing: Bool = false,
+		isMerged: Bool = false
+	) {
 		self.branch = branch
 		self.display = display ?? branch.name
 		self.depth = depth
 		self.isPushing = isPushing
+		// **The branch you are standing on never dims, whatever the reading
+		// says.** The default branch is trivially merged into itself and any
+		// branch you have just merged and not left is finished by the same
+		// test — and a faded row for the branch the window is on reads as
+		// something being wrong rather than as something being done.
+		self.isMerged = isMerged && !branch.isCurrent
 		super.init(frame: .zero)
 		toolTip = isPushing
 			? "Pushing \(branch.name)…"
 			: (branch.subject.isEmpty ? branch.checkoutName : "\(branch.checkoutName) — \(branch.subject)")
+		if self.isMerged, !isPushing {
+			toolTip = (toolTip.map { $0 + " — " } ?? "") + "already merged"
+		}
 
 		guard isPushing else { return }
 		// A real spinner rather than something drawn by hand: it has to keep
@@ -2427,9 +2472,15 @@ private final class BranchRowView: NSView {
 			if case .tag = branch.kind { return ("tag", Theme.current.gitModified) }
 			return ("arrow.trianglehead.branch", Theme.current.gitIgnored)
 		}()
-		RowMetrics.glyph(mark.name, colour: mark.colour, in: bounds)
+		// **A merged branch is faded, not greyed.** A fixed dim colour would be
+		// a fourth meaning for a row's colour, next to current, tag and plain;
+		// an alpha keeps whatever the row already said and says it quietly.
+		let fade: (NSColor) -> NSColor = { [isMerged] colour in
+			isMerged ? colour.withAlphaComponent(0.45) : colour
+		}
+		RowMetrics.glyph(mark.name, colour: fade(mark.colour), in: bounds)
 
-		let colour = branch.isCurrent ? Theme.current.gitAdded : Theme.current.sidebarText
+		let colour = fade(branch.isCurrent ? Theme.current.gitAdded : Theme.current.sidebarText)
 		let font = branch.isCurrent
 			? NSFont.systemFont(ofSize: Theme.current.scaled(12), weight: .semibold)
 			: Theme.current.uiFont(12)
@@ -2476,7 +2527,7 @@ private final class BranchRowView: NSView {
 			tracking, font: countsFont,
 			// Said quietly. A count is news — somebody moved — and a branch
 			// having no upstream is a standing fact about it.
-			colour: trackingIsWords ? Theme.current.gitIgnored : Theme.current.gitModified,
+			colour: fade(trackingIsWords ? Theme.current.gitIgnored : Theme.current.gitModified),
 			at: x + Theme.current.scaled(6), in: bounds, limit: limit
 		)
 	}

@@ -97,8 +97,17 @@ class ActionableRowView: NSView {
 	}
 
 	/// Pressed, from the pointer or from `⌘⏎`.
+	/// How many times this row's verb has been pressed or keyed.
+	///
+	/// Counted because the verbs worth checking do not all leave a mark a
+	/// driven run can read: `Pull` opens a dialog, and a driven run that opens
+	/// a dialog stops. The question the count answers is the one in doubt —
+	/// did the key reach the row — rather than what the row then did.
+	private(set) var firesForTesting = 0
+
 	func fireAction() {
 		guard action != nil else { return }
+		firesForTesting += 1
 		onAction?()
 	}
 

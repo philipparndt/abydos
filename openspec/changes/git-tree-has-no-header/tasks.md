@@ -76,12 +76,16 @@
 
 ## 6. A merged branch is dimmed
 
-- [ ] 6.1 `GitBranches` answers which local branches are merged into the default
-      branch, read alongside what the pane already reads
-- [ ] 6.2 `BranchRowView` draws a merged branch dimmed; the current branch never
-      dims, whatever the answer says
-- [ ] 6.3 A branch the reading has not covered draws as it does today
-- [ ] 6.4 Driven: a merged branch and an unmerged one, reported side by side
+- [x] 6.1 `GitBranches.merged(into:in:)` — one `git branch --merged` beside the
+      reads the pane already does, answering a set of names. The branch itself
+      is taken out of git's answer: it is trivially merged into itself
+- [x] 6.2 `BranchRowView` fades a merged branch — an alpha rather than a fixed
+      dim colour, which would be a fourth meaning for a row's colour beside
+      current, tag and plain. The current branch never dims
+- [x] 6.3 A branch the reading has not covered is simply not in the set, so a
+      slow or failed answer costs appearance rather than correctness
+- [x] 6.4 Driven, side by side: `main *`, `done-work (merged)`, `still-going`,
+      and tests over `merged` for both the answer and the empty case
 
 ## 8. The branch everything merges into is pinned
 
@@ -133,8 +137,12 @@
 - [x] 7.1 The tree begins at the top of the pane, under the repository row, and
       nothing else takes height above it — `row at 683–707 of 707`, measured in
       a driven run
-- [ ] 7.2 Every action reachable by pointer is reachable by `⌘⏎` or a context
-      menu, and the driven report says which
-- [ ] 7.3 `make test` and `make warnings` green
-- [ ] 7.4 A screenshot at 300 and at 250 points wide, compared against the
-      header the change removes
+- [x] 7.2 Every action reachable by pointer is reachable by `⌘⏎` or a context
+      menu, and the driven report says which:
+      `working: Review 4 changes… · section:Local: plus (on hover) ·
+      Local:local:main: -`. The pinned row's own `⌘⏎` is counted rather than
+      watched — `Pull` opens a dialog, and a driven run that opens one stops,
+      so the count answers the question in doubt (did the key reach the row)
+      instead of the one that is not (what the row then did): `fired 0 → 1`
+- [x] 7.3 `make test` and `make warnings` green
+- [x] 7.4 Screenshots at 300 and at 250 points wide

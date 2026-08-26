@@ -234,6 +234,16 @@ final class SidebarController: NSObject {
 	/// Whether the editor's find bar is up — the other half of "who got ⌘F".
 	private var editorFindBarIsShowing: Bool { editor.findBarIsShowingForTesting }
 
+	/// ⌘⏎, the key a row's own verb is on.
+	static func commandReturnEvent() -> NSEvent {
+		NSEvent.keyEvent(
+			with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
+			windowNumber: NSApp.keyWindow?.windowNumber ?? 0, context: nil,
+			characters: "\r", charactersIgnoringModifiers: "\r",
+			isARepeat: false, keyCode: 36
+		)!
+	}
+
 	/// Walks the window's responder chain for Find and names who takes it.
 	///
 	/// **The chain, not the key, and the window's chain rather than the
@@ -321,6 +331,7 @@ final class SidebarController: NSObject {
 			case "select":  pane.selectRowForTesting(Int(argument) ?? 0)
 			case "fire":    pane.fireSelectedRowActionForTesting()
 			case "repo":    print("BRANCHES repo: \(pane.repositoryRowForTesting())")
+			case "repo-fire": pane.fireRepositoryRowForTesting()
 			// The pinned row's whole claim is that scrolling does not take it
 			// away, and only a scrolled tree can say whether that is true.
 			case "scroll":  pane.scrollTreeForTesting(toBottom: argument != "top")

@@ -88,6 +88,31 @@ public enum GitBranches {
 	/// name or a commit subject.
 	private static let separator = "\u{1F}"
 
+	/// The local branches whose commits are all in `branch`.
+	///
+	/// **A set of names rather than a fact per branch**, and answered by one
+	/// `git branch --merged` alongside the reads the pane already does. A
+	/// branch the answer does not cover — because the read failed, or has not
+	/// come back, or there is no default branch to compare against — is simply
+	/// not in the set, so a slow or failed answer costs appearance rather than
+	/// correctness.
+	///
+	/// The branch itself is always in git's answer, being trivially merged into
+	/// itself, and is taken out here: *finished, nothing on it that is not
+	/// somewhere else* is not a thing to say about `main`.
+	public static func merged(into branch: String, in root: URL) async -> Set<String> {
+		let result = await GitRepository.run(
+			["branch", "--merged", branch, "--format=%(refname:short)"], in: root
+		)
+		guard result.exitCode == 0 else { return [] }
+		return Set(
+			result.stdout
+				.split(separator: "\n")
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+				.filter { !$0.isEmpty && $0 != branch }
+		)
+	}
+
 	public static func list(in root: URL) async -> [GitBranch] {
 		let format = [
 			"%(refname)",
