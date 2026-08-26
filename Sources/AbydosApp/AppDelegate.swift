@@ -3285,6 +3285,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		preview.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(preview)
+
+		// Where the other view preferences are, and not in the git page's own
+		// header — the page is a split of scroll views and its own comment says
+		// why nothing else may go in one: a stack view in there argued with the
+		// terminal panel once per frame and the divider could not be dragged.
+		let commitFolders = NSMenuItem(
+			title: "Arrange Commit Files by Folder",
+			action: #selector(MainWindowController.toggleCommitFilesByFolder(_:)),
+			keyEquivalent: ""
+		)
+		viewMenu.addItem(commitFolders)
 		viewMenu.addItem(.separator())
 		let splitRight = NSMenuItem(
 			title: "Split Right",

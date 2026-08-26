@@ -11342,6 +11342,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "file":
 				page.selectCommitForTesting(0)
 				page.selectFileForTesting(Int(argument) ?? 0)
+			// The changes view's own rows, which `report` does not carry: how a
+			// commit's files are arranged is the question, and the flat
+			// arrangement has to match what the page drew before it was an
+			// outline at all.
+			case "files":
+				print("LOG-PAGE files:\n  " + page.fileRowsForTesting().joined(separator: "\n  "))
+			case "arrange": page.toggleFileArrangementForTesting()
+			case "star":    page.pressStarForTesting()
+			case "shut":    page.collapseEveryFolderForTesting()
 			default:       print("LOG-PAGE: unknown step \(step)")
 			}
 		}
@@ -12329,6 +12338,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc func toggleBlame(_ sender: Any?) {
 		editor.toggleBlame()
+	}
+
+	/// Flips how the git page arranges a commit's files, and ticks itself.
+	@objc func toggleCommitFilesByFolder(_ sender: Any?) {
+		Settings.shared.commitFilesByFolder.toggle()
+		logPage?.applyFileArrangement()
+		(sender as? NSMenuItem)?.state = Settings.shared.commitFilesByFolder ? .on : .off
 	}
 
 	@objc func toggleWordWrap(_ sender: Any?) {

@@ -130,6 +130,7 @@ public final class Settings {
 		static let tabWidth = "tabWidth"
 		static let showHiddenFiles = "showHiddenFiles"
 		static let compactsPackages = "compactsPackages"
+		static let commitFilesByFolder = "commitFilesByFolder"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let agentPermissions = "agentPermissions"
@@ -690,6 +691,18 @@ public final class Settings {
 		set { set(newValue, Key.compactsPackages) }
 	}
 
+	/// Whether the log page arranges a commit's files under the folders holding
+	/// them, or lists them flat.
+	///
+	/// Off, because flat is what the page has always drawn and a commit of three
+	/// files gains nothing from four rows of folder above them. It governs the
+	/// page rather than the 300 pt sidebar column, which has no room for a tree
+	/// and hands its diffs to the editor area anyway.
+	public var commitFilesByFolder: Bool {
+		get { defaults.bool(forKey: Key.commitFilesByFolder) }
+		set { set(newValue, Key.commitFilesByFolder) }
+	}
+
 	/// Whether choosing another project opens a window or replaces this one.
 	///
 	/// Replacing by default: the window is where you were working, and a
@@ -770,7 +783,8 @@ public final class Settings {
 		for key in [
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
-			Key.showHiddenFiles, Key.compactsPackages, Key.excludedDirectories,
+			Key.showHiddenFiles, Key.compactsPackages, Key.commitFilesByFolder,
+			Key.excludedDirectories,
 			Key.uiScale, Key.terminalFontName, Key.wordWrap, Key.fontLigatures,
 			Key.terminalScheme, Key.terminalGPURendering, Key.terminalBellStyle,
 		] {

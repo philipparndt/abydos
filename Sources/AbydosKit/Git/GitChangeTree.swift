@@ -66,7 +66,10 @@ public final class GitChangeNode {
 	/// way commits half of it.
 	public var isPartial: Bool { isFolder && count < total }
 
-	init(path: String, change: GitChange?) {
+	/// Public so a view can make the flat arrangement — one childless node per
+	/// file, in the order git gave them — without going through `build`, which
+	/// sorts and groups and is the *other* arrangement.
+	public init(path: String, change: GitChange?) {
 		self.path = path
 		self.change = change
 	}
