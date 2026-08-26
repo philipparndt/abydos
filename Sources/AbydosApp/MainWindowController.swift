@@ -6,8 +6,17 @@ import AbydosKit
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
 	private(set) var project: Project?
 
+	/// What to do once the shell being waited for has answered, so that a second
+	/// container is opened after the first rather than beside it.
+	var afterContainerShellForTesting: (() -> Void)?
+
+	/// Which section a capture run asked for.
+	var settingsSectionForTesting: String?
+	/// And which one it asked to be folded away, since a triangle needs a click.
+	var settingsFoldForTesting: String?
+
 	/// What each project had open, so going back to one looks as it was left.
-	private var sessions = ProjectSessions()
+	private(set) var sessions = ProjectSessions()
 	/// Whether the window follows the terminal's working directory.
 	/// Whether this window follows the terminal into another project.
 	///
@@ -31,107 +40,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Testing
 
-	/// Rings the bell, as a program printing \u{07} would.
-	func ringTerminalBellForTesting() {
-		setPanelVisible(true)
-		bottomPanel.showTerminal()?.terminalView.writeForTesting("\u{07}")
-	}
-
-	/// Draws the terminal through Metal and writes the result out.
-	func renderTerminalWithMetal(to path: String) {
-		setPanelVisible(true)
-		guard let terminal = bottomPanel.showTerminal()?.terminalView else {
-			print("METAL: no terminal")
-			return
-		}
-		terminal.layoutSubtreeIfNeeded()
-		let ok = terminal.renderWithMetalForTesting(to: path)
-		print("METAL: \(ok ? "wrote \(path)" : "failed")")
-	}
-
-	/// Times a full terminal redraw, which is what every byte of output costs
-	/// once the screen has to be shown again.
-	func benchmarkTerminalRendering() {
-		setPanelVisible(true)
-		guard let terminal = bottomPanel.showTerminal()?.terminalView else {
-			print("BENCH render: no terminal")
-			return
-		}
-
-		// A screenful of coloured text, as a busy program produces.
-		// Two shapes of screen. Ordinary output holds a colour for a whole line,
-		// so a row is a handful of runs; the fire benchmark changes colour on
-		// every cell, so a row is as many runs as it has columns. Whether that
-		// distinction costs anything is the question.
-		let fireLike = ProcessInfo.processInfo.environment["ABYDOS_BENCH_FIRE"] != nil
-		var filler = ""
-		for row in 0..<40 {
-			if fireLike {
-				for column in 0..<198 {
-					filler += "\u{1B}[38;5;\((row * 7 + column) % 256);48;5;\((column * 3) % 256)m▀"
-				}
-			} else {
-				filler += "\u{1B}[3\(row % 8)m"
-				filler += String(repeating: "abcdefghij ", count: 18)
-			}
-			filler += "\u{1B}[0m\r\n"
-		}
-		terminal.writeForTesting(filler)
-		terminal.layoutSubtreeIfNeeded()
-
-		// A fixed 40-row screenful, so the number means the same thing whatever
-		// height the panel happens to have been left at.
-		let rowHeight = terminal.bounds.height / CGFloat(max(1, terminal.totalRowsForTesting))
-		let bounds = NSRect(x: 0, y: 0, width: terminal.bounds.width, height: rowHeight * 40)
-        guard bounds.width > 1, bounds.height > 1,
-              let rep = terminal.bitmapImageRepForCachingDisplay(in: bounds) else {
-			print("BENCH render: no drawable size \(bounds)")
-			return
-		}
-
-		// One pass first, so one-off font and colour setup is not counted.
-		terminal.cacheDisplay(in: bounds, to: rep)
-
-		// Best of several rounds. A machine doing anything else moves the mean
-		// by a factor of two, which is more than most of the changes worth
-		// measuring; the least interrupted round is far steadier.
-		let frames = 30
-		var perFrame = Double.greatestFiniteMagnitude
-		for _ in 0..<8 {
-			let start = Date()
-			for _ in 0..<frames { terminal.cacheDisplay(in: bounds, to: rep) }
-			perFrame = min(perFrame, -start.timeIntervalSinceNow / Double(frames) * 1000)
-		}
-		print("BENCH render: \(String(format: "%.2f", perFrame)) ms/frame "
-			+ "(\(String(format: "%.0f", 1000 / perFrame)) fps ceiling) at \(Int(bounds.width))x\(Int(bounds.height))")
-
-		// What a printed line actually costs now that only what changed is
-		// painted: one row rather than the whole screen.
-		let rowHeightPoints = bounds.height / 40
-		let rowRect = NSRect(x: 0, y: 0, width: bounds.width, height: rowHeightPoints)
-		guard let rowRep = terminal.bitmapImageRepForCachingDisplay(in: rowRect) else { return }
-		terminal.cacheDisplay(in: rowRect, to: rowRep)
-
-		var perRow = Double.greatestFiniteMagnitude
-		for _ in 0..<8 {
-			let rowStart = Date()
-			for _ in 0..<frames { terminal.cacheDisplay(in: rowRect, to: rowRep) }
-			perRow = min(perRow, -rowStart.timeIntervalSinceNow / Double(frames) * 1000)
-		}
-		print("BENCH render: \(String(format: "%.3f", perRow)) ms for one row "
-			+ "(\(String(format: "%.0f", perFrame / perRow))x cheaper than a full frame)")
-	}
-
 	/// Takes a tab dragged out of another window.
 	func adopt(_ tab: EditorViewController.Tab) {
 		editor.adopt(tab)
 	}
 	var onClose: (() -> Void)?
 
-	private let navigator = ProjectNavigatorViewController()
+	let navigator = ProjectNavigatorViewController()
 	/// The editor area, which may hold several split groups.
-	private let editor = EditorAreaController()
-	private let bottomPanel = BottomPanel()
+	let editor = EditorAreaController()
+	let bottomPanel = BottomPanel()
 
 	/// The left rail and the tools it opens.
 	///
@@ -139,7 +57,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// the tool it opens lives inside `navigatorContainer`, so there is no one
 	/// view for it to control. The window builds the hierarchy and hands it the
 	/// two pieces; it owns which tool is showing and every pane behind that.
-	private lazy var sidebar: SidebarController = {
+	private(set) lazy var sidebar: SidebarController = {
 		let bar = SidebarController(editor: editor, navigator: navigator)
 		bar.project = { [weak self] in self?.project }
 		bar.hostWindow = { [weak self] in self?.window }
@@ -170,8 +88,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return bar
 	}()
 
-	var sidebarForTesting: SidebarController { sidebar }
-
 	/// Breakpoints and the stopped line, which outlive any one session.
 	lazy var debug: DebugCoordinator = {
 		let coordinator = DebugCoordinator(editor: editor, panel: bottomPanel)
@@ -186,12 +102,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return coordinator
 	}()
 
-	private var debugSession: DebugSession? { bottomPanel.activeDebugSession }
-
-	var debugForTesting: DebugCoordinator { debug }
+	var debugSession: DebugSession? { bottomPanel.activeDebugSession }
 
 	/// Running a program, wherever it runs.
-	private lazy var run: RunCoordinator = {
+	private(set) lazy var run: RunCoordinator = {
 		let coordinator = RunCoordinator(panel: bottomPanel, editor: editor)
 		coordinator.currentProject = { [weak self] in self?.project }
 		coordinator.currentLaunchRoot = { [weak self] in self?.launchRoot ?? URL(fileURLWithPath: ".") }
@@ -217,10 +131,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return coordinator
 	}()
 
-	var runForTesting: RunCoordinator { run }
-
 	/// What a language server offers to change, and taking it.
-	private lazy var serverActions: ServerActions = {
+	private(set) lazy var serverActions: ServerActions = {
 		let actions = ServerActions(
 			editor: editor, navigator: navigator, panel: bottomPanel, toasts: toasts
 		)
@@ -233,10 +145,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return actions
 	}()
 
-	var serverActionsForTesting: ServerActions { serverActions }
-
 	/// Copying a place in the code, and going to one that was copied.
-	private lazy var codeLinks: CodeLinks = {
+	private(set) lazy var codeLinks: CodeLinks = {
 		let links = CodeLinks(editor: editor, toasts: toasts)
 		links.currentProject = { [weak self] in self?.project }
 		links.onNotify = { [weak self] title, detail, kind in
@@ -244,8 +154,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		return links
 	}()
-
-	var codeLinksForTesting: CodeLinks { codeLinks }
 
 	// Menu-bar selectors. AppKit resolves these against the responder chain and
 	// finds them here; the work is the collaborator's.
@@ -363,7 +271,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// here, and arrives there as a closure. The run item is the exception — it
 	/// sits in that toolbar and belongs to running, so this builds it and hands
 	/// it over until there is a run coordinator to do so.
-	private lazy var titlebar: TitlebarController = {
+	private(set) lazy var titlebar: TitlebarController = {
 		let bar = TitlebarController(window: window)
 		bar.project = { [weak self] in self?.project }
 		bar.subprojectRoot = { [weak self] in self?.subprojectRoot }
@@ -396,15 +304,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return bar
 	}()
 
-	var titlebarForTesting: TitlebarController { titlebar }
-
 	/// Where an answer to a question about the code is shown, and where it moves.
 	///
 	/// Wired rather than owned: it is handed the two views it presents into and
 	/// the handful of things only the window knows, and it holds no reference
 	/// back. `dockInSidebar` and `undockFromSidebar` are lent from here because
 	/// the lower half of the sidebar is the sidebar's, not a results list's.
-	private lazy var results: ResultsPresenter = {
+	private(set) lazy var results: ResultsPresenter = {
 		let presenter = ResultsPresenter(editor: editor, panel: bottomPanel)
 		presenter.hostWindow = { [weak self] in self?.window }
 		presenter.scopeRoot = { [weak self] in self?.project?.scopeRoot }
@@ -428,15 +334,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return presenter
 	}()
 
-	private var splitView: NSSplitView!
-	private var verticalSplitView: NSSplitView!
+	private(set) var splitView: NSSplitView!
+	var verticalSplitView: NSSplitView!
 	/// How wide the tree is, kept as a constraint so nothing else decides.
-	private var navigatorWidthConstraint: NSLayoutConstraint!
-	private var panelHeight: CGFloat = 260
+	private(set) var navigatorWidthConstraint: NSLayoutConstraint!
+	var panelHeight: CGFloat = 260
 	/// True while the panel is being rounded to whole rows, so the resize that
 	/// causes cannot ask for another one.
 	fileprivate var isSnappingPanel = false
-	private var navigatorContainer: ColoredView!
+	private(set) var navigatorContainer: ColoredView!
 	/// Painted behind the toolbar, since the titlebar itself is transparent.
 	/// Everywhere the editor has been, and where in it we are.
 	private var navigation = NavigationHistory()
@@ -457,10 +363,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var branchRead: Task<GitRepository.Head?, Never>?
 	private var toolStripWidthConstraint: NSLayoutConstraint!
 
-	private var navigatorWidth: CGFloat = 260
+	var navigatorWidth: CGFloat = 260
 
 	/// Where news the user did not ask for goes.
-	private lazy var toasts = ToastPresenter(window: window)
+	private(set) lazy var toasts = ToastPresenter(window: window)
 
 	/// Says something without stopping anything.
 	///
@@ -486,33 +392,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Which of those windows is the active one.
 	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
-
-	/// Which panes the window is giving its room to.
-	///
-	/// The one thing a screenshot of a maximised editor cannot settle: an editor
-	/// filling the window looks the same whether the tree is hidden or merely
-	/// dragged to nothing, and "the panel is down" and "the panel is up behind
-	/// the editor" are the same picture.
-	/// Double-clicks a tab, and says what the window looks like afterwards.
-	func doubleClickTabForTesting(_ index: Int) -> String {
-		let took = editor.doubleClickTabForTesting(index: index)
-		return "\(took) — \(windowLayoutReportForTesting)"
-	}
-
-	var windowLayoutReportForTesting: String {
-		let navigator = (navigatorContainer?.isHidden ?? true)
-			|| (navigatorContainer?.frame.width ?? 0) < 2
-			? "hidden" : "\(Int(navigatorContainer?.frame.width ?? 0))pt"
-		return "navigator=\(navigator) "
-			+ "panel=\(bottomPanel.isHidden ? "hidden" : "\(Int(bottomPanel.frame.height))pt") "
-			+ "editorMaximized=\(isEditorMaximized) "
-			+ "panelMaximized=\(isPanelMaximized)"
-	}
-
-	/// Shuts the panel, for `--close-panel`.
-	func closePanelForTesting() {
-		setPanelVisible(false)
-	}
 
 	/// Tells the rail which panes are in front.
 	///
@@ -595,12 +474,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let identifier = notification.userInfo?["identifier"] as? String else { return }
 		toasts.withdraw(identifier)
 	}
-
-	/// What the corner is saying, for the harness.
-	func toastReportForTesting() -> String { toasts.reportForTesting() }
-
-	/// Presses one of a question's answers by its words.
-	func answerToastForTesting(_ title: String) -> Bool { toasts.answerForTesting(title) }
 
 	/// Whether this window is the one to say something the whole app has to
 	/// say.
@@ -1643,16 +1516,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		sidebar.install(tool: sidebar.currentSidebarTool, force: true)
 	}
 
-	/// Opens the sidebar to a width, for looking at a pane in a screenshot.
-	func openSidebarForTesting(width: CGFloat) {
-		navigatorWidth = width
-		navigatorWidthConstraint.constant = width
-		navigatorContainer.isHidden = false
-		splitView.setPosition(width, ofDividerAt: 0)
-		splitView.adjustSubviews()
-		sidebar.updateSidebarSelection()
-	}
-
 	/// Gives the project tree keyboard focus.
 	func focusNavigator() {
 		navigator.focusTree()
@@ -1661,12 +1524,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Also reachable by double-clicking the empty part of the tab strip.
 	@objc func newScratchFile(_ sender: Any?) {
 		editor.newScratch()
-	}
-
-	/// Uses the empty page's button when there is one, so the capture exercises
-	/// the control rather than what it happens to call.
-	func newScratchForTesting() {
-		if !editor.clickScratchPlaceholderForTesting() { newScratchFile(nil) }
 	}
 
 	// MARK: - Debugging anything
@@ -1826,258 +1683,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Presses ⌘T in the editor and then in the terminal.
-	///
-	/// Through the menu's own validation and action, which is what the key
-	/// press does — checking the method exists would prove nothing about
-	/// whether the shortcut reaches it or is enabled at the right moment.
-	func exerciseTerminalTabKeyForTesting() {
-		let item = NSMenuItem(
-			title: "New Terminal Tab", action: #selector(newTerminalTab(_:)), keyEquivalent: "t"
-		)
-
-		editor.focusForTesting()
-		print("TAB: in editor   focused=\(isTerminalFocused) enabled=\(validateMenuItem(item)) "
-			+ "sessions=\(bottomPanel.terminalSessionCountForTesting)")
-		if validateMenuItem(item) { newTerminalTab(nil) }
-
-		toggleTerminal(nil)
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-			guard let self else { return }
-			print("TAB: in terminal focused=\(self.isTerminalFocused) "
-				+ "enabled=\(self.validateMenuItem(item)) sessions=\(self.bottomPanel.terminalSessionCountForTesting)")
-			if self.validateMenuItem(item) { self.newTerminalTab(nil) }
-
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-				print("TAB: after ⌘T   sessions=\(self.bottomPanel.terminalSessionCountForTesting)")
-			}
-		}
-	}
-
-	/// Opens a couple of tabs and presses ⌘D, then says what is in each column.
-	///
-	/// The claim is that the new shell is *beside* the one in front — both on
-	/// screen at once — and that is only visible per column: a tab that landed
-	/// in the same strip and a pane that landed in a column of its own both read
-	/// as "one more terminal" from the count alone, which is how the first
-	/// attempt at this looked right and was not.
-	func exerciseTerminalTabBesideForTesting() {
-		// The command is gated on the terminal having the keyboard, and a run
-		// that never came to the front has given it to nobody — so without this
-		// the harness measures the gate rather than the placement.
-		NSApp.activate(ignoringOtherApps: true)
-		window?.makeKeyAndOrderFront(nil)
-		toggleTerminal(nil)
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-			guard let self else { return }
-			for _ in 0..<2 { self.bottomPanel.newTerminal() }
-			print("BESIDE: opened     \(self.bottomPanel.columnsForTesting)")
-
-			self.bottomPanel.selectAndFocusTabForTesting(1)
-			print("BESIDE: selected   \(self.bottomPanel.columnsForTesting)")
-
-			let item = NSMenuItem(
-				title: "New Terminal Tab Here",
-				action: #selector(self.newTerminalTabBeside(_:)),
-				keyEquivalent: "d"
-			)
-			// Two things, reported apart, because they fail apart: whether the
-			// command is offered at all — which needs the keyboard, and a
-			// capture run has no key window to give it — and where the tab
-			// lands, which is what this change is.
-			print("BESIDE: enabled=\(self.validateMenuItem(item)) "
-				+ "keyWindow=\(self.window?.isKeyWindow ?? false)")
-			self.bottomPanel.newTerminalBesideCurrent()
-
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-				print("BESIDE: after ⌘D   \(self.bottomPanel.columnsForTesting)")
-				fflush(stdout)
-			}
-		}
-	}
-
-	/// Debugs a binary, choosing the adapter the way the menu item does.
-	func debugBinaryForTesting(_ path: String) {
-		guard let project else { return }
-		let adapter = DebugAdapters.adapter(forProgramAt: path, projectRoot: scopeRoot ?? project.root)
-		guard let executable = DebugAdapters.executable(for: adapter) else {
-			print("BINARY: no \(adapter.command) installed")
-			return
-		}
-		print("BINARY: \(adapter.name) at \(executable)")
-		setPanelVisible(true)
-		guard let session = bottomPanel.startDebugging(
-			adapter: adapter,
-			executable: executable,
-			start: .launch(program: FilePath.canonical(URL(fileURLWithPath: path)), arguments: []),
-			breakpoints: debug.pendingBreakpoints
-		) else { return }
-		wire(session)
-	}
-
-	/// Lets it run to the end and reports how it exited.
-	func reportExitForTesting() {
-		debugContinue(nil)
-		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-			guard let self else { return }
-			self.bottomPanel.writeDebugToolbarImageForTesting(to: "build/exit-toolbar.png")
-			let state = self.debugSession.map { String(describing: $0.state) } ?? "none"
-			print("EXIT: code=\(self.debugSession?.exitCode.map(String.init) ?? "none") state=\(state)")
-			fflush(stdout)
-		}
-	}
-
-	/// Presses Stop and says what the session left behind.
-	///
-	/// The report the change is about: after a stop, what the panes are still
-	/// showing. `EXIT` already prints the code for a program that ended on its
-	/// own — this is the other path, the one somebody takes when the program is
-	/// sitting at a breakpoint and they have seen enough.
-	///
-	/// Printed twice, before and after, because the fault is a difference: the
-	/// goroutine list is right while the program is there and wrong a moment
-	/// later, and one line cannot show that.
-	func reportDebugStopForTesting(_ phase: String) {
-		guard let session = debugSession else {
-			print("STOP: \(phase) no session")
-			fflush(stdout)
-			return
-		}
-		if phase == "press" {
-			session.stop()
-			print("STOP: pressed")
-			fflush(stdout)
-			return
-		}
-		// The other ending: let it run to the end rather than stopping it. This
-		// is the path where Delve reports a status at all — stopped, it says
-		// "Detaching and terminating target process" and there is no status,
-		// because the program did not exit.
-		if phase == "finish" {
-			session.resume()
-			print("STOP: released")
-			fflush(stdout)
-			return
-		}
-		// Built a piece at a time. As one expression this was six interpolations
-		// and two optional maps joined by `+`, which the type checker gave up
-		// on — "unable to type-check this expression in reasonable time".
-		let reply = session.disconnectReplyTimeForTesting.map { String(format: "%.3fs", $0) } ?? "none"
-		let code = session.exitCode.map(String.init) ?? "none"
-		var line = "STOP: \(phase) state=\(session.state)"
-		line += " reply=\(reply) code=\(code)"
-		line += " threads=\(session.threads.count)"
-		line += " frames=\(session.stackFrames.count)"
-		line += " scopes=\(session.scopes.count)"
-		print(line)
-		for thread in session.threads {
-			print("STOP: \(phase) thread \(thread.id) \(thread.name)")
-		}
-		fflush(stdout)
-	}
-
-	/// Whether the project that was left is still being watched.
-	///
-	/// **The half that fails silently.** `watch()` starts a watcher only where
-	/// there is none, so a pane that kept its old ones would be woken by the
-	/// folder it no longer shows and never by the one it does — right when it is
-	/// opened and stale a moment later, which is harder to notice than being
-	/// stale throughout.
-	///
-	/// Checked by writing an item into the project that was left and looking
-	/// again. The board must not move. Count-based rather than wall-clock: what
-	/// is asserted is what the board holds, not that a second passed.
-	func checkTheOldProjectIsUnwatchedForTesting(_ oldRoot: URL) {
-		let folder = oldRoot.appendingPathComponent(".abydos/backlog/open", isDirectory: true)
-		guard FileManager.default.fileExists(atPath: folder.path) else {
-			print("PANES watch: \(oldRoot.lastPathComponent) has no backlog to touch")
-			fflush(stdout)
-			return
-		}
-		let file = folder.appendingPathComponent("9999-written-after-the-switch.md")
-		try? "# 9999 Written after the switch\n".write(to: file, atomically: true, encoding: .utf8)
-		print("PANES watch: wrote an item into \(oldRoot.lastPathComponent)")
-		fflush(stdout)
-
-		// Long enough for a watcher to have fired if one were still on it —
-		// FSEvents is subsecond, and the reload behind it is a directory walk.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-			self?.reportPanesForTesting("after touching the old project")
-			try? FileManager.default.removeItem(at: file)
-			exit(0)
-		}
-	}
-
-	/// Which project the panes are reading, either side of a switch.
-	///
-	/// The whole of the fault in one line: the window moves and the pane goes on
-	/// naming — and showing — the project it was made for. `--switch-project`
-	/// already existed and did the switching; what it could not do was say what
-	/// the panes then held.
-	func reportPanesForTesting(_ phase: String) {
-		let window = project?.root.lastPathComponent ?? "none"
-		let board = bottomPanel.existingBacklogPane?.projectReportForTesting ?? "no pane"
-		print("PANES \(phase): window=\(window) board=[\(board)]")
-		fflush(stdout)
-	}
-
-	/// Drops files on the editor the way the Finder would, and says what happened.
-	///
-	/// A real drag cannot be scripted, so this puts the URLs on a pasteboard and
-	/// hands it to the group's drop view exactly as AppKit does — the same
-	/// `draggingEntered` and `performDragOperation`, so what is checked is the
-	/// path a drag actually takes rather than the opening underneath it.
-	///
-	/// The project is printed either side: a dropped file must not move it, and
-	/// that is the half a report of tabs alone would not show.
-	func dropFilesForTesting(_ paths: [String]) {
-		let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
-		print("DROP before: project=\(project?.root.lastPathComponent ?? "none")"
-			+ " tabs=[\(editor.openTabNamesForTesting)]")
-		fflush(stdout)
-
-		guard let group = editor.activeGroup, let target = group.view as? EditorDropView else {
-			print("DROP: no drop view")
-			fflush(stdout)
-			return
-		}
-
-		let board = NSPasteboard(name: .init("dev.abydos.drop-test"))
-		board.clearContents()
-		board.writeObjects(urls.map { $0 as NSURL })
-		let drag = TestingDrag(pasteboard: board, at: NSPoint(x: 200, y: 200))
-
-		let entered = target.draggingEntered(drag)
-		print("DROP offered: \(entered.contains(.copy) ? "copy" : (entered.isEmpty ? "nothing" : "other"))")
-		let took = target.performDragOperation(drag)
-		print("DROP accepted: \(took)")
-		fflush(stdout)
-
-		// After the open, which reaches the editor through the window.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-			guard let self else { return }
-			print("DROP after: project=\(self.project?.root.lastPathComponent ?? "none")"
-				+ " tabs=[\(self.editor.openTabNamesForTesting)]")
-			fflush(stdout)
-			exit(0)
-		}
-	}
-
-	/// Steps as the keyboard would, for checking the commands are connected.
-	func debugCommandForTesting(_ name: String) -> String {
-		guard let session = debugSession else { return "no session" }
-		switch name {
-		case "over": session.stepOver()
-		case "into": session.stepInto()
-		case "out": session.stepOut()
-		case "continue": session.resume()
-		case "pause": session.pause()
-		case "stop": session.stop()
-		default: return "unknown command"
-		}
-		return "sent \(name), active=\(session.isActive)"
-	}
-
 	/// Every state this file has been in, including abandoned branches.
 	@objc func showFileHistory(_ sender: Any?) {
 		editor.toggleFileHistory()
@@ -2094,10 +1699,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Bottom panel
 
-	private var isPanelVisible: Bool { !bottomPanel.isHidden }
+	var isPanelVisible: Bool { !bottomPanel.isHidden }
 
 	/// Whether the panel has the window to itself, and what to restore.
-	private var isPanelMaximized = false
+	private(set) var isPanelMaximized = false
 	private var heightBeforeMaximize: CGFloat?
 
 	/// Gives the panel the whole window, or hands it back.
@@ -2112,31 +1717,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func leaveTerminalFullScreen() {
 		guard isPanelMaximized else { return }
 		togglePanelMaximized(nil)
-	}
-
-	/// Puts the panel at a stated height, for a capture that has to look the
-	/// same twice.
-	///
-	/// The split position is remembered per machine, so a screenshot taken
-	/// where somebody had dragged the terminal to the top of the window shows
-	/// the terminal and nothing else. Zero closes it, which is what a shot of
-	/// the editor alone wants.
-	func setPanelHeightForTesting(_ height: Double) {
-		guard height > 0 else {
-			setPanelVisible(false)
-			return
-		}
-		if isPanelMaximized { togglePanelMaximized(nil) }
-		setPanelVisible(true)
-		panelHeight = CGFloat(height)
-
-		DispatchQueue.main.async { [weak self] in
-			guard let self else { return }
-			let total = self.verticalSplitView.bounds.height
-			guard total > 200 else { return }
-			self.verticalSplitView.setPosition(total - CGFloat(height), ofDividerAt: 0)
-			self.tellTerminalsTheySizeChanged()
-		}
 	}
 
 	/// Gives the editor enough of the window to be looked at.
@@ -2254,7 +1834,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Once layout has settled, so the size read is the one the pane ended up
 	/// with rather than the one it had.
-	private func tellTerminalsTheySizeChanged() {
+	func tellTerminalsTheySizeChanged() {
 		DispatchQueue.main.async { [weak self] in
 			self?.bottomPanel.viewportChanged()
 		}
@@ -2408,7 +1988,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		try? SessionStore.write(session, in: root)
 	}
 
-	private func setPanelVisible(_ visible: Bool) {
+	func setPanelVisible(_ visible: Bool) {
 		guard visible != isPanelVisible else { return }
 
 		// **This used to be `setTerminalSelected(visible)`, and that was the
@@ -2501,102 +2081,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// The refusal, out loud. Split out so the menu item and the driver that
 	/// exercises it produce the same sentence rather than two that can drift.
-	private func say(_ outcome: LineComment.Outcome) {
+	func say(_ outcome: LineComment.Outcome) {
 		guard case let .unavailable(reason) = outcome else { return }
 		notify("Nothing was commented out", detail: reason, kind: .information)
-	}
-
-	/// Presses ⌘/ over the caret or selection a spec names, and says what came of
-	/// it — which way it went, the sentence a refusal produces, and where the
-	/// selection ended up. `--comment 3:5` or `--comment 3@8`.
-	func toggleCommentForTesting(_ spec: String) {
-		guard let (outcome, report) = editor.toggleCommentForTesting(spec) else {
-			print("COMMENT \(spec): no editor")
-			return
-		}
-		say(outcome)
-		switch outcome {
-		case let .toggled(toggle):
-			print("COMMENT \(spec) \(toggle.commenting ? "commented" : "uncommented") — \(report)")
-		case .nothing:
-			print("COMMENT \(spec) nothing to do — \(report)")
-		case let .unavailable(reason):
-			print("COMMENT \(spec) refused: \(reason)")
-		}
-		fflush(stdout)
 	}
 
 	func setFindQuery(_ query: String) { editor.setFindQuery(query) }
 
 	func setProjectSearchQuery(_ query: String) {
 		results.showProjectSearch(query: query)
-	}
-
-	/// Works the search results the way somebody working through them does, and
-	/// says what the list holds afterwards.
-	///
-	/// Recursive around `settle` for the same reason `treeStepsForTesting` is:
-	/// the search itself streams in on the main queue, and a nested
-	/// `RunLoop.run(until:)` here would wait without ever letting a batch land.
-	func searchStepsForTesting(_ steps: String) {
-		let script = steps.split(separator: ",").map(String.init)
-		guard let pane = bottomPanel.existingSearchPane else {
-			print("SEARCH: no results pane")
-			return
-		}
-		for (index, step) in script.enumerated() {
-			if step == "settle" || step.hasPrefix("settle:") {
-				let seconds = step.hasPrefix("settle:")
-					? Double(step.dropFirst("settle:".count)) ?? 1.0
-					: 1.0
-				let rest = script[(index + 1)...].joined(separator: ",")
-				guard !rest.isEmpty else { return }
-				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-					self?.searchStepsForTesting(rest)
-				}
-				return
-			}
-			// ⌘Z the way the Edit menu sends it — at nobody in particular, down
-			// the chain from whatever has the keyboard. Which of the window's undo
-			// stacks answers is decided there and nowhere else, so asking the pane
-			// directly would be answering the easier question.
-			if step == "undo-key" || step == "redo-key" {
-				NSApp.activate(ignoringOtherApps: true)
-				window?.makeKeyAndOrderFront(nil)
-				let selector = Selector((step == "undo-key" ? "undo:" : "redo:"))
-				var responder = window?.firstResponder
-				while let hop = responder, !hop.responds(to: selector) { responder = hop.nextResponder }
-				func named(_ object: Any?) -> String {
-					object.map { String(describing: type(of: $0)) } ?? "nobody"
-				}
-				print("SEARCH \(step): chain=\(named(responder)) "
-					+ "appkit=\(named(NSApp.target(forAction: selector))) "
-					+ "first=\(named(window?.firstResponder))")
-				if !NSApp.sendAction(selector, to: nil, from: nil) {
-					_ = responder?.tryToPerform(selector, with: nil)
-				}
-				continue
-			}
-			// ⇧⌘F again, which is the only way to ask where the *next* search
-			// answers. The claim item 506 has to make about remembering is about
-			// the next question and not about this pane, so a step that moved the
-			// pane would be checking something else.
-			if step == "again" {
-				findInProject(nil)
-				continue
-			}
-			// What the *editor* is showing after the row the walk has landed on,
-			// which is the whole of item 533 and is a question about the other half
-			// of the window. Between two `down`s it says whether the match the
-			// selection moved onto is on the screen, and whether the view moved to
-			// put it there.
-			if step == "shown" {
-				print("SEARCH shown: \(editor.revealReportForTesting)")
-				fflush(stdout)
-				continue
-			}
-			pane.stepForTesting(step)
-		}
 	}
 
 	@objc func findNext(_ sender: Any?) { editor.findNext() }
@@ -2866,71 +2359,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		pane.watch(expression)
 	}
 
-	/// Says what the Cadova pane in the tab in front is doing, once a second.
-	///
-	/// Over time rather than once, because what 0499 claims is a *sequence*: a
-	/// pane that says `building`, then `model` with a file beside it, and then —
-	/// when somebody changes a constant and saves — `building` and `model` again
-	/// with the run count one higher. A single reading cannot tell any of that
-	/// from a pane that was showing a model all along. Flushed for the reason
-	/// below.
-	func watchCadovaForTesting(seconds: Double) {
-		for second in 0...Int(seconds) {
-			DispatchQueue.main.asyncAfter(deadline: .now() + Double(second)) { [weak self] in
-				guard let self else { return }
-				guard let pane = self.editorForTesting.cadovaPreview else {
-					// **Never a bare "not found".** 0499 was watched green and shipped
-					// broken because this line said only `no cadova pane in the tab in
-					// front`, which is consistent with the pane being missing, with the
-					// tab in front being some other file, and with there being no tab at
-					// all — and the first of those was assumed. What the tab in front
-					// *is* costs one line and tells the three apart.
-					let groups = self.editorForTesting.groups
-					let described = groups.isEmpty
-						? "no editor group"
-						: groups.map(\.activeTabDescriptionForTesting).joined(separator: " | ")
-					print("CADOVA: \(second)s no cadova pane — \(described)")
-					fflush(stdout)
-					return
-				}
-				print("\(second)s \(pane.reportForTesting)")
-				fflush(stdout)
-			}
-		}
-	}
-
-	/// Says where the diagram pane in the tab in front puts its message and its
-	/// indicator, once a second.
-	///
-	/// 0512's instrument. A diagram pane goes through its states in the seconds
-	/// after a file opens — a message with nothing turning, then the indicator
-	/// over it while a tool runs, then a picture — and the claim the item makes
-	/// is about the two rectangles at every one of them, so this prints them all
-	/// rather than whichever moment a screenshot happened to catch. Flushed for
-	/// the reason `--cadova-watch` is: a driver run ends in a kill, and a report
-	/// still in stdout's buffer when the signal arrives never happened.
-	func watchDiagramForTesting(seconds: Double) {
-		for second in 0...Int(seconds) {
-			DispatchQueue.main.asyncAfter(deadline: .now() + Double(second)) { [weak self] in
-				guard let self else { return }
-				guard let pane = self.editorForTesting.activeGroup?.diagramPreview else {
-					// Never a bare "not found", for the reason above it: what the tab
-					// in front *is* costs one line and tells three different failures
-					// apart.
-					let groups = self.editorForTesting.groups
-					let described = groups.isEmpty
-						? "no editor group"
-						: groups.map(\.activeTabDescriptionForTesting).joined(separator: " | ")
-					print("DIAGRAM: \(second)s no diagram pane — \(described)")
-					fflush(stdout)
-					return
-				}
-				print("\(second)s \(pane.reportForTesting)")
-				fflush(stdout)
-			}
-		}
-	}
-
 	/// Shows the backlog: the list and the board, over `.abydos/backlog`.
 	@objc func showBacklog(_ sender: Any?) {
 		setPanelVisible(true)
@@ -2951,80 +2379,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Which record the pane shows, for `--backlog openspec`.
 	func showBacklogSource(openSpec: Bool) {
 		bottomPanel.showBacklog()?.showOpenSpec(openSpec)
-	}
-
-	/// What is on the board and what the archive holds, for `--backlog openspec`.
-	func backlogBoardReportForTesting() -> String {
-		bottomPanel.showBacklog()?.boardReportForTesting ?? "no project"
-	}
-
-	/// Whether the first card of a column can be dragged.
-	///
-	/// By the column's name, which the pane resolves against whichever record is
-	/// showing — the two no longer share a vocabulary, so `BacklogState` is the
-	/// wrong thing to parse it into here.
-	func backlogDragReportForTesting(state: String) -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		return pane.dragReportForTesting(column: state)
-	}
-
-	/// What the pane offers a project with no record of work, for
-	/// `--backlog-offer`.
-	func backlogOfferReportForTesting() -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		return pane.offerReportForTesting ?? "no offer: this project has a record of work"
-	}
-
-	/// The same, of a pane already open, **without showing it**.
-	///
-	/// `showBacklog()` reloads on the way past, so a report that asks through it
-	/// cannot tell a pane that keeps itself up to date from one that is re-read
-	/// by being asked. This is the question somebody sitting in front of the
-	/// pane is asking: has it noticed yet, on its own?
-	func backlogOfferAsItStandsForTesting() -> String {
-		guard let pane = bottomPanel.existingBacklogPane else { return "no pane is open" }
-		return pane.offerReportForTesting ?? "no offer: this project has a record of work"
-	}
-
-	/// Presses the OpenSpec offer, for `--backlog-offer openspec`.
-	///
-	/// Through the pane's own verb, so what is driven is what the button does
-	/// and not a second path to the same command.
-	func pressOpenSpecOfferForTesting() -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		pane.setUpOpenSpec()
-		return OpenSpec.commandLine() == nil
-			? "refused, because openspec is not installed"
-			: "ran \(OpenSpec.initCommand()) in a terminal"
-	}
-
-	/// What a card's context menu offers, for `--backlog-menu`.
-	func backlogMenuForTesting(number: Int) -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		return pane.menuTitlesForTesting(number: number)
-	}
-
-	/// The same for a change, which is named rather than numbered.
-	func backlogMenuForTesting(change: String) -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		return pane.menuTitlesForTesting(change: change)
-	}
-
-	/// Files an item from the pane and says where it landed, for `--backlog-new`.
-	func newBacklogItemForTesting(titled title: String) -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		return pane.newItemForTesting(titled: title)
-	}
-
-	/// Whether the pane is offering to make a backlog, and then making one.
-	func backlogAbsentForTesting() -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		return pane.isOfferingToMakeOneForTesting ? "offering to make one" : "showing a backlog"
-	}
-
-	func makeBacklogForTesting() -> String {
-		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		return pane.makeBacklogForTesting()
 	}
 
 	/// Picks up the lowest-numbered ready item without opening the board first.
@@ -3150,7 +2504,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// `validateMenuItem`, so what the View menu offers and what this offers
 	/// cannot drift apart, and a devcontainer entry is greyed out here for the
 	/// projects it is greyed out for there.
-	private func newTerminalMenu() -> NSMenu {
+	func newTerminalMenu() -> NSMenu {
 		let menu = NSMenu()
 		// Validated by hand below, item by item: left to itself AppKit asks the
 		// responder chain, and a menu popped up from a view in the panel is not
@@ -3176,23 +2530,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			menu.addItem(item)
 		}
 		return menu
-	}
-
-	/// Shows the panel and nothing else, so the strip has a layout to be asked
-	/// about.
-	///
-	/// Deliberately not "open a terminal": the first terminal in a window
-	/// attaches to tmux, and a window that is following its terminal then goes
-	/// to wherever that session left its shell — a different project, with a
-	/// different answer about devcontainers, which is what this dump is for.
-	func showTerminalPanelForTesting() { setPanelVisible(true) }
-
-	/// What that menu holds, for the harness: a menu cannot be photographed
-	/// while it is open, which is why these dumps exist.
-	func newTerminalMenuForTesting() -> String {
-		newTerminalMenu().items
-			.map { "\($0.title) enabled=\($0.isEnabled)" }
-			.joined(separator: " | ")
 	}
 
 	/// A shell inside the container this project says it is worked on in.
@@ -3475,21 +2812,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - The devcontainer in the titlebar
 
-	/// What the language servers are doing, for the pill's tool tip.
-	///
-	/// Nothing at all for a project with none — a folder of Markdown has no
-	/// servers to be waiting for, and a line saying so would be an answer to a
-	/// question nobody asked.
-	/// Presses the pill menu's entry whose words are these.
-	@discardableResult
-	func pressDevContainerMenuForTesting(_ title: String) -> Bool {
-		guard let item = titlebar.devContainerPillMenu().items.first(where: { $0.title == title }),
-		      let action = item.action, item.isEnabled
-		else { return false }
-		NSApp.sendAction(action, to: item.target, from: item)
-		return true
-	}
-
 	/// What the View menu's single item says it will open.
 	///
 	/// **It opens the project's preferred devcontainer, and says which one that
@@ -3504,93 +2826,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// selector and the same validation. What it offers is a subset; what it says
 	/// is never wrong.
 	var devContainerMenuTitle: String { devContainerMenuTitle(for: nil) }
-
-	/// Opens a terminal in the project's devcontainer and says what came back.
-	///
-	/// Through the menu item's own validation and action, because that is what
-	/// the click does: a shell that works when a test calls the kit directly
-	/// proves nothing about whether the menu reaches it.
-	/// - Parameter which: the devcontainer to open, counting from one in the
-	///   order the menu offers them, or nil for the one the View menu's item
-	///   opens. A project offering two has to be openable in each, or "both are
-	///   in the menu" is all that is ever proved.
-	func exerciseDevContainerTerminalForTesting(which: Int? = nil) {
-		let choices = devContainerChoices
-		let chosen = which.flatMap { $0 >= 1 && $0 <= choices.count ? choices[$0 - 1] : nil }
-		let item = makeContainerMenuItem(for: chosen)
-		// The root as well as the answer: "there is no devcontainer here" is not
-		// actionable without "here", and the project that is open is not always
-		// the folder that was asked for. The container's root is printed beside
-		// it because it is the subproject's rather than the project's whenever
-		// the subproject has one, and the title because that is what somebody
-		// reads before clicking.
-		let enabled = validateMenuItem(item)
-		print("DEVCONTAINER: root=\(project?.root.path ?? "-") "
-			+ "scope=\(scopeRoot?.path ?? "-") container=\(devContainerRoot?.path ?? "-") "
-			+ "file=\(hasDevContainer) choices=\(choices.count) enabled=\(enabled) "
-			+ "title=\(item.title)")
-		fflush(stdout)
-		guard enabled else { return }
-		// Through the item rather than through nil, so that which one was asked
-		// for travels the way a click's does.
-		item.target = self
-		newTerminalInContainer(item)
-		waitForContainerShellForTesting(seconds: 0)
-	}
-
-	/// The same, once for every devcontainer the project offers, each after the
-	/// last has answered.
-	///
-	/// One at a time rather than all at once, and not on a clock: two shells
-	/// coming up together would be two panes racing to be the active one, and
-	/// what is being proved here is that a project really can have two containers
-	/// up at the same time with somebody typing in each.
-	func exerciseEveryDevContainerTerminalForTesting(from index: Int = 1) {
-		let count = devContainerChoices.count
-		guard index <= count else { return }
-		exerciseDevContainerTerminalForTesting(which: index)
-		guard index < count else { return }
-		afterContainerShellForTesting = { [weak self] in
-			self?.exerciseEveryDevContainerTerminalForTesting(from: index + 1)
-		}
-	}
-
-	/// Waits for the tab to stop being a report and start being a shell, then
-	/// types into it.
-	///
-	/// Asked of the pane rather than counted on a clock, because how long this
-	/// takes is not something a number can be right about: a pull is minutes, a
-	/// Dockerfile build is minutes, and `postCreateCommand` is however long
-	/// somebody else's sidebar.install takes. The tab is there from the first moment
-	/// either way — that is the point of it — so what is being waited for is the
-	/// shell, and nothing else.
-	private func waitForContainerShellForTesting(seconds: Int) {
-		let outOfPatience = 180
-		if bottomPanel.activeTerminalShowsOutputOnly, seconds < outOfPatience {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-				self?.waitForContainerShellForTesting(seconds: seconds + 1)
-			}
-			return
-		}
-		print("DEVCONTAINER: tab=\(bottomPanel.activeTerminalTitle ?? "-") ready after \(seconds)s")
-		fflush(stdout)
-		sendToTerminal("printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat /etc/hostname)\"\n")
-		DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-			guard let self else { return }
-			for line in self.bottomPanel.terminalTextForTesting.split(separator: "\n")
-			where line.contains("IN:") {
-				print("DEVCONTAINER: \(line.trimmingCharacters(in: .whitespaces))")
-			}
-			fflush(stdout)
-			let next = self.afterContainerShellForTesting
-			self.afterContainerShellForTesting = nil
-			next?()
-		}
-	}
-
-	/// What to do once the shell being waited for has answered, so that a second
-	/// container is opened after the first rather than beside it.
-	private var afterContainerShellForTesting: (() -> Void)?
 
 	/// Everything in this file, or everything in the project.
 	@objc func goToSymbolInFile(_ sender: Any?) { results.goToSymbolInFile() }
@@ -3620,75 +2855,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Launch configurations
 
-	func pushChangesForTesting() { sidebar.changesPane?.pushForTesting() }
-
-	/// Runs the selected configuration and puts the profiler on it.
-	func profileSelectedForTesting() { run.profileSelectedConfiguration() }
-
-	/// Opens two terminals side by side, as dropping one tab on the other's
-	/// edge does.
-	func splitTerminalsForTesting() {
-		setPanelVisible(true)
-		bottomPanel.newTerminal()
-		bottomPanel.newTerminal()
-		bottomPanel.splitForTesting()
-	}
-
-	/// Puts the profiler beside a terminal, as the tab menu does.
-	func splitPanesForTesting() {
-		setPanelVisible(true)
-		bottomPanel.newTerminal()
-		bottomPanel.showProfiler(address: RunCoordinator.lastProfilerAddress)
-		bottomPanel.splitFirstBesideForTesting()
-	}
-
-	/// Splits, then does the things that used to collapse a split: opens a
-	/// terminal, and activates another tab.
-	func splitThenDisturbForTesting() {
-		splitPanesForTesting()
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-			self?.bottomPanel.newTerminal()
-			self?.bottomPanel.selectTabForTesting(0)
-		}
-	}
-
-	/// One terminal, then "put it beside" — which is what somebody does first
-	/// and what used to do nothing at all.
-	func splitActiveForTesting() {
-		setPanelVisible(true)
-		bottomPanel.newTerminal()
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-			self?.bottomPanel.splitActiveBesideForTesting()
-		}
-	}
-
-	/// Puts settings in a group beside the editor and drags the divider between
-	/// them, which is the only way to see this without a hand on the mouse.
-	///
-	/// A drag is a `setPosition` and the layout passes that follow it, so the
-	/// position is set and then every stage is measured: the moment it is set,
-	/// after the split has laid out, after the window has, and again once the
-	/// run loop has been round. A width that is right at one stage and wrong at
-	/// the next says which pass took it back.
-	///
-	/// `settings: false` is the control: the same two panes with a file in each,
-	/// which says whether what happens is the page's doing or the split's.
-	func dragSettingsDividerForTesting(to position: Double, settings: Bool = true) {
-		guard editor.activeGroup?.activeTabURL != nil else {
-			print("DIVIDER: nothing open to split")
-			return
-		}
-		splitEditorRight(nil)
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-			guard let self else { return }
-			if settings { self.showSettingsPage(nil) }
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-				self.reportDividerDrag(to: CGFloat(position))
-			}
-		}
-	}
-
-	private func reportDividerDrag(to position: CGFloat) {
+	func reportDividerDrag(to position: CGFloat) {
 		guard let split = editor.rootSplitForTesting, split.arrangedSubviews.count == 2 else {
 			print("DIVIDER: no split of two groups")
 			return
@@ -3747,229 +2914,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Shows the split preview a drag would show.
-	func previewTerminalDropForTesting() {
-		setPanelVisible(true)
-		bottomPanel.newTerminal()
-		bottomPanel.previewDropForTesting()
-	}
-
-	func tearOffTerminalForTesting() {
-		setPanelVisible(true)
-		bottomPanel.newTerminal()
-		let point = window.map { NSPoint(x: $0.frame.maxX + 80, y: $0.frame.midY) } ?? .zero
-		bottomPanel.tearOffForTesting(at: point)
-	}
-
-	/// Renames the terminal in front, the way a double-click on its tab does.
-	func renameActiveTerminalForTesting(to name: String) {
-		setPanelVisible(true)
-		// An empty name opens the editor and leaves it there, which is how the
-		// field itself gets captured.
-		if name.isEmpty {
-			bottomPanel.beginRenameActiveForTesting()
-		} else {
-			bottomPanel.renameActiveForTesting(to: name)
-		}
-	}
-
-	func showPodsForTesting(filter: String, choose: Bool, kind: String?) {
-		setPanelVisible(true)
-		bottomPanel.showProfiler(address: "localhost:6060")?
-			.showPodPickerForTesting(filter: filter, choose: choose, kind: kind)
-	}
-
-	func profileForTesting(address: String, kind: String) {
-		setPanelVisible(true)
-		guard let pane = bottomPanel.showProfiler(address: address) else { return }
-		pane.connectForTesting(address: address)
-		// After the index page has answered, since the kind list comes from it.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-			pane.collectForTesting(kind: kind, seconds: 2)
-			DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-				print("PROFILER: \(pane.statusForTesting) top=\(pane.topFunctionsForTesting)")
-			}
-		}
-	}
-
-	// The sub-controllers a driven run reaches, and the only state this class
-	// exposes to one. A driving verb is declared on the thing it drives, so what
-	// `AppDelegate` needs from the window is which editor, which panel and which
-	// navigator — not the fields any of them keep.
-	var editorForTesting: EditorAreaController { editor }
-	var panelForTesting: BottomPanel { bottomPanel }
-	var navigatorForTesting: ProjectNavigatorViewController { navigator }
-	var resultsForTesting: ResultsPresenter { results }
-
 	/// Puts the caret on a line of the file being edited, for `:` in the palette.
 	func goTo(line: Int) { editor.goTo(line: line) }
-
-	/// Walks the history and reports where each step landed.
-	func navigateForTesting(_ steps: String) {
-		for step in steps.split(separator: ",") {
-			switch step {
-			case "back": navigateBack(nil)
-			case "forward": navigateForward(nil)
-			default: continue
-			}
-			let place = editor.currentPlace
-			print("NAV \(step): \(place.map { "\($0.url.lastPathComponent):\($0.line)" } ?? "nowhere")")
-		}
-	}
-
-	/// Presses a mouse button over a named view, and says where the editor
-	/// landed — `--mouse 3@editor,4@terminal`.
-	///
-	/// **The event goes to the view the pointer would be over**, not to the
-	/// function it should end up calling. What was broken here was the path
-	/// rather than the destination: `navigateBack` worked and nothing reached
-	/// it, and the terminal ate the events on the way past. Calling
-	/// `navigateBack` from a test would have passed the whole time.
-	///
-	/// The event is built through a `CGEvent` because that is the only way to
-	/// set `buttonNumber` — `NSEvent.mouseEvent` has no parameter for it, and
-	/// the number is the entire question. It carries a screen position rather
-	/// than one in a window, so the cell a terminal would report it at is not
-	/// meaningful; nothing here asks for one, and the side buttons never reach
-	/// that code.
-	func pressMouseForTesting(_ steps: String) {
-		for step in steps.split(separator: ",") {
-			let parts = step.split(separator: "@")
-			guard let number = Int(parts.first ?? "") else { continue }
-			let over = parts.count > 1 ? String(parts[1]) : "editor"
-			guard let target = viewForMouseTesting(named: over) else {
-				print("MOUSE \(step): there is no \(over) to press over")
-				fflush(stdout)
-				continue
-			}
-			pressForTesting(button: number, on: target)
-			let place = editor.currentPlace
-			print("MOUSE \(step): editor at "
-				+ (place.map { "\($0.url.lastPathComponent):\($0.line)" } ?? "nowhere"))
-			fflush(stdout)
-		}
-	}
-
-	/// The views a press can be aimed at, which are the two paths that differ:
-	/// the terminal has mouse handlers of its own, and the editor has none and
-	/// passes everything up.
-	private func viewForMouseTesting(named name: String) -> NSView? {
-		switch name {
-		case "terminal": return bottomPanel.showTerminal()?.terminalView
-		case "tree":     return navigator.view
-		default:         return editor.view
-		}
-	}
-
-	private func pressForTesting(button number: Int, on view: NSView) {
-		let middle = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
-		let inWindow = view.convert(middle, to: nil)
-		let onScreen = view.window?.convertPoint(toScreen: inWindow) ?? .zero
-		let flipped = CGPoint(
-			x: onScreen.x,
-			y: (NSScreen.screens.first?.frame.height ?? 0) - onScreen.y
-		)
-		for type in [CGEventType.otherMouseDown, .otherMouseUp] {
-			guard let raw = CGEvent(
-				mouseEventSource: nil,
-				mouseType: type,
-				mouseCursorPosition: flipped,
-				mouseButton: .center
-			) else { continue }
-			raw.setIntegerValueField(.mouseEventButtonNumber, value: Int64(number))
-			guard let event = NSEvent(cgEvent: raw) else { continue }
-			if type == .otherMouseDown {
-				view.otherMouseDown(with: event)
-			} else {
-				view.otherMouseUp(with: event)
-			}
-		}
-	}
-
-	/// Drives the project tree and reports what the editor did about it.
-	///
-	/// Arrowing through the tree is supposed to show each file it lands on, and
-	/// that is a claim about two views at once — which is why this prints both.
-	/// Selects a row in the tree and copies it the way ⌘C does, then says what
-	/// landed on the pasteboard.
-	///
-	/// Through `NSApp.sendAction`, which is exactly what the Edit menu's Copy
-	/// does: what could be wrong here is not the copying but whether the tree
-	/// is ever asked, and calling the method directly would answer the wrong
-	/// question. The pasteboard is put back afterwards — a test has no business
-	/// throwing away whatever somebody had copied.
-	func copyPathForTesting(steps: String) -> String {
-		let saved = NSPasteboard.general.string(forType: .string)
-		defer {
-			NSPasteboard.general.clearContents()
-			if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-		}
-
-		navigator.focusTree()
-		for step in steps.split(separator: ",") {
-			switch step {
-			case "down": navigator.pressKeyForTesting(125)
-			// So that copying several rows can be asked for at all.
-			case "shift-down": navigator.pressKeyForTesting(125, modifiers: .shift)
-			default: continue
-			}
-		}
-
-		let sent = NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-		let copied = NSPasteboard.general.string(forType: .string) ?? "nothing"
-		// Newlines would break the one-line report into several that look like
-		// separate answers.
-		let onOneLine = (copied as String).replacingOccurrences(of: "\n", with: " | ")
-		return "sent=\(sent) clipboard=\(onOneLine)"
-	}
-
-	/// Drives the picture in front through the View menu's **own** zoom actions,
-	/// one step per word: `in`, `out`, `actual`, `fit`, `pinch:0.25`.
-	///
-	/// **Down the responder chain rather than by calling the pane**, and that is
-	/// the whole reason this verb exists rather than `--image-fit` growing a
-	/// number. What item 0537 changes is not arithmetic — `ImageFit` is tested
-	/// without a window — it is *where ⌘+ arrives*: the picture pane takes the
-	/// keyboard and answers `zoomIn(_:)` before the window controller does. A
-	/// driver that called `pane.zoomIn(nil)` would pass with that routing removed,
-	/// which makes it a test of nothing. So the report says **who took it**, and
-	/// `took=ImageFileView` against `took=MainWindowController` is the whole of
-	/// this item in one word.
-	///
-	/// It also prints the interface's zoom beside the picture's, because the
-	/// claim being checked is about two numbers: one moves and the other does not.
-	func zoomImageForTesting(_ raw: String) {
-		guard let pane = editor.activeGroup?.imagePreview else {
-			print("IMAGE: nothing showing a picture")
-			return
-		}
-		window?.makeFirstResponder(pane)
-		var took: [String] = []
-		for step in raw.split(separator: ",").map({
-			$0.trimmingCharacters(in: .whitespaces).lowercased()
-		}) {
-			switch step {
-			case "in":  took.append(sendToKeyboard(#selector(MainWindowController.zoomIn(_:))))
-			case "out": took.append(sendToKeyboard(#selector(MainWindowController.zoomOut(_:))))
-			case "actual":
-				took.append(sendToKeyboard(#selector(MainWindowController.resetZoom(_:))))
-			// The two that are not keys and so have no chain to walk: `Fit to
-			// Window` lives only in the pane's own menu, and a pinch goes to the
-			// view under the pointer. Said as `direct` rather than dressed up as a
-			// class that answered, since nothing was asked.
-			case "fit":
-				pane.setFit(.pane)
-				took.append("direct")
-			case let pinch where pinch.hasPrefix("pinch:"):
-				pane.magnify(by: CGFloat(Double(pinch.dropFirst("pinch:".count)) ?? 0))
-				took.append("direct")
-			default:
-				print("IMAGE: --image-zoom does not know \(step)")
-			}
-		}
-		let holder = (window?.firstResponder).map { String(describing: type(of: $0)) } ?? "nobody"
-		print("IMAGE zoom: keyboard=\(holder) took=\(took.joined(separator: ",")) \(pane.reportForTesting)")
-	}
 
 	/// The first responder from the keyboard outwards that answers a selector,
 	/// having answered it — and its class, for the report.
@@ -3981,7 +2927,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// the same links AppKit would — first responder, then `nextResponder` out
 	/// through the view tree, the window and this controller — so it still
 	/// answers the question the item asks, which is who is in front of whom.
-	private func sendToKeyboard(_ selector: Selector) -> String {
+	func sendToKeyboard(_ selector: Selector) -> String {
 		var responder: NSResponder? = window?.firstResponder
 		while let current = responder {
 			if current.responds(to: selector) {
@@ -3991,600 +2937,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			responder = current.nextResponder
 		}
 		return "nobody"
-	}
-
-	func treeStepsForTesting(_ steps: String) {
-		let script = steps.split(separator: ",").map(String.init)
-		for (index, step) in script.enumerated() {
-			// `settle`, and `settle:3` for longer. Everything after it goes back
-			// to the run loop rather than being waited for here, because the trash
-			// answers on the main queue and a nested `RunLoop.run(until:)` does not
-			// drain it — measured, not assumed, when a script that trashed and then
-			// pressed ⌘Z found an empty stack however long it "waited".
-			if step == "settle" || step.hasPrefix("settle:") {
-				let seconds = step.hasPrefix("settle:")
-					? Double(step.dropFirst("settle:".count)) ?? 1.5
-					: 1.5
-				let rest = script[(index + 1)...].joined(separator: ",")
-				guard !rest.isEmpty else { return }
-				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-					self?.treeStepsForTesting(rest)
-				}
-				return
-			}
-
-			switch step {
-			case "focus": navigator.focusTree()
-			// What a right-click over the selection offers, submenus included.
-			case "menu":
-				print("TREE menu: \(navigator.contextMenuTitlesForTesting().joined(separator: " | "))")
-				continue
-			case "down": navigator.pressKeyForTesting(125)
-			case "up": navigator.pressKeyForTesting(126)
-			case "right": navigator.pressKeyForTesting(124)
-			case "left": navigator.pressKeyForTesting(123)
-			case "return": navigator.pressKeyForTesting(36)
-			// The four keys the navigator answers, each one a different gesture
-			// from the same key without its modifier: F2 and ⌥⏎ both rename, ⌘⌫
-			// trashes the selection, ⌘↓ opens as it always did.
-			case "f2": navigator.pressKeyForTesting(120)
-			case "alt-return": navigator.pressKeyForTesting(36, modifiers: .option)
-			case "cmd-delete": navigator.pressKeyForTesting(51, modifiers: .command)
-			case "cmd-down": navigator.pressKeyForTesting(125, modifiers: .command)
-			case "escape": navigator.pressKeyForTesting(53)
-			// ⇧↓ and ⇧↑: a run of rows, selected the way somebody selects one.
-			case "shift-down": navigator.pressKeyForTesting(125, modifiers: .shift)
-			case "shift-up": navigator.pressKeyForTesting(126, modifiers: .shift)
-			// What a build writing files does to the tree, on demand: the point
-			// is what is still selected afterwards.
-			case "reload": navigator.reloadForTesting()
-			case "copy":
-				print("TREE copy: clipboard=\(navigator.copyTextForTesting().replacingOccurrences(of: "\n", with: " | "))")
-				continue
-			// ⌘C for real and then ⌘V or ⌥⌘V, through the general pasteboard, so
-			// what the copy writes is what the paste reads rather than two
-			// closures agreeing with each other.
-			case "copy-files":
-				navigator.copyToPasteboardForTesting()
-				continue
-			case "paste": navigator.pasteForTesting(move: false)
-			case "paste-move": navigator.pasteForTesting(move: true)
-			// ⌘Z the way the Edit menu sends it: at nobody in particular, down the
-			// responder chain from whatever has the keyboard. That is the half
-			// `undo` cannot answer — which of the two stacks a ⌘Z reaches is
-			// decided by the chain, so the harness has to ask the chain rather
-			// than the tree.
-			case "undo-key":
-				// Key first: `target(forAction:)` starts at the *key* window's
-				// first responder, and an app launched from a terminal need not
-				// have one — which showed up as "answered by nobody" while the
-				// tree plainly had the keyboard.
-				NSApp.activate(ignoringOtherApps: true)
-				window?.makeKeyAndOrderFront(nil)
-				let selector = Selector(("undo:"))
-				// The chain walked by hand as well, because it is the mechanism
-				// under test and it can be named. AppKit's own answer is printed
-				// beside it so the two can be seen to agree.
-				var responder = window?.firstResponder
-				while let step = responder, !step.responds(to: selector) {
-					responder = step.nextResponder
-				}
-				func named(_ object: Any?) -> String {
-					object.map { String(describing: type(of: $0)) } ?? "nobody"
-				}
-				print("TREE undo-key: chain=\(named(responder)) "
-					+ "appkit=\(named(NSApp.target(forAction: selector))) "
-					+ "first=\(named(window?.firstResponder))")
-				// Sent the way the menu sends it, and by hand only when there is no
-				// key window to send it through — either way the chain decides who
-				// answers, which is the whole question.
-				if !NSApp.sendAction(selector, to: nil, from: nil) {
-					_ = responder?.tryToPerform(selector, with: nil)
-				}
-			// And the tree's own, straight at the outline view, for scripts that
-			// only want the file half.
-			case "undo": navigator.undoForTesting()
-			// What is standing in the corner, which is where an undo that refused
-			// says so.
-			case "toasts":
-				print("TREE \(toastReportForTesting())")
-				continue
-			// And the key itself, which is the half `paste-move` cannot ask
-			// about: ⌥⌘V is in no menu, so `handleKeyDown` is the only thing
-			// standing between the keystroke and the move.
-			case "alt-cmd-v": navigator.pressKeyForTesting(9, modifiers: [.command, .option])
-			case "collapse": navigator.collapseAll()
-			case "locate": navigator.selectFileInEditor()
-			// How far the text in front can be scrolled sideways. Here rather
-			// than in `--navigate` for the same reason `type:` is: only this
-			// list can put an edit and a question in a chosen order, and the
-			// question is only interesting *after* something has been typed.
-			//
-			// A screenshot cannot answer it. An overlay scroller is invisible
-			// until somebody scrolls, so "there is no scrollbar" and "there is
-			// nothing to scroll to" look exactly alike in a picture — which is
-			// how a document view that never grew past its pane went unnoticed.
-			case "scroll":
-				print("EDITOR scroll: "
-					+ (editor.activeGroup?.activeCodeView?.scrollReportForTesting ?? "no code view in front"))
-				continue
-			// The header's third button. A row count with it off and the same
-			// count with it on is the whole claim this change makes, and `rows`
-			// is what says both.
-			case "compact": navigator.toggleCompactPackages()
-			// The Dependencies section, which is not on disk and so is the one
-			// part of the tree `ls:` can say nothing about. `deps` is what the
-			// section holds whether or not anything is open; `rows` is what the
-			// pane is actually showing, which is the half that proves the rows
-			// arrived rather than only the model.
-			case "deps":
-				print("TREE deps: \(navigator.dependencyReportForTesting().joined(separator: " | "))")
-				continue
-			case "rows":
-				print("TREE rows: \(navigator.rowsForTesting().joined(separator: " | "))")
-				continue
-			// The section sits below the whole tree, which on a repository of
-			// eight subprojects is several screens down.
-			// Which roots the tree has, and what the third of them holds — the
-			// one thing a screenshot of a tree several screens long cannot say.
-			case "roots":
-				print("TREE roots: \(navigator.rootsForTesting())")
-			case "session-right-click":
-				print("TREE session-right-click:\n    \(navigator.sessionRightClicksForTesting())")
-			case "session-menu":
-				print("TREE session-menu: \(navigator.sessionMenuForTesting())")
-			case "sessions-rebuild": navigator.rebuildSessionsForTesting()
-			case "sessions-open": navigator.openSessionsForTesting(files: false)
-			case "sessions-open-all": navigator.openSessionsForTesting(files: true)
-			case "deps-open": navigator.openDependenciesForTesting(groups: false)
-			case "deps-open-all": navigator.openDependenciesForTesting(groups: true)
-			// The field on the row, left standing: where its text sits and how
-			// far it reaches are the whole of what is wrong with it, and
-			// `rename:` commits too quickly to photograph.
-			case "rename-begin":
-				navigator.beginRename()
-				print("TREE rename-begin: \(navigator.renameFieldReportForTesting)")
-			default:
-				// What is on disk under the project root, so "Escape left nothing
-				// behind" is answered by the file system rather than by the tree
-				// agreeing with itself. `ls:.` for the root, `ls:Sources` for a
-				// folder inside it.
-				// A file by absolute path, revealed the way activating its tab
-				// does — the gesture item 508 is about, driven without a symbol
-				// to follow. It prints which package the file turned out to be
-				// in and where that package came from, which is what a
-				// screenshot cannot say.
-				if step.hasPrefix("reveal:") {
-					navigator.revealForTesting(String(step.dropFirst("reveal:".count)))
-					continue
-				}
-				if step.hasPrefix("ls:") {
-					let folder = String(step.dropFirst("ls:".count))
-					guard let root = project?.root else { continue }
-					let url = folder == "." ? root : root.appendingPathComponent(folder)
-					let names = ((try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? [])
-						.sorted()
-					print("TREE ls \(folder): \(names.joined(separator: " "))")
-					continue
-				}
-				// `type:abc`, into whatever the editor is showing. Here rather than
-				// only in `--type` so that one script can put an edit and a file
-				// gesture in a chosen order and then press ⌘Z once: which of the two
-				// undo stacks answers is the question, and it cannot be asked from
-				// two flags that fire at different times.
-				if step.hasPrefix("type:") {
-					simulateTyping(String(step.dropFirst("type:".count)))
-					break
-				}
-				// `export:png`, the file's own context-menu action on whatever the
-				// tree has selected.
-				if step.hasPrefix("export:") {
-					let raw = String(step.dropFirst("export:".count)).lowercased()
-					let editable = raw.hasPrefix("editable-")
-					guard let format = DiagramFormat(
-						rawValue: editable ? String(raw.dropFirst("editable-".count)) : raw
-					) else { continue }
-					navigator.exportSelectionForTesting(format, editable: editable)
-					continue
-				}
-				// `drop:a.swift+b.swift>Sources`, and `drop-copy:` for the ⌥
-				// version — the whole of what a drag does once the mouse is up,
-				// without a mouse. Everything is relative to the project root.
-				if step.hasPrefix("drop:") || step.hasPrefix("drop-copy:") {
-					let move = step.hasPrefix("drop:")
-					let body = String(step.dropFirst(move ? "drop:".count : "drop-copy:".count))
-					guard let root = project?.root, let arrow = body.firstIndex(of: ">") else { continue }
-					let sources = body[..<arrow].split(separator: "+").map {
-						root.appendingPathComponent(String($0))
-					}
-					navigator.dropForTesting(
-						sources, into: root.appendingPathComponent(String(body[body.index(after: arrow)...])),
-						move: move
-					)
-					continue
-				}
-				// `new-begin:file`, `new-begin:folder`, `new-begin:py` — the row
-				// put in the tree with the field on it and left standing, which
-				// is the half a committed name cannot show: where the row went,
-				// what the field starts with, and which part of it is selected.
-				if step.hasPrefix("new-begin:") {
-					navigator.beginNewForTesting(kind: String(step.dropFirst("new-begin:".count)))
-					print("TREE new-begin: \(navigator.renameFieldReportForTesting)")
-				} else if step.hasPrefix("new:") {
-					// `new:file:notes.txt`, `new:folder:docs`, `new:py:script` — the
-					// whole gesture, the way `rename:` is: the row appears, takes
-					// the name, and Return writes it. A kind fills the extension
-					// in, so `new:py:script` makes `script.py`.
-					let parts = step.dropFirst("new:".count).split(separator: ":", maxSplits: 1)
-					guard let kind = parts.first else { continue }
-					navigator.createSelectionForTesting(
-						kind: String(kind), name: parts.count > 1 ? String(parts[1]) : nil
-					)
-				} else {
-					// `rename:new-name.swift`, which is the whole gesture: the field
-					// appears on the row, takes the name, and commits it.
-					guard step.hasPrefix("rename:") else { continue }
-					navigator.renameSelectionForTesting(String(step.dropFirst("rename:".count)))
-				}
-			}
-			let selection = navigator.selectionForTesting
-			let showing = editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
-			// Arrowing shows a file without leaving the tree, so which pane has
-			// the keyboard is what separates Return opening a file from Return
-			// merely selecting one — and `renaming` is what separates it from
-			// Return doing what it did last week.
-			let renaming = navigator.renamingNameForTesting
-			let focus: String
-			if renaming != nil {
-				focus = "rename-field"
-			} else if let responder = window?.firstResponder as? NSView {
-				if responder.isDescendant(of: navigator.view) {
-					focus = "tree"
-				} else if responder.isDescendant(of: editor.view) {
-					focus = "editor"
-				} else {
-					focus = "elsewhere"
-				}
-			} else {
-				focus = "elsewhere"
-			}
-			print(
-				"TREE \(step): selected=\(selection.name) rows=\(selection.rows) "
-					+ "editor=\(showing) focus=\(focus) renaming=\(renaming ?? "no")"
-			)
-		}
-	}
-
-	/// Everything 0428 asks a running window for, printed in one place.
-	///
-	/// One report rather than a flag per number, because these have to be read
-	/// together: a "time to something usable" of four seconds means one thing
-	/// beside a tree of 400 rows and another beside a tree of 40,000, and the
-	/// load average has to sit next to both or neither can be argued with later.
-	func scaleReportForTesting(typing presses: Int) {
-		// First, and the whole path. Driving this app with `--open` has come up
-		// on something from the recent list before now, and a set of timings
-		// labelled "platform" that were taken on whatever was open last is
-		// worse than no timings: they look like an answer. A harness can refuse
-		// to believe the rest of this report unless this line names what it
-		// asked for.
-		print("OPEN project \(project?.root.path ?? "nothing")")
-		for line in LaunchClock.report() { print(line) }
-		for line in navigator.scaleReportForTesting() { print(line) }
-		// Beside the watcher's batches, because the pair is the finding: before
-		// 0446 these were the same number, and the whole of the fix is the
-		// distance between them.
-		let runs = RunCoordinator.runConfigurationTallyForTesting
-		print(String(format: "OPEN %-24s %8d asked, %d skipped, %d coalesced, %d walked",
-			("run configurations" as NSString).utf8String!,
-			runs.asked, runs.skipped, runs.coalesced, runs.walked))
-
-		if presses > 0 {
-			let costs = editor.measureTypingForTesting(presses: presses)
-			if costs.isEmpty {
-				print("OPEN keystroke                no file open")
-			} else {
-				let walls = costs.map { $0.wall }.sorted()
-				let cpus = costs.map { $0.cpu }.sorted()
-				// Median and worst, not the mean. The mean of a hundred
-				// keystrokes hides the one that took 300 ms, and the one that
-				// took 300 ms is the entire complaint.
-				func at(_ values: [TimeInterval], _ fraction: Double) -> Double {
-					values[min(values.count - 1, Int(Double(values.count) * fraction))] * 1000
-				}
-				print(String(format: "OPEN keystroke wall       %8.2f ms median, %.2f ms p90, %.2f ms worst",
-					at(walls, 0.5), at(walls, 0.9), walls.last! * 1000))
-				print(String(format: "OPEN keystroke cpu        %8.2f ms median, %.2f ms p90, %.2f ms worst",
-					at(cpus, 0.5), at(cpus, 0.9), cpus.last! * 1000))
-			}
-		}
-
-		// The main thread going away is what "usable" fails to be, so the worst
-		// of them are printed with the numbers rather than left in the log.
-		for stall in StallWatch.worst(limit: 8) { print("OPEN stall \(stall.line)") }
-	}
-
-	/// What switching to another project costs, in the one number that matters:
-	/// how long the main thread is gone.
-	///
-	/// The complaint is not that a large project takes a while to finish
-	/// arriving — it is that the window stops answering while it does, so
-	/// switching between projects "feels like it crashed" and the terminal
-	/// stops drawing with it. The wall time around `switchProject` *is* that
-	/// number: it runs on the main thread, so nothing else can happen inside it.
-	///
-	/// The stalls are printed beside it because the total says a switch was
-	/// slow and `StallWatch` says which part of it was, which is the difference
-	/// between a number and a lead.
-	func measureProjectSwitchForTesting(to root: URL) {
-		StallWatch.clear()
-		let before = Date()
-		switchProject(to: root)
-		let elapsed = Date().timeIntervalSince(before) * 1000
-
-		print(String(format: "SWITCH main thread held    %8.2f ms", elapsed))
-		// The load beside the number, which the house rules ask for: a timing
-		// without it cannot be told from a regression.
-		var average = [Double](repeating: 0, count: 3)
-		getloadavg(&average, 3)
-		print(String(format: "SWITCH load                %.2f %.2f %.2f",
-			average[0], average[1], average[2]))
-
-		// After the run loop has turned a few times: the work this is about
-		// finishing off the main thread is exactly the work that would not show
-		// up in a reading taken the instant the call returned.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-			for stall in StallWatch.worst(limit: 8) { print("SWITCH stall \(stall.line)") }
-			// What arrived after the switch returned. The point of moving the
-			// walks off the main thread is that these land *later*, so a reading
-			// that did not check them would be measuring the app forgetting to
-			// do the work rather than doing it elsewhere.
-			print("SWITCH deps \(self.navigator.dependencyReportForTesting().joined(separator: " | "))")
-			print("SWITCH settled")
-			// Flushed, because stdout to a pipe is block-buffered and a harness
-			// that kills the app when it has seen enough would otherwise lose
-			// every line written after the last flush — which is all of these.
-			fflush(stdout)
-		}
-	}
-
-	/// Asks the language server a real question, over and over, until it answers.
-	///
-	/// 0428's missing number — *time until Java answers* — and the reason it went
-	/// missing twice over. Once because the app was burning eight cores beside
-	/// the server, so any figure would have described the app rather than the
-	/// server; 0446 fixed that. And once because there was no way to ask: every
-	/// other driver flag puts one question at a fixed delay, which can only tell
-	/// you whether the delay happened to be long enough. On a Tycho reactor the
-	/// honest answer is minutes, and a twelve-second `--lsp-wait` reports silence
-	/// from a server that was working perfectly well.
-	///
-	/// Three questions rather than one, because they become answerable at
-	/// different moments and the distance between them is the finding. An outline
-	/// of the open file needs only that file parsed; completion and
-	/// go-to-definition need the classpath, which for jdtls means the reactor
-	/// imported. A server that answers the first at once and the last at four
-	/// minutes is a very different thing to wait for than one that answers
-	/// nothing until it is ready.
-	///
-	/// **And two more, for the debugger**, which is 0452's question and could not
-	/// be asked either: whether the adapter inside the server is listening, and
-	/// whether the import has got far enough to say what a launch would *run*.
-	/// Taken on the same run as the file questions on purpose — one machine, one
-	/// load — so that "the adapter was ready at fifty seconds while completion
-	/// was still silent at eleven minutes" is a comparison rather than two
-	/// readings from two afternoons.
-	///
-	/// **In a loop of their own, and that is not tidiness.** The first reading
-	/// taken here put all five in one round and reported the adapter at 50.6
-	/// seconds — five milliseconds after the outline, in the same round, which is
-	/// the shape of a number bounded by its neighbours rather than measured. A
-	/// round is as slow as the slowest question in it, `completion` was timing out
-	/// at thirty seconds a go, and the adapter had very likely been listening for
-	/// most of that. Two loops, one request each, and the two figures are then
-	/// about the two things.
-	///
-	/// The file questions are asked together each round so a round costs one
-	/// request timeout rather than three, and the granularity of every figure
-	/// below is therefore the round — a second, plus however long the server took
-	/// to refuse.
-	func measureFirstAnswerForTesting(line: Int, character: Int, deadline: TimeInterval) {
-		guard let project else {
-			print("ANSWER no project")
-			fflush(stdout)
-			return
-		}
-		let position = LSPPosition(line: line, character: character)
-
-		func say(_ what: String, _ detail: String) {
-			let at = Date().timeIntervalSince(LaunchClock.processStart)
-			print(String(format: "ANSWER %-16s %8.0f ms  %@  (%@)",
-				(what as NSString).utf8String!, at * 1000,
-				detail as NSString, LaunchClock.loadSaid as NSString))
-			fflush(stdout)
-		}
-
-		func silence(_ what: String, _ waited: TimeInterval) {
-			print(String(format: "ANSWER %-16s      —     still silent at %.0f s",
-				(what as NSString).utf8String!, waited))
-			fflush(stdout)
-		}
-
-		/// The file on screen, once the editor has finished opening it. On a large
-		/// project the window arrives before the file does.
-		func onScreen() -> (url: URL, languageId: String)? {
-			guard let url = editor.activeGroup?.activeTabURL,
-			      let languageId = editor.activeGroup?.activeDocument?.languageId
-			else { return nil }
-			return (url, languageId)
-		}
-
-		// What the editor asks for.
-		Task { @MainActor in
-			var outline = false, completion = false, definition = false
-			while !(outline && completion && definition),
-			      Date().timeIntervalSince(LaunchClock.processStart) < deadline {
-				guard let (url, languageId) = onScreen() else {
-					try? await Task.sleep(nanoseconds: 500_000_000)
-					continue
-				}
-
-				let service = LanguageService.shared
-				// The file's own root, not the scope. Measuring against the
-				// scope would time a server that was never going to answer
-				// about this file — which is the fault this verb is being used
-				// to check, measured wrongly.
-				let root = service.root(for: url, languageId: languageId, project: project.root)
-				async let symbols = service.documentSymbols(url: url, languageId: languageId, project: root)
-				async let completions = service.completions(
-					url: url, position: position, languageId: languageId, project: root)
-				async let locations = service.definition(
-					url: url, position: position, languageId: languageId, project: root)
-				let (foundSymbols, foundCompletions, foundLocations) =
-					await (symbols, completions, locations)
-
-				if !outline, !foundSymbols.isEmpty {
-					outline = true
-					say("outline", "\(foundSymbols.count) symbols in \(url.lastPathComponent)")
-				}
-				if !completion, !foundCompletions.isEmpty {
-					completion = true
-					say("completion", "\(foundCompletions.count) suggestions")
-				}
-				if !definition, let first = foundLocations.first {
-					definition = true
-					say("definition", first.url?.lastPathComponent ?? "somewhere")
-				}
-				try? await Task.sleep(nanoseconds: 1_000_000_000)
-			}
-
-			// Silence is a result and has to be printed as one. A missing line
-			// reads as a harness that crashed; "still silent at 300 s" is the
-			// answer to the question that was asked.
-			let waited = Date().timeIntervalSince(LaunchClock.processStart)
-			for (what, answered) in [
-				("outline", outline), ("completion", completion), ("definition", definition),
-			] where !answered { silence(what, waited) }
-			print(String(format: "ANSWER done               %8.0f ms  %@", waited * 1000,
-				LaunchClock.loadSaid as NSString))
-			fflush(stdout)
-		}
-
-		// What the debugger asks for, on its own clock.
-		Task { @MainActor in
-			var adapter = false, classpath = false
-			while !(adapter && classpath),
-			      Date().timeIntervalSince(LaunchClock.processStart) < deadline {
-				guard let open = onScreen() else {
-					try? await Task.sleep(nanoseconds: 500_000_000)
-					continue
-				}
-				// A file that is open and is not Java: nothing here hosts an
-				// adapter, so these are not questions this project can be asked.
-				// Left unsaid rather than reported as silence, which would put two
-				// lines about a debugger at the end of every run that was not
-				// about Java.
-				guard open.languageId == "java" else { return }
-				let url = open.url
-				let ready = await LanguageService.shared
-					.javaDebugReadinessForTesting(
-						url: url,
-						project: LanguageService.shared.root(
-							for: url, languageId: open.languageId, project: project.root
-						)
-					)
-				if !adapter, let port = ready.port {
-					adapter = true
-					say("debug adapter", "listening on port \(port)")
-				}
-				// An answer with nothing in it is an answer, and it is reported as
-				// one. jdtls does that on a Tycho bundle — promptly, and for ever —
-				// and a harness that counted it as silence would report a wait that
-				// was never going to end as a wait.
-				if !classpath, let count = ready.classPaths {
-					classpath = true
-					say("debug classpath", count == 0
-						? "answered, and empty — nothing to launch a JVM with"
-						: "\(count) entries")
-				}
-				try? await Task.sleep(nanoseconds: 1_000_000_000)
-			}
-
-			let waited = Date().timeIntervalSince(LaunchClock.processStart)
-			for (what, answered) in [("debug adapter", adapter), ("debug classpath", classpath)]
-			where !answered { silence(what, waited) }
-		}
-	}
-
-	/// Whether the terminal panel is showing, what is in it, and what the pane in
-	/// front last said — for 0444's part 4, whose whole claim is about a pane that
-	/// appears without being asked for and must not be asked for again to be seen.
-	func panelTabsForTesting(tail: Int = 0) -> String {
-		var said = "PANEL: visible=\(isPanelVisible) \(bottomPanel.tabsForTesting)"
-		if tail > 0 { said += "\n  last: " + bottomPanel.activeTerminalTailForTesting(lines: tail) }
-		return said
-	}
-
-	/// Which project the window is on, and what it has open.
-	///
-	/// Beside the terminal's directory rather than instead of it, because 0509 is
-	/// exactly the two disagreeing: a shell that never moved, and a window that
-	/// left the project anyway. One of the two numbers alone says nothing — the
-	/// directory is right in both builds, and a project name on its own cannot be
-	/// told from a window that was opened on that project to begin with. The tabs
-	/// are here because they are what the switch destroys.
-	func projectReportForTesting() -> String {
-		let root = project?.root.lastPathComponent ?? "none"
-		let scope = subprojectRoot?.lastPathComponent ?? "whole"
-		let titles = editor.activeGroup?.tabTitlesForTesting ?? []
-		return "project=\(root) subproject=\(scope) tabs=[\(titles.joined(separator: " "))]"
-	}
-
-	/// Opens the run list and prints what is in it.
-	///
-	/// **This used to print a menu it built and threw away**, because opening
-	/// the real one was what a capture run could not do: an `NSMenu` runs a
-	/// nested event loop, so the window was never drawn, the screenshot never
-	/// taken, and the run had to be killed — taking the output with it. A
-	/// popover does not do that, so the harness can now open the thing somebody
-	/// actually sees instead of a second copy of it that was free to drift.
-	func showConfigurationMenuForTesting(open goal: String? = nil) {
-		// The destinations first, because they are the part worth checking and
-		// they arrive about twelve seconds after the menu is drawn — printing
-		// before they land prints "Finding destinations…" and proves nothing.
-		Task { @MainActor in
-			// And discovery before that. A reactor of a hundred modules is a
-			// walk of some seconds, and a run that printed at 1.2 s printed
-			// "No configurations yet" whatever the project held — which is a
-			// harness that cannot tell an empty project from a slow one.
-			// Generous: a reactor of a hundred and eighty modules takes 94 s to
-			// walk, measured, and most of that is the 45,772 Java files the main
-			// classes are found in.
-			let deadline = Date().addingTimeInterval(240)
-			while self.run.runConfigurations.isEmpty, Date() < deadline {
-				try? await Task.sleep(for: .milliseconds(200))
-			}
-
-			for configuration in self.run.runConfigurations where configuration.source == .xcodeScheme {
-				guard let target = configuration.xcode else { continue }
-				_ = await XcodeDestinations.shared.destinations(
-					for: target,
-					workingDirectory: URL(fileURLWithPath: configuration.workingDirectory)
-				)
-			}
-			self.run.printConfigurationMenuForTesting(open: goal)
-		}
-	}
-
-	/// What is drawn in an item's mark column, as something printable.
-	///
-	/// The two marks are the point of the dump: ▶ is the run glyph, on the
-	/// things a click starts, and ✓ is the tick that still means "this one is
-	/// selected". A list where they are muddled is the bug, and a picture of a
-	/// menu is not something a test can read.
-	private func markForTesting(_ item: NSMenuItem) -> String {
-		guard item.state == .on else { return "" }
-		return item.onStateImage === RunCoordinator.runMark() ? " ▶" : " ✓"
 	}
 
 	// MARK: - Navigation history
@@ -4711,12 +3063,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if let section = settingsSectionForTesting { page.show(named: section) }
 		if let folded = settingsFoldForTesting { page.toggleFold(named: folded) }
 	}
-
-	/// Which section a capture run asked for.
-	var settingsSectionForTesting: String?
-
-	/// And which one it asked to be folded away, since a triangle needs a click.
-	var settingsFoldForTesting: String?
 
 	/// Brings the debug panel forward.
 	///
@@ -4868,137 +3214,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return String(path.dropFirst(root.count + 1))
 	}
 
-	/// Sets a breakpoint as a gutter click would, for verifying alignment.
-	/// Presses stop, as the titlebar button does.
-	func stopRunningForTesting() { run.stopRunning() }
-
-	/// Presses a key with Option held in the terminal, and says what it sent.
-	func optionKeyForTesting(bare: String, composed: String) -> String {
-		setPanelVisible(true)
-		return bottomPanel.optionKeyForTesting(bare: bare, composed: composed)
-	}
-
-	/// Feeds the terminal a burst of frames, as a program running unwatched does.
-	func burstForTesting(frames: Int) -> Int {
-		setPanelVisible(true)
-		return bottomPanel.burstForTesting(frames: frames)
-	}
-
-	/// Presses keys by key code in the terminal, and says what each one did.
-	func deadKeyForTesting(presses: [(code: UInt16, shift: Bool)]) -> String {
-		setPanelVisible(true)
-		return bottomPanel.deadKeyForTesting(presses: presses)
-	}
-
-	/// Invokes the gutter's run action, for verifying it end to end.
-	func runLineForTesting(_ line: Int) {
-		guard let url = editor.activeGroup.activeTabURL else { return }
-		run.runConfiguration(forFile: url, line: line)
-	}
-
-	/// Presses Run twice on whatever is selected, and says what the panel is
-	/// holding after each — the whole question being whether that is one
-	/// console or two.
-	func rerunSelectedForTesting(_ goal: String?) {
-		if let goal { run.chooseMakeRunForTesting(goal) }
-		runSelected(nil)
-		DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-			guard let self else { return }
-			print("RERUN: after one run \(self.bottomPanel.runConsolesForTesting)")
-			self.runSelected(nil)
-			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-				print("RERUN: after two runs \(self.bottomPanel.runConsolesForTesting)")
-			}
-		}
-	}
-
-	/// Opens the first value on the stopped line that has anything under it, and
-	/// says what came back — for `--open-value`.
-	///
-	/// Through the same callback the click uses, so what is driven is what a
-	/// click does. The count either side is the claim that drawing asks the
-	/// adapter for nothing: scrolling a stopped file with values beside every
-	/// line must not move it.
-	func openValueForTesting() {
-		guard let session = debugSession else { return print("VALUE: no session") }
-		let before = session.childrenRequestsForTesting
-		editor.scrollStoppedFileForTesting()
-		print("VALUE: children requests after scrolling = \(session.childrenRequestsForTesting - before)")
-		guard let opened = editor.openFirstInlineValueForTesting() else {
-			print("VALUE: nothing on the stopped line can be opened")
-			// The pane's tree is there regardless, and it is checked regardless:
-			// this early return is why the pane's own selection bug was driven
-			// and never seen.
-			bottomPanel.walkThePaneForTesting()
-			return
-		}
-		print("VALUE: opened \(opened)")
-		// The fetch is a `Task`; give it the hop it needs before reading.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-			guard let self else { return }
-			print("VALUE: children requests total = \(session.childrenRequestsForTesting - before)")
-			print("VALUE tree:\n\(self.editor.openValueReportForTesting())")
-			// A value with nothing under it is a piece of text, and a click on
-			// it belongs to the editor.
-			print("VALUE leaf: \(self.editor.inlineValueClickForTesting(named: "stage"))")
-			// And a field inside it, which is the second request and the first
-			// one that was not made until somebody reached for it.
-			print("VALUE expand: \(self.editor.expandInsideOpenValueForTesting())")
-			print("VALUE \(self.editor.openValueMenuForTesting())")
-			// The arrows, on the window that opened: down onto the field.
-			print("VALUE walk down: \(self.editor.walkOpenValueForTesting(["down"]))")
-			// Down onto a field, then → to open it: the case where the
-			// selection used to be lost, read after the children arrive.
-			// → on a row whose children have never been fetched: the branch
-			// that reloads the tree, and the one that lost the selection.
-			self.editor.walkOpenValueThenSettleForTesting(["right"]) { after in
-				print("VALUE right on a fresh field, once its children arrived: \(after)")
-				fflush(stdout)
-			}
-			print("VALUE placement: \(self.editor.openValueReportForTesting().split(separator: "\n").first ?? "")")
-			print("VALUE selection: \(self.editor.openValueSelectionColourForTesting())")
-			// And the panel's own tree, which never had the keyboard either.
-			bottomPanel.walkThePaneForTesting()
-
-			// And letting the program go takes it away, which is the other half
-			// of what makes this safe to leave open.
-			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				print("VALUE after expanding: requests = \(session.childrenRequestsForTesting - before)")
-				print("VALUE tree:\n\(self.editor.openValueReportForTesting())")
-				fflush(stdout)
-
-				// And letting the program go takes it away, which is the other
-				// half of what makes this safe to leave open.
-				session.resume()
-				DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-					print("VALUE after resuming: \(self.editor.openValueReportForTesting())")
-					fflush(stdout)
-				}
-			}
-		}
-	}
-
-	/// Presses ⌃Space on an empty line and says what came back.
-	///
-	/// An empty line on purpose: with nothing typed there is no prefix, which is
-	/// the case the typing rule can never answer and the whole reason the key
-	/// exists. What it must never print here is nothing at all.
-	func exerciseExplicitCompletionForTesting() {
-		editor.moveCaretToEndForTesting()
-		editor.simulateTyping("\n")
-		serverActions.completeAtCaret(nil)
-		// Twice, a second apart: the first says whether anything appeared at
-		// all, the second whether what appeared was the answer or the notice.
-		// A server asked cold answers some way after it is asked.
-		for delay in [1.0, 6.0] {
-			DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-				guard let self else { return }
-				print("COMPLETENOW +\(delay)s: \(self.editor.completionReportForTesting)")
-				fflush(stdout)
-			}
-		}
-	}
-
 	func setWordWrap(_ enabled: Bool) {
 		guard Settings.shared.wordWrap != enabled else { return }
 		toggleWordWrap(nil)
@@ -5051,12 +3266,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// opening a project so the navigator is not just a single root row.
 	func expandNavigatorTree() {
 		navigator.expandTopLevel()
-	}
-
-	/// Drives the editor's real text-input path, so a capture run exercises the
-	/// same code a keystroke does rather than poking the buffer directly.
-	func simulateTyping(_ text: String) {
-		editor.simulateTyping(text)
 	}
 
 	// MARK: - Actions
@@ -5112,41 +3321,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc func expandAllFolds(_ sender: Any?) {
 		editor.expandAllFolds()
-	}
-
-	/// Walks a sequence of theme settings and says what each one resolved to.
-	///
-	/// The sequence is the point: switching to "system" after a fixed theme is
-	/// the case that was broken, and asking about "system" on its own would
-	/// never have shown it — the app only answers with the appearance it was
-	/// forced once something has forced one.
-	func appearanceWalkForTesting(_ steps: String) -> String {
-		var said: [String] = ["system is \(Theme.systemIsDark ? "dark" : "light")"]
-		for step in steps.split(separator: ",") {
-			Settings.shared.appearance = String(step)
-			Theme.apply()
-			said.append("\(step) → \(Theme.current.name)")
-		}
-		return said.joined(separator: " | ")
-	}
-
-	/// What the palette offers for a query, with the keys each answers to.
-	///
-	/// Read from the menus, which is where they come from: a list that says how
-	/// many there are and what they are called is the only way to see that a
-	/// command added to a menu arrived here without anybody doing anything.
-	func paletteCommandsForTesting(query: String) -> String {
-		// Menu validation answers about the responder chain of the key window,
-		// so a run that never came to the front sees every item disabled and
-		// the palette reports nothing at all.
-		NSApp.activate(ignoringOtherApps: true)
-		window?.makeKeyAndOrderFront(nil)
-
-		let commands = CommandSearch.match(MenuCommands.all().map(\.descriptor), query: query)
-		let lines = commands.prefix(12).map { command in
-			"  \(command.qualifiedTitle)\(command.shortcut.map { "  [\($0)]" } ?? "")"
-		}
-		return "\(commands.count) commands\n" + lines.joined(separator: "\n")
 	}
 
 	@objc func showProjectSwitcher(_ sender: Any?) {
@@ -5210,7 +3384,7 @@ extension MainWindowController {
 		return item
 	}
 
-	fileprivate func showBranchMenu() {
+	func showBranchMenu() {
 		guard let project, let capsule = titlebar.capsuleView else { return }
 		capsule.menuHalf = .branch
 		// The switcher's popover rather than an `NSMenu`, in its branches mode.
@@ -5233,8 +3407,6 @@ extension MainWindowController {
 			focus: .branches
 		)
 	}
-
-	func showBranchMenuForTesting() { showBranchMenu() }
 
 	/// One entry offering a shell in one container, or the grey generic one.
 	///
