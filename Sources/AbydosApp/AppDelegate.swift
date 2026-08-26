@@ -768,7 +768,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.listRunConfigurations {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-				print("RUNCONFIGS\n  \(controller?.runConfigurationsForTesting() ?? "no window")")
+				print("RUNCONFIGS\n  \(controller?.runForTesting.runConfigurationsForTesting() ?? "no window")")
 				fflush(stdout)
 				if options.writesACapture { return }
 				exit(0)
@@ -1127,7 +1127,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if let name = options.launchConfiguration {
-			controller?.selectConfigurationForTesting(named: name)
+			controller?.runForTesting.selectConfigurationForTesting(named: name)
 		}
 
 		if options.launchProfile {
@@ -1149,7 +1149,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				if options.launchMenu {
 					controller?.showConfigurationMenuForTesting(open: options.launchMenuGoal)
 				}
-				if options.launchEditor { controller?.editConfigurationForTesting() }
+				if options.launchEditor { controller?.runForTesting.editConfigurationForTesting() }
 			}
 		}
 
@@ -1288,13 +1288,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let line = options.runLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.invokeForTesting(line: line, debug: false)
+				controller?.runForTesting.invokeForTesting(line: line, debug: false)
 			}
 		}
 
 		if let line = options.debugLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.invokeForTesting(line: line, debug: true)
+				controller?.runForTesting.invokeForTesting(line: line, debug: true)
 			}
 		}
 
@@ -1324,7 +1324,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if options.reportChart {
-			let chart = MainWindowController.bundledChart
+			let chart = RunCoordinator.bundledChart
 			print("CHART: \(chart?.path ?? "not found")")
 		}
 
@@ -1371,7 +1371,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let line = options.saveGutterLine, let path = options.filePath {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.saveGutterConfigurationForTesting(
+				controller?.runForTesting.saveGutterConfigurationForTesting(
 					file: URL(fileURLWithPath: path), line: line
 				)
 			}
@@ -1382,7 +1382,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// background queue, and asking for something before the scan has
 			// answered reports only that it was not found.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-				controller?.runNamedConfigurationForTesting(name)
+				controller?.runForTesting.runNamedConfigurationForTesting(name)
 			}
 		}
 
@@ -1406,16 +1406,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let goal = options.chooseMakeRun {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-				controller?.chooseMakeRunForTesting(goal)
+				controller?.runForTesting.chooseMakeRunForTesting(goal)
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.describeRunTargetForTesting()
+				controller?.runForTesting.describeRunTargetForTesting()
 			}
 		}
 
 		if let goal = options.makeGoal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-				controller?.runMakeGoalForTesting(goal, debug: options.makeDebug)
+				controller?.runForTesting.runMakeGoalForTesting(goal, debug: options.makeDebug)
 			}
 		}
 
@@ -1443,7 +1443,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let filter = options.attachFilter {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
-				controller?.showAttachPickerForTesting(filter: filter)
+				controller?.runForTesting.showAttachPickerForTesting(filter: filter)
 			}
 		}
 

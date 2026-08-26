@@ -86,7 +86,7 @@ final class RunningToolsWindowController: NSWindowController, NSWindowDelegate {
 
 	// MARK: - Building
 
-	private func build() -> NSView {
+	func build() -> NSView {
 		summary = NSTextField(labelWithString: "")
 		summary.font = Theme.current.uiFont(12.5)
 		summary.textColor = Theme.current.sidebarText
@@ -174,7 +174,7 @@ final class RunningToolsWindowController: NSWindowController, NSWindowDelegate {
 
 	// MARK: - Refreshing
 
-	@objc private func refreshPressed() { refresh() }
+	@objc func refreshPressed() { refresh() }
 
 	/// Asks what is running, and then what it costs — the second half off the
 	/// main thread, because it is a `ps` and a runtime command.
@@ -212,7 +212,7 @@ final class RunningToolsWindowController: NSWindowController, NSWindowDelegate {
 	}
 
 	/// The headline, which is the number somebody came here for.
-	private func updateSummary() {
+	func updateSummary() {
 		guard !rows.isEmpty else {
 			summary.stringValue = "Nothing this app started is still running."
 			return
@@ -230,18 +230,18 @@ final class RunningToolsWindowController: NSWindowController, NSWindowDelegate {
 			+ " — \(RunningTools.memory(total)) between them"
 	}
 
-	private func count(_ number: Int, _ noun: String) -> String {
+	func count(_ number: Int, _ noun: String) -> String {
 		"\(number) \(noun)\(number == 1 ? "" : "s")"
 	}
 
 	// MARK: - Stopping
 
-	@objc private func stopPressed(_ sender: NSButton) {
+	@objc func stopPressed(_ sender: NSButton) {
 		guard rows.indices.contains(sender.tag) else { return }
 		stop(rows[sender.tag])
 	}
 
-	private func stop(_ row: RunningTools.Row, then finished: (@MainActor @Sendable () -> Void)? = nil) {
+	func stop(_ row: RunningTools.Row, then finished: (@MainActor @Sendable () -> Void)? = nil) {
 		let handle = row.handle
 		let title = row.title
 		Task { @MainActor in
@@ -333,7 +333,7 @@ extension RunningToolsWindowController: NSTableViewDataSource, NSTableViewDelega
 		}
 	}
 
-	private func stacked(_ title: String, under detail: String, tooltip: String?) -> NSView {
+	func stacked(_ title: String, under detail: String, tooltip: String?) -> NSView {
 		let name = NSTextField(labelWithString: title)
 		name.font = Theme.current.uiFont(12.5, weight: .medium)
 		name.textColor = Theme.current.sidebarText
@@ -373,7 +373,7 @@ extension RunningToolsWindowController: NSTableViewDataSource, NSTableViewDelega
 		return holder
 	}
 
-	private func number(_ text: String, tooltip: String? = nil) -> NSView {
+	func number(_ text: String, tooltip: String? = nil) -> NSView {
 		let field = NSTextField(labelWithString: text)
 		field.font = .monospacedDigitSystemFont(ofSize: Theme.current.scaled(11.5), weight: .regular)
 		field.textColor = Theme.current.sidebarText

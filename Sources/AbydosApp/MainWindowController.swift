@@ -173,9 +173,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	var sidebarForTesting: SidebarController { sidebar }
 
 	/// Breakpoints and the stopped line, which outlive any one session.
-	private lazy var debug: DebugCoordinator = {
+	lazy var debug: DebugCoordinator = {
 		let coordinator = DebugCoordinator(editor: editor, panel: bottomPanel)
-		coordinator.debugSession = { [weak self] in self?.debugSession ?? nil }
+		coordinator.debugSession = { [weak self] in self?.bottomPanel.activeDebugSession }
 		coordinator.hostWindow = { [weak self] in self?.window }
 		coordinator.onRememberBreakpoints = { [weak self] in self?.rememberBreakpoints() }
 		coordinator.onDebugContinue = { [weak self] in self?.debugContinue($0) }
@@ -186,7 +186,123 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return coordinator
 	}()
 
+	private var debugSession: DebugSession? { bottomPanel.activeDebugSession }
+
 	var debugForTesting: DebugCoordinator { debug }
+
+	/// Running a program, wherever it runs.
+	private lazy var run: RunCoordinator = {
+		let coordinator = RunCoordinator(panel: bottomPanel, editor: editor)
+		coordinator.currentProject = { [weak self] in self?.project }
+		coordinator.currentLaunchRoot = { [weak self] in self?.launchRoot ?? URL(fileURLWithPath: ".") }
+		coordinator.debugCoordinator = { [weak self] in self?.debug }
+		coordinator.hostWindow = { [weak self] in self?.window }
+		coordinator.onSetPanelVisible = { [weak self] visible in self?.setPanelVisible(visible) }
+		coordinator.onNotify = { [weak self] title, detail, kind, actionTitle, action in
+			self?.notify(title, detail: detail, kind: kind, actionTitle: actionTitle, action: action)
+		}
+		coordinator.onWire = { [weak self] session in self?.wire(session) }
+		coordinator.onRememberOpenEditors = { [weak self] in self?.rememberOpenEditors() }
+		coordinator.onLeaveTerminalFullScreen = { [weak self] in self?.leaveTerminalFullScreen() }
+		coordinator.onAttachToProcess = { [weak self] sender in self?.attachToProcess(sender) }
+		coordinator.onMenuItem = { [weak self] title, action in
+			self?.menuItem(title, action) ?? NSMenuItem(title: title, action: action, keyEquivalent: "")
+		}
+		coordinator.onRunSelected = { [weak self] sender in self?.runSelected(sender) }
+		coordinator.onDebugSelected = { [weak self] sender in self?.debugSelected(sender) }
+		coordinator.onStopSelected = { [weak self] sender in self?.stopSelected(sender) }
+		coordinator.onShowConfigurationMenu = { [weak self] rect, control in
+			self?.showConfigurationMenu(from: rect, in: control)
+		}
+		return coordinator
+	}()
+
+	var runForTesting: RunCoordinator { run }
+
+	// Menu-bar selectors, which AppKit resolves against the responder chain and
+	// finds here rather than on the coordinator.
+	@objc func showRunConfigurations(_ sender: Any?) { run.showRunConfigurations(sender) }
+	@objc func newFromMakeGoal(_ sender: Any?) { run.newFromMakeGoal(sender) }
+	@objc func debugStop(_ sender: Any?) { run.debugStop(sender) }
+
+	/// The run strip in the titlebar.
+	///
+	/// Built here rather than by `TitlebarController`: it sits in that toolbar
+	/// and every button on it is about running, which is this class's until
+	/// there is a run coordinator to take it.
+	func makeRunToolbarItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
+		let item = NSToolbarItem(itemIdentifier: identifier)
+		let control = RunControl()
+		control.onRun = { [weak self] in self?.run.runSelectedConfiguration(debug: false) }
+		control.onDebug = { [weak self] in self?.run.runSelectedConfiguration(debug: true) }
+		control.onStop = { [weak self] in self?.run.stopRunning() }
+		control.onProfile = { [weak self] in self?.run.profileSelectedConfiguration() }
+		control.onCoverage = { [weak self] in self?.run.runSelectedWithCoverage() }
+		control.onChooseConfiguration = { [weak self, weak control] rect in
+			guard let control else { return }
+			self?.showConfigurationMenu(from: rect, in: control)
+		}
+		control.onRunStateChanged = { [weak self] state in
+			self?.titlebar.setRunState(state)
+		}
+		run.runControl = control
+		item.view = control
+		run.refreshRunControl()
+
+		// The whole strip in a menu: run, debug, stop and the list of
+		// configurations, so a narrow window loses the buttons but not the
+		// ability to press them.
+		let menu = NSMenuItem(title: "Run", action: nil, keyEquivalent: "")
+		menu.submenu = runOverflowMenu()
+		item.menuFormRepresentation = menu
+		// Last to go: it is the one thing here that is pressed rather than
+		// read.
+		item.visibilityPriority = .high
+		return item
+	}
+
+	/// The list of configurations, and the ways to change them.
+	///
+	/// **A popover rather than the flat menu it used to be.** The menu printed
+	/// goals × modules: a reactor of a hundred modules offering three goals came
+	/// to three hundred rows, two hundred and ninety-seven of them saying the
+	/// same three words, running off the bottom of the screen and under a scroll
+	/// arrow — and an `NSMenu` cannot be typed at, so there was nothing to do
+	/// but scroll it. `RunPicker` names each goal once and treats the module as
+	/// the second choice it is; this is the same popover the project pill and
+	/// the branch pill use, so the filtering and the keys are the ones already
+	/// there.
+	func showConfigurationMenu(from rect: NSRect, in control: RunControl) {
+		ProjectSwitcherPopover.show(
+			relativeTo: control,
+			anchorRect: rect,
+			currentProject: project,
+			owner: self,
+			focus: .runs,
+			runs: run.runList()
+		)
+	}
+
+	func runOverflowMenu() -> NSMenu {
+		let menu = NSMenu()
+		menu.addItem(menuItem("Run", #selector(runSelected(_:))))
+		menu.addItem(menuItem("Debug", #selector(debugSelected(_:))))
+		menu.addItem(menuItem("Stop", #selector(stopSelected(_:))))
+		menu.addItem(.separator())
+
+		for configuration in run.launchConfigurations {
+			let item = NSMenuItem(
+				title: configuration.name,
+				action: #selector(RunCoordinator.configurationChosen(_:)),
+				keyEquivalent: ""
+			)
+			item.target = run
+			item.representedObject = configuration.name
+			item.state = configuration.name == run.selectedConfiguration?.name ? .on : .off
+			menu.addItem(item)
+		}
+		return menu
+	}
 
 	// Menu-bar items find their target through the responder chain, and this
 	// class is on it while `SidebarController` is not. So the actions stay
@@ -226,8 +342,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		bar.makeRunItem = { [weak self] identifier in self?.makeRunToolbarItem(identifier) }
 		bar.relayoutRunControl = { [weak self] in
-			self?.runControl?.invalidateIntrinsicContentSize()
-			self?.runControl?.applyThemeChange()
+			self?.run.runControl?.invalidateIntrinsicContentSize()
+			self?.run.runControl?.applyThemeChange()
 		}
 		bar.onProjectPressed = { [weak self] in self?.showProjectSwitcher(nil) }
 		bar.onBranchPressed = { [weak self] in self?.showBranchMenu() }
@@ -283,10 +399,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// causes cannot ask for another one.
 	fileprivate var isSnappingPanel = false
 	private var navigatorContainer: ColoredView!
-	private var runControl: RunControl?
-	/// The terminal a launch configuration is running in, so the play button can
-	/// become a stop button that stops the right thing.
-	private weak var runningPane: TerminalPane?
 	/// Painted behind the toolbar, since the titlebar itself is transparent.
 	/// Everywhere the editor has been, and where in it we are.
 	private var navigation = NavigationHistory()
@@ -295,20 +407,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Watches `.git` so a commit made in a terminal shows up here.
 	private var repositoryWatcher: RepositoryWatcher?
-	/// Held while open: the panel is a child window and nothing else owns it.
-	/// Held while open, for the same reason.
-	private var processPicker: ProcessPicker?
-	/// What the run control acts on, remembered per project.
-	///
-	/// Written down as it changes rather than at quit. A window that never gets
-	/// to say goodbye — a crash, a force quit, a capture run — should still
-	/// come back pointing at whatever was last run from it.
-	private var selectedConfigurationName: String? {
-		didSet {
-			guard selectedConfigurationName != oldValue else { return }
-			rememberOpenEditors()
-		}
-	}
 
 	/// Reading the repository, as a job rather than an answer.
 	///
@@ -793,8 +891,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// where the change came from and is not to be moved by it.
 			self.switchProject(to: root, followingTerminal: true)
 		}
-		bottomPanel.onRunAgain = { [weak self] in self?.runSelectedConfiguration(debug: false) }
-		bottomPanel.onDebugAgain = { [weak self] in self?.runSelectedConfiguration(debug: true) }
+		bottomPanel.onRunAgain = { [weak self] in self?.run.runSelectedConfiguration(debug: false) }
+		bottomPanel.onDebugAgain = { [weak self] in self?.run.runSelectedConfiguration(debug: true) }
 		// Room first, for the reason `makeRoomForTheEditor` already gives about a
 		// breakpoint's line: everything that comes through here is a *pane*
 		// asking for a file, and a pane can have the whole window. A backlog
@@ -889,8 +987,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self?.sidebar.changesPane?.refresh()
 			// A new main.go or Makefile target should get its play button
 			// without reopening the project — but only when what was written
-			// could be one. See `refreshRunConfigurations(because:)`.
-			self?.refreshRunConfigurations(because: change)
+			// could be one. See `run.refreshRunConfigurations(because:)`.
+			self?.run.refreshRunConfigurations(because: change)
 		}
 		// Switching tabs moves the tree's selection to match.
 		editor.onTearOffTab = { [weak self] tab, screenPoint in
@@ -950,7 +1048,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self?.debug.reanchorBreakpoints(inFile: url)
 		}
 		editor.onRunLine = { [weak self] url, line in
-			self?.runConfiguration(forFile: url, line: line)
+			self?.run.runConfiguration(forFile: url, line: line)
 		}
 		editor.onApplyDiffSelection = { [weak self] change, diff, selected in
 			self?.sidebar.applyDiffSelection(change: change, diff: diff, lines: selected)
@@ -1169,7 +1267,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					self.sidebar.install(tool: self.sidebar.currentSidebarTool, force: true)
 				}
 			}
-			self.refreshRunConfigurations()
+			self.run.refreshRunConfigurations()
 		}
 		return read
 	}
@@ -1182,8 +1280,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// may still be in flight, and both must look in the same place.
 		project.scope = subprojectRoot
 
-		selectedConfigurationName = nil
-		refreshRunControl()
+		run.selectedConfigurationName = nil
+		run.refreshRunControl()
 		LanguageService.shared.warmUp(project: scope)
 		// The files already on screen belong to the new scope's servers now.
 		// Without this the container's server comes up knowing about nothing,
@@ -1258,8 +1356,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// Started now rather than when a file of that language is first opened,
 		// so asking for a symbol straight after opening a project works.
 		LanguageService.shared.warmUp(project: project.root)
-		selectedConfigurationName = nil
-		refreshRunControl()
+		run.selectedConfigurationName = nil
+		run.refreshRunControl()
 		startWatchingRepository(at: project.root)
 		sidebar.scratchesPane?.setProject(project.root)
 		// The panes that are about a project follow it. Told with `project.root`
@@ -1284,10 +1382,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// configurations have finished loading, which is fine: it is a
 			// name, and the list is only needed when something is run.
 			if let chosen = remembered.selectedConfiguration {
-				selectedConfigurationName = chosen
-				refreshRunControl()
+				run.selectedConfigurationName = chosen
+				run.refreshRunControl()
 			}
-			xcodeDestinations = remembered.xcodeDestinations
+			run.xcodeDestinations = remembered.xcodeDestinations
 
 			// The gutter, from what was there last time. Only when nothing has
 			// set any yet: a window that already has debug.breakpoints is one where
@@ -1343,7 +1441,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 
 		readGit()
-		refreshRunConfigurations()
+		run.refreshRunConfigurations()
 	}
 
 	/// Opens a file as a permanent tab and selects it in the tree.
@@ -1588,10 +1686,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 
 		let picker = ProcessPicker()
-		processPicker = picker
+		run.processPicker = picker
 		picker.onAttach = { [weak self] chosen in
 			guard let self else { return }
-			self.processPicker = nil
+			self.run.processPicker = nil
 			self.attach(to: chosen)
 		}
 		picker.show(processes: processes, over: window)
@@ -1620,15 +1718,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Debugging
 
-	/// The session the debug commands act on, if one is running.
-	private var debugSession: DebugSession? { bottomPanel.activeDebugSession }
-
 	@objc func debugContinue(_ sender: Any?) { debugSession?.resume() }
 	@objc func debugPause(_ sender: Any?) { debugSession?.pause() }
 	@objc func debugStepOver(_ sender: Any?) { debugSession?.stepOver() }
 	@objc func debugStepInto(_ sender: Any?) { debugSession?.stepInto() }
 	@objc func debugStepOut(_ sender: Any?) { debugSession?.stepOut() }
-	@objc func debugStop(_ sender: Any?) { debugSession?.stop() }
 
 	/// Greys out the debug commands when nothing is being debugged.
 	///
@@ -2206,8 +2300,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				followingTerminal: followingTerminal
 			)
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
-			session.selectedConfiguration = selectedConfigurationName
-			session.xcodeDestinations = xcodeDestinations
+			session.selectedConfiguration = run.selectedConfigurationName
+			session.xcodeDestinations = run.xcodeDestinations
 			session.breakpoints = debug.breakpointsToRemember()
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
@@ -2270,8 +2364,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		session.isPanelVisible = isPanelVisible
 		session.tmuxWindow = bottomPanel.currentTmuxWindowID
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
-		session.selectedConfiguration = selectedConfigurationName
-		session.xcodeDestinations = xcodeDestinations
+		session.selectedConfiguration = run.selectedConfigurationName
+		session.xcodeDestinations = run.xcodeDestinations
 		session.breakpoints = debug.breakpointsToRemember()
 		try? SessionStore.write(session, in: root)
 	}
@@ -2648,7 +2742,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					presentGoError("Could not find `dlv`. Install Delve with: go sidebar.install github.com/go-delve/delve/cmd/dlv@latest")
 					return
 				}
-				startNativeDebugger(delve: delve, package: package)
+				run.startNativeDebugger(delve: delve, package: package)
 				return
 			}
 		case .test: command = GoTooling.testCommand(executable: go)
@@ -2670,23 +2764,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		)
 	}
 
-	/// Starts the native debugger and wires its state to the editor.
-	private func startNativeDebugger(delve: String, package: String) {
-		setPanelVisible(true)
-		// The titlebar follows the session from here on — `wire` reports every
-		// state change to it — but the gap before the adapter answers is worth
-		// filling, or pressing debug looks like it did nothing.
-		runControl?.setStatus("Starting…", busy: true)
-		// Breakpoints go in with the session, not after it: the adapter only
-		// asks for them once, immediately after launch.
-		guard let session = bottomPanel.startDebugging(
-			delve: delve,
-			package: package,
-			breakpoints: debug.pendingBreakpoints
-		) else { return }
-		wire(session)
-	}
-
 	/// Connects a session to the window, whichever debugger is behind it.
 	///
 	/// Every way of starting one goes through here. Wiring it at the Go entry
@@ -2695,7 +2772,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func wire(_ session: DebugSession) {
 		session.onHotSwap = { [weak self, weak session] event, wasStopped in
 			guard let self, let session else { return }
-			self.reportHotSwap(event, wasStopped: wasStopped, in: session)
+			self.run.reportHotSwap(event, wasStopped: wasStopped, in: session)
 		}
 		session.onBreakpointsChanged = { [weak self, weak session] in
 			guard let self, let session else { return }
@@ -2726,7 +2803,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.setDebugRunning(true)
 		session.observeState { [weak self, weak session] state in
 			self?.toolStrip.setDebugRunning(state != .idle && state != .terminated)
-			self?.updateRunControl(for: state, session: session)
+			self?.run.updateRunControl(for: state, session: session)
 			// The marker must go when execution resumes or the process ends.
 			switch state {
 			case .running, .terminated, .idle:
@@ -2810,361 +2887,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Running
 
-	/// What this project can run, refreshed off the main thread.
-	private(set) var runConfigurations: [RunConfiguration] = []
-
-	/// Where each Xcode project was last sent, keyed as
-	/// `XcodeDestinationMemory` says — by project, not by scheme. Kept with the
-	/// project's session, so a project that went to the phone yesterday goes
-	/// there again today rather than back to a simulator.
-	var xcodeDestinations: [String: String] = [:]
-
-	/// One scan at a time, with at most one more queued behind it — the shape
-	/// `refreshGitStatus` has had all along.
-	private var isDiscoveringRunConfigurations = false
-	private var wantsAnotherRunConfigurationScan = false
-
-	/// What the scan has been asked for and what it actually did, for
-	/// `--report-open`.
-	///
-	/// Three numbers rather than one, because the fix has two halves and only
-	/// separate counts say which half is working: `asked` is how often something
-	/// wanted a scan, `skipped` is how many of those wrote nothing that could
-	/// define a configuration, and `walked` is how many whole-project walks
-	/// actually happened. Before 0446 the three were equal by construction.
-	struct RunConfigurationTally {
-		var asked = 0
-		var skipped = 0
-		var coalesced = 0
-		var walked = 0
-	}
-	nonisolated(unsafe) static var runConfigurationTallyForTesting = RunConfigurationTally()
-
-	/// Rescans, but only if this batch of writes could have changed the answer.
-	///
-	/// A language server importing a Tycho reactor writes `.project`,
-	/// `.classpath` and `.settings` into every bundle it touches, and each of
-	/// those arrives here as a filesystem event. None of them can add a `main`
-	/// method or a Makefile target, so none of them is worth a walk of 45,772
-	/// Java files — which is what each one used to cost.
-	func refreshRunConfigurations(because change: FileSystemChange) {
-		Self.runConfigurationTallyForTesting.asked += 1
-		guard RunConfigurationDiscovery.deservesRescan(after: change) else {
-			Self.runConfigurationTallyForTesting.skipped += 1
-			return
-		}
-		// The cached scan describes the tree as it was, and a change that deserves
-		// a rescan is by definition one it no longer describes.
-		refreshRunConfigurations(forgettingCachedScan: true)
-	}
-
-	/// The shared Java scan, from a thread that is not in an async context.
-	///
-	/// Discovery runs on a `DispatchQueue`, and the cache that keeps a second
-	/// scan from starting is an actor. A semaphore is the bridge between the two,
-	/// and blocking here is the intended behaviour: this queue exists to wait for
-	/// exactly this. It is not a cooperative-pool thread, so nothing starves.
-	private static func awaitingMainClasses(
-		in root: URL, forgetting forget: Bool
-	) -> [JavaTooling.MainClass] {
-		let gate = DispatchSemaphore(value: 0)
-		// A box rather than a captured `var`: the write happens on whichever
-		// thread the task finishes on, and the read after `wait()` is ordered
-		// after it by the semaphore.
-		final class Box: @unchecked Sendable { var value: [JavaTooling.MainClass] = [] }
-		let box = Box()
-		Task.detached {
-			if forget { await JavaTooling.forgetMainClasses(in: root) }
-			box.value = await JavaTooling.mainClassesOffMain(in: root)
-			gate.signal()
-		}
-		gate.wait()
-		return box.value
-	}
-
-	/// - Parameter forgettingCachedScan: whether the kept Java scan is known to
-	///   be out of date. Set when a file-system change brought us here, and
-	///   acted on *inside* the same task that then rescans: forgetting from a
-	///   task of its own raced the scan it was meant to precede, and a scan whose
-	///   answer is invalidated while it is running is one whose answer cannot be
-	///   kept — so the next Debug press paid for the walk all over again.
-	func refreshRunConfigurations(forgettingCachedScan forget: Bool = false) {
-		guard let project else { return }
-		let root = project.root
-
-		// Coalesced, because the filter above is not a guarantee: a `git
-		// checkout` across a large repository names thousands of Java files in
-		// a few batches, and every one of those batches is a legitimate reason
-		// to scan. Uncoalesced, the concurrent queue answers a burst by making
-		// more threads, and every walk but the last is stale before it finishes.
-		guard !isDiscoveringRunConfigurations else {
-			wantsAnotherRunConfigurationScan = true
-			Self.runConfigurationTallyForTesting.coalesced += 1
-			return
-		}
-		isDiscoveringRunConfigurations = true
-		Self.runConfigurationTallyForTesting.walked += 1
-
-		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-			// The Java scan through the shared cache, and the rest of discovery
-			// around it: pressing Debug wants the same answer and would otherwise
-			// start a second walk of the same tree while this one is still running.
-			let mains = Self.awaitingMainClasses(in: root, forgetting: forget)
-			let found = RunConfigurationDiscovery.discover(in: root, javaMainClasses: mains)
-			DispatchQueue.main.async {
-				guard let self else { return }
-				self.isDiscoveringRunConfigurations = false
-				self.runConfigurations = found
-
-				// Group by file so the gutter can put a play button beside each
-				// entry point and each make target.
-				var byFile: [String: Set<Int>] = [:]
-				for configuration in found {
-					guard let file = configuration.file, let line = configuration.line else { continue }
-					byFile[file, default: []].insert(line)
-				}
-				self.editor.setRunnableLines(byFile)
-
-				if self.wantsAnotherRunConfigurationScan {
-					self.wantsAnotherRunConfigurationScan = false
-					// Coalesced changes are still changes: this rescan exists because
-					// more of them arrived while the last walk was running.
-					self.refreshRunConfigurations(forgettingCachedScan: true)
-				}
-			}
-		}
-	}
-
-	/// Offers what can be done with the line the play button sits on.
-	///
-	/// A menu rather than running straight away: run and debug are both things
-	/// you want from the same marker, and a button that starts a process on a
-	/// single click with no way to say which is a button you learn to distrust.
-	private func runConfiguration(forFile url: URL, line: Int) {
-		let path = RunConfigurationDiscovery.canonicalPath(url)
-		let matching = runConfigurations.filter { $0.file == path && $0.line == line }
-
-		// The marker is drawn from the same list, so an empty match means the
-		// two have drifted — say so rather than appearing to do nothing.
-		guard !matching.isEmpty else {
-			presentNothingToRun(at: line, in: url)
-			return
-		}
-
-		let menu = NSMenu()
-		menu.autoenablesItems = false
-
-		for (index, configuration) in matching.enumerated() {
-			// The name above the verbs rather than inside them. A Go
-			// configuration is called "go run app", because that is what it
-			// does, and putting it after a verb produced "Run go run app" —
-			// which reads as a stutter and gets longer with every source that
-			// names its configurations after a command line.
-			if index > 0 { menu.addItem(.separator()) }
-			let header = NSMenuItem(title: configuration.name, action: nil, keyEquivalent: "")
-			header.isEnabled = false
-			menu.addItem(header)
-
-			let runItem = NSMenuItem(
-				title: "Run",
-				action: #selector(runMenuItem(_:)),
-				keyEquivalent: ""
-			)
-			runItem.target = self
-			runItem.representedObject = configuration.id
-			runItem.toolTip = configuration.commandLine
-			menu.addItem(runItem)
-
-			// Listing a Debug that cannot start would be worse than leaving it
-			// out. Go goes through Delve; Java goes through an adapter inside a
-			// jdtls, which since 0452 is started for the debugger alone when the
-			// server editing the project is not one that hosts it — so what has to
-			// be asked here is whether *anything* can host it, not which server
-			// happens to be answering about files.
-			if configuration.isDebuggable, javaDebugSettledRefusal(configuration) == nil {
-				let debugItem = NSMenuItem(
-					title: "Debug",
-					action: #selector(debugMenuItem(_:)),
-					keyEquivalent: ""
-				)
-				debugItem.target = self
-				debugItem.representedObject = configuration.id
-				menu.addItem(debugItem)
-			}
-
-			// The gutter is where a program is run the first time, so it is
-			// also where the configuration for it should come from: pressing
-			// play twice from the same arrow should not mean typing it in.
-			//
-			// Except for a test. Tests are run from every function in a file
-			// and saving one for each would leave hundreds nobody wants.
-			if configuration.isDebuggable, !RunConfigurationDiscovery.isTest(configuration) {
-				let save = NSMenuItem(
-					title: "Save as Launch Configuration\u{2026}",
-					action: #selector(saveGutterConfiguration(_:)),
-					keyEquivalent: ""
-				)
-				save.target = self
-				save.representedObject = configuration.id
-				menu.addItem(save)
-			}
-		}
-
-		popUpAtPointer(menu)
-	}
-
-	/// Shows a menu where the pointer is, in this window's coordinates.
-	private func popUpAtPointer(_ menu: NSMenu) {
-		guard let contentView = window?.contentView, let window else {
-			menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-			return
-		}
-		let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-		menu.popUp(positioning: nil, at: contentView.convert(inWindow, from: nil), in: contentView)
-	}
-
-	private func presentNothingToRun(at line: Int, in url: URL) {
-		notify("Nothing to run here", detail: """
-		No run configuration was found for \(url.lastPathComponent):\(line). 		This is a bug — the marker is drawn from the same list.
-		""")
-	}
-
-	/// Writes a launch configuration for what the gutter would have run.
-	///
-	/// The arrow beside `func main` knows the package, the arguments and where
-	/// it runs; a configuration written from it is the same thing with a name,
-	/// and it opens for editing so the arguments can be filled in before the
-	/// first run.
-	@objc private func saveGutterConfiguration(_ sender: NSMenuItem) {
-		guard let project, let discovered = configuration(for: sender) else { return }
-
-		let package = MakeLaunch.relativeToWorkspace(
-			path: discovered.workingDirectory, root: project.root
-		)
-		// A Java configuration names a class rather than a directory, and its
-		// arguments are the program's — the goals that got Maven to start it are
-		// not something to carry into a launch configuration.
-		var configuration = discovered.mainClass.map { mainClass in
-			LaunchConfiguration(
-				name: discovered.name,
-				type: "java",
-				request: "launch",
-				program: mainClass,
-				workingDirectory: package,
-				environment: discovered.environment
-			)
-		} ?? LaunchConfiguration(
-			name: discovered.name,
-			type: "go",
-			request: "launch",
-			program: package,
-			arguments: discovered.arguments.filter { $0 != "run" && $0 != "." },
-			workingDirectory: package,
-			environment: discovered.environment
-		)
-		// A name that is already taken would replace something somebody else
-		// wrote; the file is shared with the rest of the team.
-		configuration.name = LaunchNames.free(
-			like: discovered.name, avoiding: launchConfigurations.map(\.name)
-		)
-		presentConfigurationEditor(configuration, isNew: true)
-	}
-
-	@objc private func runMenuItem(_ sender: NSMenuItem) {
-		guard let configuration = configuration(for: sender) else { return }
-		run(configuration)
-	}
-
-	@objc private func debugMenuItem(_ sender: NSMenuItem) {
-		guard let configuration = configuration(for: sender) else { return }
-		debug(configuration)
-	}
-
-	private func configuration(for item: NSMenuItem) -> RunConfiguration? {
-		guard let id = item.representedObject as? String else { return nil }
-		return runConfigurations.first { $0.id == id }
-	}
-
-	/// Why Java cannot be debugged here at all, when nothing anybody does now
-	/// would change it — and nil for everything else, including the reasons that
-	/// are worth offering and explaining.
-	///
-	/// Nil for a configuration that is not Java, which is most of them: the
-	/// question is about the Java debugger and asking it of a Go package would
-	/// walk a project for markers that decide nothing.
-	private func javaDebugSettledRefusal(_ configuration: RunConfiguration) -> String? {
-		guard configuration.source == .javaMain, let project else { return nil }
-		let root = project.scopeRoot
-		guard let refusal = JavaDebugHost.refusal(
-			project: root,
-			inDevContainer: LanguageService.shared.devContainerNameHoldingServers(for: root)
-		), refusal.isSettledHere else { return nil }
-		return refusal.localizedDescription
-	}
-
-	/// Starts the native debugger on a configuration's package.
-	func debug(_ configuration: RunConfiguration) {
-		guard configuration.isDebuggable else { return }
-
-		// Java does not go through Delve, and it does not go through a program
-		// at all: the adapter is inside the language server.
-		if configuration.source == .javaMain, let mainClass = configuration.mainClass {
-			startJavaDebug(
-				name: configuration.name,
-				mainClass: mainClass,
-				anchorFile: configuration.file.map { URL(fileURLWithPath: $0) },
-				workingDirectory: URL(fileURLWithPath: configuration.workingDirectory),
-				arguments: [],
-				environment: configuration.environment
-			)
-			return
-		}
-
-		guard let delve = GoTooling.findDelveExecutable() else {
-			notify(
-				"Delve is not installed",
-				detail: "Install it with: go sidebar.install github.com/go-delve/delve/cmd/dlv@latest"
-			)
-			return
-		}
-		// Delve is told the directory, which is where the package lives.
-		startNativeDebugger(delve: delve, package: configuration.workingDirectory)
-	}
-
-	/// Runs a configuration in a terminal session of its own.
-	///
-	/// A terminal rather than a captured-output pane: the thing being run is
-	/// usually interactive, or prints as it goes, and watching it in a real
-	/// shell is what makes it debuggable.
-	func run(_ configuration: RunConfiguration) {
-		// A scheme is not a command line until somewhere to run it is known,
-		// and finding that out means asking `xcodebuild`, which takes long
-		// enough that it cannot happen while a list of runnable things is being
-		// drawn. So it happens here, once, on the way to the first run.
-		if let target = configuration.xcode {
-			runScheme(configuration, target: target)
-			return
-		}
-
-		setPanelVisible(true)
-		// Through the same reporting as anything else started here: a run from
-		// the gutter is a run, and it should colour the titlebar, offer a stop
-		// button, and say how it went.
-		runControl?.setStatus("Running \(configuration.name)…", busy: true)
-
-		let pane = bottomPanel.runCommand(
-			title: configuration.name,
-			command: configuration.commandLine,
-			directory: URL(fileURLWithPath: configuration.workingDirectory),
-			environment: configuration.environment,
-			// This configuration's console, and it keeps it. Running the same
-			// thing five times left five finished consoles behind, and the one
-			// being read was whichever was on top.
-			reusing: "run:\(configuration.id)"
-		)
-		followRunningPane(pane)
-	}
-
 	/// Watches what is selected in the editor.
 	///
 	/// Selecting an expression and asking to watch it is the short way round:
@@ -3185,112 +2907,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		setPanelVisible(true)
 		pane.watch(expression)
-	}
-
-	/// Runs a scheme where it went last time, or where it makes sense to.
-	///
-	/// The destination is asked for rather than assumed even when one is
-	/// remembered, because a remembered one can be a simulator that has been
-	/// deleted or a phone that is in somebody's pocket, and a build aimed at a
-	/// destination that is not there fails several minutes in with a message
-	/// about a scheme.
-	func runScheme(_ configuration: RunConfiguration, target: XcodeTarget) {
-		setPanelVisible(true)
-		let directory = URL(fileURLWithPath: configuration.workingDirectory)
-		let remembered = xcodeDestinations[XcodeDestinationMemory.key(for: target)]
-
-		// Asked once per project per session: the second run of a scheme starts
-		// building immediately rather than spending twelve seconds finding out
-		// what it already knows.
-		let known = XcodeDestinations.shared.known(for: target)
-		if let chosen = known.first(where: { $0.id == remembered })
-			?? (remembered == nil ? XcodeDestinations.shared.preferred(among: known) : nil)
-		{
-			start(configuration, target: target, on: chosen)
-			return
-		}
-
-		runControl?.setStatus("Finding where \(configuration.name) can run…", busy: true)
-		Task { @MainActor in
-			let found = await XcodeDestinations.shared.destinations(
-				for: target, workingDirectory: directory
-			)
-			guard let destination = found.first(where: { $0.id == remembered })
-				?? XcodeDestinations.shared.preferred(among: found)
-			else {
-				self.runControl?.setStatus("No destination for \(configuration.name)", failed: true)
-				self.notify(
-					"Nowhere to run \(configuration.name)",
-					detail: "xcodebuild lists no destination for this scheme. "
-						+ "A device has to be connected and unlocked, and a simulator has to be "
-						+ "installed for the deployment target."
-				)
-				return
-			}
-			self.start(configuration, target: target, on: destination)
-		}
-	}
-
-	/// Builds, installs and launches, in the terminal where the output is.
-	func start(_ configuration: RunConfiguration, target: XcodeTarget, on destination: XcodeDestination) {
-		xcodeDestinations[XcodeDestinationMemory.key(for: target)] = destination.id
-
-
-		let directory = URL(fileURLWithPath: configuration.workingDirectory)
-		let derived = XcodeRun.derivedDataPath(for: target.scheme, in: directory)
-		let command = XcodeRun.command(
-			project: target.project,
-			scheme: target.scheme,
-			destination: destination,
-			derivedData: derived
-		) ?? XcodeRun.build(
-			project: target.project,
-			scheme: target.scheme,
-			destination: destination,
-			derivedData: derived
-		)
-
-		runControl?.setStatus("Running \(configuration.name) on \(destination.title)…", busy: true)
-		let pane = bottomPanel.runCommand(
-			// The destination in the title, because "docscanner-ios" twice over
-			// is two tabs nobody can tell apart, and where it went is the thing
-			// that differs.
-			title: "\(configuration.name) · \(destination.title)",
-			command: command,
-			directory: directory,
-			environment: configuration.environment,
-			reusing: "run:\(configuration.id)"
-		)
-		followRunningPane(pane)
-	}
-
-	/// Watches a pane's process, so the titlebar says what became of it.
-	private func followRunningPane(_ pane: TerminalPane?) {
-		runningPane = pane
-		// The panel sets this too — it is how a tab learns its process has
-		// gone, and so how a run tab stops wearing the running green. Taking
-		// the handler rather than adding to it left the tab green over
-		// `[process exited]`.
-		let panelHandler = pane?.terminalView.onProcessExit
-		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
-			panelHandler?(code)
-			MainActor.assumeIsolated {
-				guard let self, self.runningPane === pane else { return }
-				self.runningPane = nil
-				self.runControl?.setStatus(
-					code == 0 ? "Finished — exit code 0" : "Failed — exit code \(code)",
-					failed: code != 0
-				)
-			}
-		}
-	}
-
-	/// What this project offers to run, as the picker would group it.
-	func runConfigurationsForTesting() -> String {
-		guard !runConfigurations.isEmpty else { return "nothing" }
-		return runConfigurations
-			.map { "\(title(for: $0.source)): \($0.name) → \($0.executable) \($0.arguments.joined(separator: " "))" }
-			.joined(separator: "\n  ")
 	}
 
 	/// Says what the Cadova pane in the tab in front is doing, once a second.
@@ -3355,335 +2971,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				print("\(second)s \(pane.reportForTesting)")
 				fflush(stdout)
 			}
-		}
-	}
-
-	/// Starts one of the discovered configurations by name, as choosing it from
-	/// the run menu does, and reads its console back a few seconds later.
-	///
-	/// `--run-configs` says what the list holds; this says what one of them
-	/// does, which is a different question and the one that catches a
-	/// configuration that looks right and does not run. Every line is flushed:
-	/// a driver run ends in a kill, and a report still in stdout's buffer when
-	/// the signal arrives is a run that looks like it never happened.
-	func runNamedConfigurationForTesting(_ name: String) {
-		func say(_ text: String) {
-			print("RUNCONFIG: \(text)")
-			fflush(stdout)
-		}
-
-		for configuration in runConfigurations {
-			say("  \(title(for: configuration.source)) | \(configuration.name)"
-				+ " | \(configuration.commandLine) | in \(configuration.workingDirectory)")
-		}
-
-		guard let configuration = runConfigurations.first(where: { $0.name == name }) else {
-			say("nothing called \(name)")
-			return
-		}
-
-		say("starting \(configuration.name)")
-		run(configuration)
-
-		// Twice, because how long this takes is not knowable from here: a warm
-		// `swift run` is a second and a cold one compiles the world. The first
-		// reading says the run started, the second says how it ended.
-		for (index, delay) in [8.0, 40.0].enumerated() {
-			DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-				guard let self else { return }
-				say("after \(Int(delay))s, console \(self.bottomPanel.runConsolesForTesting)")
-				say("after \(Int(delay))s: "
-					+ self.bottomPanel.activeTerminalTailForTesting(lines: index == 0 ? 6 : 14))
-			}
-		}
-	}
-
-	/// Shows every configuration, for the Run menu.
-	@objc func showRunConfigurations(_ sender: Any?) {
-		guard !runConfigurations.isEmpty else {
-			notify(
-				"Nothing to run",
-				detail: "No run configurations, makefiles or Go entry points were found in this project."
-			)
-			return
-		}
-
-		let menu = NSMenu()
-		menu.autoenablesItems = false
-		var lastSource: RunConfiguration.Source?
-
-		for configuration in runConfigurations {
-			if configuration.source != lastSource {
-				if lastSource != nil { menu.addItem(.separator()) }
-				let header = NSMenuItem(title: title(for: configuration.source), action: nil, keyEquivalent: "")
-				header.isEnabled = false
-				menu.addItem(header)
-				lastSource = configuration.source
-			}
-
-			let item = NSMenuItem(title: configuration.name, action: #selector(runMenuItem(_:)), keyEquivalent: "")
-			item.target = self
-			item.representedObject = configuration.id
-			item.toolTip = configuration.commandLine
-
-			// A scheme runs somewhere, and where is a second choice beside it
-			// rather than an entry of its own for each combination: a machine
-			// with several simulator runtimes offers dozens, and a list of
-			// dozens is not a list anybody reads.
-			if let target = configuration.xcode {
-				item.submenu = destinationMenu(for: configuration, target: target)
-			}
-			menu.addItem(item)
-		}
-
-		// Centred in the window: this is reached from the menu bar and from ⌃R,
-		// so the pointer is not where the user is looking. The previous version
-		// converted a screen point that was already in screen coordinates and
-		// placed the menu off the window entirely.
-		guard let contentView = window?.contentView else { return }
-		menu.popUp(
-			positioning: nil,
-			at: NSPoint(x: contentView.bounds.midX, y: contentView.bounds.midY),
-			in: contentView
-		)
-	}
-
-	/// The one run mark, kept between menus and remade when the zoom changes.
-	private static var cachedRunMark: (scale: CGFloat, image: NSImage?) = (0, nil)
-
-	/// The mark on a menu item that will run something, in place of a tick.
-	///
-	/// A ticked list is what a settings menu looks like — "Word Wrap", "Show
-	/// Invisibles", things somebody turns on — and neither the schemes nor the
-	/// destinations under them are that: clicking one runs the app. The glyph is
-	/// the play button's own, in the play button's own green, so the menu and
-	/// the button it hangs off say the same thing. It goes in the tick's column
-	/// rather than beside the title, which is what keeps the titles lined up
-	/// with each other and with the headings above them.
-	///
-	/// One image rather than one per item, which is also what lets a printed
-	/// dump tell a run mark from a tick.
-	private static func runMark() -> NSImage? {
-		let scale = Theme.current.scale
-		if cachedRunMark.scale == scale { return cachedRunMark.image }
-		let image = Theme.symbol("play.fill", size: 10 * scale, color: Theme.current.gitAdded)
-		// Not a template: AppKit re-tints a template state image with the menu's
-		// own ink, and the colour is half of what this glyph is for.
-		image?.isTemplate = false
-		cachedRunMark = (scale, image)
-		return image
-	}
-
-	/// Marks the one item a click would actually start, the way the tick used to.
-	///
-	/// The tick is left alone if there is no glyph to put there: a menu item
-	/// whose on-state image is nil shows nothing at all, and an unmarked list is
-	/// worse than the one this was meant to fix.
-	private func markWillRun(_ item: NSMenuItem, _ willRun: Bool) {
-		item.state = willRun ? .on : .off
-		if let mark = MainWindowController.runMark() { item.onStateImage = mark }
-	}
-
-	/// Where a scheme can go, with a run mark beside where it went last.
-	///
-	/// Filled in as the answer arrives rather than before the menu opens: the
-	/// question takes about twelve seconds and a menu that waits for it is a
-	/// menu that does not open. Items are added to a menu that may already be
-	/// on screen, which AppKit allows and which is the whole point — the list
-	/// grows under the pointer instead of appearing a keystroke later.
-	private func destinationMenu(for configuration: RunConfiguration, target: XcodeTarget) -> NSMenu {
-		let menu = NSMenu()
-		menu.autoenablesItems = false
-
-		let known = XcodeDestinations.shared.known(for: target)
-		if known.isEmpty {
-			let waiting = NSMenuItem(title: "Finding destinations…", action: nil, keyEquivalent: "")
-			waiting.isEnabled = false
-			menu.addItem(waiting)
-
-			let directory = URL(fileURLWithPath: configuration.workingDirectory)
-			Task { @MainActor in
-				let found = await XcodeDestinations.shared.destinations(
-					for: target, workingDirectory: directory
-				)
-				menu.removeAllItems()
-				if found.isEmpty {
-					let empty = NSMenuItem(title: "No destinations", action: nil, keyEquivalent: "")
-					empty.isEnabled = false
-					menu.addItem(empty)
-					return
-				}
-				self.fill(menu, with: found, for: configuration, target: target)
-			}
-		} else {
-			fill(menu, with: known, for: configuration, target: target)
-		}
-		return menu
-	}
-
-	private func fill(
-		_ menu: NSMenu,
-		with destinations: [XcodeDestination],
-		for configuration: RunConfiguration,
-		target: XcodeTarget
-	) {
-		let remembered = xcodeDestinations[XcodeDestinationMemory.key(for: target)]
-			?? XcodeDestinations.shared.preferred(among: destinations)?.id
-
-		// This Mac and the devices on the desk in full, then one simulator per
-		// family — the newest of each — and the other seventy-odd behind a
-		// dialog that can be typed into. A real project answers with 79
-		// destinations, of which 75 are simulators, and a menu that long is a
-		// column running off the screen with no way to search it.
-		let shortlist = XcodeDestinationMenu.newestOfEachFamily(among: destinations)
-		let rest = XcodeDestinationMenu.rest(among: destinations, shown: shortlist)
-		let inMenu = destinations.filter { $0.kind != .simulator } + shortlist
-
-		// This Mac, then the phones and iPads, then the simulators — the order
-		// somebody scans in. `xcodebuild` happens to answer in this order;
-		// sorting says so rather than relying on it.
-		let order: [XcodeDestination.Kind] = [.mac, .device, .simulator]
-		let sorted = inMenu.enumerated().sorted { left, right in
-			let a = order.firstIndex(of: left.element.kind) ?? order.count
-			let b = order.firstIndex(of: right.element.kind) ?? order.count
-			// Within a kind, the order they came in: simulators arrive grouped
-			// by model and sorted by runtime, which is more useful than
-			// alphabetical.
-			return a != b ? a < b : left.offset < right.offset
-		}.map(\.element)
-
-		var lastKind: XcodeDestination.Kind?
-		for destination in sorted {
-			if destination.kind != lastKind {
-				if lastKind != nil { menu.addItem(.separator()) }
-				lastKind = destination.kind
-				// Said rather than implied. A simulator and the phone on the
-				// desk are one list of names otherwise, and "iPad (A16)" reads
-				// like a device somebody owns — the runtime in brackets after
-				// it is not what anybody notices first.
-				//
-				// This Mac belongs with the devices: it is a real machine, and
-				// the heading is about what the thing is rather than what
-				// `xcodebuild` calls its platform.
-				let heading = NSMenuItem(
-					title: destination.kind == .simulator ? "Simulators" : "Devices",
-					action: nil, keyEquivalent: ""
-				)
-				heading.isEnabled = false
-				menu.addItem(heading)
-			}
-
-			// How it is attached, beside its name: a phone on a cable and one
-			// paired over Wi-Fi are offered identically by `xcodebuild`, and
-			// the difference only shows up minutes later as an sidebar.install that
-			// times out.
-			let attachment = XcodeDestinations.shared.attachment(of: destination)?.attachment
-			let item = NSMenuItem(
-				title: attachment.map { "\(destination.title) — \($0)" } ?? destination.title,
-				action: #selector(runOnDestination(_:)),
-				keyEquivalent: ""
-			)
-			item.target = self
-			item.representedObject = [configuration.id, destination.id]
-			// The same mark as the scheme above it, because it means the same
-			// thing one level down: the scheme says what will run and the
-			// destination says where, and together they are the single path the
-			// play button takes. Two different marks for one sentence is what
-			// made this pair read as two unrelated settings.
-			markWillRun(item, destination.id == remembered)
-			menu.addItem(item)
-		}
-
-		// Nothing is hidden, only moved: everything the shortlist left out is
-		// here, and a chosen one is remembered like any other.
-		guard !rest.isEmpty else { return }
-		menu.addItem(.separator())
-		let more = NSMenuItem(
-			title: "Other Simulators… (\(rest.count))",
-			action: #selector(chooseOtherDestination(_:)),
-			keyEquivalent: ""
-		)
-		more.target = self
-		more.representedObject = [configuration.id]
-		menu.addItem(more)
-
-		// A device plugged in since is noticed on its own — `devicectl` is
-		// asked every time this menu opens and is quick about it. A simulator
-		// installed since is not: nothing cheap reports one, and asking
-		// `xcodebuild` costs twelve seconds, which is not a thing to spend
-		// every time somebody looks at a menu. So it is offered.
-		let again = NSMenuItem(
-			title: "Look Again…",
-			action: #selector(refreshDestinations(_:)),
-			keyEquivalent: ""
-		)
-		again.target = self
-		again.representedObject = [configuration.id]
-		menu.addItem(again)
-	}
-
-	@objc private func refreshDestinations(_ sender: NSMenuItem) {
-		guard let pair = sender.representedObject as? [String], let id = pair.first,
-		      let configuration = runConfigurations.first(where: { $0.id == id }),
-		      let target = configuration.xcode
-		else { return }
-
-		Task { @MainActor in
-			_ = await XcodeDestinations.shared.destinations(
-				for: target,
-				workingDirectory: URL(fileURLWithPath: configuration.workingDirectory),
-				refresh: true
-			)
-			// Rebuilt rather than left to the next opening: somebody who asks
-			// for this is standing in front of the menu waiting for it.
-			refreshRunConfigurations()
-		}
-	}
-
-	@objc private func chooseOtherDestination(_ sender: NSMenuItem) {
-		guard let pair = sender.representedObject as? [String], let id = pair.first,
-		      let configuration = runConfigurations.first(where: { $0.id == id }),
-		      let target = configuration.xcode
-		else { return }
-
-		let all = XcodeDestinations.shared.known(for: target)
-		let shortlist = XcodeDestinationMenu.newestOfEachFamily(among: all)
-		let rest = XcodeDestinationMenu.rest(among: all, shown: shortlist)
-		DestinationPicker.show(among: rest, relativeTo: window) { [weak self] chosen in
-			guard let self else { return }
-			self.selectedConfigurationName = configuration.name
-			self.start(configuration, target: target, on: chosen)
-		}
-	}
-
-	@objc private func runOnDestination(_ sender: NSMenuItem) {
-		guard let pair = sender.representedObject as? [String],
-		      pair.count == 2,
-		      let configuration = runConfigurations.first(where: { $0.id == pair[0] }),
-		      let target = configuration.xcode
-		else { return }
-
-		let chosen = XcodeDestinations.shared.known(for: target).first { $0.id == pair[1] }
-		guard let chosen else { return }
-
-		// Chosen on purpose, so it becomes what the play button repeats.
-		selectedConfigurationName = configuration.name
-		start(configuration, target: target, on: chosen)
-	}
-
-	private func title(for source: RunConfiguration.Source) -> String {
-		switch source {
-		case .intelliJ:  return "IntelliJ"
-		case .vscode:    return "VS Code"
-		case .make:      return "Make"
-		case .goModule:  return "Go"
-		case .maven:     return "Maven"
-		case .gradle:    return "Gradle"
-		case .javaMain:  return "Java"
-		case .xcodeScheme: return "Schemes"
-		case .swiftPackage: return "Swift Package"
-		case .bazel:     return "Bazel"
-		case .conan:     return "Conan"
 		}
 	}
 
@@ -4442,13 +3729,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Opens the profiler on the bottom panel.
 	@objc func showProfiler(_ sender: Any?) {
 		setPanelVisible(true)
-		bottomPanel.showProfiler(address: Self.lastProfilerAddress)
+		bottomPanel.showProfiler(address: RunCoordinator.lastProfilerAddress)
 	}
-
-	/// Remembered for the session: the same program is usually profiled more
-	/// than once in a sitting.
-	static var lastProfilerAddress = "localhost:6060"
-
 
 	/// Everywhere the symbol at a position is used.
 	///
@@ -5363,142 +4645,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Launch configurations
 
-	/// What the project defines, plus a suggestion when it defines nothing.
-	private var launchConfigurations: [LaunchConfiguration] {
-		guard project != nil else { return [] }
-		return LaunchStore.read(in: launchRoot)
-	}
-
-	/// What the play button is pointed at, decided in one place.
-	///
-	/// The strip and the button used to work this out separately, and disagreed
-	/// exactly where it mattered: with a Makefile goal chosen in a project that
-	/// has launch configurations of its own, the strip fell back to the first
-	/// configuration while the button ran the goal.
-	private var runTarget: RunSelection.Target {
-		RunSelection.resolve(
-			configurations: launchConfigurations.map(\.name),
-			makeRun: selectedMakeRun?.name,
-			selected: selectedConfigurationName
-		)
-	}
-
-	private var selectedConfiguration: LaunchConfiguration? {
-		guard case let .configuration(name) = runTarget else { return nil }
-		return launchConfigurations.first { $0.name == name }
-	}
-
-	func refreshRunControl() {
-		runControl?.setConfiguration(RunSelection.displayName(
-			configurations: launchConfigurations.map(\.name),
-			makeRun: selectedMakeRun?.name,
-			selected: selectedConfigurationName
-		))
-		refreshLaunchNotice()
-	}
-
-	/// Says up front when the selected launch could not be debugged here.
-	///
-	/// Everything this asks is a `PATH` lookup or a jar on disk. Pressing Debug
-	/// without it started a JVM, suspended it on a port, spent the classpath scan
-	/// and *then* said that no debugger was ever going to arrive — the same
-	/// information, after the wait, about a JVM now stuck waiting for it.
-	private func refreshLaunchNotice() {
-		guard let project, let selection = selectedJavaDebuggableLaunch() else {
-			editor.activeGroup?.setLaunchNotice(nil)
-			return
-		}
-		_ = selection
-		editor.activeGroup?.setLaunchNotice(
-			LanguageService.shared.javaDebugNotice(project: project.root)
-		)
-	}
-
-	/// The selected configuration, when debugging it would go through jdtls.
-	///
-	/// Which is any configuration whose debugger is the Java one, and any whose
-	/// program is a wrapper script — `mvnw`, `gradlew`, a `#!` script — because
-	/// those debug by asking the JVM the script starts to wait, and the adapter
-	/// that then attaches lives inside jdtls. A configuration that is only ever
-	/// run is included, and says so honestly: the strip is about what Debug
-	/// would do, not about what Run is doing.
-	private func selectedJavaDebuggableLaunch() -> LaunchConfiguration? {
-		guard let name = selectedConfigurationName,
-		      let configuration = launchConfigurations.first(where: { $0.name == name })
-		else { return nil }
-
-		if configuration.adapterID == "java" { return configuration }
-		guard let root = project?.root else { return nil }
-		let program = configuration.expandedProgram(root: root)
-		return ScriptLaunch.kind(ofProgramAt: program) != nil ? configuration : nil
-	}
-
-	/// Keeps the titlebar saying what the session is doing.
-	private func updateRunControl(for state: DebugSession.State, session: DebugSession?) {
-		switch state {
-		case .starting:
-			runControl?.setStatus("Starting…", busy: true)
-		case .running:
-			runControl?.setStatus("Running", busy: true)
-		case let .stopped(reason):
-			runControl?.setStatus("Paused — \(reason)", busy: true)
-		case .terminated:
-			guard let code = session?.exitCode else {
-				runControl?.setStatus("Finished")
-				return
-			}
-			runControl?.setStatus(
-				code == 0 ? "Finished — exit code 0" : "Failed — exit code \(code)",
-				failed: code != 0
-			)
-		case .idle:
-			runControl?.setStatus("")
-		}
-	}
-
-	/// Runs or debugs what is selected.
-	///
-	/// A project with nothing configured gets one written for it from what is
-	/// actually there, rather than a dialog asking a question nobody has the
-	/// information to answer before the first run.
-	/// Stops whichever of the two is running.
-	private func stopRunning() {
-		// A launch still working its way through the cluster is the thing most
-		// worth being able to stop: it is the part that waits.
-		if let task = clusterTask {
-			clusterTask = nil
-			task.cancel()
-			stopDevPodForwards()
-			clusterLog("stopped")
-			runControl?.setStatus("Stopped")
-			return
-		}
-		if devPodClient != nil {
-			stopDevPod()
-			return
-		}
-		if let pane = runningPane {
-			runningPane = nil
-			pane.terminalView.terminateProcess()
-			// The tab is showing a running program; it has just stopped being
-			// one.
-			bottomPanel.refreshTabs()
-			runControl?.setStatus("Stopped")
-			return
-		}
-		debugStop(nil)
-	}
-
 	func pushChangesForTesting() { sidebar.changesPane?.pushForTesting() }
 
-	/// Chooses a configuration by name, as the menu does.
-	func selectConfigurationForTesting(named name: String) {
-		selectedConfigurationName = name
-		refreshRunControl()
-	}
-
 	/// Runs the selected configuration and puts the profiler on it.
-	func profileSelectedForTesting() { profileSelectedConfiguration() }
+	func profileSelectedForTesting() { run.profileSelectedConfiguration() }
 
 	/// Opens two terminals side by side, as dropping one tab on the other's
 	/// edge does.
@@ -5513,7 +4663,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func splitPanesForTesting() {
 		setPanelVisible(true)
 		bottomPanel.newTerminal()
-		bottomPanel.showProfiler(address: Self.lastProfilerAddress)
+		bottomPanel.showProfiler(address: RunCoordinator.lastProfilerAddress)
 		bottomPanel.splitFirstBesideForTesting()
 	}
 
@@ -5648,71 +4798,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Derives a launch configuration from the gutter's arrow and prints it.
-	func saveGutterConfigurationForTesting(file: URL, line: Int) {
-		let path = RunConfigurationDiscovery.canonicalPath(file)
-		guard let discovered = runConfigurations.first(where: { $0.file == path && $0.line == line })
-			?? runConfigurations.first
-		else {
-			print("GUTTER: nothing to run at \(file.lastPathComponent):\(line)")
-			return
-		}
-		let item = NSMenuItem()
-		item.representedObject = discovered.id
-		saveGutterConfiguration(item)
-		print("GUTTER: opened the editor for \(discovered.name)")
-	}
-
-	/// Derives a configuration from a make goal and starts it.
-	/// Picks a Makefile goal from the run menu exactly as clicking it does, and
-	/// says what the run control shows afterwards.
-	func chooseMakeRunForTesting(_ goal: String) {
-		let goals = makeGoals()
-		print("MAKE RUNS: \(goals.map(\.name))")
-		guard let found = goals.first(where: { $0.name == goal }) else {
-			print("MAKE: no goal called \(goal)")
-			return
-		}
-		let item = NSMenuItem()
-		item.representedObject = [found.makefile.path.path, found.name]
-		makeGoalChosen(item)
-		print("MAKE SELECTED: \(runControl?.selectedNameForTesting ?? "(none)")")
-	}
-
-	/// What play would start right now, without starting it.
-	func describeRunTargetForTesting() {
-		switch runTarget {
-		case let .make(name):          print("MAKE PLAY: \(name)")
-		case let .configuration(name): print("MAKE PLAY: \(name)")
-		case .none:                    print("MAKE PLAY: (nothing)")
-		}
-	}
-
-	func runMakeGoalForTesting(_ goal: String, debug: Bool) {
-		guard let project else { return }
-		let goals = debuggableMakeGoals()
-		print("MAKE GOALS: \(goals.map(\.name))")
-
-		guard let found = goals.first(where: { $0.name == goal }),
-		      let configuration = MakeLaunch.configuration(
-		          for: goal, in: found.makefile, projectRoot: project.root
-		      )
-		else {
-			print("MAKE: no plan for \(goal)")
-			return
-		}
-		_ = try? LaunchStore.save(configuration, in: launchRoot)
-		selectedConfigurationName = configuration.name
-		refreshRunControl()
-
-		print("MAKE CONFIG: \(configuration.json)")
-		if debug {
-			debugConfiguration(configuration, in: launchRoot)
-		} else {
-			runConfiguration(configuration, in: launchRoot)
-		}
-	}
-
 	func showPodsForTesting(filter: String, choose: Bool, kind: String?) {
 		setPanelVisible(true)
 		bottomPanel.showProfiler(address: "localhost:6060")?
@@ -5743,13 +4828,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Puts the caret on a line of the file being edited, for `:` in the palette.
 	func goTo(line: Int) { editor.goTo(line: line) }
-
-	func showAttachPickerForTesting(filter: String) {
-		attachToProcess(nil)
-		guard !filter.isEmpty else { return }
-		processPicker?.filterForTesting(filter)
-		print("ATTACH: \(processPicker?.shownNamesForTesting.prefix(5).joined(separator: ", ") ?? "none")")
-	}
 
 	/// Walks the history and reports where each step landed.
 	func navigateForTesting(_ steps: String) {
@@ -6221,7 +5299,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// Beside the watcher's batches, because the pair is the finding: before
 		// 0446 these were the same number, and the whole of the fix is the
 		// distance between them.
-		let runs = Self.runConfigurationTallyForTesting
+		let runs = RunCoordinator.runConfigurationTallyForTesting
 		print(String(format: "OPEN %-24s %8d asked, %d skipped, %d coalesced, %d walked",
 			("run configurations" as NSString).utf8String!,
 			runs.asked, runs.skipped, runs.coalesced, runs.walked))
@@ -6508,36 +5586,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// walk, measured, and most of that is the 45,772 Java files the main
 			// classes are found in.
 			let deadline = Date().addingTimeInterval(240)
-			while self.runConfigurations.isEmpty, Date() < deadline {
+			while self.run.runConfigurations.isEmpty, Date() < deadline {
 				try? await Task.sleep(for: .milliseconds(200))
 			}
 
-			for configuration in self.runConfigurations where configuration.source == .xcodeScheme {
+			for configuration in self.run.runConfigurations where configuration.source == .xcodeScheme {
 				guard let target = configuration.xcode else { continue }
 				_ = await XcodeDestinations.shared.destinations(
 					for: target,
 					workingDirectory: URL(fileURLWithPath: configuration.workingDirectory)
 				)
 			}
-			self.printConfigurationMenuForTesting(open: goal)
+			self.run.printConfigurationMenuForTesting(open: goal)
 		}
-	}
-
-	private func printConfigurationMenuForTesting(open goal: String?) {
-		let list = runList()
-		print("MENU: \(list.arrangement.rowCount) rows for "
-			+ "\(list.arrangement.flatCount) runnable things")
-		if let control = runControl {
-			showConfigurationMenu(from: control.bounds, in: control)
-			for line in ProjectSwitcherPopover.rowsForTesting() { print("MENU: \(line)") }
-			guard let goal else { return }
-			print("MENU: --- opening \(goal) ---")
-			for line in ProjectSwitcherPopover.openGoalForTesting(goal) { print("MENU: \(line)") }
-		}
-		// Redirected to a file, stdout is fully buffered, and this run has no
-		// natural end — the window stays up until it is killed, which throws the
-		// buffer away along with the only thing the run was for.
-		fflush(stdout)
 	}
 
 	/// What is drawn in an item's mark column, as something printable.
@@ -6548,16 +5609,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// menu is not something a test can read.
 	private func markForTesting(_ item: NSMenuItem) -> String {
 		guard item.state == .on else { return "" }
-		return item.onStateImage === MainWindowController.runMark() ? " ▶" : " ✓"
-	}
-
-	/// Opens the editor on the selected configuration, making one if there is
-	/// none yet — what pressing play would have done first.
-	func editConfigurationForTesting() {
-		guard let configuration = selectedConfiguration ?? createSuggestedConfiguration() else { return }
-		selectedConfigurationName = configuration.name
-		refreshRunControl()
-		presentConfigurationEditor(configuration, isNew: false)
+		return item.onStateImage === RunCoordinator.runMark() ? " ▶" : " ✓"
 	}
 
 	// MARK: - Navigation history
@@ -6622,643 +5674,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	@objc func stopSelected(_ sender: Any?) { stopRunning() }
+	@objc func stopSelected(_ sender: Any?) { run.stopRunning() }
 
-	@objc func runSelected(_ sender: Any?) { runSelectedConfiguration(debug: false) }
-	@objc func debugSelected(_ sender: Any?) { runSelectedConfiguration(debug: true) }
-
-	private func runSelectedConfiguration(debug: Bool) {
-		guard project != nil else { return }
-
-		// A make goal nothing can debug runs as make runs it, in the terminal,
-		// for both buttons: there is no debugger to offer and refusing to start
-		// would be worse than starting without one.
-		if case let .make(name) = runTarget, let goal = selectedMakeRun, goal.name == name {
-			run(goal)
-			return
-		}
-
-		guard let configuration = selectedConfiguration ?? createSuggestedConfiguration() else {
-			notify(
-				"Nothing to run",
-				detail: "No launch configuration, and nothing recognisable to make one from."
-			)
-			return
-		}
-		selectedConfigurationName = configuration.name
-		refreshRunControl()
-
-		if debug {
-			debugConfiguration(configuration, in: launchRoot)
-		} else {
-			runConfiguration(configuration, in: launchRoot)
-		}
-	}
-
-	/// Writes a configuration for a project that has none, and says so.
-	private func createSuggestedConfiguration() -> LaunchConfiguration? {
-		guard project != nil, let suggestion = LaunchFile.suggestion(for: launchRoot) else { return nil }
-		do {
-			_ = try LaunchStore.save(suggestion, in: launchRoot)
-			notify(
-				"Created a launch configuration",
-				detail: "Written to .vscode/launch.json as “\(suggestion.name)”. Edit it from the run menu.",
-				kind: .information
-			)
-			return suggestion
-		} catch {
-			notify("Could not write launch.json", detail: error.localizedDescription)
-			return nil
-		}
-	}
-
-	/// Runs the build and produces the environment a configuration needs, then
-	/// hands both to whatever starts it.
-	///
-	/// Both steps are skipped by configurations that declare neither, which is
-	/// every one written by hand — this is the price of a configuration
-	/// derived from a Makefile, and only those pay it.
-	private func prepare(
-		_ configuration: LaunchConfiguration,
-		in root: URL,
-		then start: @escaping ([String: String]) -> Void
-	) {
-		let evaluate = { [weak self] in
-			guard let self else { return }
-			let commands = configuration.environmentCommands
-			guard !commands.isEmpty else {
-				start(configuration.expandedEnvironment(root: root))
-				return
-			}
-
-			self.runControl?.setStatus("Reading \(configuration.name)'s environment…", busy: true)
-			Task { @MainActor in
-				let directory = URL(
-					fileURLWithPath: configuration.expandedWorkingDirectory(root: root)
-				)
-				let produced = await ShellEnvironment.evaluate(commands, in: directory)
-				if !produced.failures.isEmpty {
-					// Started anyway: the program is the one that knows whether
-					// it can do without, and it says so better than a guess.
-					self.notify(
-						"Some environment could not be read",
-						detail: produced.failures
-							.map { "\($0.key): \($0.value.isEmpty ? "produced nothing" : $0.value)" }
-							.sorted()
-							.joined(separator: "\n")
-					)
-				}
-				start(configuration.expandedEnvironment(root: root).merging(produced.values) { _, new in new })
-			}
-		}
-
-		guard let step = configuration.makeStep else {
-			evaluate()
-			return
-		}
-
-		setPanelVisible(true)
-		runControl?.setStatus("Building \(configuration.name)…", busy: true)
-		let pane = bottomPanel.runCommand(
-			title: "make",
-			command: step.commandLine(root: root),
-			directory: root,
-			// The build console for this configuration, kept apart from the
-			// console the program itself runs in.
-			reusing: "build:\(configuration.id)"
-		)
-		runningPane = pane
-		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
-			MainActor.assumeIsolated {
-				guard let self, self.runningPane === pane else { return }
-				self.runningPane = nil
-				guard code == 0 else {
-					// Nothing starts on a failed build: what would run is the
-					// last binary that built, which is the wrong one.
-					self.runControl?.setStatus("Build failed — exit code \(code)", failed: true)
-					return
-				}
-				evaluate()
-			}
-		}
-	}
-
-	private func runConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
-		prepare(configuration, in: root) { [weak self] environment in
-			guard let self else { return }
-			if configuration.devPod != nil {
-				self.runInCluster(configuration, in: root, environment: environment, debug: false)
-			} else {
-				self.startRun(configuration, in: root, environment: environment)
-			}
-		}
-	}
+	@objc func runSelected(_ sender: Any?) { run.runSelectedConfiguration(debug: false) }
+	@objc func debugSelected(_ sender: Any?) { run.runSelectedConfiguration(debug: true) }
 
 	// MARK: - Running in a cluster
 
-	/// The tunnel and the debugger's tunnel, while a dev pod session is on.
-	private var devPodForwards: [PortForward] = []
-	/// The pod running something of ours, so stop can tell it to stop.
-	private var devPodClient: DevPodClient?
-	/// The launch in progress, so it can be cancelled.
-	private var clusterTask: Task<Void, Never>?
-
-	/// Writes a line into the launch log.
-	///
-	/// Everything a cluster launch does happens somewhere else and takes
-	/// seconds: which context, which pod, what helm is doing, what the cluster
-	/// says about it. A spinner and one line of status is not enough to tell a
-	/// slow step from a stuck one.
-	private func clusterLog(_ line: String, reset: Bool = false) {
-		bottomPanel.appendLaunchLog(line, reset: reset)
-	}
-
-	/// Builds for the cluster, pushes the binary into a pod, and starts it.
-	///
-	/// The same configuration as any other: the package, the arguments and the
-	/// environment do not change because the machine does. What changes is
-	/// where the binary lands and who runs it.
-	private func runInCluster(
-		_ configuration: LaunchConfiguration,
-		in root: URL,
-		environment: [String: String],
-		debug: Bool
-	) {
-		guard let settings = configuration.devPod else { return }
-		stopDevPodForwards()
-		setPanelVisible(true)
-		runControl?.setStatus("Looking for a pod\u{2026}", busy: true)
-		clusterLog("launching \(configuration.name)", reset: true)
-
-		// Kept, so the stop button has something to stop. Everything here waits
-		// on a cluster, and waiting on a cluster is exactly when somebody wants
-		// to change their mind.
-		clusterTask = Task { @MainActor in
-			defer { clusterTask = nil }
-			do {
-				// Which cluster, and whether this configuration is allowed on
-				// it: one that follows the current context follows it
-				// everywhere, and everybody has a production cluster in their
-				// kubeconfig.
-				let current = settings.followsCurrentContext
-					? await Kubernetes.currentContext(kubeconfig: settings.kubeconfig)
-					: nil
-				let context: String?
-				switch settings.resolve(current: current) {
-				case let .success(name):
-					context = name
-				case let .failure(refusal):
-					throw refusal
-				}
-				let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
-				clusterLog("cluster \(context ?? "current")"
-					+ (settings.namespace.isEmpty ? "" : ", namespace \(settings.namespace)"))
-
-				// A project with a chart of its own gets that chart, with one
-				// container of it put into development mode. Everything the
-				// chart gives that container — its environment, its secrets,
-				// what it sits beside — is what the program will find.
-				if let chart = configuration.helm {
-					try await prepareChart(
-						chart,
-						configuration: configuration,
-						settings: settings,
-						context: context,
-						kubeconfig: kubeconfig,
-						root: root
-					)
-				}
-
-				let pods = await DevPods.list(
-					context: context,
-					namespace: settings.namespace.isEmpty ? nil : settings.namespace,
-					kubeconfig: kubeconfig
-				).filter { $0.isRunning }
-
-				// This project's own pod. Two projects sharing a namespace each
-				// get a release named after them, and taking whichever pod is
-				// listed first means one project's binary lands in the other's
-				// pod — which looks, from the logs, like a stale build.
-				// A chart of the project's own names its own release, and the
-				// pod is whichever one holds the patched container.
-				let release = configuration.helm?.release ?? DevPodInstall.releaseName(for: root)
-				var candidates = settings.pod.isEmpty
-					? pods.filter { $0.name.hasPrefix(release) }
-					: pods
-				if candidates.isEmpty, configuration.helm != nil {
-					throw DevPodClient.Failure.unreachable(
-						"The chart's pod did not come up. The launch log has what helm and the "
-							+ "cluster said about it."
-					)
-				}
-				if candidates.isEmpty {
-					// Nowhere to run this yet, so make somewhere: pressing run
-					// should not stop to say a chart is missing.
-					guard settings.allowInstall else {
-						throw DevPodClient.Failure.unreachable(
-							"No development pod is running in "
-								+ "\(context ?? "the current context")"
-								+ (settings.namespace.isEmpty ? "" : "/\(settings.namespace)")
-								+ ", and this configuration does not sidebar.install one."
-						)
-					}
-					try await installDevPod(
-							configuration: configuration, settings: settings,
-							context: context, root: root
-						)
-					candidates = await DevPods.list(
-						context: context,
-						namespace: settings.namespace.isEmpty ? nil : settings.namespace,
-						kubeconfig: kubeconfig
-					).filter { $0.isRunning && (settings.pod.isEmpty ? $0.name.hasPrefix(release) : true) }
-				}
-
-				// A pod that is running is not necessarily a pod that is
-				// published. What the chart was installed with is compared
-				// against what this configuration asks for, and the release is
-				// upgraded when they have drifted apart.
-				if !candidates.isEmpty, settings.allowInstall, configuration.helm == nil {
-					let desired = DevPodFiles.helmValues(
-							for: settings,
-							image: DevPodImage.resolved(settings.image, for: configuration, root: root)
-						)
-					let release = DevPodInstall.releaseName(for: root)
-					let deployed = await DevPodInstall.deployedValues(
-						release: release,
-						namespace: settings.namespace.isEmpty ? "abydos-dev" : settings.namespace,
-						context: context,
-						kubeconfig: kubeconfig
-					)
-					if DevPodInstall.upgradeNeeded(desired: desired, deployed: deployed) {
-						clusterLog("the pod is not set up the way this configuration asks for")
-						try await installDevPod(
-							configuration: configuration, settings: settings,
-							context: context, root: root
-						)
-						candidates = await DevPods.list(
-							context: context,
-							namespace: settings.namespace.isEmpty ? nil : settings.namespace,
-							kubeconfig: kubeconfig
-						).filter { $0.isRunning && (settings.pod.isEmpty ? $0.name.hasPrefix(release) : true) }
-					}
-				}
-
-				guard let pod = candidates.first(where: { settings.pod.isEmpty || $0.name == settings.pod })
-					?? candidates.first
-				else {
-					throw DevPodClient.Failure.unreachable(
-						"No development pod is running there, and installing one produced none."
-					)
-				}
-
-				// The node decides what the binary has to be: a laptop is arm64
-				// and a shared cluster usually is not.
-				try Task.checkCancellation()
-				clusterLog("pod \(pod.namespace)/\(pod.name)")
-				let architecture = await DevPods.architecture(context: context, kubeconfig: kubeconfig)
-					?? "amd64"
-				runControl?.setStatus("Building for linux/\(architecture)…", busy: true)
-				clusterLog("building for linux/\(architecture)")
-
-				let output = FileManager.default.temporaryDirectory
-					.appendingPathComponent("abydos-devpod-\(configuration.name.replacingOccurrences(of: " ", with: "-"))")
-				// The project, not the working directory: what a build needs to
-				// know — where go.mod is, where build.zig is, where make runs —
-				// hangs off the project, and `cwd` is where the program runs.
-				let binary = try await DevPodBuild.build(
-					configuration: configuration,
-					root: root,
-					architecture: architecture,
-					output: output,
-					progress: { line in Task { @MainActor in self.clusterLog(line) } }
-				)
-
-				let attributes = try? FileManager.default.attributesOfItem(atPath: binary.path)
-				let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-				runControl?.setStatus(
-					"Sending \(ProfileValue.format(size, unit: "bytes")) to \(pod.name)…",
-					busy: true
-				)
-				let control = try await PortForward.start(
-					to: PodTarget(
-						namespace: pod.namespace, name: pod.name, phase: pod.phase,
-						containers: [], port: pod.controlPort, portSource: .containerPort
-					),
-					context: context,
-					remotePort: pod.controlPort,
-					kubeconfig: kubeconfig
-				)
-				devPodForwards.append(control)
-
-				let client = DevPodClient(localPort: control.localPort)
-
-				// Whatever the program reads goes first, and before it starts:
-				// a service told where its configuration is cannot find it in
-				// a pod that has never seen the file, and "no such file" says
-				// nothing about the pod being empty.
-				let plan = DevPodFiles.plan(
-					files: settings.files,
-					arguments: configuration.expandedArguments(root: root),
-					root: root
-				)
-				for transfer in plan.transfers {
-					try Task.checkCancellation()
-					clusterLog("sending \(transfer.local.lastPathComponent) to \(transfer.remote)")
-					try await client.push(file: transfer.local, to: transfer.remote)
-				}
-				if !plan.transfers.isEmpty {
-					runControl?.setStatus(
-						"Sent \(plan.transfers.count) file\(plan.transfers.count == 1 ? "" : "s")…",
-						busy: true
-					)
-				}
-
-				// Delve debugs Go; a JVM debugs itself, given the flag; and
-				// everything else is held by gdbserver and driven by the LLDB on
-				// this machine.
-				// Nothing recognised means the full image is in the pod, which has
-				// both; gdbserver is the one that works on a binary from anywhere.
-				let debugger = DevPodBuild.debugger(for: configuration, root: root)
-				let isGo = debugger == .delve
-				let isJava = debugger == .jdwp
-				let mode: String
-				switch (debug, debugger) {
-				case (false, .jdwp): mode = "jvm"
-				case (false, _): mode = "run"
-				case (true, .delve): mode = "debug"
-				case (true, .jdwp): mode = "jvm-debug"
-				case (true, _): mode = "native-debug"
-				}
-
-				try Task.checkCancellation()
-				clusterLog("sending the binary, mode \(mode)")
-				let status = try await client.push(
-					binary: binary,
-					mode: mode,
-					// In debug mode the editor says what to launch, so these
-					// would be said twice; in run mode the pod is on its own.
-					arguments: debug ? [] : plan.arguments,
-					environment: debug ? [:] : environment
-				)
-				guard status.architecture.isEmpty || status.architecture == architecture else {
-					throw DevPodClient.Failure.wrongArchitecture(
-						binary: architecture, pod: status.architecture
-					)
-				}
-
-				if debug {
-					clusterLog("attaching the debugger")
-					try await attachDebugger(
-						to: pod, context: context, kubeconfig: kubeconfig,
-						arguments: plan.arguments, environment: environment,
-						nativeBinary: isGo || isJava ? nil : binary,
-						java: isJava
-							? JavaDebug.Request(
-								kind: .attach,
-								mainClass: configuration.javaMainClass ?? "",
-								projectName: nil
-							)
-							: nil,
-						root: root
-					)
-					// What the program prints goes to the pod's stdout, which
-					// the debugger never sees. Followed into the console beside
-					// the debugger's own output, so one pane has both.
-					if let started = bottomPanel.activeDebugSession {
-						followDevPodLogs(client, pod: pod, debugging: started)
-					}
-				} else {
-					// Busy: the program is up in the cluster until somebody
-					// stops it, and the strip is where that is said and done.
-					// The size is what proves the push landed: a program that
-					// looks unchanged is the first thing to doubt.
-					runControl?.setStatus(
-						"Running \(ProfileValue.format(Int64(status.binarySize), unit: "bytes")) "
-							+ "in \(pod.namespace)/\(pod.name)",
-						busy: true
-					)
-					clusterLog("running in \(pod.namespace)/\(pod.name)")
-					devPodClient = client
-					followDevPodLogs(client, pod: pod)
-					await openServicePort(settings: settings, pod: pod, context: context, kubeconfig: kubeconfig)
-
-					if profileAfterRun {
-						profileAfterRun = false
-						await openProfiler(on: pod, context: context, kubeconfig: kubeconfig)
-					}
-				}
-			} catch is CancellationError {
-				stopDevPodForwards()
-				clusterLog("stopped")
-				runControl?.setStatus("Stopped")
-			} catch {
-				let detail = Self.describe(devPod: error)
-				stopDevPodForwards()
-				clusterLog(detail)
-				// The strip gets the headline; the whole story is in the toast
-				// and in the launch log, where there is room for it.
-				runControl?.setStatus(Self.headline(of: detail), failed: true)
-				notify("Could not run in the cluster", detail: detail)
-			}
-		}
-	}
-
-	/// The chart that travels with the app.
-	///
-	/// Looked for by hand in every place it could be: inside the resource
-	/// bundle a package target produces, beside the executable, inside the
-	/// application bundle, and in the repository when running from a checkout.
-		static var bundledChart: URL? {
-		// `Bundle.module` is not used here. Its generated accessor calls
-		// `fatalError` when it cannot find the resource bundle, so a build that
-		// shipped without one does not fall back — it takes the app down, which
-		// is what happened when somebody pressed run in a cluster.
-		// SwiftPM names it `<package>_<target>.bundle`, so it followed the
-		// rename: a stale name here is a run in a cluster that cannot find the
-		// chart it ships with.
-		let resource = "Abydos_AbydosApp.bundle"
-		var candidates: [URL] = []
-
-		if let main = Bundle.main.resourceURL {
-			candidates.append(main.appendingPathComponent(resource))
-			candidates.append(main)
-		}
-		// Beside the executable, which is where a plain `swift build` puts it.
-		let beside = Bundle.main.bundleURL.deletingLastPathComponent()
-		candidates.append(beside.appendingPathComponent(resource))
-		candidates.append(Bundle.main.bundleURL.appendingPathComponent(resource))
-		// Running from the repository, where the source is the chart.
-		candidates.append(
-			URL(fileURLWithPath: #filePath)
-				.deletingLastPathComponent()
-				.deletingLastPathComponent()
-				.deletingLastPathComponent()
-				.appendingPathComponent("DevPod")
-		)
-
-		let manager = FileManager.default
-		for candidate in candidates {
-			for chart in [
-				candidate.appendingPathComponent("devpod-chart"),
-				candidate.appendingPathComponent("Contents/Resources/devpod-chart"),
-				candidate.appendingPathComponent("chart/abydos-devpod"),
-			] where manager.fileExists(atPath: chart.appendingPathComponent("Chart.yaml").path) {
-				return chart
-			}
-		}
-		return nil
-	}
-
-	/// Puts a development pod in the cluster for this project.
-	///
-	/// One release per project, named after it: two projects sharing a pod
-	/// would overwrite each other's binary, and the name is what somebody sees
-	/// in `helm list` when they wonder what this is.
-	private func installDevPod(
-		configuration: LaunchConfiguration,
-		settings: LaunchConfiguration.DevPodSettings,
-		context: String?,
-		root: URL
-	) async throws {
-		guard let chart = Self.bundledChart else { throw DevPodInstall.Failure.noChart }
-
-		let release = DevPodInstall.releaseName(for: root)
-		let namespace = settings.namespace.isEmpty ? "abydos-dev" : settings.namespace
-		let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
-		// The slim image for whatever this project is written in, unless the
-		// configuration names one itself: a pod that only ever debugs Go has no
-		// use for gdbserver, and one that never sees Go has none for Delve.
-		let image = DevPodImage.resolved(settings.image, for: configuration, root: root)
-		runControl?.setStatus("Installing \(release) in \(namespace)…", busy: true)
-		clusterLog("installing \(release) in \(namespace), image \(image)")
-
-		// The sidebar.install and a watch on what it produces, side by side. helm waits
-		// in silence and then reports its own deadline — "context deadline
-		// exceeded" — while the cluster has been saying since the fourth second
-		// that it cannot pull the image. Whichever finishes first wins: a pod
-		// that will never start ends this now rather than in two minutes.
-		try await withThrowingTaskGroup(of: Void.self) { group in
-			group.addTask { @MainActor [weak self] in
-				try await DevPodInstall.install(
-					chart: chart,
-					release: release,
-					namespace: namespace,
-					// The resolved context, not what the configuration says: it
-					// may say `${currentContext}`, which is not a cluster.
-					context: context,
-					kubeconfig: kubeconfig,
-					image: image,
-					// What the chart has to publish, and on which port.
-					values: DevPodFiles.helmValues(for: settings, image: image),
-					progress: { line in
-						Task { @MainActor in self?.clusterLog(line) }
-					}
-				)
-			}
-			group.addTask { @MainActor [weak self] in
-				try await self?.watchInstall(
-					release: release, namespace: namespace,
-					context: context, kubeconfig: kubeconfig, image: image
-				)
-			}
-
-			defer { group.cancelAll() }
-			try await group.next()
-		}
-		notify(
-			"Installed a development pod",
-			detail: "\(release) in \(namespace). Remove it with: helm uninstall \(release) -n \(namespace)",
-			kind: .information
-		)
-	}
 
 	// MARK: - The other ways to start
-
-	/// Runs what is selected and puts the profiler in front of it.
-	///
-	/// The program has to be serving pprof for this to find anything, which for
-	/// a Go service usually means `net/http/pprof` on 6060 — the profiler says
-	/// so plainly when there is nothing there, which is the only useful thing
-	/// to say about a program that is not instrumented.
-	private func profileSelectedConfiguration() {
-		guard let configuration = selectedConfiguration else {
-			notify("Nothing to profile", detail: "Choose a configuration first.", kind: .information)
-			return
-		}
-
-		// Asked for now, done when there is something to profile. A cluster run
-		// opens the profiler on the pod it just started; a local one waits for
-		// the program to be listening.
-		profileAfterRun = true
-		runSelectedConfiguration(debug: false)
-
-		guard configuration.devPod == nil else { return }
-		Task { @MainActor in
-			try? await Task.sleep(nanoseconds: 1_500_000_000)
-			guard profileAfterRun else { return }
-			profileAfterRun = false
-			setPanelVisible(true)
-			bottomPanel.showProfiler(address: Self.lastProfilerAddress, connecting: true)
-		}
-	}
-
-	/// Set while a run is on its way to being profiled.
-	private var profileAfterRun = false
-
-	/// The profiler, on the pod this run just started.
-	private func openProfiler(on pod: DevPodTarget, context: String?, kubeconfig: String?) async {
-		do {
-			let forward = try await PortForward.start(
-				to: PodTarget(
-					namespace: pod.namespace, name: pod.name, phase: pod.phase,
-					containers: [], port: 6060, portSource: .containerPort
-				),
-				context: context,
-				remotePort: 6060,
-				kubeconfig: kubeconfig
-			)
-			devPodForwards.append(forward)
-			setPanelVisible(true)
-			bottomPanel.showProfiler(address: "localhost:\(forward.localPort)", connecting: true)
-			clusterLog("profiling through localhost:\(forward.localPort)")
-		} catch {
-			clusterLog("no profiler on port 6060: \(error.localizedDescription)")
-			notify(
-				"Could not reach the pod's profiler",
-				detail: "Nothing answered on port 6060 in \(pod.name). A Go service serves "
-					+ "pprof there when it imports net/http/pprof.\n\n"
-					+ error.localizedDescription
-			)
-		}
-	}
-
-	/// Runs the tests with coverage, and reports what they covered.
-	///
-	/// The tests rather than the program: coverage is a property of a test run,
-	/// and a program run by hand covers whatever the person doing it happened
-	/// to touch.
-	private func runSelectedWithCoverage() {
-		guard let root = project?.root else { return }
-		guard FileManager.default.fileExists(atPath: root.appendingPathComponent("go.mod").path) else {
-			notify(
-				"Coverage is Go-only so far",
-				detail: "This project has no go.mod. Coverage for other languages is not built yet.",
-				kind: .information
-			)
-			return
-		}
-
-		let profile = AbydosFolder.url(in: root).appendingPathComponent("coverage.out")
-		_ = try? AbydosFolder.create(in: root)
-		setPanelVisible(true)
-		bottomPanel.runCommand(
-			title: "coverage",
-			command: "go test ./... -coverprofile='\(profile.path)' -covermode=atomic"
-				+ " && echo && go tool cover -func='\(profile.path)' | tail -30",
-			directory: root,
-			reusing: "coverage:\(root.path)"
-		)
-	}
 
 	/// A window for a terminal dragged out of a panel — including out of one of
 	/// these windows, which is why it hands itself along.
@@ -7273,1029 +5697,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		).show()
 	}
 
-	/// Makes what the program serves reachable from here.
-	///
-	/// A microservice is tested by talking to it, and a pod in a cluster is not
-	/// somewhere a browser can reach. A forward to the port it listens on costs
-	/// nothing and turns "it is running" into a link. The ingress, when the
-	/// configuration asks for one, is the other way in — and the one that other
-	/// people can use.
-	private func openServicePort(
-		settings: LaunchConfiguration.DevPodSettings,
-		pod: DevPodTarget,
-		context: String?,
-		kubeconfig: String?
-	) async {
-		if !settings.ingressHost.isEmpty {
-			clusterLog("published at http://\(settings.ingressHost)")
-		}
 
-		let port = settings.port > 0 ? settings.port : 8080
-		do {
-			let forward = try await PortForward.start(
-				to: PodTarget(
-					namespace: pod.namespace, name: pod.name, phase: pod.phase,
-					containers: [], port: port, portSource: .containerPort
-				),
-				context: context,
-				remotePort: port,
-				kubeconfig: kubeconfig
-			)
-			devPodForwards.append(forward)
-			clusterLog("reachable at http://localhost:\(forward.localPort) (pod port \(port))")
-		} catch {
-			// Not a failure: plenty of programs serve nothing at all.
-			clusterLog("no forward to port \(port): \(error.localizedDescription)")
-		}
-	}
 
-	/// Installs the project's own chart, and puts one of its containers into
-	/// development mode.
-	///
-	/// Two steps, both of which somebody could do by hand and neither of which
-	/// anybody wants to: `helm upgrade` with this stage's values, and a patch
-	/// that swaps the named container's image and command for the supervisor.
-	/// The pod keeps everything else the chart gave it.
-	private func prepareChart(
-		_ chart: LaunchConfiguration.HelmSettings,
-		configuration: LaunchConfiguration,
-		settings: LaunchConfiguration.DevPodSettings,
-		context: String?,
-		kubeconfig: String?,
-		root: URL
-	) async throws {
-		let namespace = settings.namespace.isEmpty ? "default" : settings.namespace
-
-		let present = await HelmRelease.exists(
-			release: chart.release, namespace: namespace, context: context, kubeconfig: kubeconfig
-		)
-		if !present || chart.install {
-			guard chart.install else {
-				throw HelmRelease.Failure(
-					"The release \(chart.release) is not installed in \(namespace), and this "
-						+ "configuration does not sidebar.install it."
-				)
-			}
-			runControl?.setStatus("Installing \(chart.release)…", busy: true)
-			clusterLog("installing \(chart.release) from \(chart.chart)")
-			try await HelmRelease.upgrade(
-				chart,
-				root: root,
-				namespace: namespace,
-				context: context,
-				kubeconfig: kubeconfig,
-				progress: { line in Task { @MainActor in self.clusterLog(line) } }
-			)
-		}
-		try Task.checkCancellation()
-
-		// Which deployment holds the container this configuration is for. A pod
-		// with an application and a web front end in it is two configurations,
-		// and each replaces its own container.
-		let deployments = await HelmRelease.deployments(
-			release: chart.release, namespace: namespace, context: context, kubeconfig: kubeconfig
-		)
-		guard let deployment = HelmRelease.deployment(holding: chart.container, in: deployments) else {
-			throw HelmRelease.Failure(
-				"No deployment in \(chart.release) has a container called "
-					+ "\(chart.container.isEmpty ? "anything" : chart.container). "
-					+ "It has: " + deployments.map(\.name).joined(separator: ", ") + "."
-			)
-		}
-
-		let image = DevPodImage.resolved(settings.image, for: configuration, root: root)
-		let container = chart.container.isEmpty
-			? (deployments.first { $0.name == deployment }?.containers.first ?? "app")
-			: chart.container
-
-		runControl?.setStatus("Putting \(container) into development mode…", busy: true)
-		clusterLog("patching \(deployment)/\(container) to run the supervisor")
-
-		let patch = await Kubernetes.run(
-			[
-				"patch", "deployment", deployment, "--namespace", namespace,
-				"--type", "strategic",
-				// Under helm's name: the cluster records who owns each field,
-				// and a patch under a name of its own makes the next `helm
-				// upgrade` a conflict rather than an upgrade.
-				"--field-manager", "helm",
-				"-p", DevContainerPatch.json(container: container, image: image),
-			],
-			context: context,
-			kubeconfig: kubeconfig
-		)
-		guard patch.exitCode == 0 else {
-			throw HelmRelease.Failure(patch.stderr.isEmpty ? patch.stdout : patch.stderr)
-		}
-		clusterLog(patch.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
-
-		// And wait for it, because the next thing that happens is a binary
-		// being pushed into a pod that has to exist first.
-		runControl?.setStatus("Waiting for \(deployment)…", busy: true)
-		let rollout = await Kubernetes.run(
-			[
-				"rollout", "status", "deployment/" + deployment,
-				"--namespace", namespace, "--timeout", "120s",
-			],
-			context: context,
-			kubeconfig: kubeconfig
-		)
-		clusterLog(rollout.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
-		guard rollout.exitCode == 0 else {
-			throw HelmRelease.Failure(
-				(rollout.stderr.isEmpty ? rollout.stdout : rollout.stderr)
-					+ "\n\nThe container was patched but the pod did not come up. "
-					+ "`kubectl rollout undo deployment/\(deployment) -n \(namespace)` puts it back."
-			)
-		}
-	}
-
-	/// Reports what the cluster is doing with the pods an sidebar.install just asked
-	/// for, and gives up when there is nothing left to wait for.
-	///
-	/// Only failure ends this: readiness is helm's to decide, and a pod that
-	/// looks ready for a moment is not the same as a release that is.
-	private func watchInstall(
-		release: String,
-		namespace: String,
-		context: String?,
-		kubeconfig: String?,
-		image: String
-	) async throws {
-		var reported: Set<String> = []
-		while !Task.isCancelled {
-			try await Task.sleep(nanoseconds: 1_500_000_000)
-			let states = await DevPodWatch.states(
-				release: release, namespace: namespace,
-				context: context, kubeconfig: kubeconfig
-			)
-			for state in states where !reported.contains(state.line) {
-				reported.insert(state.line)
-				clusterLog("  " + state.line)
-			}
-			if let hopeless = states.first(where: \.isHopeless) {
-				throw DevPodInstall.Failure.failed(DevPodWatch.explain(hopeless, image: image))
-			}
-		}
-	}
-
-	/// Connects the debugger to the `dlv dap` the pod is now running.
-	/// How a pod is named in the toolbar: the namespace and the pod, which is
-	/// what `kubectl` would want to be told to find it again.
-	private func label(for pod: DevPodTarget) -> String {
-		"\(pod.namespace)/\(pod.name)"
-	}
-
-	private func attachDebugger(
-		to pod: DevPodTarget,
-		context: String?,
-		kubeconfig: String?,
-		arguments: [String],
-		environment: [String: String],
-		nativeBinary: URL? = nil,
-		java: JavaDebug.Request? = nil,
-		root: URL? = nil
-	) async throws {
-		let debugForward = try await PortForward.start(
-			to: PodTarget(
-				namespace: pod.namespace, name: pod.name, phase: pod.phase,
-				containers: [], port: pod.debugPort, portSource: .containerPort
-			),
-			context: context,
-			remotePort: pod.debugPort,
-			kubeconfig: kubeconfig
-		)
-		devPodForwards.append(debugForward)
-
-		runControl?.setStatus("Debugging in \(pod.name)…", busy: true)
-
-		// A JVM in a pod holds itself at its first instruction — `suspend=y` —
-		// and waits for a debugger on the port the supervisor opened. What
-		// connects to it is the adapter inside the language server here, so the
-		// sources it shows are the ones on this disk.
-		if var request = java {
-			guard let root else { return }
-			// The port and the class files together, from one server: whichever
-			// jdtls can give them, which since 0452 may be one started for the
-			// debugger alone. The class files are here, so a frame from the pod
-			// lands on the source it was compiled from rather than on a
-			// decompiled stub.
-			let target = try await LanguageService.shared.javaLaunchTarget(
-				project: root,
-				// Off this thread and through the shared cache: the synchronous
-				// scan reads every source file in the project, and
-				// `mainClasses`' own documentation says not to call it from a
-				// context like this one.
-				anchor: await JavaTooling.mainClassesOffMain(in: root).first
-					.map { URL(fileURLWithPath: $0.file) },
-				saying: { sentence in
-						self.runControl?.setStatus(sentence, busy: true, preparing: true)
-					}
-			)
-			request.host = "127.0.0.1"
-			request.port = debugForward.localPort
-			request.classPaths = target.classPaths
-			request.projectName = target.projectName
-
-			guard let session = bottomPanel.startDebugging(
-				adapter: DebugAdapters.java,
-				executable: DebugAdapters.java.command,
-				start: .java(host: "127.0.0.1", port: target.port, request: request),
-				breakpoints: debug.pendingBreakpoints,
-				location: label(for: pod)
-			) else { return }
-			wire(session)
-			return
-		}
-
-		// A native program is held by gdbserver in the pod and driven by the
-		// LLDB here, against the binary that was pushed — which was built here,
-		// so its debug information points at these sources.
-		if let nativeBinary {
-			guard let lldb = DebugAdapters.executable(for: DebugAdapters.lldb) else {
-				throw DevPodClient.Failure.unreachable(
-					"Debugging a native program in a cluster needs LLDB's adapter here: "
-						+ DebugAdapters.lldb.installHint
-				)
-			}
-			guard let session = bottomPanel.startDebugging(
-				adapter: DebugAdapters.lldb,
-				executable: lldb,
-				start: .nativeRemote(
-					host: "127.0.0.1", port: debugForward.localPort, binary: nativeBinary
-				),
-				breakpoints: debug.pendingBreakpoints,
-				location: label(for: pod)
-			) else { return }
-			wire(session)
-			return
-		}
-
-		guard let session = bottomPanel.startDebugging(
-			adapter: DebugAdapters.delve,
-			executable: "",
-			start: .remote(
-				host: "127.0.0.1",
-				port: debugForward.localPort,
-				// The path inside the pod, which is where the supervisor put it.
-				program: "/app/current",
-				arguments: arguments,
-				workingDirectory: "/app",
-				environment: environment
-			),
-			breakpoints: debug.pendingBreakpoints,
-			location: label(for: pod)
-		) else { return }
-		wire(session)
-	}
-
-	/// Shows what the program in the pod is printing.
-	///
-	/// While debugging it goes to the debug console rather than to a tab of its
-	/// own. The adapter's output events carry what the *debugger* says; a
-	/// program in a pod writes to the pod's stdout, which the debugger never
-	/// sees — so the console sat empty through a whole session while
-	/// `kubectl logs` had the story.
-	private func followDevPodLogs(
-		_ client: DevPodClient,
-		pod: DevPodTarget,
-		debugging debugSession: DebugSession? = nil
-	) {
-		Task { @MainActor in
-			// A poll rather than a stream: the supervisor keeps a tail, the
-			// interesting output arrives in the first seconds, and a websocket
-			// for this would be a protocol to maintain.
-			//
-			// A run is watched for a while; a debug session for as long as it
-			// lasts, since the line worth reading is often the one printed just
-			// before a breakpoint somebody took ten minutes to reach.
-			var remaining = debugSession == nil ? 20 : Int.max
-			// The console is appended to rather than replaced, so the same two
-			// hundred lines must not arrive every second — and cannot simply be
-			// replaced either, since the debugger's own output is interleaved
-			// with the program's.
-			var tail = LogTail()
-			while remaining > 0 {
-				remaining -= 1
-				try? await Task.sleep(nanoseconds: 1_000_000_000)
-				if let debugSession, debugSession.state == .terminated { return }
-				guard let text = try? await client.logs(tail: 200), !text.isEmpty else { continue }
-				guard debugSession != nil else {
-					bottomPanel.showDevPodOutput(text, from: "\(pod.namespace)/\(pod.name)")
-					continue
-				}
-				let fresh = tail.newText(in: text)
-				if !fresh.isEmpty { bottomPanel.activeDebugPane?.appendOutput(fresh) }
-			}
-		}
-	}
-
-	private func stopDevPodForwards() {
-		for forward in devPodForwards { forward.stop() }
-		devPodForwards = []
-	}
-
-	/// Stops a program running in a cluster, and closes the tunnels to it.
-	private func stopDevPod() {
-		guard let client = devPodClient else { return }
-		devPodClient = nil
-		runControl?.setStatus("Stopping…", busy: true)
-		Task { @MainActor in
-			try? await client.stop()
-			stopDevPodForwards()
-			runControl?.setStatus("Stopped")
-		}
-	}
-
-	/// The first line of a message, for somewhere a line is all there is.
-	static func headline(of message: String) -> String {
-		let first = message
-			.split(separator: "\n", omittingEmptySubsequences: false)
-			.first
-			.map(String.init)?
-			.trimmingCharacters(in: .whitespaces) ?? message
-		return first.count > 140 ? String(first.prefix(139)) + "\u{2026}" : first
-	}
-
-	private static func describe(devPod error: any Error) -> String {
-		switch error {
-		case let refusal as ContextRefusal:
-			return refusal.message
-		case let failure as DevPodClient.Failure:
-			switch failure {
-			case let .unreachable(reason): return reason
-			case let .refused(code, body): return "The pod answered \(code): \(body)"
-			case let .wrongArchitecture(binary, pod):
-				return "Built for \(binary), but the pod runs \(pod)"
-			}
-		case let failure as DevPodBuild.Failure:
-			switch failure {
-			case .noToolchain: return "No Go toolchain was found"
-			case let .failed(output): return output
-			case let .unsupported(reason): return reason
-			}
-		case let failure as DevPodInstall.Failure:
-			switch failure {
-			case .noHelm:
-				return "helm is not installed. The development pod is a chart, and helm is what installs it."
-			case .noChart:
-				return "The development pod's chart is missing from this build of Abydos."
-			case let .failed(output):
-				return output.isEmpty ? "helm failed and said nothing." : output
-			}
-		case let failure as PortForward.Failure:
-			switch failure {
-			case .noKubectl: return "kubectl is not installed"
-			case .noFreePort: return "No local port was free"
-			case .timedOut: return "kubectl did not answer"
-			case let .failed(reason): return reason
-			}
-		default:
-			return error.localizedDescription
-		}
-	}
-
-	private func startRun(
-		_ configuration: LaunchConfiguration,
-		in root: URL,
-		environment: [String: String]
-	) {
-		let program = configuration.expandedProgram(root: root)
-		let directory = configuration.expandedWorkingDirectory(root: root)
-		let arguments = configuration.expandedArguments(root: root)
-
-		setPanelVisible(true)
-		runControl?.setStatus("Running \(configuration.name)…", busy: true)
-
-		// A Go configuration names a package, which is `go run`'s argument; any
-		// other names a binary, which is simply executed.
-		//
-		// Except a script, whatever the type says. `go` is the default type a new
-		// configuration is written with, so a configuration somebody pointed at
-		// `./mvnw` and did not change the type of ran as `go run ./mvnw` — which
-		// fails in Go's words about a directory that is not a package, and is the
-		// same fault as handing the script to LLDB: believing the type over the
-		// file.
-		let isScript = ScriptLaunch.kind(ofProgramAt: program) != nil
-		let words = configuration.type == "go" && !isScript
-			? ["go", "run", program] + arguments
-			: [program] + arguments
-		let pane = bottomPanel.runCommand(
-			title: configuration.name,
-			command: words.map(Self.shellQuoted).joined(separator: " "),
-			directory: URL(fileURLWithPath: directory),
-			environment: environment,
-			reusing: "run:\(configuration.id)"
-		)
-		// The shell reports what the program exited with, which is the one thing
-		// worth saying in the titlebar once it is over.
-		followRunningPane(pane)
-	}
-
-	/// Runs a wrapper script with JDWP asked for, then attaches to the JVM.
-	///
-	/// The same two halves as debugging in a pod, which is the flow this follows:
-	/// something elsewhere is started with its port open and suspended, and the
-	/// adapter inside the language server connects to it so the sources on screen
-	/// are the ones on this disk. What differs is that "elsewhere" is a child of
-	/// a shell script on this machine rather than a container, so there is no
-	/// port-forward and nothing to tell us when the JVM is up — the port is
-	/// opened by a grandchild this app never sees, and is polled for.
-	///
-	/// The script runs in an ordinary run pane, not swallowed by the debugger:
-	/// what Maven and Gradle print while they resolve and compile is most of what
-	/// there is to read when a launch does not work, and `internalConsole` would
-	/// have shown none of it.
-	private func startScriptDebug(
-		_ configuration: LaunchConfiguration,
-		kind: ScriptLaunch.Kind,
-		in root: URL,
-		environment: [String: String]
-	) {
-		let program = configuration.expandedProgram(root: root)
-		let directory = configuration.expandedWorkingDirectory(root: root)
-
-		// Gradle's port is Gradle's, so a stale JVM holding it is a thing that
-		// can happen and has to be said. For everyone else the kernel picks.
-		let port: Int
-		if kind == .gradle {
-			port = ScriptLaunch.gradleDebugPort
-			if DebugPort.isOpen(port) {
-				notify(
-					"Something is already on port \(port)",
-					detail: "Gradle's --debug-jvm always uses \(port) and cannot be told another. "
-						+ "A JVM left suspended by an earlier launch is the usual reason; stop it "
-						+ "and try again."
-				)
-				return
-			}
-		} else if let free = DebugPort.free() {
-			port = free
-		} else {
-			notify("No free port", detail: "The debugger needs a local port and the kernel had none.")
-			return
-		}
-
-		let plan = ScriptLaunch.plan(
-			kind: kind,
-			port: port,
-			environment: environment,
-			arguments: configuration.expandedArguments(root: root)
-		)
-
-		setPanelVisible(true)
-		runControl?.setStatus("Starting \(configuration.name)…", busy: true)
-
-		let words = [program] + plan.arguments
-		let pane = bottomPanel.runCommand(
-			title: configuration.name,
-			command: words.map(Self.shellQuoted).joined(separator: " "),
-			directory: URL(fileURLWithPath: directory),
-			environment: plan.environment,
-			reusing: "run:\(configuration.id)"
-		)
-		followRunningPane(pane)
-		// Said in the debug console rather than only in the status line: it is
-		// the one record of what was actually arranged, and the command in the
-		// run pane does not show it — the option went into the environment.
-		bottomPanel.showDebug()?.appendOutput(plan.note + "\n")
-
-		scriptDebugExit = nil
-		runControl?.setStatus(
-			"Waiting for the JVM on \(plan.port)…", busy: true, preparing: true
-		)
-
-		// Detached, and that is the point rather than a detail: the poll blocks a
-		// thread for up to a quarter of a second at a time and keeps it up for
-		// two minutes, and a `Task { @MainActor in … }` here would inherit this
-		// window's actor and make that thread the one drawing. A launch that is
-		// waiting has to leave the project usable — the wait is for a grandchild
-		// process, and nothing about it belongs on the main thread.
-		let waitedPort = plan.port
-		let waiter = Task.detached { [weak self] in
-			let opened = await DebugPort.waitUntilOpen(waitedPort)
-			await self?.scriptDebugFinished(
-				opened: opened, configuration: configuration, kind: kind, port: waitedPort, root: root
-			)
-		}
-
-		// The poll above is waiting for a JVM that this process starts. Once the
-		// process itself is gone, no JVM is coming and there is nothing left to
-		// wait for — so stop, rather than spending the rest of the two minutes
-		// saying "Waiting for the JVM" about something that has already failed.
-		//
-		// That is how a duplicate JDWP option in MAVEN_OPTS presented: VM
-		// initialisation refused it in the first second, and the window then sat
-		// on "Waiting for the JVM on 49565…" for two minutes before offering
-		// advice about forked goals, which had nothing to do with it. The
-		// handler is taken and called on rather than replaced, the way
-		// `followRunningPane` does it, so the run tab still learns its process
-		// has gone.
-		let followHandler = pane?.terminalView.onProcessExit
-		pane?.terminalView.onProcessExit = { [weak self] code in
-			followHandler?(code)
-			MainActor.assumeIsolated {
-				self?.scriptDebugExit = code
-				waiter.cancel()
-			}
-		}
-	}
-
-	/// What the script being debugged exited with, while its port is awaited.
-	///
-	/// Read when the wait ends to tell "the build is still going" from "the thing
-	/// died", which from the port alone look identical.
-	private var scriptDebugExit: Int32?
-
-	/// What to do once the wait for the script's JVM is over, however it ended.
-	///
-	/// A method rather than the tail of the detached task's closure: the closure
-	/// runs off the main actor and everything here belongs on it, and reaching
-	/// back into a weakly captured `self` from inside a nested `MainActor.run`
-	/// is a captured-var reference that Swift 6 makes an error.
-	@MainActor
-	private func scriptDebugFinished(
-		opened: Bool,
-		configuration: LaunchConfiguration,
-		kind: ScriptLaunch.Kind,
-		port: Int,
-		root: URL
-	) {
-		guard opened else {
-			// Three ways this ends badly now, and the first is the one that used
-			// to be reported as one of the other two.
-			if let code = scriptDebugExit {
-				runControl?.setStatus(
-					"Exited with code \(code) before opening \(port)", failed: true
-				)
-				notify(
-					"\(configuration.name) exited before the JVM opened port \(port)",
-					detail: "Exit code \(code). Whatever it printed is in the run pane — the "
-						+ "script never got as far as a JVM, so none of the advice about which "
-						+ "goal forks one applies."
-				)
-				return
-			}
-			// Deliberately specific about the two ways this ends badly, because
-			// they need opposite things done about them.
-			runControl?.setStatus("The JVM never opened \(port)", failed: true)
-			notify("Nothing opened port \(port)", detail: Self.scriptDebugAdvice(for: kind))
-			return
-		}
-		attachToScriptJVM(configuration, port: port, root: root)
-	}
-
-	/// What to try when the port never opened, which differs by wrapper.
-	private static func scriptDebugAdvice(for kind: ScriptLaunch.Kind) -> String {
-		switch kind {
-		case .maven:
-			return "Maven ran but no JVM took the debug option. A forked goal starts a second JVM "
-				+ "that does not inherit MAVEN_OPTS — Surefire needs it in argLine, Spring Boot in "
-				+ "jvmArguments."
-		case .gradle:
-			return "Gradle ran but nothing forked a JVM. --debug-jvm only opens a port for a task "
-				+ "that starts one, which means a JavaExec or Test task."
-		case .script:
-			return "The script ran but started no JVM under JAVA_TOOL_OPTIONS. If it starts the JVM "
-				+ "through something that clears the environment, the option has to go in there "
-				+ "instead."
-		}
-	}
-
-	/// Connects the Java debugger to a JVM that is up and waiting.
-	private func attachToScriptJVM(
-		_ configuration: LaunchConfiguration, port: Int, root: URL
-	) {
-		Task { @MainActor in
-			// The anchor decides which module's classpath jdtls answers about, so
-			// it is chosen against *this configuration's* working directory rather
-			// than taken from the front of the project's list — see
-			// `JavaTooling.nearestFile`.
-			//
-			// From what discovery already found, rather than by reading every
-			// source file in the project again. `refreshRunConfigurations` walks
-			// the project off the main thread when it opens and again when files
-			// change, and every Java entry it returns carries the file its `main`
-			// is in — so the answer is already in hand and cost nothing to get.
-			//
-			// Pressing Debug used to spend that walk a second time: tens of
-			// thousands of file reads on a large repository, in the seconds right
-			// after the JVM had suspended itself waiting for us.
-			let directory = configuration.expandedWorkingDirectory(root: root)
-			var anchor = JavaTooling.nearestFile(
-				to: directory,
-				among: runConfigurations.filter { $0.source == .javaMain }.compactMap(\.file)
-			).map { URL(fileURLWithPath: $0) }
-
-			// Only if discovery has not run yet, or found none — a project opened
-			// a moment ago, which is exactly when somebody presses Debug.
-			//
-			// **Any Java file in the module will do, and a main class is not needed
-			// to find one.** The anchor names a module and nothing more: jdtls
-			// answers about the project the file belongs to. Asking for a main class
-			// meant reading every source file in the repository — 96–139 s on a
-			// checkout of 13,754 of them, to reach the seven that had a `main` —
-			// while the JVM sat suspended waiting for the debugger being arranged
-			// here.
-			//
-			// So it is asked for in two ways, better one first. A configuration that
-			// names a module is anchored by a file from that module, which is a few
-			// `stat`s and is *precise*. A configuration whose directory is the
-			// project root names no module and gives nothing to be precise about:
-			// the cheap search would answer with whichever module the walk reached
-			// first, which on the repository this was measured on was a
-			// build-tooling module nobody was debugging. The main classes are the
-			// better signal for that case — and now that the scan behind them is
-			// seconds and shared rather than minutes and repeated, it is one worth
-			// paying for.
-			if anchor == nil, FilePath.canonicalEvenIfMissing(URL(fileURLWithPath: directory))
-				!= FilePath.canonical(root) {
-				runControl?.setStatus("Finding the module to debug…", busy: true, preparing: true)
-				// Detached: bounded, but still a directory walk, and this is the main
-				// actor.
-				anchor = await Task.detached {
-					JavaTooling.nearestJavaFile(
-						to: URL(fileURLWithPath: directory), under: root
-					)
-				}.value.map { URL(fileURLWithPath: $0) }
-			}
-			if anchor == nil {
-				runControl?.setStatus("Looking for the class to debug…", busy: true, preparing: true)
-				let scanned = await JavaTooling.mainClassesOffMain(in: root).map(\.file)
-				anchor = JavaTooling.nearestFile(to: directory, among: scanned)
-					.map { URL(fileURLWithPath: $0) }
-			}
-			// Said in the debug console, beside the plan: which file the classpath
-			// was asked about is the difference between debugging this module and
-			// debugging whichever one sorted first, and it is not visible anywhere
-			// else.
-			if let anchor {
-				bottomPanel.showDebug()?.appendOutput(
-					"Classpath from \(MakeLaunch.relativeToWorkspace(anchor, root: root))\n"
-				)
-			}
-
-			// The class files and the server's own port together, as the pod
-			// attach does: a frame from the JVM then lands on the source it was
-			// compiled from rather than on a decompiled stub.
-			let target: LanguageService.JavaLaunchTarget
-            do {
-				target = try await LanguageService.shared.javaLaunchTarget(
-					project: root,
-					anchor: anchor,
-					saying: { sentence in
-						self.runControl?.setStatus(sentence, busy: true, preparing: true)
-					}
-				)
-			} catch {
-				runControl?.setStatus("Java cannot be debugged yet", failed: true)
-				// The error already says which of the several reasons it was —
-				// jdtls not installed, the java-debug bundle missing, an import
-				// still running, a classpath with nothing in it — and each wants
-				// something different done about it. `JavaDebugFailure` spells
-				// every one of them out; reporting one sentence about readiness
-				// instead threw that away and sent somebody looking at a language
-				// server that was never on the machine.
-				notify(
-					"Java cannot be debugged here",
-					detail: error.localizedDescription
-						+ "\n\nThe JVM is waiting on port \(port) until a debugger arrives or you "
-						+ "stop it."
-				)
-				return
-			}
-
-			var request = JavaDebug.Request(kind: .attach)
-			request.host = "127.0.0.1"
-			request.port = port
-			request.classPaths = target.classPaths
-			request.projectName = target.projectName
-
-			guard let session = bottomPanel.startDebugging(
-				adapter: DebugAdapters.java,
-				executable: DebugAdapters.java.command,
-				start: .java(host: "127.0.0.1", port: target.port, request: request),
-				breakpoints: debug.pendingBreakpoints
-			) else { return }
-			wire(session)
-		}
-	}
-
-	/// A word the shell will pass through as it was written.
-	private static func shellQuoted(_ word: String) -> String {
-		guard word.contains(where: { !$0.isLetter && !$0.isNumber && !"-_./=:@".contains($0) })
-		else { return word }
-		return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
-	}
-
-	private func debugConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
-		prepare(configuration, in: root) { [weak self] environment in
-			guard let self else { return }
-			if configuration.devPod != nil {
-				self.runInCluster(configuration, in: root, environment: environment, debug: true)
-			} else {
-				self.startDebug(configuration, in: root, environment: environment)
-			}
-		}
-	}
-
-	private func startDebug(
-		_ configuration: LaunchConfiguration,
-		in root: URL,
-		environment: [String: String]
-	) {
-		// A script before anything else, because the thing it is *not* is what
-		// the rest of this function assumes: a file a debugger can open. Handing
-		// `./mvnw` to lldb-dap got "is not a valid executable" — true, and about
-		// the wrong program. What a wrapper script has to be debugged through is
-		// the JVM it eventually starts.
-		if let kind = ScriptLaunch.kind(ofProgramAt: configuration.expandedProgram(root: root)) {
-			// The JVM option variables are resolved against the shell that will run
-			// the command before the plan is made, so that the plan can both take
-			// the agents out of them and add its own without losing what was
-			// there. See `ShellEnvironment.values(of:in:)` for why this app's own
-			// environment is the wrong thing to ask.
-			Task { @MainActor in
-				let directory = URL(
-					fileURLWithPath: configuration.expandedWorkingDirectory(root: root)
-				)
-				let known = ScriptLaunch.jvmOptionVariables.filter { environment[$0] == nil }
-				let fromShell = await ShellEnvironment.values(of: known, in: directory)
-				self.startScriptDebug(
-					configuration,
-					kind: kind,
-					in: root,
-					environment: environment.merging(fromShell) { mine, _ in mine }
-				)
-			}
-			return
-		}
-
-		let adapter = DebugAdapters.adapter(id: configuration.adapterID) ?? DebugAdapters.lldb
-
-		// Nothing to find on disk for Java: the adapter is started by the
-		// language server, which is either running or is the thing to fix.
-		if adapter.transport == .languageServer {
-			guard let mainClass = configuration.javaMainClass else {
-				notify(
-					"This configuration does not say what to start",
-					detail: "A Java configuration needs a mainClass — the fully qualified name of "
-						+ "the class with the main method."
-				)
-				return
-			}
-			startJavaDebug(
-				name: configuration.name,
-				mainClass: mainClass,
-				anchorFile: nil,
-				workingDirectory: URL(fileURLWithPath: configuration.expandedWorkingDirectory(root: root)),
-				arguments: configuration.expandedArguments(root: root),
-				vmArguments: configuration.javaVMArguments,
-				environment: environment
-			)
-			return
-		}
-
-		guard let executable = DebugAdapters.executable(for: adapter) else {
-			notify("\(adapter.name) is not installed", detail: adapter.installHint)
-			return
-		}
-
-		setPanelVisible(true)
-		runControl?.setStatus("Debugging \(configuration.name)…", busy: true)
-		guard let session = bottomPanel.startDebugging(
-			adapter: adapter,
-			executable: executable,
-			start: .launch(
-				program: configuration.expandedProgram(root: root),
-				arguments: configuration.expandedArguments(root: root),
-				workingDirectory: URL(
-					fileURLWithPath: configuration.expandedWorkingDirectory(root: root)
-				),
-				environment: environment
-			),
-			breakpoints: debug.pendingBreakpoints
-		) else { return }
-		wire(session)
-	}
-
-	/// Starts a Java debug session.
-	///
-	/// Two things have to come from a Java language server and neither can be
-	/// worked out here: the port its debug adapter is listening on, and the
-	/// classpath of the module the class belongs to. A JVM started without the
-	/// second one fails with `ClassNotFoundException` on the class it was asked
-	/// to run, which reads like the class is missing rather than the classpath.
-	///
-	/// **Which server that is may not be the one editing.** Since 0452, a project
-	/// that chose the fast Java server for editing gets a jdtls started here for
-	/// the debugger alone — and the wait for its import is what pressing Debug
-	/// costs on a large project. So the status line says what is being waited for
-	/// while it happens, in the server's own words where it has any: a spinner
-	/// that says nothing looks exactly like a debugger that has hung.
-	private func startJavaDebug(
-		name: String,
-		mainClass: String,
-		anchorFile: URL?,
-		workingDirectory: URL,
-		arguments: [String],
-		vmArguments: [String] = [],
-		environment: [String: String]
-	) {
-		guard let project else { return }
-		// The scope, because the adapter lives inside the language server and
-		// the server for a subproject is filed under the subproject: asking the
-		// repository above it gets `noServer` in a checkout of several.
-		let root = project.scopeRoot
-
-		setPanelVisible(true)
-		runControl?.setStatus("Debugging \(name)…", busy: true)
-
-		Task { @MainActor in
-			// Any file in the module will do — the question is about the project
-			// the file belongs to, not the file — so the class's own source is
-			// used when there is one and any main class in the project otherwise.
-			// The scan reads every source file in the project, and this closure is
-			// on the main actor: called synchronously here it was the whole-repository
-			// walk on the main thread, which is a beach ball rather than a slow status
-			// — 96–139 s of one on the checkout this was measured on. `mainClasses`
-			// says as much in its own documentation.
-			var anchor = anchorFile
-			if anchor == nil {
-				anchor = await JavaTooling.mainClassesOffMain(in: root)
-					.first { $0.name == mainClass }
-					.map { URL(fileURLWithPath: $0.file) }
-			}
-
-			let target: LanguageService.JavaLaunchTarget
-			do {
-				target = try await LanguageService.shared.javaLaunchTarget(
-					project: root,
-					anchor: anchor,
-					// Strongly, because the `Task` around this already holds self
-					// and a weak capture inside one buys nothing.
-					saying: { sentence in
-						self.runControl?.setStatus(sentence, busy: true)
-						self.bottomPanel.showDebug()?.appendOutput(sentence + "\n")
-					}
-				)
-			} catch {
-				runControl?.setStatus("Java cannot be debugged yet", failed: true)
-				// The missing bundle gets the whole manual rather than one line:
-				// it is the one failure here nobody can guess the fix for.
-				var detail = error.localizedDescription
-				if let failure = error as? LanguageService.JavaDebugFailure, case .noBundle = failure {
-					detail = JavaTooling.debugPluginManual
-				}
-				if let failure = error as? JavaDebugHost.Failure, case .noBundle = failure {
-					detail = JavaTooling.debugPluginManual
-				}
-				notify("Java cannot be debugged yet", detail: detail)
-				return
-			}
-
-			runControl?.setStatus("Debugging \(name)…", busy: true)
-			let request = JavaDebug.Request(
-				kind: .launch,
-				mainClass: mainClass,
-				classPaths: target.classPaths,
-				projectName: target.projectName,
-				workingDirectory: workingDirectory.path,
-				arguments: arguments,
-				vmArguments: vmArguments,
-				environment: environment
-			)
-			guard let session = bottomPanel.startDebugging(
-				adapter: DebugAdapters.java,
-				executable: DebugAdapters.java.command,
-				start: .java(host: "127.0.0.1", port: target.port, request: request),
-				breakpoints: debug.pendingBreakpoints
-			) else { return }
-			wire(session)
-		}
-	}
 
 	// MARK: - Hot code replace
-
-	/// Says what a swap into the running JVM did.
-	///
-	/// **Most of these are refusals, and that is the JVM rather than a fault.**
-	/// HotSpot replaces method bodies and nothing else, so adding a method,
-	/// changing a signature, adding a field and changing what a class extends are
-	/// all refused — which is most of what editing feels like. A report that said
-	/// only "hot swap failed" would teach somebody to ignore it; one that carries
-	/// the adapter's own sentence tells them why they are about to restart.
-	private func reportHotSwap(
-		_ event: JavaDebug.HotSwap.Event, wasStopped: Bool, in session: DebugSession
-	) {
-		// Every stage in the log as well as the console. `BUILD_COMPLETE` with no
-		// `END` after it is the shape of "the adapter compiled and then found
-		// nothing to redefine", and telling that from "no events at all" is the
-		// whole of diagnosing a swap that does not happen.
-		DiagnosticLog.write(
-			"java hot code replace: \(event.stage.rawValue) \(event.message ?? "")", to: "lsp"
-		)
-		// **`activeDebugPane` and not `showDebug()`, which was the fault.**
-		// `showDebug()` ends in `activate(session, focus: true)` — it brings the
-		// pane forward *and takes the keyboard*. Called once per hot-swap event,
-		// that meant every save during a debug session pulled the focus out of
-		// the editor: reported as "I lose focus whenever I save, as soon as the
-		// application runs", and it is also why ⌘Z looked broken afterwards —
-		// the undo history was never lost, the keyboard was somewhere else.
-		//
-		// Reporting is not a reason to move anybody's keyboard. The pane is
-		// written into where it is; somebody who wants to look at it clicks it.
-		let console = bottomPanel.activeDebugPane
-		switch event.stage {
-		case .starting:
-			// Before anything has happened. In the console, where somebody
-			// looking for it finds it, and not in the corner of the window — a
-			// toast per save is a toast nobody reads.
-			if let message = event.message { console?.appendOutput(message + "\n") }
-
-		case .buildComplete:
-			if let message = event.message { console?.appendOutput(message + "\n") }
-			// **And now ask, which is the half that was missing.** The adapter
-			// says the build is done and then waits: `AUTO` is this client's
-			// policy about the event, not something the adapter acts on alone.
-			// Sending it here rather than on the save is what makes the timing
-			// right — the adapter knows when its compile finished and nothing
-			// out here does.
-			Task { @MainActor in
-				guard let result = await session.redefineClasses() else { return }
-				if let failure = result.errorMessage, !result.didSwap {
-					self.reportHotSwap(
-						JavaDebug.HotSwap.Event(stage: .error, message: failure),
-						wasStopped: wasStopped, in: session
-					)
-					return
-				}
-				guard result.didSwap else { return }
-				self.reportHotSwap(
-					JavaDebug.HotSwap.Event(
-						stage: .end,
-						message: "Redefined " + result.changed.joined(separator: ", ")
-					),
-					wasStopped: wasStopped, in: session
-				)
-			}
-
-		case .end:
-			console?.appendOutput((event.message ?? "Classes redefined in the running JVM") + "\n")
-			// **And the stack moved, which is the most confusing thing this
-			// does.** The adapter drops to an affected frame and enters it
-			// again, so somebody stopped in the method they just edited is
-			// suddenly somewhere else. Not this app's behaviour to decline, and
-			// unexplained it reads as the debugger losing its place.
-			if JavaDebug.HotSwap.movedTheStack(event, wasStopped: wasStopped) {
-				console?.appendOutput(
-					"The frame you were stopped in was entered again, so the new body runs "
-						+ "from its start.\n"
-				)
-			}
-
-		case .warning:
-			if let message = event.message { console?.appendOutput(message + "\n") }
-
-		case .error:
-			let detail = event.message ?? "The JVM would not take the change."
-			console?.appendOutput(detail + "\n")
-			// A session that cannot swap at all says so once — `cannotHotSwap`
-			// is set by the session the first time a failure is about the session
-			// rather than about the change, so this is the only time it is true
-			// and unsaid.
-			if session.cannotHotSwap {
-				guard !saidThisSessionCannotHotSwap else { return }
-				saidThisSessionCannotHotSwap = true
-				notify(
-					"This session cannot replace code",
-					detail: detail + "\nSaving will not change the running program.",
-					kind: .information
-				)
-				return
-			}
-			notify(
-				"The JVM would not take that change",
-				detail: detail + "\nIt replaces method bodies and nothing else.",
-				kind: .warning,
-				actionTitle: restartTitle(for: session),
-				action: { [weak self] in self?.runSelectedConfiguration(debug: true) }
-			)
-		}
-	}
-
-	/// Said once per session, since `cannotHotSwap` stays true afterwards.
-	private var saidThisSessionCannotHotSwap = false
-
-	/// What the restart offer is about to restart.
-	///
-	/// **Named for an attached session, because it is somebody's service.**
-	/// Restarting a JVM this app launched costs a process nobody else is using;
-	/// restarting one in a pod is a different sentence and deserves to be read
-	/// before it is pressed.
-	private func restartTitle(for session: DebugSession) -> String {
-		session.isAttached ? "Restart the program being debugged" : "Restart the session"
-	}
 
 	/// A save during a Java debug session, which is what makes a swap happen.
 	///
@@ -8315,428 +5720,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// of the feature without the feature.
 		if case .terminated = session.state { return }
 		if case .idle = session.state { return }
-		queueHotSwapCompile(project: project.scopeRoot)
+		run.queueHotSwapCompile(project: project.scopeRoot)
 	}
 
-	private var hotSwapCompileRunning = false
-	private var hotSwapCompileQueued = false
-
-	private func queueHotSwapCompile(project root: URL) {
-		guard !hotSwapCompileRunning else {
-			hotSwapCompileQueued = true
-			return
-		}
-		hotSwapCompileRunning = true
-		Task { @MainActor in
-			_ = await LanguageService.shared.compileJavaForSwap(project: root)
-			self.hotSwapCompileRunning = false
-			if self.hotSwapCompileQueued {
-				self.hotSwapCompileQueued = false
-				self.queueHotSwapCompile(project: root)
-			}
-		}
-	}
-
-	/// The list of configurations, and the ways to change them.
-	///
-	/// **A popover rather than the flat menu it used to be.** The menu printed
-	/// goals × modules: a reactor of a hundred modules offering three goals came
-	/// to three hundred rows, two hundred and ninety-seven of them saying the
-	/// same three words, running off the bottom of the screen and under a scroll
-	/// arrow — and an `NSMenu` cannot be typed at, so there was nothing to do
-	/// but scroll it. `RunPicker` names each goal once and treats the module as
-	/// the second choice it is; this is the same popover the project pill and
-	/// the branch pill use, so the filtering and the keys are the ones already
-	/// there.
-	private func showConfigurationMenu(from rect: NSRect, in control: RunControl) {
-		ProjectSwitcherPopover.show(
-			relativeTo: control,
-			anchorRect: rect,
-			currentProject: project,
-			owner: self,
-			focus: .runs,
-			runs: runList()
-		)
-	}
-
-	/// Everything the run popover needs: what can be run, what is chosen, and
-	/// what choosing one means.
-	///
-	/// The four sources are the menu's own, untouched — this is only what is
-	/// done with what they found.
-	func runList() -> ProjectSwitcherPopover.RunList {
-		let saved = launchConfigurations
-		let savedNames = Set(saved.map(\.name))
-
-		// The saved ones as rows. Only a name and a source are read from these:
-		// choosing one selects it by name, exactly as the menu item did.
-		var all: [RunConfiguration] = saved.map { entry in
-			RunConfiguration(
-				name: entry.name,
-				source: .vscode,
-				executable: entry.program,
-				arguments: entry.arguments,
-				workingDirectory: entry.workingDirectory
-			)
-		}
-
-		all += runConfigurations.filter { $0.source == .xcodeScheme }
-
-		for goal in makeGoals() where !savedNames.contains("make \(goal.name)") {
-			all.append(RunConfiguration(
-				name: "make \(goal.name)",
-				source: .make,
-				executable: "make",
-				arguments: [goal.name],
-				workingDirectory: goal.makefile.path.deletingLastPathComponent().path,
-				file: goal.makefile.path.path
-			))
-		}
-
-		all += runConfigurations.filter {
-			($0.source == .maven || $0.source == .gradle || $0.source == .javaMain)
-				&& !savedNames.contains($0.name)
-		}
-
-		var actions: [(title: String, symbol: String, handler: () -> Void)] = []
-		if selectedConfiguration != nil {
-			actions.append(("Edit\u{2026}", "pencil", { [weak self] in
-				self?.editSelectedConfiguration()
-			}))
-			// One local and one in the cluster differ by two fields, so the way
-			// to get the second is a copy of the first.
-			actions.append(("Duplicate\u{2026}", "plus.square.on.square", { [weak self] in
-				self?.duplicateSelectedConfiguration()
-			}))
-		}
-		actions.append(("New\u{2026}", "plus", { [weak self] in self?.addConfiguration() }))
-		actions.append(("Open launch.json", "doc.text", { [weak self] in self?.openLaunchFile() }))
-
-		return ProjectSwitcherPopover.RunList(
-			arrangement: RunPicker.arrange(all, pinned: savedNames),
-			selected: selectedConfigurationName,
-			choose: { [weak self] configuration in self?.chose(configuration) },
-			actions: actions
-		)
-	}
-
-	/// What choosing a row means, which depends on where the row came from.
-	///
-	/// The same four behaviours the menu items had, in one place instead of four
-	/// selectors: a saved configuration is selected, a scheme is started, a make
-	/// goal goes through `MakeLaunch` because it may become a debuggable entry,
-	/// and everything else is selected as the goal to run.
-	private func chose(_ configuration: RunConfiguration) {
-		switch configuration.source {
-		case .vscode, .intelliJ:
-			selectedMakeRun = nil
-			selectedConfigurationName = configuration.name
-			refreshRunControl()
-
-		case .xcodeScheme:
-			// A scheme has a second axis of its own — where it runs — and in the
-			// menu that axis was a submenu, which is the only way a scheme could
-			// be started from this control at all. A popover row has no submenu,
-			// so the destination list opens as a menu from where the row was.
-			// It is not folded like a reactor's modules because the destinations
-			// are not known yet: asking Xcode takes about twelve seconds, and a
-			// row that could not say what was behind it until then would be
-			// worse than the menu it replaced.
-			guard let target = configuration.xcode, let control = runControl else {
-				run(configuration)
-				return
-			}
-			let menu = destinationMenu(for: configuration, target: target)
-			menu.popUp(positioning: nil, at: NSPoint(x: 0, y: control.bounds.maxY), in: control)
-
-		case .make:
-			guard let file = configuration.file, let goal = configuration.arguments.first else { return }
-			chooseMakeGoal(goal, inMakefileAt: URL(fileURLWithPath: file))
-
-		default:
-			// Chosen, not started — the same bargain the build goals had: picking
-			// from a list says which one, and the play button says when.
-			selectedMakeRun = configuration
-			selectedConfigurationName = configuration.name
-			refreshRunControl()
-		}
-	}
-
-	/// The goals in the project's Makefiles that start a Go program.
-	///
-	/// Read fresh each time the menu opens: a Makefile is edited while the
-	/// project is open, and a stale list would offer goals that no longer
-	/// exist and hide the ones just added.
-	private func debuggableMakeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
-		makeGoals().filter { MakeLaunch.plan(for: $0.name, in: $0.makefile) != nil }
-	}
-
-	/// Every goal the project's Makefiles define, worth offering to run.
-	///
-	/// Read here rather than taken from the discovered configurations: those
-	/// are found on a background queue when the project opens, and a menu
-	/// opened before that finished showed nothing at all — which is what "why
-	/// is `make dev` not offered" turned out to be.
-	///
-	/// Goals that clean, sidebar.install or explain themselves are left out: a run
-	/// menu is a list of ways to start the thing being worked on.
-	private func makeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
-		guard let project else { return [] }
-		var found: [(Makefile, String, String)] = []
-
-		let uninteresting: Set<String> = [
-			"help", "clean", "distclean", "sidebar.install", "uninstall", "all",
-		]
-		for url in Makefile.find(in: project.root) {
-			guard let makefile = Makefile.read(at: url) else { continue }
-			for target in makefile.targets
-			where !uninteresting.contains(target.name) && !target.recipe.isEmpty {
-				found.append((makefile, target.name, target.summary))
-			}
-		}
-		return found
-	}
-
-	/// Every goal every Makefile in the project defines, for the dialog.
-	///
-	/// Unfiltered, unlike the ones offered beside the play button. That list
-	/// leaves out the goals nobody wants suggested — `help`, `clean`,
-	/// `sidebar.install` — because suggesting them is noise; but somebody who came
-	/// here has said which one they want, and refusing to show `sidebar.install`
-	/// because it is usually uninteresting is refusing the thing they asked
-	/// for.
-	private func allMakeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
-		guard let project else { return [] }
-		var found: [(Makefile, String, String)] = []
-		for url in Makefile.find(in: project.root) {
-			guard let makefile = Makefile.read(at: url) else { continue }
-			for target in makefile.targets where !target.recipe.isEmpty {
-				found.append((makefile, target.name, target.summary))
-			}
-		}
-		return found
-	}
-
-	/// Makes a launch configuration out of any goal in the project.
-	@objc func newFromMakeGoal(_ sender: Any?) {
-		let goals = allMakeGoals()
-		guard !goals.isEmpty else {
-			notify("No Makefile goals here", detail: "Nothing in this project defines any.")
-			return
-		}
-
-		let alert = NSAlert()
-		alert.messageText = "New from Make goal"
-		alert.informativeText = "It becomes a launch configuration you can run, edit and keep."
-		alert.addButton(withTitle: "Create")
-		alert.addButton(withTitle: "Cancel")
-
-		let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 25))
-		for goal in goals {
-			// The summary beside the name, since a Makefile that documents
-			// itself has already said what each one is for.
-			let title = goal.summary.isEmpty ? goal.name : "\(goal.name) — \(goal.summary)"
-			picker.addItem(withTitle: title)
-		}
-		alert.accessoryView = picker
-
-		guard alert.runModal() == .alertFirstButtonReturn else { return }
-		let goal = goals[max(0, min(goals.count - 1, picker.indexOfSelectedItem))]
-
-        let directory = goal.makefile.path.deletingLastPathComponent()
-		let configuration = LaunchConfiguration(
-			name: LaunchNames.free(
-				like: "make \(goal.name)", avoiding: launchConfigurations.map(\.name)
-			),
-			type: "shell",
-			program: "make",
-			arguments: [goal.name],
-			workingDirectory: directory.path
-		)
-		do {
-			_ = try LaunchStore.save(configuration, in: launchRoot)
-		} catch {
-			notify("Could not write the configuration", detail: error.localizedDescription)
-			return
-		}
-		refreshRunConfigurations()
-		selectedConfigurationName = configuration.name
-		refreshRunControl()
-	}
-
-	/// Runs a goal the Makefile defines but nothing here can debug.
-	///
-	/// Exactly what `make <goal>` does, in the terminal, where its output
-	/// belongs — the same path the play button beside a target in a Makefile
-	/// takes.
-	@objc private func makeGoalRunChosen(_ sender: NSMenuItem) {
-		guard let parts = sender.representedObject as? [String], parts.count == 2 else { return }
-		// Chosen, not started: picking something from a list of things to run
-		// says which one, and the play button says when. Starting a build
-		// because somebody looked at the menu is a surprise.
-		selectedMakeRun = RunConfiguration(
-			name: "make \(parts[1])",
-			source: .make,
-			executable: "make",
-			arguments: [parts[1]],
-			workingDirectory: URL(fileURLWithPath: parts[0]).deletingLastPathComponent().path
-		)
-		selectedConfigurationName = selectedMakeRun?.name
-		refreshRunControl()
-	}
-
-	/// A goal from a build file chosen from the menu that has no launch
-	/// configuration — a make target, a Maven goal, a Gradle task. Play runs it
-	/// the way its build tool would.
-	///
-	/// Named for make because make was the first, and the selection model calls
-	/// it that too. Nothing about it is make-specific.
-	private var selectedMakeRun: RunConfiguration?
-
-	/// Runs a goal of a Maven or Gradle build, chosen from the run menu.
-	///
-	/// Chosen, not started — the same bargain as a make goal: picking from a
-	/// list says which one, and the play button says when.
-	@objc private func buildGoalChosen(_ sender: NSMenuItem) {
-		guard let id = sender.representedObject as? String,
-		      let configuration = runConfigurations.first(where: { $0.id == id })
-		else { return }
-
-		selectedMakeRun = configuration
-		selectedConfigurationName = configuration.name
-		refreshRunControl()
-	}
-
-	@objc private func makeGoalChosen(_ sender: NSMenuItem) {
-		guard let parts = sender.representedObject as? [String], parts.count == 2 else {
-			notify("That Makefile could not be read")
-			return
-		}
-		chooseMakeGoal(parts[1], inMakefileAt: URL(fileURLWithPath: parts[0]))
-	}
-
-	/// Picks a Makefile goal to run, from the menu or from the run popover.
-	///
-	/// Shared rather than duplicated: what a goal becomes is decided here, by
-	/// `MakeLaunch`, and deciding it anywhere else is how a goal came to be
-	/// offered as debuggable and then do nothing.
-	private func chooseMakeGoal(_ goal: String, inMakefileAt path: URL) {
-		guard let project, let makefile = Makefile.read(at: path) else {
-			notify("That Makefile could not be read")
-			return
-		}
-
-		// Chosen, not started: picking something from a list of things to run
-		// says which one, and the play button says when.
-		switch MakeLaunch.choice(for: goal, in: makefile, projectRoot: project.root) {
-		case let .run(configuration):
-			selectedMakeRun = configuration
-			selectedConfigurationName = configuration.name
-			refreshRunControl()
-
-		case let .debug(configuration):
-			do {
-				_ = try LaunchStore.save(configuration, in: launchRoot)
-				selectedMakeRun = nil
-				selectedConfigurationName = configuration.name
-				refreshRunControl()
-				notify(
-					"Added “\(configuration.name)”",
-					detail: Self.describe(configuration, root: launchRoot),
-					kind: .information
-				)
-			} catch {
-				notify("Could not write launch.json", detail: error.localizedDescription)
-			}
-		}
-	}
-
-	/// What a derived configuration will actually do, in a sentence or three.
-	private static func describe(_ configuration: LaunchConfiguration, root: URL) -> String {
-		var lines: [String] = []
-		if let step = configuration.makeStep {
-			lines.append("Builds with make \(step.targets.joined(separator: " ")) first.")
-		}
-		lines.append("Debugs \(configuration.program) with the arguments the recipe passes.")
-		if !configuration.environmentCommands.isEmpty {
-			let names = configuration.environmentCommands.keys.sorted().joined(separator: ", ")
-			lines.append("\(names) come from the shell each time it starts.")
-		}
-		return lines.joined(separator: "\n")
-	}
-
-	@objc private func configurationChosen(_ sender: NSMenuItem) {
-		selectedMakeRun = nil
-		selectedConfigurationName = sender.representedObject as? String
-		refreshRunControl()
-	}
-
-	@objc private func openLaunchFile() {
-		guard project != nil else { return }
-		let file = LaunchFile.url(in: launchRoot)
-		guard FileManager.default.fileExists(atPath: file.path) else {
-			notify("No launch.json yet", detail: "Press run once and one will be written.", kind: .information)
-			return
-		}
-		editor.open(fileURL: file, focusEditor: true)
-	}
-
-	@objc private func addConfiguration() {
-		guard let project else { return }
-		let suggestion = LaunchFile.suggestion(for: launchRoot)
-			?? LaunchConfiguration(name: project.name, type: "lldb", program: "${workspaceFolder}")
-		presentConfigurationEditor(suggestion, isNew: true)
-	}
-
-	/// Copies the selected configuration under a free name and opens it.
-	///
-	/// The copy is what somebody wanted: the same program and arguments, run
-	/// somewhere else. It opens in the editor because the name and the one
-	/// field that differs are the reason for making it.
-	@objc private func duplicateSelectedConfiguration() {
-		guard let configuration = selectedConfiguration else { return }
-		var copy = configuration
-		copy.name = LaunchNames.copy(
-			of: configuration.name, avoiding: launchConfigurations.map(\.name)
-		)
-		presentConfigurationEditor(copy, isNew: true)
-	}
-
-	@objc private func editSelectedConfiguration() {
-		guard let configuration = selectedConfiguration else { return }
-		presentConfigurationEditor(configuration, isNew: false)
-	}
-
-	/// Asks for the parts of a configuration worth changing by hand.
-	///
-	/// Arguments, working directory and environment — the three that differ
-	/// between one run and the next. Everything else in the entry is left
-	/// alone, including keys this app knows nothing about.
-	private func presentConfigurationEditor(_ configuration: LaunchConfiguration, isNew: Bool) {
-		guard project != nil else { return }
-
-		// A configuration that is not written down yet is written now, so the
-		// page has something to select. Nothing is lost by it: an unwanted one
-		// is deleted with the same button that deletes any other.
-		if isNew {
-			let free = LaunchNames.free(
-				like: configuration.name, avoiding: launchConfigurations.map(\.name)
-			)
-			var stored = configuration
-			stored.name = free
-			do {
-				_ = try LaunchStore.save(stored, in: launchRoot)
-			} catch {
-				notify("Could not write the configuration", detail: error.localizedDescription)
-				return
-			}
-			selectedConfigurationName = free
-			refreshRunControl()
-			showLaunchConfigurations(selecting: free)
-			return
-		}
-		showLaunchConfigurations(selecting: configuration.name)
-	}
 
 	/// Opens the settings as a page in the editor.
 	///
@@ -8756,72 +5742,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// And which one it asked to be folded away, since a triangle needs a click.
 	var settingsFoldForTesting: String?
-
-	/// Opens the launch configurations as a page in the editor.
-	///
-	/// A page rather than a dialog: a configuration is edited while looking at
-	/// the code it runs, and a modal panel takes the project away for as long
-	/// as it is open.
-	func showLaunchConfigurations(selecting name: String? = nil) {
-		leaveTerminalFullScreen()
-		guard project != nil, let group = editor.activeGroup else { return }
-
-		let page = (group.page(identifier: "launch") as? LaunchConfigurationsPage)
-			?? LaunchConfigurationsPage()
-		page.onSave = { [weak self] updated, previousName in
-			guard let self else { return }
-			do {
-				// Renaming replaces rather than duplicating.
-				if let previousName, previousName != updated.name {
-					_ = try LaunchStore.remove(named: previousName, in: launchRoot)
-					if self.selectedConfigurationName == previousName {
-						self.selectedConfigurationName = updated.name
-					}
-				}
-				_ = try LaunchStore.save(updated, in: launchRoot)
-				self.refreshRunControl()
-			} catch {
-				self.notify("Could not write the configuration", detail: error.localizedDescription)
-			}
-		}
-		page.onDelete = { [weak self] name in
-			guard let self else { return }
-			_ = try? LaunchStore.remove(named: name, in: launchRoot)
-			if self.selectedConfigurationName == name { self.selectedConfigurationName = nil }
-			self.refreshRunControl()
-		}
-		page.onStart = { [weak self] configuration, mode in
-			guard let self else { return }
-			self.selectedConfigurationName = configuration.name
-			self.refreshRunControl()
-			switch mode {
-			case .run: self.runSelectedConfiguration(debug: false)
-			case .debug: self.runSelectedConfiguration(debug: true)
-			case .profile: self.profileSelectedConfiguration()
-			case .coverage: self.runSelectedWithCoverage()
-			}
-		}
-
-		group.openPage(page, title: "Launch Configurations", identifier: "launch", symbol: "play.square")
-
-		// The part being worked on, not the repository around it: a subproject
-		// has its own configurations, and a page showing the ones belonging to
-		// somewhere else is a page showing nothing.
-		page.load(
-			LaunchStore.read(in: launchRoot),
-			root: launchRoot,
-			selecting: name ?? selectedConfigurationName
-		)
-
-		// The clusters this machine knows about, once kubectl has answered:
-		// asking takes a moment and the rest of the page should not wait.
-		if Kubernetes.isAvailable {
-			Task { @MainActor [weak page] in
-				let contexts = await Kubernetes.contexts()
-				page?.setContexts(contexts)
-			}
-		}
-	}
 
 	/// Brings the debug panel forward.
 	///
@@ -8975,7 +5895,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Sets a breakpoint as a gutter click would, for verifying alignment.
 	/// Presses stop, as the titlebar button does.
-	func stopRunningForTesting() { stopRunning() }
+	func stopRunningForTesting() { run.stopRunning() }
 
 	/// Presses a key with Option held in the terminal, and says what it sent.
 	func optionKeyForTesting(bare: String, composed: String) -> String {
@@ -8998,25 +5918,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Invokes the gutter's run action, for verifying it end to end.
 	func runLineForTesting(_ line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
-		runConfiguration(forFile: url, line: line)
-	}
-
-	/// Runs, or debugs, the configuration on a line without going through the
-	/// menu — which is a separate window the harness cannot reach.
-	func invokeForTesting(line: Int, debug wantsDebug: Bool) {
-		guard let url = editor.activeGroup.activeTabURL else { return }
-		let path = RunConfigurationDiscovery.canonicalPath(url)
-		guard let configuration = runConfigurations.first(where: {
-			$0.file == path && $0.line == line
-		}) else { return }
-		if wantsDebug { debug(configuration) } else { run(configuration) }
+		run.runConfiguration(forFile: url, line: line)
 	}
 
 	/// Presses Run twice on whatever is selected, and says what the panel is
 	/// holding after each — the whole question being whether that is one
 	/// console or two.
 	func rerunSelectedForTesting(_ goal: String?) {
-		if let goal { chooseMakeRunForTesting(goal) }
+		if let goal { run.chooseMakeRunForTesting(goal) }
 		runSelected(nil)
 		DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
 			guard let self else { return }
@@ -9705,42 +6614,6 @@ extension MainWindowController {
 
 	func showBranchMenuForTesting() { showBranchMenu() }
 
-	/// The run strip in the titlebar.
-	///
-	/// Built here rather than by `TitlebarController`: it sits in that toolbar
-	/// and every button on it is about running, which is this class's until
-	/// there is a run coordinator to take it.
-	func makeRunToolbarItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
-		let item = NSToolbarItem(itemIdentifier: identifier)
-		let control = RunControl()
-		control.onRun = { [weak self] in self?.runSelectedConfiguration(debug: false) }
-		control.onDebug = { [weak self] in self?.runSelectedConfiguration(debug: true) }
-		control.onStop = { [weak self] in self?.stopRunning() }
-		control.onProfile = { [weak self] in self?.profileSelectedConfiguration() }
-		control.onCoverage = { [weak self] in self?.runSelectedWithCoverage() }
-		control.onChooseConfiguration = { [weak self, weak control] rect in
-			guard let control else { return }
-			self?.showConfigurationMenu(from: rect, in: control)
-		}
-		control.onRunStateChanged = { [weak self] state in
-			self?.titlebar.setRunState(state)
-		}
-		runControl = control
-		item.view = control
-		refreshRunControl()
-
-		// The whole strip in a menu: run, debug, stop and the list of
-		// configurations, so a narrow window loses the buttons but not the
-		// ability to press them.
-		let menu = NSMenuItem(title: "Run", action: nil, keyEquivalent: "")
-		menu.submenu = runOverflowMenu()
-		item.menuFormRepresentation = menu
-		// Last to go: it is the one thing here that is pressed rather than
-		// read.
-		item.visibilityPriority = .high
-		return item
-	}
-
 	/// One entry offering a shell in one container, or the grey generic one.
 	///
 	/// The choice travels on the item, because with several of them the title is
@@ -9754,27 +6627,6 @@ extension MainWindowController {
 		)
 		item.representedObject = choice?.file
 		return item
-	}
-
-	private func runOverflowMenu() -> NSMenu {
-		let menu = NSMenu()
-		menu.addItem(menuItem("Run", #selector(runSelected(_:))))
-		menu.addItem(menuItem("Debug", #selector(debugSelected(_:))))
-		menu.addItem(menuItem("Stop", #selector(stopSelected(_:))))
-		menu.addItem(.separator())
-
-		for configuration in launchConfigurations {
-			let item = NSMenuItem(
-				title: configuration.name,
-				action: #selector(configurationChosen(_:)),
-				keyEquivalent: ""
-			)
-			item.target = self
-			item.representedObject = configuration.name
-			item.state = configuration.name == selectedConfiguration?.name ? .on : .off
-			menu.addItem(item)
-		}
-		return menu
 	}
 
 }

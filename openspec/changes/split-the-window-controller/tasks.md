@@ -116,20 +116,24 @@
 
 ## 7. The run cluster
 
-- [ ] 7.1 `RunConfigurationDiscovery` — `refreshRunConfigurations`, the scan
+- [x] 7.1 `RunConfigurationDiscovery` — `refreshRunConfigurations`, the scan
       re-entry flags, `xcodeDestinations`
-- [ ] 7.2 `RunCoordinator` — choosing and starting: `run`, `debug`, `startRun`,
+- [x] 7.2 `RunCoordinator` — choosing and starting: `run`, `debug`, `startRun`,
       `startDebug`, `startJavaDebug`, `startScriptDebug`, `runScheme`,
       profiling and coverage, `runningPane`
-- [ ] 7.3 `LaunchConfigurationMenu` — `runList`, the make goals, the
+- [x] 7.3 `LaunchConfigurationMenu` — `runList`, the make goals, the
       configuration editor and the destination menu
-- [ ] 7.4 `HotSwapCoordinator` — `compileForHotSwapIfDebugging`, the compile
+- [x] 7.4 `HotSwapCoordinator` — `compileForHotSwapIfDebugging`, the compile
       queue, the once-per-session refusal
-- [ ] 7.5 `ClusterRun` — `runInCluster`, `installDevPod`, the forwards, the
+- [x] 7.5 `ClusterRun` — `runInCluster`, `installDevPod`, the forwards, the
       profiler address and the service port
-- [ ] 7.6 Decide which of these the window holds and which are peers, per the
-      design's open question
-- [ ] 7.7 `make test`, `make warnings`, and every driven run, debug, profile and
+- [x] 7.6 **Answered: one type, four files, not five types.** What makes a run
+      coordinator is one set of state — the configuration list, which one is
+      chosen, what is running — and every part of the job reads it. Five types
+      would have put that state in one of them with the other four asking,
+      which is the arrangement being taken apart rather than a smaller version
+      of it. Files: the core, `+Starting`, `+Menus`, `+Cluster`.
+- [x] 7.7 `make test`, `make warnings`, and every driven run, debug, profile and
       make-goal flag
 
 ## 10. Server edit actions
