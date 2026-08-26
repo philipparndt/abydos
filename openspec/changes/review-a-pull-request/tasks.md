@@ -96,10 +96,10 @@
 
 ## 9. Proving it
 
-- [ ] 9.1 `make test` and `make warnings` green
-- [ ] 9.2 The commit page and the log page are unchanged — the reports from 1.3
+- [x] 9.1 `make test` and `make warnings` green
+- [x] 9.2 The commit page and the log page are unchanged — the reports from 1.3
       still match
-- [ ] 9.3 The usages list and the search results are unchanged — the driven
+- [x] 9.3 The usages list and the search results are unchanged — the driven
       output from 5.2 still matches
-- [ ] 9.4 No worktree is left behind by the driven runs, and
+- [x] 9.4 No worktree is left behind by the driven runs, and
       `git worktree list` names none this change made
