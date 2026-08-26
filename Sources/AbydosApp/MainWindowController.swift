@@ -1147,6 +1147,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// that is always on screen at the old size.
 		runControl?.invalidateIntrinsicContentSize()
 		runControl?.applyThemeChange()
+		// The symbol carries its colour and its size in the image, so a zoom or
+		// a theme change has to make it again — the same reason the navigator's
+		// header buttons are remade in `restyle`.
+		refreshMaximizeButton()
 	}
 
 	/// Pushes the measured titlebar height down to the navigator and editor.
@@ -2481,6 +2485,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	var isEditorMaximized: Bool { beforeEditorMaximized != nil }
 
+	private var maximizeButton: NSButton?
+
+	/// Two arrows apart to take the window, two arrows together to give it back.
+	///
+	/// The icon *is* the state. A button that looked the same either way would
+	/// leave somebody in a maximised window with no way of knowing that the
+	/// thing they were looking for was the same button they had just pressed —
+	/// which is what a maximised editor with no visible way out amounts to.
+	private func refreshMaximizeButton() {
+		let symbol = isEditorMaximized
+			? "arrow.down.right.and.arrow.up.left"
+			: "arrow.up.left.and.arrow.down.right"
+		maximizeButton?.image = Theme.symbol(
+			symbol, size: Theme.current.scaled(12),
+			color: Theme.current.sidebarHeaderText, weight: .medium
+		)
+		maximizeButton?.toolTip = isEditorMaximized
+			? "Give the tree and the terminal back"
+			: "Give the editor the whole window"
+	}
+
+	/// Gives the editor the window if it has not got it, and does nothing if it
+	/// has.
+	///
+	/// For the two pages that are unreadable small: a log is a graph, a list of
+	/// commits and a diff, and a commit page is two lists and a diff. Both are
+	/// opened *to be read*, which is not what a third of a window is for.
+	///
+	/// **It does not give the window back when the page closes.** The panel
+	/// staying down after `makeRoomForTheEditor` is the same decision and its
+	/// comment is the argument: putting panes back when the editor loses the
+	/// focus that opened it is a mode nobody asked for, and it would fight the
+	/// next click. Double-clicking the tab gives it back, and so does the menu.
+	private func giveTheEditorTheWindow() {
+		guard !isEditorMaximized else { return }
+		toggleEditorMaximized(nil)
+	}
+
 	/// Gives the editor the whole window, or gives it back.
 	///
 	/// A double-click on a tab that is already permanent, and the mirror of
@@ -2489,6 +2531,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// a split view will not put a pane fully away, and a sliver of tree left
 	/// showing is not what "give the editor the window" means.
 	@objc func toggleEditorMaximized(_ sender: Any? = nil) {
+		defer { refreshMaximizeButton() }
 		if let before = beforeEditorMaximized {
 			beforeEditorMaximized = nil
 			if before.navigator { openNavigator() }
@@ -11295,6 +11338,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			identifier: "log",
 			symbol: "clock.arrow.circlepath"
 		)
+		giveTheEditorTheWindow()
 		page.setRef(ref)
 	}
 
@@ -11330,6 +11374,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		commitPage = page
 		group.openPage(page, title: "Commit", identifier: "commit", symbol: "checkmark.circle")
+		giveTheEditorTheWindow()
 
 		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
 		page.refresh()
@@ -12587,6 +12632,7 @@ extension MainWindowController: NSToolbarDelegate {
 	private static let worktreeItem = NSToolbarItem.Identifier("abydos.worktree")
 	private static let devContainerItem = NSToolbarItem.Identifier("abydos.devcontainer")
 	private static let runItem = NSToolbarItem.Identifier("abydos.run")
+	private static let maximizeItem = NSToolbarItem.Identifier("abydos.maximize")
 
 	/// Next to the traffic lights, where a window says what it is.
 	///
@@ -12602,9 +12648,12 @@ extension MainWindowController: NSToolbarDelegate {
 		// checkout — where the subproject qualifies which corner of it and the
 		// devcontainer qualifies what it is built with. Reading left to right
 		// then goes from the widest question to the narrowest.
+		// The window-shape button last, at the trailing edge: it is about the
+		// window rather than about the project or what is running in it, and
+		// that is where a window's own controls live.
 		[
 			Self.capsuleItem, Self.worktreeItem, Self.subprojectItem, Self.devContainerItem,
-			.flexibleSpace, Self.runItem,
+			.flexibleSpace, Self.runItem, Self.maximizeItem,
 		]
 	}
 
@@ -12647,6 +12696,30 @@ extension MainWindowController: NSToolbarDelegate {
 			item.menuFormRepresentation = menu
 			// The switcher is also in the menu bar, so this is the first thing
 			// that can go when there is no room.
+			item.visibilityPriority = .standard
+			return item
+
+		case Self.maximizeItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let button = NSButton(image: NSImage(), target: self, action: #selector(
+				toggleEditorMaximized(_:)
+			))
+			button.isBordered = false
+			button.bezelStyle = .shadowlessSquare
+			button.imagePosition = .imageOnly
+			// Nothing in the titlebar should take the keyboard from the editor.
+			button.refusesFirstResponder = true
+			maximizeButton = button
+			refreshMaximizeButton()
+			item.view = button
+
+			let menu = NSMenuItem(
+				title: "Maximize Editor", action: #selector(toggleEditorMaximized(_:)),
+				keyEquivalent: ""
+			)
+			item.menuFormRepresentation = menu
+			// It goes before the run strip does: this is a convenience for a
+			// gesture that is also a double-click on a tab.
 			item.visibilityPriority = .standard
 			return item
 
