@@ -405,6 +405,7 @@ final class EditorViewController: NSViewController {
 			NSWorkspace.shared.activateFileViewerSelecting([url])
 		}
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
+		tabBar.onMaximize = { [weak self] in self?.onMaximize?() }
 		tabBar.onNewScratch = { [weak self] in self?.newScratch() }
 		tabBar.onNewGlobalScratch = { [weak self] in self?.newScratch(global: true) }
 		tabBar.groupID = groupID
@@ -2953,6 +2954,10 @@ final class EditorViewController: NSViewController {
 	/// with the tab it was asked about, the mode that tab is in, and the classes
 	/// in its content view, which between them say *which* of the possible reasons
 	/// it is.
+	func doubleClickTabForTesting(index: Int) -> String {
+		tabBar.doubleClickForTesting(index: index)
+	}
+
 	var activeTabDescriptionForTesting: String {
 		let open = "open=[" + tabs.map(\.url.lastPathComponent).joined(separator: " ") + "]"
 		guard let tab = activeTab else {
@@ -3568,6 +3573,10 @@ final class EditorViewController: NSViewController {
 	func expandAllFolds() { activeTab?.codeView?.expandAllFolds() }
 
 	var hasOpenFiles: Bool { !tabs.isEmpty }
+
+	/// Asked for the whole window, by a double-click on a tab that is already
+	/// permanent. The window owns the panes, so it owns the answer.
+	var onMaximize: (() -> Void)?
 
 	/// Told where the editor went, and where it stood before.
 	var onNavigated: ((NavigationHistory.Place?, NavigationHistory.Place) -> Void)?

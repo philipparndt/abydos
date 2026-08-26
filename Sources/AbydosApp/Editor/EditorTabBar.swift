@@ -42,6 +42,9 @@ final class EditorTabBar: NSView {
 	var onCopyPath: ((Int) -> Void)?
 	/// Double-click promotes a preview tab to a permanent one.
 	var onPromote: ((Int) -> Void)?
+	/// Double-clicking a tab that is already permanent: give the editor the
+	/// whole window, or give it back.
+	var onMaximize: (() -> Void)?
 	/// The empty part of the strip was double-clicked: make a scratch.
 	var onNewScratch: (() -> Void)?
 	/// Asked for a scratch belonging to no project, from that strip's menu.
@@ -492,7 +495,19 @@ final class EditorTabBar: NSView {
 			return
 		}
 		if event.clickCount >= 2 {
-			onPromote?(index)
+			// **A provisional tab is promoted; an already-permanent one gives the
+			// editor the window.** One gesture, two meanings, and the tab says
+			// which it will be: a preview tab is drawn in italic, so what a
+			// double-click is about to do is on screen rather than remembered.
+			//
+			// Promoting first also means the tab survives what happens next: a
+			// maximised editor with a provisional tab in it is one click from
+			// being replaced by the next file somebody looks at.
+			if items.indices.contains(index), items[index].isPreview {
+				onPromote?(index)
+			} else {
+				onMaximize?()
+			}
 			return
 		}
 		pressedIndex = index
@@ -894,6 +909,34 @@ extension EditorTabBar: TabCloseHovering {
 	var tabCountForTesting: Int { items.count }
 
 	@discardableResult
+	/// Double-clicks a tab the way a pointer does, and says which branch it
+	/// took.
+	///
+	/// Through `mouseDown` with a real event, because the branch *is* the
+	/// behaviour: a provisional tab is promoted and a permanent one asks for the
+	/// window, and a check that called either method directly could not be wrong
+	/// about which.
+	func doubleClickForTesting(index: Int) -> String {
+		guard frames.indices.contains(index), items.indices.contains(index) else {
+			return "no tab at \(index)"
+		}
+		let was = items[index].isPreview ? "preview" : "permanent"
+		let centre = NSPoint(x: frames[index].midX, y: frames[index].midY)
+		guard let event = NSEvent.mouseEvent(
+			with: .leftMouseDown,
+			location: convert(centre, to: nil),
+			modifierFlags: [],
+			timestamp: ProcessInfo.processInfo.systemUptime,
+			windowNumber: window?.windowNumber ?? 0,
+			context: nil,
+			eventNumber: 0,
+			clickCount: 2,
+			pressure: 1
+		) else { return "no event" }
+		mouseDown(with: event)
+		return "double-clicked a \(was) tab"
+	}
+
 	func hoverCloseForTesting(_ index: Int?) -> String {
 		// Through `updateHover` rather than by setting the two flags: what is
 		// being checked is what the pointer does, and a harness that assigns the

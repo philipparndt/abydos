@@ -342,6 +342,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Panes in the panel, for proving the tmux + added none.
 	var paneCountForTesting: Int { bottomPanel.paneCountForTesting }
 
+	/// Which panes the window is giving its room to.
+	///
+	/// The one thing a screenshot of a maximised editor cannot settle: an editor
+	/// filling the window looks the same whether the tree is hidden or merely
+	/// dragged to nothing, and "the panel is down" and "the panel is up behind
+	/// the editor" are the same picture.
+	var windowLayoutReportForTesting: String {
+		let navigator = (navigatorContainer?.isHidden ?? true)
+			|| (navigatorContainer?.frame.width ?? 0) < 2
+			? "hidden" : "\(Int(navigatorContainer?.frame.width ?? 0))pt"
+		return "navigator=\(navigator) "
+			+ "panel=\(bottomPanel.isHidden ? "hidden" : "\(Int(bottomPanel.frame.height))pt") "
+			+ "editorMaximized=\(isEditorMaximized) "
+			+ "panelMaximized=\(isPanelMaximized)"
+	}
+
+	/// Double-clicks a tab, and says what the window looks like afterwards.
+	func doubleClickTabForTesting(_ index: Int) -> String {
+		let took = editor.doubleClickTabForTesting(index: index)
+		return "\(took) — \(windowLayoutReportForTesting)"
+	}
+
 	/// The editor's own text, drawn to a PNG.
 	@discardableResult
 	func writeEditorImageForTesting(to path: String) -> Bool {
@@ -563,6 +585,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// apply it.
 		takeServerEdits()
 
+		editor.onMaximize = { [weak self] in self?.toggleEditorMaximized(nil) }
 		editor.onNavigated = { [weak self] departure, arrival in
 			guard let self, !self.isNavigatingHistory else { return }
 			// The place being left is recorded first, and at the line the caret
@@ -2442,6 +2465,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.verticalSplitView.setPosition(total - half, ofDividerAt: 0)
 			self.tellTerminalsTheySizeChanged()
 		}
+	}
+
+	/// Whether the editor has the window, and what to put back when it gives it
+	/// up.
+	///
+	/// The two answers are remembered rather than assumed: somebody who was
+	/// working with the sidebar already shut does not want it opened for them by
+	/// un-maximising, and the panel is the same. Nil while nothing is maximised,
+	/// so a stale pair cannot be restored over a window somebody has since
+	/// rearranged by hand.
+	private var beforeEditorMaximized: (navigator: Bool, panel: Bool)?
+
+	var isEditorMaximized: Bool { beforeEditorMaximized != nil }
+
+	/// Gives the editor the whole window, or gives it back.
+	///
+	/// A double-click on a tab that is already permanent, and the mirror of
+	/// `togglePanelMaximized` — which does the same for the terminal, from the
+	/// other side. Both hide rather than resize, for the reason that one records:
+	/// a split view will not put a pane fully away, and a sliver of tree left
+	/// showing is not what "give the editor the window" means.
+	@objc func toggleEditorMaximized(_ sender: Any? = nil) {
+		if let before = beforeEditorMaximized {
+			beforeEditorMaximized = nil
+			if before.navigator { openNavigator() }
+			if before.panel { setPanelVisible(true) }
+			updateTopInsets()
+			return
+		}
+
+		// The terminal cannot have the window at the same moment. Un-maximising
+		// it first, rather than refusing, because the gesture says what somebody
+		// wants and the two states are exclusive.
+		if isPanelMaximized { togglePanelMaximized(nil) }
+
+		let navigatorShowing = !(navigatorContainer?.isHidden ?? true)
+			&& (navigatorContainer?.frame.width ?? 0) >= 2
+		beforeEditorMaximized = (navigator: navigatorShowing, panel: isPanelVisible)
+		if navigatorShowing { toggleNavigator(nil) }
+		if isPanelVisible { setPanelVisible(false) }
+		updateTopInsets()
 	}
 
 	@objc func togglePanelMaximized(_ sender: Any? = nil) {

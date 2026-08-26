@@ -2215,6 +2215,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if !options.tabDoubleClicks.isEmpty {
+			let after = max(1.0, options.screenshotDelay - 1.2)
+			for (index, tab) in options.tabDoubleClicks.enumerated() {
+				DispatchQueue.main.asyncAfter(deadline: .now() + after + Double(index) * 0.3) {
+					print("TAB double-click \(tab): "
+						+ (controller?.doubleClickTabForTesting(tab) ?? "no window"))
+				}
+			}
+		}
+
 		// After whatever `--run` put on the screen, and before the shot: a
 		// selection is drawn over output, so there has to be output first.
 		if !options.terminalSelections.isEmpty {
