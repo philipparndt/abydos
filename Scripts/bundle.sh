@@ -291,6 +291,41 @@ if [ "$PIN_UUID" != "0" ]; then
 	echo "    a pinned build cannot be profiled — 'make profile' builds one that can"
 fi
 
+# **Liquid glass, and how to not have it.**
+#
+# macOS 26 decides whether an app gets the Tahoe appearance — glass capsules
+# behind every toolbar item — from the SDK the binary was *linked* against, not
+# from the OS it runs on. `Package.swift` pins the minimum to macOS 14, which is
+# not the same thing: `vtool -show-build` reports `sdk 26.5` for anything built
+# with the Xcode on this machine, and `sdk 14.0` for the copy Homebrew ships.
+# That is the entire difference between the two, and the reason a local build
+# suddenly grew white pills in a dark toolbar while the installed one did not.
+#
+# There is no supported switch to ask for the old look: AppKit carries no
+# Info.plist key for it — the iOS `UIDesignRequiresCompatibility` has no macOS
+# equivalent that could be found — and building against the macOS 15 SDK fails
+# outright, because Xcode 26's compiler cannot use that SDK's standard library
+# (`cannot find type 'SendableMetatype' in scope`). So the marker AppKit reads is
+# rewritten after linking, which is what `vtool` is for.
+#
+# **What this trades away.** It tells the OS the binary was built against an
+# older SDK, and every SDK-gated behaviour change goes with it, not only the one
+# being asked for. Availability is checked at runtime, so an `if #available` for
+# a macOS 26 API still works. `GLASS=1` builds without the rewrite, which is how
+# to see what a user on Tahoe actually sees — and worth doing before shipping a
+# toolbar, because the Homebrew build's own SDK will move eventually.
+if [ "${GLASS:-0}" != "1" ]; then
+	if vtool -set-build-version macos 14.0 14.0 -replace \
+		-output "$CONTENTS/MacOS/Abydos.legacy" "$CONTENTS/MacOS/Abydos" >/dev/null 2>&1
+	then
+		mv "$CONTENTS/MacOS/Abydos.legacy" "$CONTENTS/MacOS/Abydos"
+		echo "    marked as built against the macOS 14 SDK (GLASS=1 to keep the Tahoe look)"
+	else
+		rm -f "$CONTENTS/MacOS/Abydos.legacy"
+		echo "    warning: could not rewrite the SDK marker; the toolbar will be glass" >&2
+	fi
+fi
+
 IDENTITY="${SIGN_IDENTITY:-}"
 if [ -z "$IDENTITY" ]; then
 	# By hash, not by name. `--sign "Apple Development"` is a *prefix match over
