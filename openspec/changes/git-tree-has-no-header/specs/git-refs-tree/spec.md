@@ -8,8 +8,16 @@ The tree SHALL begin with a row for the repository, and that row SHALL stay at
 the top of the pane while the rest of the tree scrolls.
 
 It says which project, which branch the work tree is on, and how far that branch
-is from its upstream in words — `3 behind · 1 ahead`, `level`, or that there is
-no remote. It is also the control: fetch when level, pull when behind, push when
+is from its upstream in words — `3 behind · 1 ahead`, `level`, `upstream gone`,
+or that there is no remote.
+
+**When the pane is too narrow for all of it, the project name goes first.** The
+titlebar already names the project and nothing else says how far the branch is
+from its upstream, which is what this row is pinned for.
+
+**An upstream that is gone SHALL not read as level.** `%(upstream:track)` says
+`[gone]` in place of the counts, so the naive reading is nought behind and
+nought ahead — a sentence about a ref that is not there. It is also the control: fetch when level, pull when behind, push when
 ahead, which is what the button above the tree used to be.
 
 **Drawn as a row because a verb hangs off the row that draws its object**, which
@@ -40,6 +48,18 @@ fault the header was avoiding, reintroduced.
 
 - **GIVEN** a repository with no remote configured
 - **THEN** the row says so, and offers nothing to press
+
+#### Scenario: an upstream that has been deleted
+
+- **GIVEN** a branch tracking a remote branch that no longer exists
+- **THEN** the row says the upstream is gone rather than that it is level
+- **AND** pressing it fetches
+
+#### Scenario: a pane too narrow for the whole row
+
+- **GIVEN** the pane at 250 points and a branch two behind and one ahead
+- **THEN** the distance is still said in words
+- **AND** the project name is what gives way
 
 ### Requirement: The working copy row carries the verb that acts on it
 

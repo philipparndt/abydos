@@ -23,16 +23,23 @@
 
 ## 3. The repository row
 
-- [ ] 3.1 A `repository` case on the row model, drawn by the same row view:
-      project, branch, and the distance from upstream in words
-- [ ] 3.2 A one-row outline above the scroll view, sharing the model, the row
-      view and the metrics, with no selection of its own
-- [ ] 3.3 It carries the traffic control: fetch when level, pull when behind,
-      push when ahead — `refreshTraffic` moves onto it, `GitPush.state` unchanged
-- [ ] 3.4 No remote, and an upstream that is gone, each say what they are
-- [ ] 3.5 Delete `trafficButton` and its constraints
-- [ ] 3.6 Driven: scroll the tree to the bottom and confirm the row is still
-      there; check the wording at 250 points wide
+- [x] 3.1 `RepositoryRowView`, an `ActionableRowView` drawn through the same
+      metrics: project, branch, and the distance from upstream in words. **Not a
+      `Row` case** — see the design; the row model belongs to the outline and
+      this row is not in one
+- [x] 3.2 It sits above the scroll view, at a fixed height, with no selection of
+      its own — keyboard focus instead, and `↓` off it into the tree
+- [x] 3.3 It carries the traffic control: fetch when level, pull when behind,
+      push when ahead — `refreshTraffic` hands it the state and nothing else
+- [x] 3.4 No remote, nothing committed yet, never published, and an upstream
+      that is gone each say what they are. **The gone case needed
+      `GitPush.State` to gain a flag** — it parsed as level, which is a sentence
+      about a ref that is not there
+- [x] 3.5 Delete `trafficButton` and its constraints
+- [x] 3.6 Driven: the tree scrolled to the bottom leaves the row where it was
+      (`scrolled 0` → `scrolled 505`, row at `569–593` both times), and the
+      wording holds at 250 points — **the project name drops before the
+      sentence does**, the titlebar naming the project already
 
 ## 4. The filter, on `⌘F`
 

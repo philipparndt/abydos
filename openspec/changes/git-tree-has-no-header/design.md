@@ -180,6 +180,10 @@ it has today.
   so the rule says it could; the risk is a row that is a menu.
 - Whether `⌘⏎` should fall through to the context menu's first item on rows with
   no action, or do nothing. Doing nothing is the assumption.
-- What the repository row shows for a repository whose upstream is gone — not
-  level, not behind, not ahead. `GitPush.state` answers it and the wording is a
-  question for whoever writes that row.
+- ~~What the repository row shows for a repository whose upstream is gone.~~
+  **Answered: `upstream gone`, and the verb is `Fetch`.** `GitPush.state` did
+  *not* answer it — `%(upstream:track)` says `[gone]` where it would otherwise
+  say the counts, so a gone upstream parsed as nought behind and nought ahead
+  and would have read `level`: a sentence about a ref that is not there. It
+  carries its own flag now. Fetch, because a prune clears the tracking, and
+  pushing to a ref somebody deleted on purpose is not this row's call.

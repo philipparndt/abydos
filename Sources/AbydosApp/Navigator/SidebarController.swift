@@ -261,6 +261,10 @@ final class SidebarController: NSObject {
 				+ pane.rowActionsForTesting().joined(separator: "\n  "))
 			case "select":  pane.selectRowForTesting(Int(argument) ?? 0)
 			case "fire":    pane.fireSelectedRowActionForTesting()
+			case "repo":    print("BRANCHES repo: \(pane.repositoryRowForTesting())")
+			// The pinned row's whole claim is that scrolling does not take it
+			// away, and only a scrolled tree can say whether that is true.
+			case "scroll":  pane.scrollTreeForTesting(toBottom: argument != "top")
 			default:        print("BRANCHES: unknown step \(step)")
 			}
 		}

@@ -109,7 +109,9 @@ final class BranchesPane: NSView {
 	private var conflictHeight: NSLayoutConstraint!
 	private var conflictPaths: [String] = []
 	private var filterField: NSSearchField!
-	private var trafficButton: NSButton!
+	/// The repository, drawn as the first row and pinned above the scrolling
+	/// ones — see `RepositoryRowView` for why it does not scroll.
+	private var repositoryRow: RepositoryRowView!
 	private var tableView: BranchesOutlineView!
 	/// Where this branch stands against its remote, for what the counter says.
 	private var trafficState: GitPush.State?
@@ -208,14 +210,15 @@ final class BranchesPane: NSView {
 		newButton.controlSize = .small
 		newButton.font = Theme.current.uiFont(11)
 
-		// **The repository, as a control.** It reads `↓3 ↑1` and it is also the
-		// button: fetch when level, pull when behind, push when ahead. That is
-		// where fetch and pull have been missing from — a verb here hangs off
-		// the row that draws its object, and nothing drew the repository.
-		trafficButton = NSButton(title: "Fetch", target: self, action: #selector(trafficPressed))
-		trafficButton.bezelStyle = .rounded
-		trafficButton.controlSize = .small
-		trafficButton.font = Theme.current.uiFont(11)
+		// **The repository, as a control**, which is what the button above this
+		// tree used to be: fetch when level, pull when behind, push when ahead.
+		// Its own comment gave the reason it was a button — *a verb here hangs
+		// off the row that draws its object, and nothing drew the repository*.
+		// Something does now, so the verb is on it and the button is gone.
+		repositoryRow = RepositoryRowView(name: root.lastPathComponent)
+		repositoryRow.translatesAutoresizingMaskIntoConstraints = false
+		repositoryRow.onAction = { [weak self] in self?.trafficPressed() }
+		repositoryRow.onDownArrow = { [weak self] in self?.moveKeyboardIntoTree() }
 
 		tableView = BranchesOutlineView()
 		tableView.headerView = nil
@@ -239,6 +242,7 @@ final class BranchesPane: NSView {
 		tableView.menu = makeMenu()
 		tableView.onActivate = { [weak self] in self?.checkoutSelected() }
 		tableView.onRowAction = { [weak self] in self?.fireSelectedRowAction() }
+		tableView.onLeaveTop = { [weak self] in self?.moveKeyboardToRepositoryRow() }
 
 		conflictBanner = ConflictBanner()
 		conflictBanner.onOpenFiles = { [weak self] in
@@ -274,7 +278,8 @@ final class BranchesPane: NSView {
 		scrollView.backgroundColor = Theme.current.sidebarBackground
 		scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
 
-		for view in [conflictBanner, filterField, newButton, trafficButton, scrollView] as [NSView] {
+		for view in [conflictBanner, filterField, newButton, repositoryRow, scrollView]
+			as [NSView] {
 			addSubview(view)
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -297,13 +302,12 @@ final class BranchesPane: NSView {
 			newButton.topAnchor.constraint(equalTo: filterField.bottomAnchor, constant: inset / 2),
 			newButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
 
-			trafficButton.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
-			trafficButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-			trafficButton.leadingAnchor.constraint(
-				greaterThanOrEqualTo: newButton.trailingAnchor, constant: inset / 2
-			),
+			repositoryRow.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: inset / 2),
+			repositoryRow.leadingAnchor.constraint(equalTo: leadingAnchor),
+			repositoryRow.trailingAnchor.constraint(equalTo: trailingAnchor),
+			repositoryRow.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24)),
 
-			scrollView.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: inset / 2),
+			scrollView.topAnchor.constraint(equalTo: repositoryRow.bottomAnchor),
 			scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
 			scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
 			scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -371,40 +375,74 @@ final class BranchesPane: NSView {
 		}
 	}
 
-	/// Reads where the branch stands, and says it on the button.
+	/// Reads where the branch stands, and says it on the repository row.
+	///
+	/// The row decides its own wording and its own verb — which of behind,
+	/// ahead, level, gone or no-remote it is looking at, and whether the pane
+	/// is wide enough to say it in words. All this does is hand it the answer.
 	private func refreshTraffic() {
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			let state = await GitPush.state(in: self.root)
 			self.trafficState = state
-
-			guard let state, state.hasRemote, state.hasCommits else {
-				self.trafficButton.title = "Fetch"
-				self.trafficButton.isEnabled = state?.hasRemote ?? false
-				self.trafficButton.toolTip = state?.hasRemote == true
-					? "Bring down what is on the remote"
-					: "This repository has no remote"
-				return
-			}
-
-			// Behind wins over ahead: what somebody else has done comes first,
-			// because pushing on top of it is what makes the mess this is meant
-			// to avoid.
-			var parts: [String] = []
-			if state.behind > 0 { parts.append("↓\(state.behind)") }
-			if state.ahead > 0 { parts.append("↑\(state.ahead)") }
-			self.trafficButton.isEnabled = true
-			self.trafficButton.title = parts.isEmpty ? "Fetch" : parts.joined(separator: " ")
-			self.trafficButton.toolTip = parts.isEmpty
-				? "Level with \(state.upstream ?? "the remote") — fetch"
-				: (state.behind > 0 ? "Pull \(state.behind)" : state.explanation)
+			self.repositoryRow.show(branch: self.currentBranchName, state: state)
 		}
 	}
 
 	/// Fetch, pull or push, whichever the counter is showing.
+	/// The branch the work tree is on, for the repository row.
+	private var currentBranchName: String? {
+		branches.first { $0.isCurrent && $0.kind == .local }?.name
+	}
+
+	/// `↓` off the pinned row and into the tree, so the two read as one list.
+	private func moveKeyboardIntoTree() {
+		window?.makeFirstResponder(tableView)
+		if tableView.selectedRow < 0, tableView.numberOfRows > 0 {
+			tableView.selectRowIndexes([0], byExtendingSelection: false)
+		}
+	}
+
+	/// `↑` off the top of the tree and onto the pinned row, which is what a
+	/// list with a row above it does everywhere else.
+	fileprivate func moveKeyboardToRepositoryRow() {
+		window?.makeFirstResponder(repositoryRow)
+	}
+
+	/// Scrolls the tree, so a driven run can ask whether the pinned row moved.
+	func scrollTreeForTesting(toBottom: Bool) {
+		let rows = tableView.numberOfRows
+		guard rows > 0 else { return }
+		tableView.scrollRowToVisible(toBottom ? rows - 1 : 0)
+		layoutSubtreeIfNeeded()
+	}
+
+	/// What the pinned row says, and where it and the tree are.
+	///
+	/// The geometry is here because *pinned* and *the tree starts at the top*
+	/// are claims about position, and a screenshot is somebody's eye rather
+	/// than a measurement.
+	func repositoryRowForTesting() -> String {
+		layoutSubtreeIfNeeded()
+		let row = repositoryRow.frame
+		let scroll = tableView.enclosingScrollView
+		let tree = scroll?.frame ?? .zero
+		return repositoryRow.reportForTesting
+			+ " · row at \(Int(row.minY))–\(Int(row.maxY)) of \(Int(bounds.height))"
+			+ " · tree from \(Int(tree.minY))"
+			+ " · scrolled \(Int(scroll?.contentView.bounds.minY ?? 0))"
+	}
+
 	@objc private func trafficPressed() {
 		guard let state = trafficState, state.hasRemote else { return }
 
+		// An upstream that is gone is answered by fetching — a prune clears the
+		// tracking — and it lands here anyway, being neither behind nor
+		// pushable. Said out loud so this and the row's `Fetch` cannot drift.
+		if state.upstreamIsGone {
+			run { await GitPull.fetch(in: self.root) }
+			return
+		}
 		if state.behind > 0 {
 			pullWithDialog()
 			return
@@ -2044,6 +2082,8 @@ private final class BranchesOutlineView: NSOutlineView {
 	var onActivate: (() -> Void)?
 	/// `⌘⏎` — the selected row's own verb, whatever that row is.
 	var onRowAction: (() -> Void)?
+	/// `↑` from the first row, which leaves for the row pinned above the tree.
+	var onLeaveTop: (() -> Void)?
 
 	/// A click from an inactive window lands on the row rather than being spent
 	/// activating the app, which is what the project tree has always done.
@@ -2078,6 +2118,12 @@ private final class BranchesOutlineView: NSOutlineView {
 		// arrows and leaves these four to the scroll view, which moves the
 		// paper and not the selection — so the list scrolled and the highlight
 		// stayed where it was, which is not what any of them means in a list.
+		// ↑ off the top goes to the row pinned above, which is the repository.
+		if event.keyCode == 126, selectedRow == 0 {
+			onLeaveTop?()
+			return
+		}
+
 		let last = numberOfRows - 1
 		guard last >= 0 else { return super.keyDown(with: event) }
 		let page = max(1, Int(visibleRect.height / max(1, rowHeight)) - 1)
