@@ -52,6 +52,25 @@ public enum FileNotice {
 		)
 	}
 
+	/// Why a file cannot be opened as text, or nil when it can.
+	///
+	/// **Binary wins over too-large, and that ordering is the point of putting
+	/// this here.** A 400 MB `.mov` was told "This file is 405,7 MB — too large
+	/// to open as text", which is a statement about text made about something
+	/// that was never text: the size is beside the point, and the sentence
+	/// invites somebody to wonder what a smaller one would have done. It is a
+	/// binary file. That it is also large is true of most binary files.
+	///
+	/// The size is not in the sentence either. `Content.size` carries it, in the
+	/// units the rest of this app uses — the two together said it twice, once as
+	/// `405,7 MB` and once as `387 MiB`, which is the same number twice in two
+	/// conventions and reads as a mistake because it is one.
+	public static func reason(isBinary: Bool, isTooLargeForText: Bool) -> String? {
+		if isBinary { return "This looks like a binary file." }
+		if isTooLargeForText { return "This file is too large to open as text." }
+		return nil
+	}
+
 	/// Whether Quick Look is worth offering for a name.
 	///
 	/// **Not "always".** Quick Look opens for anything and shows a generic icon

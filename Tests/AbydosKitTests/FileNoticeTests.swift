@@ -138,4 +138,38 @@ struct FileNoticeTests {
 		#expect(video.offersQuickLook)
 		#expect(!object.offersQuickLook)
 	}
+
+	// MARK: - Which sentence a file gets
+
+	/// A 400 MB `.mov` was told it was too large to open as text — a statement
+	/// about text, about something that was never text.
+	@Test func aBinaryFileIsCalledBinaryHoweverLargeItIs() {
+		#expect(
+			FileNotice.reason(isBinary: true, isTooLargeForText: true)
+				== "This looks like a binary file."
+		)
+	}
+
+	@Test func aLargeTextFileIsCalledTooLarge() {
+		#expect(
+			FileNotice.reason(isBinary: false, isTooLargeForText: true)
+				== "This file is too large to open as text."
+		)
+	}
+
+	@Test func aFileThatCanBeOpenedGetsNoNotice() {
+		#expect(FileNotice.reason(isBinary: false, isTooLargeForText: false) == nil)
+	}
+
+	/// The number belongs to `size`, once, in this app's units — not in the
+	/// sentence as well in somebody else's.
+	@Test func theSentenceCarriesNoSize() {
+		for sentence in [
+			FileNotice.reason(isBinary: true, isTooLargeForText: true),
+			FileNotice.reason(isBinary: false, isTooLargeForText: true),
+		] {
+			#expect(sentence?.contains("MB") == false)
+			#expect(sentence?.contains("MiB") == false)
+		}
+	}
 }
