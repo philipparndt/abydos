@@ -48,16 +48,16 @@
 
 ## 5. Ticking, and ticks that die
 
-- [ ] 5.1 `ResultChecklist` takes an optional token per row and gains
+- [x] 5.1 `ResultChecklist` takes an optional token per row and gains
       `revalidate`, clearing the ticks whose token changed and keeping the rest
-- [ ] 5.2 The usages list and the search results pass no token and behave
+- [x] 5.2 The usages list and the search results pass no token and behave
       exactly as they do today — driven, before and after, same output
-- [ ] 5.3 The pull request page ticks files, with the token being that file's
+- [x] 5.3 The pull request page ticks files, with the token being that file's
       diff at the head it was ticked at
-- [ ] 5.4 Ticks are remembered per pull request in `ProjectSession` and come
+- [x] 5.4 Ticks are remembered per pull request in `ProjectSession` and come
       back when the page is reopened
-- [ ] 5.5 One key to the next file not yet ticked, and a count of what is left
-- [ ] 5.6 Driven, the three cases that matter: a push touching one file clears
+- [x] 5.5 One key to the next file not yet ticked, and a count of what is left
+- [x] 5.6 Driven, the three cases that matter: a push touching one file clears
       one tick; a rebase that changes no diff clears none; a push adding a file
       leaves the existing ticks alone
 

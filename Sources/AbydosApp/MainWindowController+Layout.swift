@@ -119,6 +119,7 @@ extension MainWindowController {
 		toolStrip.onToggleScratches = { [weak self] in self?.sidebar.showSidebarTool(.scratches) }
 		toolStrip.onToggleHistory = { [weak self] in self?.sidebar.showSidebarTool(.history) }
 		toolStrip.onTogglePullRequests = { [weak self] in self?.sidebar.showSidebarTool(.pullRequests) }
+		sidebar.rememberSession = { [weak self] in self?.rememberOpenEditors() }
 		toolStrip.onToggleBacklog = { [weak self] in self?.showBacklog(nil) }
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(toastPosted(_:)), name: .abydosToast, object: nil

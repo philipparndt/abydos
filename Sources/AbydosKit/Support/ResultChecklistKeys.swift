@@ -38,6 +38,29 @@ public enum ResultChecklistKeys {
 		return keyCode == space || keyCode == backspace
 	}
 
+	/// Down arrow, which with ⌥ means "the next one I have not read".
+	public static let downArrow: UInt16 = 125
+
+	/// Whether this press goes to the next row nobody has ticked yet.
+	///
+	/// **⌥↓ and not a letter.** An outline view answers letters with type-select
+	/// — typing `n` in a list of files goes to the first one starting with `n` —
+	/// so a letter here would be a shortcut that mostly works and sometimes
+	/// jumps somewhere baffling. ⌥ with an arrow already means "further" in this
+	/// program's editor, and a list that can be walked with ↓ can be walked
+	/// faster with ⌥↓.
+	///
+	/// Out here with `marksDone` because it is the same kind of claim about the
+	/// same kind of list, and because the list it belongs to is in `AbydosApp`,
+	/// which the suite cannot reach.
+	public static func goesToNextUndone(
+		keyCode: UInt16, modifiers: NSEvent.ModifierFlags
+	) -> Bool {
+		guard modifiers.contains(.option) else { return false }
+		guard modifiers.intersection([.command, .control, .shift]).isEmpty else { return false }
+		return keyCode == downArrow
+	}
+
 	/// What a press in the list does about showing a row, or nil when the list
 	/// does not answer that key at all.
 	///

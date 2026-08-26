@@ -44,6 +44,9 @@ final class SidebarController: NSObject {
 	var isPanelVisible: () -> Bool = { false }
 	/// The repository read the window runs, which several panes ask to repeat.
 	var readGit: () -> Void = {}
+	/// Write what the project has open beside it — the window's, because only
+	/// the window knows what the terminals and the panel are doing.
+	var rememberSession: () -> Void = {}
 	/// Opening a checkout is the window's, the way every other route to one is.
 	var openProject: (URL) -> Void = { _ in }
 
@@ -61,6 +64,7 @@ final class SidebarController: NSObject {
 		pullRequests.existingPage = { [weak self] identifier in
 			self?.editor.activeGroup?.page(identifier: identifier)
 		}
+		pullRequests.rememberSession = { [weak self] in self?.rememberSession() }
 		pullRequests.openPage = { [weak self] page, title, identifier, symbol in
 			guard let self, let group = self.editor.activeGroup else { return }
 			self.leaveTerminalFullScreen()

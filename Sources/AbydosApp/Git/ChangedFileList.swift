@@ -28,6 +28,21 @@ final class ChangedFileList: NSView {
 	/// have to ask again.
 	private var lineCounts: [String: GitLineCount] = [:]
 
+	/// Whether rows can be ticked off as they are read.
+	///
+	/// Off for a commit's files: a commit has happened, and there is no reading
+	/// somebody is halfway through. On for a pull request, which is a list
+	/// somebody works down over an hour and comes back to.
+	var allowsTicking = false
+	/// Which files have been read, and what each tick was made against.
+	private(set) var ticks = Checklist<String>()
+	/// What each file's diff is *now*, which is what a tick is checked against.
+	private var tokens: [String: String] = [:]
+	/// Whether the ticked rows are hidden.
+	private(set) var hidesDone = false
+	/// Somebody ticked something, so whatever remembers ticks should.
+	var onTicksChanged: (() -> Void)?
+
 	private let outline = FileOutlineView()
 	private let scroll = NSScrollView()
 
@@ -75,6 +90,7 @@ final class ChangedFileList: NSView {
 		outline.dataSource = self
 		outline.onSelectionChange = { [weak self] in self?.selectionChanged() }
 		outline.onExpandAll = { [weak self] in self?.expandEveryFolder() }
+		outline.onKey = { [weak self] event in self?.handleKey(event) ?? false }
 
 		scroll.documentView = outline
 		scroll.hasVerticalScroller = true
@@ -116,7 +132,10 @@ final class ChangedFileList: NSView {
 	/// Builds the rows for the file list from what git answered.
 	private func rebuild() {
 		let previous = selectedPath
-		roots = Self.rows(for: files, byFolder: arrangesByFolder)
+		// Hidden rather than removed: `files` is still what git answered, so
+		// turning the switch back off brings them back without asking again.
+		let showing = hidesDone ? files.filter { !ticks.isDone($0.path) } : files
+		roots = Self.rows(for: showing, byFolder: arrangesByFolder)
 		for row in roots { row.applyLineCounts(lineCounts) }
 		outline.reloadData()
 		expandEveryFolder(keepingSelection: false)
@@ -171,6 +190,105 @@ final class ChangedFileList: NSView {
 		arrange.setToolTip("List the files a commit touched", forSegment: 0)
 		arrange.setToolTip("Group them under the folders holding them", forSegment: 1)
 		return arrange
+	}
+
+	// MARK: - Ticking, and ticks that die
+
+	/// What each file's diff is now, so a tick can be checked against it.
+	///
+	/// The page hands these in whenever it has a new head. Nothing is
+	/// invalidated by setting them; `revalidateTicks` is the act.
+	func setTokens(_ tokens: [String: String]) { self.tokens = tokens }
+
+	/// Puts a remembered set of ticks back, as a page being reopened does.
+	func setTicks(_ ticks: Checklist<String>) {
+		self.ticks = ticks
+		rebuild()
+	}
+
+	/// Clears the ticks whose file's diff has changed and keeps the rest.
+	///
+	/// - Returns: the paths whose ticks went, so a page can say so out loud —
+	///   a tick disappearing without a word looks like a bug.
+	@discardableResult
+	func revalidateTicks() -> Set<String> {
+		let cleared = ticks.revalidate(against: tokens)
+		guard !cleared.isEmpty else { return [] }
+		rebuild()
+		onTicksChanged?()
+		return cleared
+	}
+
+	/// Ticks or unticks the selected file. Nil toggles it.
+	func setDoneAtSelection(_ done: Bool?) {
+		guard allowsTicking, let path = selectedPath, files.contains(where: { $0.path == path })
+		else { return }
+		let isDone = done ?? !ticks.isDone(path)
+		// The token travels with the tick: what was read is that diff, and a
+		// tick with no record of what it was about is one nothing can clear.
+		ticks.set([path], done: isDone, tokens: tokens[path].map { [path: $0] } ?? [:])
+		// Ticking with the done rows hidden takes the row out from under the
+		// selection, so the next one is chosen before the rebuild loses it.
+		let next = hidesDone && isDone ? pathAfter(path) : nil
+		rebuild()
+		if let next { select(path: next) }
+		onTicksChanged?()
+	}
+
+	func setHidesDone(_ hiding: Bool) {
+		guard hiding != hidesDone else { return }
+		hidesDone = hiding
+		rebuild()
+	}
+
+	/// How much of the list has been read.
+	var progress: (done: Int, total: Int) {
+		(files.filter { ticks.isDone($0.path) }.count, files.count)
+	}
+
+	/// Goes to the next file nobody has ticked, wrapping to the top.
+	///
+	/// **The thing most easily lost in a long review** is where you were, and
+	/// the most annoying to find again. It wraps because a reviewer who ticked
+	/// the last three files first should still be taken to the first one left.
+	@discardableResult
+	func selectNextUndone() -> Bool {
+		guard allowsTicking, !files.isEmpty else { return false }
+		let order = files.map(\.path)
+		let start = selectedPath.flatMap { order.firstIndex(of: $0) } ?? -1
+		for step in 1...order.count {
+			let path = order[(start + step) % order.count]
+			guard !ticks.isDone(path) else { continue }
+			select(path: path)
+			return true
+		}
+		return false
+	}
+
+	/// The file after this one, in git's own order.
+	private func pathAfter(_ path: String) -> String? {
+		guard let index = files.firstIndex(where: { $0.path == path }) else { return nil }
+		let rest = files[(index + 1)...].first(where: { !ticks.isDone($0.path) })
+		return (rest ?? files.first { !ticks.isDone($0.path) })?.path
+	}
+
+	private func handleKey(_ event: NSEvent) -> Bool {
+		guard allowsTicking else { return false }
+		// The same rule the search results and the usages list keep, out in
+		// `AbydosKit` because of the key it must *not* answer: ⌘⌫ trashes a file
+		// one pane over, and this is another list-shaped thing full of file
+		// names.
+		if ResultChecklistKeys.marksDone(keyCode: event.keyCode, modifiers: event.modifierFlags) {
+			setDoneAtSelection(nil)
+			return true
+		}
+		if ResultChecklistKeys.goesToNextUndone(
+			keyCode: event.keyCode, modifiers: event.modifierFlags
+		) {
+			selectNextUndone()
+			return true
+		}
+		return false
 	}
 
 	// MARK: - The selection, held by path
@@ -260,7 +378,8 @@ final class ChangedFileList: NSView {
 			// The path for a file, because two commits' worth of `spec.md` and
 			// `design.md` are indistinguishable by name in the flat arrangement.
 			let said = node.holdsFiles ? node.name + "/" : node.path
-			return indent + said + shut + selected
+			let read = !node.holdsFiles && ticks.isDone(node.path) ? " [read]" : ""
+			return indent + said + read + shut + selected
 		}
 	}
 
@@ -372,13 +491,25 @@ extension ChangedFileList: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	func outlineView(_ outlineView: NSOutlineView, viewFor column: NSTableColumn?, item: Any) -> NSView? {
 		guard let node = item as? GitChangeNode else { return nil }
 		guard let file = files.first(where: { $0.path == node.path }) else {
-			return CommitFolderRowView(node: node)
+			return CommitFolderRowView(node: node, read: readCount(under: node))
 		}
-		return CommitFileRowView(file: file, lines: node.lines)
+		return CommitFileRowView(file: file, lines: node.lines, isRead: ticks.isDone(file.path))
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
 		ThemedRowView()
+	}
+
+	/// How many of a folder's files have been read, or nil where nothing is
+	/// being ticked and the number would mean nothing.
+	private func readCount(under node: GitChangeNode) -> Int? {
+		guard allowsTicking else { return nil }
+		return paths(under: node).filter { ticks.isDone($0) }.count
+	}
+
+	private func paths(under node: GitChangeNode) -> [String] {
+		guard node.holdsFiles else { return [node.path] }
+		return node.children.flatMap { paths(under: $0) }
 	}
 
 	func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -414,6 +545,9 @@ private final class FileOutlineView: NSOutlineView {
 	/// `*` — open everything.
 	var onExpandAll: (() -> Void)?
 
+	/// A press the list may want before the table gets it. True when it took it.
+	var onKey: ((NSEvent) -> Bool)?
+
 	override func keyDown(with event: NSEvent) {
 		// The character, not the key code: `*` is shift-8 on an ANSI layout and
 		// somewhere else on every other one, and this is the key people press in
@@ -422,6 +556,7 @@ private final class FileOutlineView: NSOutlineView {
 			onExpandAll?()
 			return
 		}
+		if onKey?(event) == true { return }
 		super.keyDown(with: event)
 	}
 }
@@ -465,9 +600,13 @@ private enum CommitLineCountLabel {
 private final class CommitFolderRowView: NSView {
 	private let node: GitChangeNode
 	override var isFlipped: Bool { true }
+	/// How many of the files under it have been read, where that is a question
+	/// this list answers at all.
+	private let read: Int?
 
-	init(node: GitChangeNode) {
+	init(node: GitChangeNode, read: Int? = nil) {
 		self.node = node
+		self.read = read
 		super.init(frame: .zero)
 		toolTip = node.path
 	}
@@ -492,9 +631,14 @@ private final class CommitFolderRowView: NSView {
 			counts.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
 			limit -= size.width + Theme.current.scaled(8)
 		}
-		let tally = NSAttributedString(string: "\(node.count)", attributes: [
+		// `2/5` where somebody is working down the list, and `5` where the rows
+		// are a commit's and nobody is ticking anything.
+		let counted = read.map { "\($0)/\(node.count)" } ?? "\(node.count)"
+		let tally = NSAttributedString(string: counted, attributes: [
 			.font: Theme.current.uiFont(10.5),
-			.foregroundColor: Theme.current.gitIgnored,
+			.foregroundColor: read == node.count && read != 0
+				? Theme.current.gitAdded
+				: Theme.current.gitIgnored,
 		])
 		tally.draw(at: NSPoint(x: limit - tally.size().width, y: bounds.midY - tally.size().height / 2))
 		limit -= tally.size().width + Theme.current.scaled(6)
@@ -513,10 +657,13 @@ private final class CommitFileRowView: NSView {
 	override var isFlipped: Bool { true }
 
 	private let lines: GitLineCount?
+	/// Whether somebody has ticked this one off as read.
+	private let isRead: Bool
 
-	init(file: GitCommitFile, lines: GitLineCount?) {
+	init(file: GitCommitFile, lines: GitLineCount?, isRead: Bool = false) {
 		self.file = file
 		self.lines = lines
+		self.isRead = isRead
 		super.init(frame: .zero)
 		toolTip = file.originalPath.map { "\($0) → \(file.path)" } ?? file.path
 	}
@@ -542,10 +689,18 @@ private final class CommitFileRowView: NSView {
 		letter.draw(at: NSPoint(x: left, y: bounds.midY - letter.size().height / 2))
 
 		var x = left + Theme.current.scaled(16)
-		let name = NSAttributedString(string: file.name, attributes: [
+		// **Struck through rather than gone.** A row that vanished when it was
+		// ticked would take with it the only evidence of what has been done —
+		// and hiding them is a switch of its own, for when the list is long.
+		var nameAttributes: [NSAttributedString.Key: Any] = [
 			.font: Theme.current.uiFont(11.5),
-			.foregroundColor: Theme.current.sidebarText,
-		])
+			.foregroundColor: isRead ? Theme.current.gitIgnored : Theme.current.sidebarText,
+		]
+		if isRead {
+			nameAttributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+			nameAttributes[.strikethroughColor] = Theme.current.gitIgnored
+		}
+		let name = NSAttributedString(string: file.name, attributes: nameAttributes)
 		name.draw(at: NSPoint(x: x, y: bounds.midY - name.size().height / 2))
 		x += name.size().width + Theme.current.scaled(6)
 

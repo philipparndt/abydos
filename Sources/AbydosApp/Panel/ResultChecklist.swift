@@ -223,6 +223,26 @@ final class ResultChecklist: NSView {
 
 	func applySettings() { tableView.reloadData() }
 
+	/// Clears the ticks whose row is about something that has since changed.
+	///
+	/// **Nothing here gives a token today**, and that is the point of the
+	/// argument's shape rather than an oversight: a search and a usages list are
+	/// answers to a question asked once, and asking it again starts from the
+	/// beginning. The capability is `Checklist`'s, shared with the pull request
+	/// page's file list, and this is where a list drawn by *this* view would
+	/// reach it — so the two cannot drift into two answers about what a tick
+	/// means.
+	///
+	/// - Returns: how many ticks went, so a caller can say so.
+	@discardableResult
+	func revalidate(against tokens: [SearchChecklist.Mark: String]) -> Int {
+		let cleared = checklist.revalidate(tokens, for: question)
+		guard !cleared.isEmpty else { return 0 }
+		reloadRows()
+		onProgressChanged?()
+		return cleared.count
+	}
+
 	/// The keyboard, put in the list.
 	///
 	/// The one call that item 470 found missing everywhere: a list that appears

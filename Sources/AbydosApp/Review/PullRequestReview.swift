@@ -25,6 +25,44 @@ final class PullRequestReview {
 	var existingPage: (String) -> NSView? = { _ in nil }
 	/// Put a page in the editor area and give the editor the window.
 	var openPage: (NSView, String, String, String) -> Void = { _, _, _, _ in }
+	/// Write what the project has open, so a tick outlives the window.
+	var rememberSession: () -> Void = {}
+
+	/// Which files of which pull request have been read, this window's copy.
+	///
+	/// Kept here rather than in the page because a page is a tab somebody may
+	/// close and open again in the same afternoon, and closing a tab is not
+	/// unreading a file.
+	private var ticks: [Int: Checklist<String>] = [:]
+
+	/// What to write beside the project: every pull request this window knows
+	/// about, over whatever the session file already held.
+	///
+    /// **Merged rather than written over.** A window that has opened one pull
+	/// request today knows nothing about the four somebody read yesterday, and
+	/// writing only what it knows would forget them.
+	func ticksToRemember() -> [String: [String: String]] {
+		guard let root = repositoryRoot() else { return [:] }
+		var remembered = SessionStore.read(in: root)?.reviewTicks ?? [:]
+		for (number, list) in ticks {
+			let recorded = list.recordedTokens.filter { list.isDone($0.key) }
+			if recorded.isEmpty {
+				remembered.removeValue(forKey: "\(number)")
+			} else {
+				remembered["\(number)"] = recorded
+			}
+		}
+		return remembered
+	}
+
+	/// What the project remembered about one pull request.
+	private func remembered(_ number: Int) -> Checklist<String> {
+		if let held = ticks[number] { return held }
+		guard let root = repositoryRoot(),
+		      let stored = SessionStore.read(in: root)?.reviewTicks["\(number)"]
+		else { return Checklist<String>() }
+		return Checklist(done: Set(stored.keys), tokens: stored)
+	}
 
 	/// The pages open, by pull request number.
 	///
@@ -53,6 +91,14 @@ final class PullRequestReview {
 		let identifier = "pull-request-\(request.number)"
 		let page = (existingPage(identifier) as? PullRequestPage)
 			?? PullRequestPage(root: root, request: request)
+		// Before the files arrive, so the revalidation that follows them has
+		// something to check.
+		page.restore(ticks: remembered(request.number))
+		page.onTicksChanged = { [weak self] number, list in
+			guard let self else { return }
+			self.ticks[number] = list
+			self.rememberSession()
+		}
 		pages[request.number] = WeakPage(page: page)
 		openPage(page, "PR #\(request.number)", identifier, "arrow.trianglehead.pull")
 		// Opened to be read, and read with the arrows.
@@ -75,6 +121,12 @@ final class PullRequestReview {
 	/// - `page` — what the open page holds: files, rows, diff
 	/// - `whole:on` / `whole:off` — the whole-file view of the diff
 	/// - `pick:2` — select the file at that index
+	/// - `read` — tick the selected file off, as ␣ does
+	/// - `next` — go to the next file nobody has read, as ⌥↓ does
+	/// - `hide:on` / `hide:off` — leave only what is still to read
+	/// - `push:<path>` — pretend the author pushed a change to that file, which
+	///   fakes the token and nothing else; `push:` alone revalidates against the
+	///   tokens as they are, which is a rebase that changed nothing
 	/// - `keys:down+down` — walk the file list, as `--log-page` does
 	/// - `diff` — the first lines of the diff on screen
 	/// - `settle` / `settle:2` — wait, because a network call is in flight
@@ -133,7 +185,7 @@ final class PullRequestReview {
 				lastOpened = opened ? number : nil
 				print("PULL-REQUESTS: open #\(number) \(opened ? "opened" : "no such row")")
 			case "rail": print("PULL-REQUESTS rail: \(rail())")
-			case "page", "whole", "pick", "keys", "diff":
+			case "page", "whole", "pick", "keys", "diff", "read", "next", "hide", "push":
 				// The page is a second round of network calls, so a step that
 				// addresses it waits — and takes the rest of the script with it
 				// rather than running the tail against a page that is not there.
@@ -153,6 +205,10 @@ final class PullRequestReview {
 					return
 				}
 				switch step.prefix(while: { $0 != ":" }) {
+				case "push":  print("PULL-REQUEST PAGE: " + page.pretendPushForTesting(argument))
+				case "read":  page.toggleReadForTesting()
+				case "next":  print("PULL-REQUEST PAGE: next unread \(page.nextUnreadForTesting())")
+				case "hide":  page.setHideReadForTesting(argument == "on")
 				case "page":  print("PULL-REQUEST PAGE:\n\(page.reportForTesting())")
 				case "whole": page.setWholeFileForTesting(argument == "on")
 				case "pick":  page.selectFileForTesting(Int(argument) ?? 0)

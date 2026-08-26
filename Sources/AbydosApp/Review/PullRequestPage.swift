@@ -22,6 +22,9 @@ final class PullRequestPage: NSView {
 
 	/// The whole diff, cut into one piece per file.
 	private var diffs: [String: String] = [:]
+	/// What each file's diff hashes to at the head this page was read at, which
+	/// is what a tick is recorded against.
+	private var tokens: [String: String] = [:]
 	/// The file text at the head, for the whole-file view — asked for once per
 	/// file and kept, because turning the switch off and on again should not be
 	/// a second network call.
@@ -32,6 +35,8 @@ final class PullRequestPage: NSView {
 	private var diffScroll: NSScrollView!
 	private var arrangeControl: NSSegmentedControl!
 	private var wholeFileSwitch: NSButton!
+	private var hideReadSwitch: NSButton!
+	private var progressLabel: NSTextField!
 	private var headingLabel: NSTextField!
 	private var subheadingLabel: NSTextField!
 	private var split: NSSplitView!
@@ -84,6 +89,14 @@ final class PullRequestPage: NSView {
 			arrangedByFolder: Settings.shared.commitFilesByFolder
 		)
 		fileList.onSelect = { [weak self] file in self?.show(file: file) }
+		// **A file is ticked as it is read.** A reviewer's place in a long list
+		// is the thing most easily lost and the most annoying to find again.
+		fileList.allowsTicking = true
+		fileList.onTicksChanged = { [weak self] in
+			guard let self else { return }
+			self.showProgress()
+			self.onTicksChanged?(self.request.number, self.fileList.ticks)
+		}
 
 		diffView = DiffView()
 		// **Nothing here stages anything.** `DiffView` offers staging by line
@@ -126,7 +139,18 @@ final class PullRequestPage: NSView {
 		wholeFileSwitch.state = Settings.shared.reviewShowsWholeFile ? .on : .off
 		wholeFileSwitch.toolTip = "Show the change inside the whole file, not only its hunks"
 
-		let controls = NSStackView(views: [arrangeControl, wholeFileSwitch])
+		hideReadSwitch = NSButton(
+			checkboxWithTitle: "Hide read", target: self, action: #selector(hideReadChanged)
+		)
+		hideReadSwitch.controlSize = .small
+		hideReadSwitch.font = Theme.current.uiFont(11)
+		hideReadSwitch.toolTip = "Leave only the files still to read"
+
+		progressLabel = NSTextField(labelWithString: "")
+		progressLabel.font = Theme.current.uiFont(11)
+		progressLabel.textColor = Theme.current.gitIgnored
+
+		let controls = NSStackView(views: [progressLabel, hideReadSwitch, arrangeControl, wholeFileSwitch])
 		controls.orientation = .horizontal
 		controls.spacing = Theme.current.scaled(10)
 
@@ -210,6 +234,13 @@ final class PullRequestPage: NSView {
 			self.diffs = FileDiffs.split(diff.value ?? "")
 			self.contents = [:]
 
+			// **What a tick was made against is that file's diff at that head.**
+			// Not the head commit: a rebase moves the head without changing a
+			// single file's diff, and clearing every tick on every push is how a
+			// checklist comes to be ignored.
+			self.tokens = self.diffs.mapValues { FileDiffs.token(forDiff: $0) }
+			self.fileList.setTokens(self.tokens)
+
 			switch files {
 			case .answered(let listed):
 				self.trouble = listed.isEmpty ? "This pull request changes no files." : diff.trouble
@@ -220,6 +251,14 @@ final class PullRequestPage: NSView {
 					)
 				)
 				self.onFilesLoaded?(listed)
+				// The ticks come back, and then the ones whose file has moved
+				// under them go. Said out loud rather than silently: a tick
+				// disappearing without a word reads as a bug.
+				let cleared = self.fileList.revalidateTicks()
+				if !cleared.isEmpty {
+					self.clearedByThePush = cleared
+				}
+				self.showProgress()
 				// Opened to be read: the first file, rather than an empty half.
 				if let first = listed.first { self.fileList.select(path: first.path) }
 			case .unavailable, .failed:
@@ -232,6 +271,19 @@ final class PullRequestPage: NSView {
 
 	/// The files, once they are known — for whatever is built on top of them.
 	var onFilesLoaded: (([PullRequestFile]) -> Void)?
+
+	/// Somebody ticked a file, so whatever remembers ticks should.
+	var onTicksChanged: ((Int, Checklist<String>) -> Void)?
+
+	/// Which ticks the last read cleared, for the report to say.
+	private(set) var clearedByThePush: Set<String> = []
+
+	/// The ticks as they stand, for whatever writes them down.
+	var ticks: Checklist<String> { fileList.ticks }
+
+	/// Puts a remembered set of ticks back. Called before the files arrive, so
+	/// the revalidation that follows them has something to check.
+	func restore(ticks: Checklist<String>) { fileList.setTicks(ticks) }
 
 	/// The diff of one file at the head this page was opened at.
 	func diff(of path: String) -> String? { diffs[path] }
@@ -282,6 +334,16 @@ final class PullRequestPage: NSView {
 		fileList.arrangesByFolder = Settings.shared.commitFilesByFolder
 	}
 
+	@objc private func hideReadChanged() {
+		fileList.setHidesDone(hideReadSwitch.state == .on)
+	}
+
+	/// How much of the list has been read, and what a cleared tick did.
+	private func showProgress() {
+		let (done, total) = fileList.progress
+		progressLabel.stringValue = total == 0 ? "" : "\(done) of \(total) read"
+	}
+
 	@objc private func wholeFileChanged() {
 		Settings.shared.reviewShowsWholeFile = wholeFileSwitch.state == .on
 		guard let file = fileList.selectedFile else { return }
@@ -296,6 +358,11 @@ final class PullRequestPage: NSView {
 		said.append("head=\(head?.prefix(8).description ?? "unknown")")
 		said.append("whole-file=\(Settings.shared.reviewShowsWholeFile ? "on" : "off")")
 		if let trouble { said.append("trouble=\(trouble)") }
+		let (done, total) = fileList.progress
+		said.append("read=\(done)/\(total)")
+		if !clearedByThePush.isEmpty {
+			said.append("cleared=" + clearedByThePush.sorted().joined(separator: ", "))
+		}
 		said.append("files=\(fileList.files.count)")
 		said += fileList.rowsForTesting().prefix(12).map { "  " + $0 }
 		said.append("diff=\(diffView.reportForTesting)")
@@ -308,6 +375,43 @@ final class PullRequestPage: NSView {
 	func fileKeysForTesting(_ steps: String) -> String { fileList.keysForTesting(steps) }
 
 	func selectFileForTesting(_ index: Int) { fileList.select(index: index) }
+
+	/// Ticks or unticks the selected file, as ␣ does.
+	func toggleReadForTesting() { fileList.setDoneAtSelection(nil) }
+
+	/// Goes to the next file nobody has read, as ⌥↓ does.
+	@discardableResult
+	func nextUnreadForTesting() -> Bool { fileList.selectNextUndone() }
+
+	/// Pretends the author pushed a change to one file.
+	///
+	/// **It fakes the input and nothing else**, and says so rather than hiding
+	/// it: the token that file's diff hashes to is replaced, and everything
+	/// downstream — the revalidation, the row, the count — is the real path. The
+	/// honest version of this would move a real head, which means pushing to a
+	/// repository, and nothing here may do that.
+	///
+	/// Called with no path it revalidates against the tokens as they are, which
+	/// is the other case that matters: a rebase that changed no file's diff
+	/// clears nothing.
+	func pretendPushForTesting(_ path: String) -> String {
+		if !path.isEmpty {
+			tokens[path] = (tokens[path] ?? "") + "-pushed"
+			fileList.setTokens(tokens)
+		}
+		let cleared = fileList.revalidateTicks()
+		clearedByThePush = cleared
+		showProgress()
+		let (done, total) = fileList.progress
+		return cleared.isEmpty
+			? "nothing cleared, \(done) of \(total) still read"
+			: "cleared " + cleared.sorted().joined(separator: ", ") + ", \(done) of \(total) still read"
+	}
+
+	func setHideReadForTesting(_ on: Bool) {
+		hideReadSwitch.state = on ? .on : .off
+		hideReadChanged()
+	}
 
 	func setWholeFileForTesting(_ on: Bool) {
 		wholeFileSwitch.state = on ? .on : .off

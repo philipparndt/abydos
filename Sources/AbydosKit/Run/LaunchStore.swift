@@ -195,7 +195,8 @@ public enum SessionStore {
 			xcodeDestinations: XcodeDestinationMemory.remembered(
 				object["destinations"] as? [String: String] ?? [:]
 			),
-			breakpoints: readBreakpoints(object["breakpoints"])
+			breakpoints: readBreakpoints(object["breakpoints"]),
+			reviewTicks: readReviewTicks(object["review"])
 		)
 		return session.isEmpty ? nil : session
 	}
@@ -211,6 +212,24 @@ public enum SessionStore {
 		      fraction.isFinite, fraction > 0, fraction < 1
 		else { return nil }
 		return fraction
+	}
+
+	/// Which files of which pull request had been read.
+	///
+	/// Read defensively, like everything else here: this is JSON on disk that
+	/// anything may have written, and a tick that cannot be understood is a tick
+	/// that never happened — which shows a file as unread, and showing is the
+	/// safe direction.
+	static func readReviewTicks(_ value: Any?) -> [String: [String: String]] {
+		guard let entries = value as? [String: Any] else { return [:] }
+		var found: [String: [String: String]] = [:]
+		for (number, ticks) in entries {
+			guard Int(number) != nil, let ticks = ticks as? [String: Any] else { continue }
+			let paths = ticks.compactMapValues { $0 as? String }
+			guard !paths.isEmpty else { continue }
+			found[number] = paths
+		}
+		return found
 	}
 
 	/// The breakpoints a session file lists, back into what the debugger holds.
@@ -297,6 +316,9 @@ public enum SessionStore {
 						return entry
 					}
 				}
+		}
+		if !session.reviewTicks.isEmpty {
+			object["review"] = session.reviewTicks
 		}
 		if !session.terminals.isEmpty {
 			object["terminals"] = session.terminals.map { terminal -> [String: Any] in
