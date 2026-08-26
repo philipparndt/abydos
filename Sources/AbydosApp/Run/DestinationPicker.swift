@@ -55,7 +55,7 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		build()
 	}
 
-	private func build() {
+	func build() {
 		panel.title = "Choose a simulator"
 		panel.isFloatingPanel = true
 		panel.hidesOnDeactivate = false
@@ -125,7 +125,7 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		])
 	}
 
-	private func present(relativeTo window: NSWindow?) {
+	func present(relativeTo window: NSWindow?) {
 		if let window {
 			panel.setFrameOrigin(NSPoint(
 				x: window.frame.midX - panel.frame.width / 2,
@@ -143,7 +143,7 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 	}
 
 	/// The kinds in the list, in the menu's own order so the two agree.
-	private func orderedCategories(in destinations: [XcodeDestination]) -> [String] {
+	func orderedCategories(in destinations: [XcodeDestination]) -> [String] {
 		var seen: [String] = []
 		for destination in destinations {
 			let category = XcodeDestinationMenu.category(of: destination)
@@ -162,7 +162,7 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		return categories[index - 1]
 	}
 
-	@objc private func filterChanged() {
+	@objc func filterChanged() {
 		let category = chosenCategory
 		shown = all.filter { destination in
 			guard XcodeDestinationMenu.matches(destination, field.stringValue) else { return false }
@@ -173,7 +173,7 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		if !shown.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
 	}
 
-	@objc private func chooseSelected() {
+	@objc func chooseSelected() {
 		let row = table.selectedRow
 		guard shown.indices.contains(row) else { return }
 		let chosen = shown[row]
@@ -181,7 +181,7 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		onChoose(chosen)
 	}
 
-	@objc private func close() {
+	@objc func close() {
 		panel.orderOut(nil)
 		Self.open = nil
 	}

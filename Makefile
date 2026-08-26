@@ -95,7 +95,7 @@ test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
 # recompiles all of this repository's code and none of anybody else's, and which
 # fails only on warnings that are ours. Run it before finishing a backlog item.
 .PHONY: warnings
-warnings: ## Every warning in this repository's own code (JOBS=N)
+warnings: ## Every warning in this repository's own code, and every file over the length ceiling (JOBS=N)
 	@JOBS="$(JOBS)" Scripts/warnings.sh
 
 # The bounds on how long a warm render takes, which `make test` measures and
