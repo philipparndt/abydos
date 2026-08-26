@@ -2734,6 +2734,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		) else { return false }
 
 		lastReportedMouseCell = GridCell(row: position.row, column: position.column)
+		if isDrag { forwardedDragsForTesting += 1 }
 		pty.write(sequence)
 		return true
 	}
@@ -2764,6 +2765,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 
 		guard mouseSelects || event.modifierFlags.contains(.shift) else {
+			clickSlack.pressed(at: convert(event.locationInWindow, from: nil))
 			_ = forwardMouse(event, button: .left, isRelease: false)
 			return
 		}
@@ -2784,6 +2786,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	override func mouseUp(with event: NSEvent) {
+		clickSlack.released()
 		if isSelecting {
 			isSelecting = false
 			// A click that never moved is a click, not an empty selection.
@@ -2855,6 +2858,66 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// one cell does not send a report per pixel.
 	private var lastReportedMouseCell: GridCell?
 
+	/// How far the pointer has to travel before a press-and-release becomes a
+	/// drag the program hears about. See `ClickSlack` for what it is guarding.
+	private var clickSlack = ClickSlack()
+
+	/// Drag reports the program has been sent, counted only so a driven run can
+	/// say whether an unsteady click reached it.
+	private var forwardedDragsForTesting = 0
+
+	/// `--wobble <points>`: the gesture that was emptying the clipboard.
+	///
+	/// Presses over a pane that has asked for the mouse, moves the pointer that
+	/// far without meaning to, and releases. tmux copies on selection, so every
+	/// drag report this sends is a chance for it to select nothing and put that
+	/// nothing on the clipboard. The number to want is zero.
+	///
+	/// Mouse tracking is turned on here, by writing what a program writes, so
+	/// the check does not need tmux running to be about tmux's problem. 1002 and
+	/// not 1000: mode 1000 reports presses and releases and no motion at all, so
+	/// a wobble could not reach the program under it whatever this did. 1002 is
+	/// button-event tracking — motion while a button is held — which is what
+	/// tmux turns on and the mode the bug lives in.
+	func wobbleClickForTesting(_ points: Int) -> String {
+		writeForTesting("\u{1B}[?1002h")
+		guard !mouseSelects else { return "WOBBLE: the terminal is not tracking the mouse" }
+
+		let origin = NSPoint(
+			x: Self.horizontalInset + cellWidth * 8,
+			y: Self.verticalInset + cellHeight * 2
+		)
+		func event(_ type: NSEvent.EventType, dx: CGFloat, dy: CGFloat) -> NSEvent? {
+			NSEvent.mouseEvent(
+				with: type,
+				location: convert(NSPoint(x: origin.x + dx, y: origin.y + dy), to: nil),
+				modifierFlags: [],
+				timestamp: ProcessInfo.processInfo.systemUptime,
+				windowNumber: window?.windowNumber ?? 0,
+				context: nil,
+				eventNumber: 0,
+				clickCount: 1,
+				pressure: 1
+			)
+		}
+		guard let down = event(.leftMouseDown, dx: 0, dy: 0) else { return "WOBBLE: no events" }
+
+		forwardedDragsForTesting = 0
+		mouseDown(with: down)
+		// Every point on the way, because a hand does not arrive at its wobble in
+		// one step and each event is a separate chance to report a drag.
+		for step in 1...max(1, points) {
+			if let drag = event(.leftMouseDragged, dx: CGFloat(step), dy: CGFloat(step % 2)) {
+				mouseDragged(with: drag)
+			}
+		}
+		let reported = forwardedDragsForTesting
+		if let up = event(.leftMouseUp, dx: CGFloat(max(1, points)), dy: 0) { mouseUp(with: up) }
+
+		return "WOBBLE \(points)pt: \(reported) drag report(s) reached the program"
+			+ " (cell \(Int(cellWidth))x\(Int(cellHeight)))"
+	}
+
 	/// A cell of the visible grid, as the mouse protocol addresses it.
 	private struct GridCell: Equatable {
 		let row: Int
@@ -2863,6 +2926,14 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	override func mouseDragged(with event: NSEvent) {
 		guard isSelecting else {
+			// A hand that moves two points between pressing and releasing is
+			// clicking, not dragging. Telling tmux otherwise makes it select
+			// nothing and copy that nothing over the clipboard — see
+			// `ClickSlack`, where the whole of that is written down.
+			guard clickSlack.hasLeftTheSlack(
+				at: convert(event.locationInWindow, from: nil),
+				cellWidth: cellWidth, cellHeight: cellHeight
+			) else { return }
 			_ = forwardMouse(event, button: .left, isRelease: false, isDrag: true)
 			return
 		}

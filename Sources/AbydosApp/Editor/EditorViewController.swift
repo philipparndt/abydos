@@ -3606,6 +3606,9 @@ final class EditorViewController: NSViewController {
 	/// permanent. The window owns the panes, so it owns the answer.
 	var onMaximize: (() -> Void)?
 
+	/// Whether the editor has the window, for the strip's own control.
+	func setMaximized(_ maximized: Bool) { tabBar.setMaximized(maximized) }
+
 	/// Told where the editor went, and where it stood before.
 	var onNavigated: ((NavigationHistory.Place?, NavigationHistory.Place) -> Void)?
 	/// Raised while an outer open reports the jump itself, with the line it

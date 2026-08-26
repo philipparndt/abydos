@@ -51,10 +51,28 @@ public enum ProcessPipes {
 		let outDescriptor = out.fileHandleForReading.fileDescriptor
 		let errDescriptor = err.fileHandleForReading.fileDescriptor
 
-		DispatchQueue.global(qos: .userInitiated).async(group: group) {
+		// **Threads of their own, and not the global queue.** This is what made
+		// the git suites unreliable, and it is worse than unreliable tests: a
+		// reader that never got a thread came back empty from a command that had
+		// *succeeded*, so callers were handed exit code 0 and no output and read
+		// it as "no changes", "no stashes", "no files in that commit".
+		//
+		// GCD's global queues overcommit only so far — about sixty-four threads
+		// per quality of service — and every one of these reads blocks its
+		// thread until end of file. Run enough commands at once and the readers
+		// for the newest of them are still queued when the two-second grace
+		// below runs out, so `stop` is set on a read that never began.
+		//
+		// Measured: the git suites failed every run with twenty to fifty
+		// expectation failures, all of them a value that should have been read
+		// coming back empty, and passed every run when the same tests were
+		// serialised. A thread apiece cannot be starved by other work, which is
+		// the whole of the fix; the grace below then means what it says, which
+		// is "the program has exited, drain what it left".
+		startReader(group: group) {
 			output.data = readToEnd(outDescriptor, until: stop, onData: onOutput)
 		}
-		DispatchQueue.global(qos: .userInitiated).async(group: group) {
+		startReader(group: group) {
 			errors.data = readToEnd(errDescriptor, until: stop, onData: onOutput)
 		}
 		if let stdin {
@@ -93,14 +111,16 @@ public enum ProcessPipes {
 		// how this used to end the read, and it ended the app instead: see
 		// `readToEnd`.
 		process.waitUntilExit()
-		let drained = DispatchSemaphore(value: 0)
-		DispatchQueue.global(qos: .userInitiated).async {
-			group.wait()
-			drained.signal()
-		}
-		if drained.wait(timeout: .now() + .seconds(2)) == .timedOut {
+		// Waited for here rather than on a borrowed thread. This used to dispatch
+		// a block that did `group.wait()` and signalled a semaphore — which is
+		// the same starvation the readers had, one layer up: a waiter that had
+		// not been given a thread yet made the two seconds expire against a
+		// group that was already finished, and `stop` was set on a completed
+		// read. `DispatchGroup` can be waited on with a timeout directly, so
+		// there is nothing to borrow.
+		if group.wait(timeout: .now() + .seconds(2)) == .timedOut {
 			stop.set()
-			_ = drained.wait(timeout: .now() + .seconds(2))
+			_ = group.wait(timeout: .now() + .seconds(2))
 		}
 		return (output.data, errors.data)
 	}
@@ -115,18 +135,15 @@ public enum ProcessPipes {
 		let output = Box()
 		let stop = Flag()
 		let descriptor = out.fileHandleForReading.fileDescriptor
-		DispatchQueue.global(qos: .userInitiated).async(group: group) {
+		// A thread of its own, and waited for here — for the reasons the two-pipe
+		// `drain` above gives at length.
+		startReader(group: group) {
 			output.data = readToEnd(descriptor, until: stop)
 		}
 		process.waitUntilExit()
-		let drained = DispatchSemaphore(value: 0)
-		DispatchQueue.global(qos: .userInitiated).async {
-			group.wait()
-			drained.signal()
-		}
-		if drained.wait(timeout: .now() + .seconds(2)) == .timedOut {
+		if group.wait(timeout: .now() + .seconds(2)) == .timedOut {
 			stop.set()
-			_ = drained.wait(timeout: .now() + .seconds(2))
+			_ = group.wait(timeout: .now() + .seconds(2))
 		}
 		return output.data
 	}
@@ -216,6 +233,24 @@ public enum ProcessPipes {
 	}
 
 	/// One bool, set by whoever gave up and read by the threads still reading.
+	/// Runs a pipe reader on a thread of its own, tied to `group`.
+	///
+	/// `Thread` rather than a queue because a queue is a promise to run the work
+	/// eventually and this work has a deadline: see the comment in `drain`.
+	private static func startReader(group: DispatchGroup, _ work: @escaping @Sendable () -> Void) {
+		group.enter()
+		let thread = Thread {
+			work()
+			group.leave()
+		}
+		// Smaller than the 512 KB default: these read into a buffer that is
+		// already allocated and call one closure. Thousands of git commands over
+		// a session should not each reserve half a megabyte of stack.
+		thread.stackSize = 128 * 1024
+		thread.name = "abydos.pipe-reader"
+		thread.start()
+	}
+
 	private final class Flag: @unchecked Sendable {
 		private let lock = NSLock()
 		private var value = false

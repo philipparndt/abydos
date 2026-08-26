@@ -546,7 +546,9 @@ extension MainWindowController {
 	/// a split view will not put a pane fully away, and a sliver of tree left
 	/// showing is not what "give the editor the window" means.
 	@objc func toggleEditorMaximized(_ sender: Any? = nil) {
-		defer { titlebar.refreshMaximizeButton() }
+		// Every editor strip draws the control, so every one is told which way
+		// its arrows go.
+		defer { editor.setMaximized(isEditorMaximized) }
 		if let before = beforeEditorMaximized {
 			beforeEditorMaximized = nil
 			if before.navigator { openNavigator() }

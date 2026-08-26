@@ -1435,6 +1435,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// An unsteady click over a pane that is tracking the mouse. tmux copies
+		// on selection, so a drag report from a click nobody meant is what
+		// empties the clipboard.
+		if let pixels = options.wobblePixels {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(2.0, options.screenshotDelay - 2)) {
+				print(controller?.panelForTesting.showTerminal()?.terminalView
+					.wobbleClickForTesting(pixels)
+					?? "WOBBLE: no terminal")
+				fflush(stdout)
+			}
+		}
+
 		if options.highlightPills {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 1)) {
 				controller?.titlebarForTesting.highlightPillsForTesting()
