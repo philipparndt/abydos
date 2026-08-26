@@ -133,6 +133,7 @@ public final class Settings {
 		static let compactsPackages = "compactsPackages"
 		static let commitFilesByFolder = "commitFilesByFolder"
 		static let reviewRequestsIncludeTeams = "reviewRequestsIncludeTeams"
+		static let reviewShowsWholeFile = "reviewShowsWholeFile"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let agentPermissions = "agentPermissions"
@@ -715,6 +716,18 @@ public final class Settings {
 	public var reviewRequestsIncludeTeams: Bool {
 		get { defaults.bool(forKey: Key.reviewRequestsIncludeTeams) }
 		set { set(newValue, Key.reviewRequestsIncludeTeams) }
+	}
+
+	/// Whether a pull request's diff is shown inside the whole file rather than
+	/// as its hunks alone.
+	///
+	/// Off, because the hunks are what a diff is and they arrive with the diff;
+	/// the whole file costs a call per file. On is the thing a review in an
+	/// editor can do that a review in a browser cannot, which is why it is a
+	/// switch above the diff rather than a setting somebody has to find.
+	public var reviewShowsWholeFile: Bool {
+		get { defaults.bool(forKey: Key.reviewShowsWholeFile) }
+		set { set(newValue, Key.reviewShowsWholeFile) }
 	}
 
 	/// Whether choosing another project opens a window or replaces this one.

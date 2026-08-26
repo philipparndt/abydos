@@ -239,6 +239,33 @@ public enum GitHubPullRequests {
 		return .answered(result.stdout)
 	}
 
+	/// One file's text at a commit, for the whole-file view of its diff.
+	///
+	/// The raw media type rather than the JSON one: the JSON carries the file
+	/// base64-encoded inside a field, and this wants the bytes.
+	public static func contents(
+		of path: String, at ref: String, in root: URL
+	) async -> ForgeReply<String> {
+		guard let repository = await GitForge.repository(in: root) else {
+			return .unavailable(.noGitHubRemote)
+		}
+		// Each component escaped on its own: a path has slashes that must stay
+		// slashes, and may have a space that must not.
+		let escaped = path.split(separator: "/").map {
+			$0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0)
+		}.joined(separator: "/")
+		let result = await GitHubCLI.run(
+			[
+				"api", "--hostname", repository.host,
+				"-H", "Accept: application/vnd.github.raw",
+				"repos/\(repository.owner)/\(repository.name)/contents/\(escaped)?ref=\(ref)",
+			],
+			in: root
+		)
+		guard result.exitCode == 0 else { return .failed(complaint(result)) }
+		return .answered(result.stdout)
+	}
+
 	// MARK: - The conversation
 
 	/// The review comments already on it, at the lines they are still about.

@@ -55,6 +55,18 @@ final class SidebarController: NSObject {
 		pullRequests.pane = { [weak self] in self?.pullRequestsPane }
 		pullRequests.showList = { [weak self] in self?.showSidebarTool(.pullRequests) }
 		pullRequests.rail = { [weak self] in self?.railReportForTesting() ?? "" }
+		pullRequests.repositoryRoot = { [weak self] in
+			self?.gitCommandRoot() ?? self?.project()?.root
+		}
+		pullRequests.existingPage = { [weak self] identifier in
+			self?.editor.activeGroup?.page(identifier: identifier)
+		}
+		pullRequests.openPage = { [weak self] page, title, identifier, symbol in
+			guard let self, let group = self.editor.activeGroup else { return }
+			self.leaveTerminalFullScreen()
+			group.openPage(page, title: title, identifier: identifier, symbol: symbol)
+			self.giveTheEditorTheWindow()
+		}
 	}
 
 	/// The rail itself, which the window puts down its left edge.
@@ -760,6 +772,7 @@ final class SidebarController: NSObject {
 			// something only the repository knows.
 			guard let project = project(), project.git != nil else { return nil }
 			let pane = PullRequestsPane(root: gitCommandRoot() ?? project.root)
+			pane.onOpen = { [weak self] request in self?.pullRequests.open(request) }
 			pullRequestsPane = pane
 			view = pane
 		case .scratches:

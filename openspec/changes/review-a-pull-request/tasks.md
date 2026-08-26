@@ -38,12 +38,12 @@
 
 ## 4. Reading one
 
-- [ ] 4.1 A pull request opens as a page, using the shared list from group 1
-- [ ] 4.2 The files are the change against the merge base, not the difference
+- [x] 4.1 A pull request opens as a page, using the shared list from group 1
+- [x] 4.2 The files are the change against the merge base, not the difference
       between two tips — a file the base moved is not in the list
-- [ ] 4.3 A diff per file, through `DiffView`; answer the design's open question
+- [x] 4.3 A diff per file, through `DiffView`; answer the design's open question
       about the staging gestures on somebody else's branch
-- [ ] 4.4 Driven: open a pull request, walk the files with the arrows, print the
+- [x] 4.4 Driven: open a pull request, walk the files with the arrows, print the
       rows and the diff of one
 
 ## 5. Ticking, and ticks that die
