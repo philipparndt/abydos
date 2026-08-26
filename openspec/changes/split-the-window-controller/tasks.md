@@ -173,10 +173,19 @@
 
 ## 9. Proving nothing changed
 
-- [ ] 9.1 Run `Scripts/screenshots.sh` and compare every picture against the
-      ones in `docs/images`
-- [ ] 9.2 Walk the menus in a driven run and confirm no item that was enabled is
-      now grey
-- [ ] 9.3 Open a project, switch to another and back, and confirm
-      `ProjectSessions` restores the layout it did before
-- [ ] 9.4 Confirm the recorded list is shorter by one and no entry has grown
+- [ ] 9.1 ~~Run `Scripts/screenshots.sh`~~ — **cannot be run here.** It needs
+      the `ideai-examples` repository, which is not on this machine. Left open
+      rather than ticked; it is the one check in this list nothing stood in for.
+- [x] 9.2 Walk the menus in a driven run and confirm no item that was enabled is
+      now grey — `--menu-keys` walks every item and its shortcut. The stronger
+      guarantee is the compiler's: `#selector(MainWindowController.x)` does not
+      build if `x` is not on the class, which is what would have broken when the
+      actions moved. `validateMenuItem` is intact and byte-identical in its one
+      selector comparison to the version at `a907a7fe`.
+- [x] 9.3 Open a project, switch to another and back, and confirm
+      `ProjectSessions` restores the layout it did before — driven with two
+      `--switch-project` steps: `SWITCHED to proj at 6s`, `SWITCHED to plain at
+      12s`, with the panel's three terminal tabs still there afterwards.
+- [x] 9.4 Confirm the recorded list is shorter by one and no entry has grown —
+      27 entries to 26, `MainWindowController.swift` struck at 927 lines, and
+      the check exits 0.
