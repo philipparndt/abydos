@@ -3306,6 +3306,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// header — the page is a split of scroll views and its own comment says
 		// why nothing else may go in one: a stack view in there argued with the
 		// terminal panel once per frame and the divider could not be dragged.
+		let maximizeEditor = NSMenuItem(
+			title: "Maximize Editor",
+			action: #selector(MainWindowController.toggleEditorMaximized(_:)),
+			keyEquivalent: "\r"
+		)
+		maximizeEditor.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(maximizeEditor)
+
 		let commitFolders = NSMenuItem(
 			title: "Arrange Commit Files by Folder",
 			action: #selector(MainWindowController.toggleCommitFilesByFolder(_:)),

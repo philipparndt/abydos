@@ -215,8 +215,8 @@ final class SessionNode {
 		return formatter.string(from: date)
 	}
 
-	/// A size, in the units somebody reads. `FileSize` holds the one copy — the
+	/// A size, in the units somebody reads. `ByteSize` holds the one copy — the
 	/// binary-file notice says it too, and two roundings of the same number
 	/// looking different is the sort of thing nobody can explain afterwards.
-	private static func said(_ bytes: Int64) -> String { FileSize.said(bytes) }
+	private static func said(_ bytes: Int64) -> String { ByteSize.said(bytes) }
 }

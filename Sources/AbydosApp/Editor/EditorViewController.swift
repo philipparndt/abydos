@@ -1333,13 +1333,16 @@ final class EditorViewController: NSViewController {
 			}
 		}
 
+		// The binary test first, and it costs nothing to ask it there: it reads
+		// eight thousand bytes whatever the file's size, so the old order —
+		// size, then kind — was not buying anything with it. `FileNotice.reason`
+		// holds which of the two answers wins, where a test can pin it.
 		let byteSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-		if byteSize > 64 * 1024 * 1024 {
-			let formatted = ByteCountFormatter.string(fromByteCount: Int64(byteSize), countStyle: .file)
-			return makeNoticeTab(for: fileURL, reason: "This file is \(formatted) — too large to open as text.", preview: preview)
-		}
-		if FileInspector.isProbablyBinary(url: fileURL) {
-			return makeNoticeTab(for: fileURL, reason: "This looks like a binary file.", preview: preview)
+		if let reason = FileNotice.reason(
+			isBinary: FileInspector.isProbablyBinary(url: fileURL),
+			isTooLargeForText: byteSize > 64 * 1024 * 1024
+		) {
+			return makeNoticeTab(for: fileURL, reason: reason, preview: preview)
 		}
 
 		let document: TextDocument

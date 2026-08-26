@@ -38,6 +38,9 @@ final class SidebarController: NSObject {
 	var leaveMaximised: () -> Void = {}
 	var leaveTerminalFullScreen: () -> Void = {}
 	var onInsetsChanged: () -> Void = {}
+	/// A log or a commit page is opened to be read, and is unreadable in a
+	/// third of a window. The gesture is the window's; asking is this object's.
+	var giveTheEditorTheWindow: () -> Void = {}
 	var isPanelVisible: () -> Bool = { false }
 	/// The repository read the window runs, which several panes ask to repeat.
 	var readGit: () -> Void = {}
@@ -722,6 +725,7 @@ final class SidebarController: NSObject {
 			identifier: "log",
 			symbol: "clock.arrow.circlepath"
 		)
+		giveTheEditorTheWindow()
 		page.setRef(ref)
 	}
 
@@ -756,6 +760,7 @@ final class SidebarController: NSObject {
 		}
 		commitPage = page
 		group.openPage(page, title: "Commit", identifier: "commit", symbol: "checkmark.circle")
+		giveTheEditorTheWindow()
 
 		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
 		page.refresh()

@@ -521,6 +521,23 @@ extension MainWindowController {
 
 	var isEditorMaximized: Bool { beforeEditorMaximized != nil }
 
+	/// Gives the editor the window if it has not got it, and does nothing if it
+	/// has.
+	///
+	/// For the two pages that are unreadable small: a log is a graph, a list of
+	/// commits and a diff, and a commit page is two lists and a diff. Both are
+	/// opened *to be read*, which is not what a third of a window is for.
+	///
+	/// **It does not give the window back when the page closes.** The panel
+	/// staying down after `makeRoomForTheEditor` is the same decision and its
+	/// comment is the argument: putting panes back when the editor loses the
+	/// focus that opened it is a mode nobody asked for, and it would fight the
+	/// next click. Double-clicking the tab gives it back, and so does the menu.
+	func giveTheEditorTheWindow() {
+		guard !isEditorMaximized else { return }
+		toggleEditorMaximized(nil)
+	}
+
 	/// Gives the editor the whole window, or gives it back.
 	///
 	/// A double-click on a tab that is already permanent, and the mirror of
@@ -529,6 +546,7 @@ extension MainWindowController {
 	/// a split view will not put a pane fully away, and a sliver of tree left
 	/// showing is not what "give the editor the window" means.
 	@objc func toggleEditorMaximized(_ sender: Any? = nil) {
+		defer { titlebar.refreshMaximizeButton() }
 		if let before = beforeEditorMaximized {
 			beforeEditorMaximized = nil
 			if before.navigator { openNavigator() }

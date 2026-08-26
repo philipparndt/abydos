@@ -107,6 +107,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bar.leaveMaximised = { [weak self] in self?.togglePanelMaximized(nil) }
 		bar.leaveTerminalFullScreen = { [weak self] in self?.leaveTerminalFullScreen() }
 		bar.onInsetsChanged = { [weak self] in self?.updateTopInsets() }
+		bar.giveTheEditorTheWindow = { [weak self] in self?.giveTheEditorTheWindow() }
 		bar.isPanelVisible = { [weak self] in self?.isPanelVisible ?? false }
 		bar.readGit = { [weak self] in self?.readGit() }
 		bar.openProject = { [weak self] url in
@@ -331,6 +332,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		bar.onShowAllWorktrees = { [weak self] in self?.toggleBranchesView(nil) }
 		bar.onOpenFile = { [weak self] url in self?.openFile(at: url) }
+		bar.isEditorMaximized = { [weak self] in self?.isEditorMaximized ?? false }
+		bar.onToggleEditorMaximized = { [weak self] in self?.toggleEditorMaximized(nil) }
 		return bar
 	}()
 
