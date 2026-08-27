@@ -889,6 +889,30 @@ final class BranchesPane: NSView {
 		}
 	}
 
+	/// The branches the menu applies to.
+	///
+	/// The same rule the stashes above follow, and for the same reason: a
+	/// right-click inside the selection means all of it, and a right-click
+	/// anywhere else means the row under the pointer, as every list does.
+	///
+	/// Only *Copy Name* reads this. Checkout, merge and delete are each about
+	/// one branch and say so — a menu that quietly deleted three refs because
+	/// the pointer happened to be inside a selection would be a different kind
+	/// of thing entirely.
+	private var selectedBranches: [GitBranch] {
+		let clicked = tableView.clickedRow
+		let selected = tableView.selectedRowIndexes
+		let indexes = clicked >= 0 && !selected.contains(clicked)
+			? IndexSet(integer: clicked)
+			: selected
+		return indexes.compactMap {
+			guard case let .branch(branch, _, _) = (tableView.item(atRow: $0) as? GitNode)?.row else {
+				return nil
+			}
+			return branch
+		}
+	}
+
 	private var selectedWorktree: GitWorktree? {
 		guard case let .worktree(worktree) = selectedNode?.row else { return nil }
 		return worktree
@@ -1133,6 +1157,45 @@ final class BranchesPane: NSView {
 	/// whether a prefix folded, whether one branch under a prefix stayed flat,
 	/// and whether filtering flattened the lot — none of which a screenshot
 	/// settles without somebody counting pixels, and all of which diff.
+	/// Selects the rows for these branches, by the name git would take.
+	///
+	/// The selection is what the menu reads, so this is the half that has to be
+	/// driven rather than called.
+	func selectBranchesForTesting(_ names: [String]) -> String {
+		var rows = IndexSet()
+		var missing: [String] = []
+		for name in names {
+			let found = (0..<tableView.numberOfRows).first { index in
+				guard case let .branch(branch, _, _) = (tableView.item(atRow: index) as? GitNode)?.row
+				else { return false }
+				return branch.checkoutName == name
+			}
+			if let found { rows.insert(found) } else { missing.append(name) }
+		}
+		tableView.selectRowIndexes(rows, byExtendingSelection: false)
+		return "selected \(rows.count)" + (missing.isEmpty ? "" : ", no row for \(missing.joined(separator: " "))")
+	}
+
+	/// What *Copy Name* would put on the pasteboard — **without putting it
+	/// there**.
+	///
+	/// The pasteboard belongs to whoever is at the keyboard, and a driven run
+	/// that clobbered it would be the same trespass as a driven run typing into
+	/// somebody's shell. What is worth checking is which names and in what
+	/// order; `setString` is the line after this one.
+	func copyNameTextForTesting() -> String {
+		selectedBranches.map(\.checkoutName).joined(separator: "\n")
+	}
+
+	/// What the context menu would offer over the selection.
+	func branchMenuTitlesForTesting() -> [String] {
+		let menu = NSMenu()
+		// Through the delegate the real menu goes through, so what is reported is
+		// what would be shown — titles included, which is where the count is.
+		menuNeedsUpdate(menu)
+		return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+	}
+
 	func rowsForTesting() -> String {
 		(0..<tableView.numberOfRows).compactMap { index -> String? in
 			guard let node = tableView.item(atRow: index) as? GitNode else { return nil }
@@ -1860,10 +1923,21 @@ final class BranchesPane: NSView {
 		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
 	}
 
+	/// Copies what the selected branches are called, one a line.
+	///
+	/// All of them, because selecting three and being given one is the same
+	/// shrinking-selection surprise `TreeSelection` exists for elsewhere — and
+	/// because the reason to select several branches at once is nearly always to
+	/// paste the list somewhere.
+	///
+	/// `checkoutName` rather than the display name: what is copied should be
+	/// what can be typed at git, and a remote branch's row says `main` where git
+	/// wants `origin/main`.
 	@objc private func copyBranchName() {
-		guard let branch = selectedBranch else { return }
+		let names = selectedBranches.map(\.checkoutName)
+		guard !names.isEmpty else { return }
 		NSPasteboard.general.clearContents()
-		NSPasteboard.general.setString(branch.checkoutName, forType: .string)
+		NSPasteboard.general.setString(names.joined(separator: "\n"), forType: .string)
 	}
 
 	/// Asks for a branch name, rejecting ones git would refuse.
@@ -2222,7 +2296,13 @@ extension BranchesPane: NSMenuDelegate {
 			enabled: !branch.isCurrent
 		))
 		menu.addItem(.separator())
-		menu.addItem(item("Copy Name", #selector(copyBranchName)))
+		// Saying how many, so a menu opened over a selection of three does not
+		// look like it is about the one row under the pointer.
+		let copying = selectedBranches.count
+		menu.addItem(item(
+			copying > 1 ? "Copy \(copying) Names" : "Copy Name",
+			#selector(copyBranchName)
+		))
 		menu.addItem(item("New Worktree from Here…", #selector(addWorktree)))
 		menu.addItem(item(remoteMenuTitle, #selector(setRemote)))
 

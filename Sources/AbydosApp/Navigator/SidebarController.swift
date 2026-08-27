@@ -325,6 +325,17 @@ final class SidebarController: NSObject {
 			case "cmdf":
 				print("BRANCHES find taken by: \(SidebarController.sendFind(in: pane.window))")
 			case "focus-tree": pane.window?.makeFirstResponder(pane.tableViewForTesting)
+			// Several branches at once, and what the menu would then offer and
+			// copy. `+` between the names, as the other multi-row steps use.
+			case "select":
+				print("BRANCHES select: "
+					+ pane.selectBranchesForTesting(argument.split(separator: "+").map(String.init)))
+			case "menu":
+				print("BRANCHES menu: \(pane.branchMenuTitlesForTesting().joined(separator: " | "))")
+			case "copy-name":
+				print("BRANCHES copy-name would copy:\n"
+					+ pane.copyNameTextForTesting().split(separator: "\n")
+						.map { "  " + $0 }.joined(separator: "\n"))
 			case "unfind":  pane.hideFilter()
 			case "menu":
 				print("BRANCHES menu \(argument): "
