@@ -182,13 +182,23 @@ class ActionableRowView: NSView {
 			return label(for: action).map { ceil($0.size().width) + padding * 2 }
 				?? Theme.current.scaled(20)
 		}()
-		let second = showsSecondary ? secondaryWidth : 0
+		// The gap only where there is something on both sides of it: a row with
+		// only the glyph must not be inset by the space a missing button would
+		// have needed.
+		let second = showsSecondary
+			? secondaryWidth + (first > 0 ? secondaryGap : 0)
+			: 0
 		guard first > 0 || second > 0 else { return 0 }
 		return first + second + RowMetrics.trailingInset
 	}
 
-	/// A glyph and the gap before it, which is all a second verb ever takes.
+	/// The box a second verb's glyph is drawn in.
 	private var secondaryWidth: CGFloat { Theme.current.scaled(24) }
+
+	/// **Between the two of them, and it was missing.** The glyph fills its box,
+	/// so `Fetch` and the refresh arrow were drawn edge to edge and read as one
+	/// wide control with a line down it.
+	private var secondaryGap: CGFloat { Theme.current.scaled(6) }
 
 	/// Draws the action, at the width `actionWidth` promised.
 	func drawAction() {
@@ -200,14 +210,14 @@ class ActionableRowView: NSView {
 		let colour = Theme.current.gitIgnored
 		let height = Theme.current.scaled(17)
 		let label = label(for: action)
-		let width = actionWidth - RowMetrics.trailingInset - (showsSecondary ? secondaryWidth : 0)
+		let aside = showsSecondary ? secondaryWidth + secondaryGap : 0
+		let width = actionWidth - RowMetrics.trailingInset - aside
 
 		// To the left of the second verb when there is one, which is the whole
 		// reason `actionWidth` counts both: the first version put them at the
 		// same trailing edge and drew the glyph on top of `Push`.
 		let frame = NSRect(
-			x: bounds.maxX - RowMetrics.trailingInset - width
-				- (showsSecondary ? secondaryWidth : 0),
+			x: bounds.maxX - RowMetrics.trailingInset - width - aside,
 			y: bounds.midY - height / 2,
 			width: width,
 			height: height
