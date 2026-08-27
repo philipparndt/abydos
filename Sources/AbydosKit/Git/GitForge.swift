@@ -41,6 +41,35 @@ public enum GitForge {
 			URL(string: "https://\(host)/\(owner)/\(name)/pulls")
 		}
 
+	/// Where a pull request is opened from this branch.
+		///
+		/// **The compare page, not an API call.** Which pull request already
+		/// belongs to a branch is a question only the host can answer and
+		/// answering it needs a token this app deliberately does not hold — so
+		/// this offers the page where one is written, with the branches filled
+		/// in and the form open. If a pull request is already open for the
+		/// branch, GitHub says so on that page rather than making a second.
+		///
+		/// **GitHub's spelling, for the hosts that share GitHub's layout**,
+		/// which is the same set this type already claims. GitLab spells it
+		/// `/-/merge_requests/new` with the branches as query parameters and
+		/// Bitbucket differently again; neither is guessed at, because a URL
+		/// invented for a host nobody tested against is worse than no offer.
+		public func url(forPullRequestFrom branch: String, into base: String?) -> URL? {
+			guard let escaped = branch.addingPercentEncoding(
+				withAllowedCharacters: .urlPathAllowed
+			) else { return nil }
+			guard let base, base != branch else {
+				return URL(string: "https://\(host)/\(owner)/\(name)/compare/\(escaped)?expand=1")
+			}
+			guard let escapedBase = base.addingPercentEncoding(
+				withAllowedCharacters: .urlPathAllowed
+			) else { return nil }
+			return URL(
+				string: "https://\(host)/\(owner)/\(name)/compare/\(escapedBase)...\(escaped)?expand=1"
+			)
+		}
+
 		/// A permalink to a file at a commit, with the line named in it.
 		///
 		/// **A commit rather than a branch, and that is the whole point.** A

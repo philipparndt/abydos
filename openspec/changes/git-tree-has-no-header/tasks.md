@@ -151,6 +151,37 @@
       `local-only [icloud.and.arrow.up]`, `orphaned [xmark.icloud]`,
       `shipped [checkmark]`
 
+## 13. An unpublished branch is measured against main
+
+- [x] 13.1 `GitBranches.list(in:comparedTo:)` asks `%(ahead-behind:)` in the
+      listing already being made, and falls back to the format without it —
+      the atom arrived in git 2.41 and an older git refuses the whole command
+      over it, which would take every row away to get a nicer number
+- [x] 13.2 The pane reads the default branch first, the listing being measured
+      against it
+- [x] 13.3 The count draws beside the symbol rather than instead of it: both
+      are true and neither implies the other
+- [x] 13.4 **Only the ahead half.** `↓1557` against the default branch borrowed
+      this pane's remote vocabulary to say something else — not *commits to
+      pull* but *main has moved on* — and was read as the first, which is the
+      only way it can be read on a row where every other arrow means that. `↑`
+      survives because it does not change meaning between the two readings.
+      The figure that could not be drawn honestly is in the tooltip, in words
+- [x] 13.5 The report says which the count is against — the same arrow means a
+      different thing on an unpublished row
+- [x] 13.6 Driven: `local-only [↑2 of the default icloud.and.arrow.up]`
+
+## 14. A branch row offers to open a pull request
+
+- [x] 14.1 `GitForge.Repository.url(forPullRequestFrom:into:)` — the compare
+      page with the branches filled in, spelled GitHub's way, for the hosts
+      this type already claims
+- [x] 14.2 `Publish and Open Pull Request…` on a branch with no upstream,
+      `Open Pull Request…` on one that has been published
+- [x] 14.3 The publish happens first and the page is not opened if it fails
+- [x] 14.4 Nothing offered for the default branch, or without a forge
+- [x] 14.5 Driven over three branches with a GitHub remote
+
 ## 7. Proving it
 
 - [x] 7.1 The tree begins at the top of the pane, under the repository row, and

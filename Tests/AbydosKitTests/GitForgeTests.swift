@@ -167,4 +167,33 @@ struct ExecutablesTests {
 		#expect(Executables.locate("cargo", path: given.path, loginPath: [shell.path])
 			== given.path + "/cargo")
 	}
+
+	/// The page a pull request is written on, with both branches in it.
+	@Test func offersTheComparePageForAPullRequest() {
+		let repository = GitForge.Repository(
+			host: "github.com", owner: "someone", name: "thing"
+		)
+		#expect(
+			repository.url(forPullRequestFrom: "feature/x", into: "main")?.absoluteString
+				== "https://github.com/someone/thing/compare/main...feature/x?expand=1"
+		)
+	}
+
+	/// No default branch to compare against — the host picks its own.
+	@Test func comparesAgainstTheHostsChoiceWithoutABase() {
+		let repository = GitForge.Repository(
+			host: "github.com", owner: "someone", name: "thing"
+		)
+		#expect(
+			repository.url(forPullRequestFrom: "feature/x", into: nil)?.absoluteString
+				== "https://github.com/someone/thing/compare/feature/x?expand=1"
+		)
+		// A branch compared against itself has nothing to show, and the base is
+		// dropped rather than a page built that says so.
+		#expect(
+			repository.url(forPullRequestFrom: "main", into: "main")?.absoluteString
+				== "https://github.com/someone/thing/compare/main?expand=1"
+		)
+	}
+
 }

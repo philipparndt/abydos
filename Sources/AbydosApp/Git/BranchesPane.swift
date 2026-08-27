@@ -317,7 +317,12 @@ final class BranchesPane: NSView {
 
 	@objc func refresh() {
 		Task { @MainActor in
-			let fresh = await GitBranches.list(in: root)
+			// **The default branch is read first**, because the listing is
+			// measured against it: a branch that has never been pushed has no
+			// upstream to count from, and how far it has come from the branch
+			// it will go back into is the only thing that can be said about it.
+			self.defaultBranch = await BranchGrouping.defaultBranch(in: root)
+			let fresh = await GitBranches.list(in: root, comparedTo: self.defaultBranch)
 			self.working = await GitWorkingCopy.status(in: root)
 			// Before the trees are built, so `add(changes:)` fills from a cache
 			// that holds only directories git still reports.
@@ -333,7 +338,6 @@ final class BranchesPane: NSView {
 			let trees = await GitWorktrees.list(in: root)
 			let put = await GitStash.list(in: root)
 			remoteURL = await GitForge.remoteURL(in: root)
-			self.defaultBranch = await BranchGrouping.defaultBranch(in: root)
 			if let main = self.defaultBranch {
 				self.mergedBranches = await GitBranches.merged(into: main, in: root)
 			} else {
@@ -1043,6 +1047,40 @@ final class BranchesPane: NSView {
 		onShowLog?(branch.checkoutName)
 	}
 
+	/// What the pull-request entry says, or nothing when there is none to make.
+	///
+	/// Nothing for a remote-tracking branch or a tag, which are not somewhere
+	/// work happens; nothing without a forge to open it on; and nothing for the
+	/// default branch, a pull request from `main` into `main` being a page that
+	/// tells you there is nothing to compare.
+	private func pullRequestTitle(for branch: GitBranch) -> String? {
+		guard case .local = branch.kind, forge != nil else { return nil }
+		guard branch.name != defaultBranch else { return nil }
+		return branch.isUnpublished
+			? "Publish and Open Pull Request\u{2026}"
+			: "Open Pull Request\u{2026}"
+	}
+
+	/// Opens the compare page, publishing the branch first when it has to.
+	/// See `PullRequestFlow`.
+	@objc private func openPullRequest() {
+		guard let branch = selectedBranch, let forge else { return }
+		guard branch.isUnpublished else {
+			PullRequestFlow.open(branch.name, on: forge, into: defaultBranch)
+			return
+		}
+		pushingBranch = branch.name
+		tableView.reloadData()
+		PullRequestFlow.publishThenOpen(
+			branch, on: forge, into: defaultBranch, in: root
+		) { [weak self] in
+			guard let self else { return }
+			self.pushingBranch = nil
+			self.tableView.reloadData()
+			self.refresh()
+		}
+	}
+
 	@objc private func openBranchOnForge() {
 		guard let branch = selectedBranch, let forge else { return }
 		guard let url = forge.url(forBranch: branch.name) else { return }
@@ -1092,13 +1130,19 @@ final class BranchesPane: NSView {
 				let merged = branch.kind == .local
 					&& !branch.isCurrent
 					&& mergedBranches.contains(branch.name)
-				let tracking: String
-				if merged { tracking = " [checkmark]" }
-				else if branch.upstreamIsGone { tracking = " [xmark.icloud]" }
-				else if branch.isUnpublished { tracking = " [icloud.and.arrow.up]" }
-				else if branch.ahead > 0 || branch.behind > 0 {
-					tracking = " [↑\(branch.ahead) ↓\(branch.behind)]"
-				} else { tracking = "" }
+				var marks: [String] = []
+				if branch.isUnpublished {
+					// Against the default branch, and said so: the same arrow
+					// means a different thing on this row.
+					let ahead = branch.aheadOfDefault ?? 0
+					if ahead > 0 { marks.append("↑\(ahead) of the default") }
+				} else if branch.ahead > 0 || branch.behind > 0 {
+					marks.append("↑\(branch.ahead) ↓\(branch.behind)")
+				}
+				if merged { marks.append("checkmark") }
+				else if branch.upstreamIsGone { marks.append("xmark.icloud") }
+				else if branch.isUnpublished { marks.append("icloud.and.arrow.up") }
+				let tracking = marks.isEmpty ? "" : " [" + marks.joined(separator: " ") + "]"
 				return indent + display + (branch.isCurrent ? " *" : "") + tracking
 			case let .worktree(worktree):
 				return indent + "= \(worktree.name)"
@@ -1967,7 +2011,8 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 				branch: branch,
 				display: display,
 				isPushing: branch.name == pushingBranch,
-				isMerged: branch.kind == .local && mergedBranches.contains(branch.name)
+				isMerged: branch.kind == .local && mergedBranches.contains(branch.name),
+				base: defaultBranch
 			)
 		case .worktree(let worktree):
 			return WorktreeRowView(worktree: worktree)
@@ -2107,6 +2152,16 @@ extension BranchesPane: NSMenuDelegate {
 		// gets past that writes over commits somebody else may be standing on.
 		if case .local = branch.kind, branch.behind > 0, branch.ahead > 0 {
 			menu.addItem(item("Force-push\u{2026}", #selector(forcePushBranch)))
+		}
+		// **The two halves of opening a pull request, as one entry each.**
+		// Making one from a branch nobody else can see is two steps, and having
+		// to know that — push first, then find the compare page — is what made
+		// this the part of the job people leave the app for.
+		//
+		// Above `Open on …`, and next to `Publish Branch`, because the three
+		// read in the order they are done: send it, propose it, go and look.
+		if let title = pullRequestTitle(for: branch) {
+			menu.addItem(item(title, #selector(openPullRequest)))
 		}
 		if let forge {
 			menu.addItem(item("Open on \(forge.displayName)", #selector(openBranchOnForge)))
@@ -2408,6 +2463,8 @@ private final class BranchRowView: NSView {
 	/// Its work is already in the default branch: nothing on it that is not
 	/// somewhere else. Drawn faded, and never for the branch you are on.
 	private let isMerged: Bool
+	/// What an unpublished branch's count is measured against, for the tooltip.
+	private let base: String?
 	private var spinner: NSProgressIndicator?
 	override var isFlipped: Bool { true }
 
@@ -2416,12 +2473,14 @@ private final class BranchRowView: NSView {
 		display: String? = nil,
 		depth: Int = 0,
 		isPushing: Bool = false,
-		isMerged: Bool = false
+		isMerged: Bool = false,
+		base: String? = nil
 	) {
 		self.branch = branch
 		self.display = display ?? branch.name
 		self.depth = depth
 		self.isPushing = isPushing
+		self.base = base
 		// **The branch you are standing on never dims, whatever the reading
 		// says.** The default branch is trivially merged into itself and any
 		// branch you have just merged and not left is finished by the same
@@ -2440,7 +2499,18 @@ private final class BranchRowView: NSView {
 		if !branch.subject.isEmpty { notes.append(branch.subject) }
 		if self.isMerged { notes.append("already merged") }
 		if branch.upstreamIsGone { notes.append("its upstream has been deleted") }
-		else if branch.isUnpublished { notes.append("never published") }
+		else if branch.isUnpublished {
+			let ahead = branch.aheadOfDefault ?? 0
+			notes.append(ahead > 0
+				? "never published — \(ahead) commit\(ahead == 1 ? "" : "s") of its own"
+				: "never published")
+			// The half the row does not draw, said here in words rather than
+			// in an arrow that would be read as remote traffic.
+			if let behind = branch.behindDefault, behind > 0 {
+				notes.append("\(base ?? "the default branch")"
+					+ " has moved on by \(behind) commit\(behind == 1 ? "" : "s")")
+			}
+		}
 		toolTip = notes.joined(separator: " — ")
 
 		guard isPushing else { return }
@@ -2529,20 +2599,40 @@ private final class BranchRowView: NSView {
 			return nil
 		}()
 
+		// **A branch that has never been pushed still has a count worth
+		// showing** — against the default branch, there being no upstream to
+		// count from. The cloud stays beside it: *never published* and *three
+		// commits of your own* are both true and neither implies the other.
+		//
+		// **Only the ahead half, and that is the whole care taken here.** `↑`
+		// and `↓` are this pane's remote vocabulary — what is waiting to go up
+		// and what is waiting to come down — and `↓1557` against the default
+		// branch borrows the second of those to say something else entirely:
+		// not *there are commits to pull* but *main has moved on, and you may
+		// want to rebase*. It was read as the first, which is the only way it
+		// could be read on a row where every other arrow means that.
+		//
+		// `↑` survives because it does not change meaning: commits this branch
+		// has that the other side has not, which is both the work on it and
+		// exactly what publishing would send. The number that could not be said
+		// without misleading is not said — it is in the tooltip, in words,
+		// where there is room to name what it is measured against.
 		var counts = ""
-		if standing == nil {
+		if branch.isUnpublished {
+			let own = branch.aheadOfDefault ?? 0
+			if own > 0 { counts = "↑\(own)" }
+		} else if standing == nil {
 			if branch.ahead > 0 { counts += "↑\(branch.ahead)" }
 			if branch.behind > 0 { counts += (counts.isEmpty ? "" : " ") + "↓\(branch.behind)" }
 		}
 
 		let countsFont = Theme.current.uiFont(10.5)
-		let trailingWidth: CGFloat = {
-			if standing != nil { return RowMetrics.trailingGlyphSize }
-			guard !counts.isEmpty else { return 0 }
-			return ceil(NSAttributedString(
-				string: counts, attributes: [.font: countsFont]
-			).size().width)
-		}()
+		let countsWidth = counts.isEmpty ? 0 : ceil(NSAttributedString(
+			string: counts, attributes: [.font: countsFont]
+		).size().width)
+		let symbolWidth = standing == nil ? 0 : RowMetrics.trailingGlyphSize
+		let inner = countsWidth > 0 && symbolWidth > 0 ? Theme.current.scaled(5) : 0
+		let trailingWidth = countsWidth + inner + symbolWidth
 
 		// While pushing, the spinner has the right-hand end of the row.
 		let right = bounds.maxX - RowMetrics.trailingInset
@@ -2555,6 +2645,8 @@ private final class BranchRowView: NSView {
 			limit: trailingWidth == 0 ? right : right - trailingWidth - gap
 		)
 
+		// The symbol takes the edge and the counts sit inside it, so the marks
+		// of a kind line up with each other down the pane.
 		if let standing {
 			// **The tick is not faded, though everything beside it is.** It is
 			// the reason the row is dim, and dimming the answer along with the
@@ -2565,12 +2657,12 @@ private final class BranchRowView: NSView {
 				colour: isMerged ? Theme.current.gitIgnored : fade(Theme.current.gitIgnored),
 				in: bounds, rightAt: right
 			)
-			return
 		}
 		guard !counts.isEmpty else { return }
 		RowMetrics.drawTrailing(
 			counts, font: countsFont,
-			colour: fade(Theme.current.gitModified), in: bounds, rightAt: right
+			colour: fade(Theme.current.gitModified), in: bounds,
+			rightAt: right - symbolWidth - inner
 		)
 	}
 }

@@ -268,6 +268,85 @@ other puts it elsewhere.
 - **GIVEN** a repository on `main`, which is also its default
 - **THEN** `main` appears once, at the top
 
+### Requirement: An unpublished branch counts its own commits
+
+A local branch with no upstream SHALL show how many commits it has that the
+default branch has not, in the column its ahead and behind counts would be in.
+
+**Its upstream counts cannot say anything**, there being no upstream: they are
+nought and nought, which is what a branch in step with a remote reads. What
+somebody wants to know about a branch of their own is how much work is on it
+that is not in the branch it will go back into.
+
+The symbol saying it is unpublished stays beside the count. Both are true and
+neither implies the other — three commits of your own, and nowhere else holding
+a copy of them.
+
+**How far the default branch has moved SHALL NOT be drawn as a down arrow, and
+is not drawn at all.** `↑` and `↓` are this pane's remote vocabulary — what is
+waiting to go up, what is waiting to come down — and `↓1557` against the default
+branch borrows the second to say something else entirely: not *there are commits
+to pull* but *main has moved on, and you may want to rebase*. It was read as the
+first, which is the only way it can be read on a row where every other arrow
+means that.
+
+`↑` survives because it does not change meaning between the two readings:
+commits this branch has that the other side has not, which is both the work on
+it and exactly what publishing would send.
+
+The figure that cannot be drawn without misleading SHALL be in the row's
+tooltip, in words, naming what it is measured against.
+
+It is asked with `%(ahead-behind:)` in the listing already being made, not one
+`rev-list` per branch. **That atom arrived in git 2.41 and an older git refuses
+the whole command over it** — not the field, the list — so the listing SHALL
+fall back to the format without it rather than show no branches at all.
+
+#### Scenario: a branch that has never been pushed
+
+- **GIVEN** a local branch with two commits the default branch has not got
+- **THEN** its row reads `↑2` beside the symbol saying it is unpublished
+
+#### Scenario: a branch the default has moved past
+
+- **GIVEN** an unpublished branch the default branch is 1557 commits ahead of
+- **THEN** no down arrow is drawn
+- **AND** the tooltip says the default branch has moved on by 1557 commits
+
+### Requirement: A branch row offers to open a pull request
+
+A local branch that is not the default branch SHALL offer opening a pull request
+from its context menu, wherever the repository has a forge.
+
+**The two halves are one entry each.** Making a pull request from a branch
+nobody else can see takes two steps, and having to know that — push first, then
+find the compare page — is what makes this the part of the job people leave the
+app to do. A branch with no upstream SHALL offer publishing and opening in one
+verb, and one that has been published SHALL offer opening.
+
+The publish SHALL happen first and the page SHALL NOT be opened if it fails: a
+browser tab explaining that a branch does not exist is a worse answer than
+saying why it could not be sent.
+
+**The compare page, not an API call.** Which pull request already belongs to a
+branch is a question only the host can answer, and answering it needs a token
+this app deliberately does not hold.
+
+#### Scenario: a branch that has been published
+
+- **GIVEN** a published local branch and a GitHub remote
+- **THEN** its menu offers `Open Pull Request…`
+
+#### Scenario: a branch that has not
+
+- **GIVEN** a local branch with no upstream and a GitHub remote
+- **THEN** its menu offers `Publish and Open Pull Request…`
+
+#### Scenario: the default branch
+
+- **GIVEN** the default branch selected
+- **THEN** no pull request is offered, there being nothing to compare it against
+
 ### Requirement: A branch whose work is already merged is dimmed
 
 A local branch merged into the default branch SHALL be drawn dimmed, and SHALL
