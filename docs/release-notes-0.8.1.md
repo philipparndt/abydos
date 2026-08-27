@@ -128,8 +128,3 @@ The repair itself was broken. It recognised its own hook by a name the binary
 stopped having when the project was renamed, so installing twice left two entries
 per event, an app that moved left the old entry beside the new one, and `remove`
 removed nothing at all.
-
-## Known
-
-The terminal's black-block artifact is still open. Inverse video was found on the
-way to it and is a real fault of its own, but it is not that one.
