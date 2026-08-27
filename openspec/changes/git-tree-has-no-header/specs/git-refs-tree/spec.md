@@ -321,8 +321,15 @@ from its context menu, wherever the repository has a forge.
 **The two halves are one entry each.** Making a pull request from a branch
 nobody else can see takes two steps, and having to know that — push first, then
 find the compare page — is what makes this the part of the job people leave the
-app to do. A branch with no upstream SHALL offer publishing and opening in one
-verb, and one that has been published SHALL offer opening.
+app to do. A branch the forge does not have SHALL offer publishing and opening
+in one verb, and one it has SHALL offer opening.
+
+**Whether the forge has it is asked of the listing, not of the upstream.** A
+branch is on the forge when a remote-tracking ref of the same name is. That is
+the better question in both directions: a branch pushed without `--set-upstream`
+is on the host and names no upstream, and a branch whose remote branch was
+deleted names one — `[gone]` — and is not there. A compare page for either
+absent case is the same 404.
 
 The publish SHALL happen first and the page SHALL NOT be opened if it fails: a
 browser tab explaining that a branch does not exist is a worse answer than
@@ -342,10 +349,40 @@ this app deliberately does not hold.
 - **GIVEN** a local branch with no upstream and a GitHub remote
 - **THEN** its menu offers `Publish and Open Pull Request…`
 
+#### Scenario: a branch whose remote branch was deleted
+
+- **GIVEN** a local branch naming an upstream that no longer exists
+- **THEN** its menu offers `Publish and Open Pull Request…`, as an unpublished
+  branch's does
+
 #### Scenario: the default branch
 
 - **GIVEN** the default branch selected
 - **THEN** no pull request is offered, there being nothing to compare it against
+
+### Requirement: A ref is only opened on the forge when the forge has it
+
+Opening a ref's page on the forge SHALL be offered only where a remote-tracking
+ref of that name exists.
+
+A page for a branch the host has never heard of is a 404, which is a worse
+answer than not offering — and the offer was made on every local branch,
+including one that had never been pushed and one whose remote branch had been
+deleted.
+
+It is disabled rather than hidden, which is how this menu already says *this
+verb, not on this row*. Remote branches and tags are always on the forge, being
+what the forge sent.
+
+#### Scenario: a branch that has never been pushed
+
+- **GIVEN** an unpublished local branch and a GitHub remote
+- **THEN** `Open on GitHub` is shown and cannot be chosen
+
+#### Scenario: a branch that is there
+
+- **GIVEN** a published local branch, or any remote branch
+- **THEN** `Open on GitHub` can be chosen
 
 ### Requirement: A branch whose work is already merged is dimmed
 

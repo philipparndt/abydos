@@ -180,7 +180,16 @@
       `Open Pull Request…` on one that has been published
 - [x] 14.3 The publish happens first and the page is not opened if it fails
 - [x] 14.4 Nothing offered for the default branch, or without a forge
-- [x] 14.5 Driven over three branches with a GitHub remote
+- [x] 14.5 `Open on <forge>` is disabled where the forge has no copy of the ref
+      — it was offered on every local branch, and a page for a branch the host
+      has never heard of is a 404
+- [x] 14.6 **Asked of the listing, not of the upstream.** A branch is on the
+      forge when a remote-tracking ref of that name is: a branch pushed without
+      `--set-upstream` is there and names no upstream, and one whose upstream
+      is `[gone]` names one and is not. The same test decides which of the two
+      pull-request verbs a row gets
+- [x] 14.7 Driven over five rows with a GitHub remote: the default, a published
+      branch, an unpublished one, one whose upstream is gone, and a remote one
 
 ## 7. Proving it
 

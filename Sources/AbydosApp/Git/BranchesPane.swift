@@ -1056,16 +1056,20 @@ final class BranchesPane: NSView {
 	private func pullRequestTitle(for branch: GitBranch) -> String? {
 		guard case .local = branch.kind, forge != nil else { return nil }
 		guard branch.name != defaultBranch else { return nil }
-		return branch.isUnpublished
-			? "Publish and Open Pull Request\u{2026}"
-			: "Open Pull Request\u{2026}"
+		// **Whether the host has it, not whether it has an upstream.** A branch
+		// whose remote branch was deleted still names an upstream — `[gone]` —
+		// and a compare page for it is the same 404 as one for a branch that
+		// was never pushed. Both need publishing first, so both are offered it.
+		return isOnForge(branch)
+			? "Open Pull Request\u{2026}"
+			: "Publish and Open Pull Request\u{2026}"
 	}
 
 	/// Opens the compare page, publishing the branch first when it has to.
 	/// See `PullRequestFlow`.
 	@objc private func openPullRequest() {
 		guard let branch = selectedBranch, let forge else { return }
-		guard branch.isUnpublished else {
+		guard !isOnForge(branch) else {
 			PullRequestFlow.open(branch.name, on: forge, into: defaultBranch)
 			return
 		}
@@ -1081,8 +1085,31 @@ final class BranchesPane: NSView {
 		}
 	}
 
+	/// Whether the forge has a copy of this ref to open.
+	///
+	/// **Asked of the listing rather than of the upstream.** A branch is on the
+	/// forge when a remote-tracking ref of the same name is, which is a better
+	/// question than *does it have an upstream configured*: a branch pushed
+	/// without `--set-upstream` is on the host and has no upstream, and one
+	/// whose upstream is `[gone]` has an upstream and is not. Both fall out of
+	/// the same test, and it costs nothing — the refs were listed already.
+	private func isOnForge(_ branch: GitBranch) -> Bool {
+		guard case .local = branch.kind else { return true }
+		return branches.contains { other in
+			guard case .remote = other.kind else { return false }
+			return other.name == branch.name
+		}
+	}
+
 	@objc private func openBranchOnForge() {
 		guard let branch = selectedBranch, let forge else { return }
+		// **A page for a branch the host has never heard of is a 404**, which
+		// is a worse answer than not offering. Said as well as disabled, in
+		// case something other than the menu ever calls this.
+		guard isOnForge(branch) else {
+			Toast.post("\(branch.name) is not on \(forge.displayName) yet")
+			return
+		}
 		guard let url = forge.url(forBranch: branch.name) else { return }
 		NSWorkspace.shared.open(url)
 	}
@@ -2164,7 +2191,11 @@ extension BranchesPane: NSMenuDelegate {
 			menu.addItem(item(title, #selector(openPullRequest)))
 		}
 		if let forge {
-			menu.addItem(item("Open on \(forge.displayName)", #selector(openBranchOnForge)))
+			menu.addItem(item(
+				"Open on \(forge.displayName)",
+				#selector(openBranchOnForge),
+				enabled: isOnForge(branch)
+			))
 		}
 
 		// **Bringing a branch up to date without standing on it.** `main ↓4`
