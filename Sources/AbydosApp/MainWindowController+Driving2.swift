@@ -131,6 +131,12 @@ extension MainWindowController {
 	func treeStepsForTesting(_ steps: String) {
 		let script = steps.split(separator: ",").map(String.init)
 		for (index, step) in script.enumerated() {
+			// **Flushed however the step leaves.** A driven run is killed rather
+			// than ended: stdout is a pipe, nothing drains its buffer at exit,
+			// and a report written after the last flushing step is simply lost.
+			// `defer` rather than a line at the bottom because half these cases
+			// `continue` past it — which is exactly how the losses happened.
+			defer { fflush(stdout) }
 			// `settle`, and `settle:3` for longer. Everything after it goes back
 			// to the run loop rather than being waited for here, because the trash
 			// answers on the main queue and a nested `RunLoop.run(until:)` does not
@@ -167,6 +173,14 @@ extension MainWindowController {
 			case "cmd-delete": navigator.pressKeyForTesting(51, modifiers: .command)
 			case "cmd-down": navigator.pressKeyForTesting(125, modifiers: .command)
 			case "escape": navigator.pressKeyForTesting(53)
+			// Space, and what the panel it opens is showing. Two steps because
+			// the panel is a window of its own and a screenshot of ours cannot
+			// see it — the same reason the delete dialog is reported rather
+			// than shot.
+			case "space": navigator.pressKeyForTesting(49)
+			case "quicklook":
+				print("TREE \(navigator.quickLookReportForTesting)")
+				continue
 			// ⇧↓ and ⇧↑: a run of rows, selected the way somebody selects one.
 			case "shift-down": navigator.pressKeyForTesting(125, modifiers: .shift)
 			case "shift-up": navigator.pressKeyForTesting(126, modifiers: .shift)

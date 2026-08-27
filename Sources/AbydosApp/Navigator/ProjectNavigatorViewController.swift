@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import AbydosKit
 
 /// The project tree from image 1: a bold root row carrying the home-relative
@@ -159,6 +160,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		outline.target = self
 		outline.doubleAction = #selector(rowDoubleClicked)
 		outline.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
+		// Asked for rather than handed over: the panel reads this every time it
+		// reloads, and a list captured when the panel opened would go stale the
+		// moment ↑ moved the selection underneath it.
+		outline.quickLookFiles = { [weak self] in self?.quickLookSelection() ?? [] }
 		// The absolute path, which is what "copy path" has always meant here and
 		// what a terminal, a Finder window or another program can be given. The
 		// menu still offers the relative one, which is the one a commit message
@@ -1173,6 +1178,14 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(.separator())
 		menu.addItem(item("Open", #selector(contextOpen)))
 		menu.addItem(item("Open Externally", #selector(contextOpenExternally)))
+		// Space does this too. Written down here because a key with nothing
+		// naming it is a key nobody finds — and hidden per click, like the
+		// model preview below, because whether it is worth offering depends on
+		// what was clicked.
+		let look = item("Quick Look", #selector(contextQuickLook))
+		look.keyEquivalent = " "
+		look.keyEquivalentModifierMask = []
+		menu.addItem(look)
 		// Built once and hidden per click: the menu exists long before anything
 		// has been right-clicked, so it cannot be decided here.
 		menu.addItem(item("Preview in GoSTL", #selector(contextPreviewModel)))
@@ -2611,12 +2624,60 @@ final class ProjectNavigatorViewController: NSViewController {
 			// hands may already know it from the week Return did not.
 			openSelection(focusEditor: true)
 			return true
-		case 49: // Space — the same provisional open, for a row already selected
-			openSelection(focusEditor: false)
+		case 49: // Space
+			// **Quick Look for what Quick Look is for.** An image, a video, a
+			// PDF: the provisional open this used to do put a notice in the
+			// editor with a Quick Look button on it, which is two presses to
+			// reach the thing Space reaches everywhere else on this machine.
+			//
+			// Everything else keeps the provisional open, which is what Space
+			// is for in a tree of source files — and `offersQuickLook` is the
+			// same list the notice uses, so the two cannot disagree about what
+			// the system will actually render.
+			if !quickLookSelection().isEmpty {
+				outlineView.showQuickLook()
+			} else {
+				openSelection(focusEditor: false)
+			}
 			return true
 		default:
 			return false
 		}
+	}
+
+	/// What the preview panel is showing, and whether the tree is driving it.
+	var quickLookReportForTesting: String { outlineView.quickLookReportForTesting }
+
+	/// The selected files Quick Look would show something for, in tree order.
+	///
+	/// Empty when there is nothing worth previewing, which is what decides
+	/// whether Space previews or opens. A directory is never previewable here:
+	/// Quick Look draws one as a large folder icon, and Space on a folder in
+	/// this tree has always folded it.
+	private func quickLookSelection() -> [URL] {
+		outlineView.selectedRowIndexes.sorted().compactMap { row in
+			guard let node = outlineView.item(atRow: row) as? FileNode, !node.isDirectory
+			else { return nil }
+			guard FileNotice.offersQuickLook(forExtension: node.url.pathExtension) else {
+				return nil
+			}
+			return node.url
+		}
+	}
+
+	/// Opens the panel from the menu, on the row that was clicked.
+	@objc private func contextQuickLook() {
+		guard let node = contextNode else { return }
+		// The clicked row, and the selection only when the click was inside it:
+		// right-clicking one file with three selected previews that one, as it
+		// does in the Finder.
+		let selected = quickLookSelection()
+		if !selected.contains(node.url) {
+			outlineView.selectRowIndexes(
+				IndexSet(integer: outlineView.row(forItem: node)), byExtendingSelection: false
+			)
+		}
+		outlineView.showQuickLook()
 	}
 
 	private func openSelection(focusEditor: Bool) {
@@ -3550,6 +3611,14 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			switch item.action {
 			case #selector(contextOpenExternally):
 				item.isHidden = node?.isDirectory ?? true
+			case #selector(contextQuickLook):
+				// Only where the system would actually render something. A
+				// menu item that opens a panel showing a large grey icon is an
+				// offer to do nothing, which is the argument `offersQuickLook`
+				// was written for.
+				item.isHidden = !(node.map {
+					!$0.isDirectory && FileNotice.offersQuickLook(forExtension: $0.url.pathExtension)
+				} ?? false)
 			case #selector(contextPreviewModel):
 				// `holdsAModel` rather than `canPreview`, for the same reason Export
 				// above uses `holdsADiagram`: a go3mf recipe is a `.yaml`, and the
@@ -3757,6 +3826,9 @@ private final class FileUndoTarget {
 /// Outline view that hands key events to the controller before acting on them.
 final class NavigatorOutlineView: NSOutlineView {
 	var onKeyDown: ((NSEvent) -> Bool)?
+	/// The files Quick Look should show, in tree order — the whole selection,
+	/// so the panel's arrow keys walk it the way they do in the Finder.
+	var quickLookFiles: (() -> [URL])?
 	/// The tree's file undo stack, asked for rather than held: the controller
 	/// withholds it while a name is being edited on a row.
 	fileprivate var fileUndoManager: (() -> UndoManager?)?
@@ -3847,6 +3919,59 @@ final class NavigatorOutlineView: NSOutlineView {
 		super.keyDown(with: event)
 	}
 
+	// MARK: - Quick Look
+
+	/// Opens the system's preview panel on the selection.
+	///
+	/// **Here rather than on the controller**, because the panel asks the key
+	/// window's responder chain who wants to control it and this is what has
+	/// the keyboard when the tree does. The same handshake `FileNoticeView`
+	/// does, and for the same measured reason: the documented route is the
+	/// three `…PreviewPanelControl` methods, the panel only walks the chain
+	/// when the application is active, and a panel opened while it is not is
+	/// one controlled by nobody, showing nothing.
+	func showQuickLook() {
+		guard let panel = QLPreviewPanel.shared() else { return }
+		// **A toggle, as everywhere else on this machine.** Space opens it and
+		// Space closes it; without this the second press reloaded the panel it
+		// had already opened and looked like a key that had stopped working.
+		if panel.isVisible, panel.dataSource === self {
+			panel.orderOut(nil)
+			return
+		}
+		window?.makeFirstResponder(self)
+		panel.dataSource = self
+		panel.delegate = self
+		panel.makeKeyAndOrderFront(nil)
+		panel.reloadData()
+	}
+
+	override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+	override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+		panel.dataSource = self
+		panel.delegate = self
+	}
+
+	override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+		// Only what this view put there. The panel outlives the tree's focus,
+		// and clearing somebody else's source would leave their panel blank.
+		guard panel.dataSource === self else { return }
+		panel.dataSource = nil
+		panel.delegate = nil
+	}
+
+	/// What the panel is showing, for a driven run.
+	var quickLookReportForTesting: String {
+		guard QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared()
+		else { return "QUICKLOOK no panel" }
+		let mine = panel.dataSource === self
+		return "QUICKLOOK \(panel.isVisible ? "open" : "shut")"
+			+ " controlled=\(mine ? "tree" : "somebody else")"
+			+ " showing=\((panel.currentPreviewItem?.previewItemURL?.lastPathComponent) ?? "nothing")"
+			+ " of=\(mine ? (quickLookFiles?().count ?? 0) : 0)"
+	}
+
 	/// Redraw selected rows when focus moves, so the highlight dims correctly.
 	override func becomeFirstResponder() -> Bool {
 		needsDisplay = true
@@ -3856,6 +3981,49 @@ final class NavigatorOutlineView: NSOutlineView {
 	override func resignFirstResponder() -> Bool {
 		needsDisplay = true
 		return super.resignFirstResponder()
+	}
+}
+
+extension NavigatorOutlineView: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+	func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+		quickLookFiles?().count ?? 0
+	}
+
+	func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+		let files = quickLookFiles?() ?? []
+		guard index >= 0, index < files.count else { return nil }
+		return files[index] as NSURL
+	}
+
+	/// Zooms out of the row it is previewing rather than appearing from
+	/// nowhere, which is what the panel does everywhere else on this machine.
+	func previewPanel(
+		_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: QLPreviewItem!
+	) -> NSRect {
+		guard let window, let url = item.previewItemURL as URL? else { return .zero }
+		// **The row holding this file**, found by its path rather than by
+		// counting. The two lists are not the same length — four rows selected
+		// with two of them previewable is a panel of two — so the item's
+		// position in the panel is not its position in the selection, and
+		// indexing one by the other zooms out of somebody else's row.
+		// `self.item(atRow:)` spelled out: the parameter of this delegate method
+		// is also called `item`, and shadows the method.
+		guard let row = selectedRowIndexes.first(where: {
+			(self.item(atRow: $0) as? FileNode)?.url == url
+		}) else { return .zero }
+		return window.convertToScreen(convert(rect(ofRow: row), to: nil))
+	}
+
+	/// The panel takes the keys while it is up — except the ones that belong to
+	/// the tree underneath it, so ↑ and ↓ still move the selection and the
+	/// preview follows it, as in the Finder.
+	func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+		guard event.type == .keyDown, event.keyCode == 125 || event.keyCode == 126 else {
+			return false
+		}
+		keyDown(with: event)
+		panel.reloadData()
+		return true
 	}
 }
 
