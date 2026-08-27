@@ -24,6 +24,31 @@ final class BranchDeletion {
 	private let worktrees: [GitWorktree]
 	private weak var window: NSWindow?
 
+	/// **Holds itself while its sheet is up.**
+	///
+	/// `ask` returns the moment the sheet is on screen, and the press that
+	/// started it has nowhere to put this object: the pane made one, asked it,
+	/// and let it go. Everything that matters happens later, in the sheet's
+	/// completion handler — so the object was gone by the time somebody pressed
+	/// Delete, the handler's `self` was nil, and the press did nothing at all.
+	/// No error, because nothing ran to fail.
+	///
+	/// Answering that by asking every caller to hold one is how it broke: the
+	/// driven step held it and the menu item did not, so the run that was meant
+	/// to check this was the one path where it worked. A lifetime is this
+	/// object's own business, and it ends when the sheet is answered.
+	private var untilTheSheetIsAnswered: BranchDeletion?
+
+	/// Which branches the delete is working on, as it works: all of them when it
+	/// starts, one fewer each time git answers for one, and empty at the end.
+	///
+	/// **A delete is not instant and used to look it.** Removing an 11 GiB
+	/// worktree takes seconds and every branch is a git of its own, and until
+	/// the tree redrew at the end the list looked exactly as it had — which is
+	/// what a press that never landed looks like. Same reason the pane has a
+	/// spinner for a push.
+	var onDeleting: ((Set<String>) -> Void)?
+
 	/// Said once at the end rather than per branch.
 	var onFinished: (() -> Void)?
 	var onFailure: ((String) -> Void)?
@@ -90,6 +115,9 @@ final class BranchDeletion {
 	/// What a delete would act on, in the three kinds somebody has to be asked
 	/// about separately.
 	private struct DeletePlan {
+		/// What "merged" was decided against, kept because the delete has to ask
+		/// the same question again — see where `-d` is refused.
+		var target = "HEAD"
 		var merged: [GitBranch] = []
 		var carrying: [GitBranch] = []
 		var held: [HeldBranch] = []
@@ -103,7 +131,7 @@ final class BranchDeletion {
 	/// Sorts the selection into that plan, asking git the three questions it
 	/// takes: is it merged, is it checked out somewhere, and how big is that.
 	private func plan(for branches: [GitBranch], target: String) async -> DeletePlan {
-		var plan = DeletePlan()
+		var plan = DeletePlan(target: target)
 		let trees = worktrees
 		for branch in branches {
 			if let worktree = GitWorktrees.holder(of: branch.name, in: trees, excluding: root) {
@@ -251,8 +279,14 @@ final class BranchDeletion {
 			removeWorktrees.action = #selector(worktreeBoxToggled)
 		}
 
+		// From here until the sheet answers, nothing else is holding this — see
+		// `untilTheSheetIsAnswered`. Let go of inside the handler rather than
+		// after it, so a cancel releases it too.
+		untilTheSheetIsAnswered = self
 		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-			guard response == .alertFirstButtonReturn, let self else { return }
+			guard let self else { return }
+			defer { self.untilTheSheetIsAnswered = nil }
+			guard response == .alertFirstButtonReturn else { return }
 			self.delete(plan, removingWorktrees: removeWorktrees?.state == .on)
 		}
 		if let window {
@@ -279,6 +313,15 @@ final class BranchDeletion {
 			var deleted: [String] = []
 			var freed: Int64 = 0
 
+			// What this press is about to work on, so the rows can say so.
+			// A held branch only when its worktree is going with it: the others
+			// are being left alone on purpose, and a row spinning over work
+			// nobody is doing is a lie about what is happening.
+			var working = Set((plan.merged + plan.carrying).map(\.name))
+			if removingWorktrees { working.formUnion(plan.held.map(\.branch.name)) }
+			self.onDeleting?(working)
+			defer { self.onDeleting?([]) }
+
 			if removingWorktrees {
 				for held in plan.held {
 					// **Prune, not remove, for one that is already gone.**
@@ -298,6 +341,10 @@ final class BranchDeletion {
 						let saidIt = result.stderr.isEmpty ? result.stdout : result.stderr
 						failures.append("\(held.worktree.path.lastPathComponent): "
 							+ saidIt.trimmingCharacters(in: .whitespacesAndNewlines))
+						// Its branch is not attempted, so its row stops here
+						// rather than at the end with the ones that were.
+						working.remove(held.branch.name)
+						self.onDeleting?(working)
 					} else {
 						freed += held.bytes ?? 0
 					}
@@ -318,9 +365,24 @@ final class BranchDeletion {
 				+ plan.held.map(\.branch).filter { removedTrees.contains($0.name) }
 
 			for branch in branches {
-				let result = await GitBranches.delete(
+				var result = await GitBranches.delete(
 					branch.name, force: forced.contains(branch.name), in: self.root
 				)
+				// **`-d` answers a different question than the dialog did.**
+				// It refuses a branch that is ahead of its own *stale* upstream
+				// — "not fully merged", meaning `origin/<branch>` is behind —
+				// even when every commit on it is already on the branch you are
+				// standing on. That is the question the dialog asked and the
+				// one that decides whether anything is lost, so ask it again,
+				// now, and force from its answer rather than take git's for it.
+				//
+				// It cost a branch: `git-tree-has-no-header` was listed under
+				// "nothing would be lost", was, and stayed where it was while
+				// the other four went.
+				if result.exitCode != 0, !forced.contains(branch.name),
+					await GitBranches.isMerged(branch.name, into: plan.target, in: self.root) {
+					result = await GitBranches.delete(branch.name, force: true, in: self.root)
+				}
 				if result.exitCode != 0 {
 					let saidIt = result.stderr.isEmpty ? result.stdout : result.stderr
 					failures.append(
@@ -329,6 +391,8 @@ final class BranchDeletion {
 				} else {
 					deleted.append(branch.name)
 				}
+				working.remove(branch.name)
+				self.onDeleting?(working)
 			}
 
 			if failures.isEmpty {
@@ -368,6 +432,32 @@ final class BranchDeletion {
 
 	// MARK: - Driven runs
 
+	/// Presses a button on the sheet that is up, named by what its title starts
+	/// with — `Delete`, `Cancel`, or `Also` for the worktree checkbox, whose
+	/// full title carries a comma the step separator would eat.
+	///
+	/// **The press is the step nothing took.** A driven run could put the dialog
+	/// up and could do the delete behind its back, and the one thing in between
+	/// — what happens when somebody presses Delete — was never driven. It was
+	/// doing nothing at all.
+	///
+	/// Static, and takes the window: there is no way to reach the dialog's own
+	/// object from outside, which is the point of it holding itself.
+	static func pressSheetButtonForTesting(_ title: String, in window: NSWindow?) -> String {
+		guard let sheet = window?.attachedSheet else { return "SHEET none" }
+		var found: NSButton?
+		func walk(_ view: NSView) {
+			if let button = view as? NSButton, button.title.hasPrefix(title), found == nil {
+				found = button
+			}
+			view.subviews.forEach(walk)
+		}
+		sheet.contentView.map(walk)
+		guard let button = found else { return "SHEET no button starting “\(title)”" }
+		button.performClick(nil)
+		return "SHEET pressed “\(button.title)”"
+	}
+
 	/// What the dialog would say, without putting it up.
 	///
 	/// The sentence *is* the feature here: "nothing would be lost", "these
@@ -398,7 +488,8 @@ final class BranchDeletion {
 	}
 
 	/// Does the delete the dialog would do, with the checkbox as given — the
-	/// half a driven run cannot reach, because the dialog itself is AppKit's.
+	/// dialog skipped rather than answered. `pressSheetButtonForTesting` is the
+	/// one that answers it.
 	func deleteForTesting(
 		about branches: [GitBranch], target: String, removingWorktrees: Bool
 	) async {

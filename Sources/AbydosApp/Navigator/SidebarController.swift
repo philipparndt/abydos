@@ -352,8 +352,8 @@ final class SidebarController: NSObject {
 					fflush(stdout)
 				}
 			// The delete itself, with the dialog's checkbox as the argument —
-			// `delete:worktrees` ticks it, `delete` leaves it. The dialog is
-			// AppKit's and a driven run cannot answer it.
+			// `delete:worktrees` ticks it, `delete` leaves it. This skips the
+			// dialog; `sheet-press` below is the step that answers one.
 			case "delete":
 				Task { @MainActor in
 					await pane.deleteForTesting(removingWorktrees: argument == "worktrees")
@@ -361,6 +361,10 @@ final class SidebarController: NSObject {
 			// The dialog itself, on screen, for a screenshot of it.
 			case "ask-delete": pane.askAboutDeletingForTesting()
 			case "sheet":      print(pane.deleteSheetForTesting())
+			// Answering it — the step the two above skip between them. Not
+			// `press`, which the banner below has: a second one is a dead case.
+			case "sheet-press": print("BRANCHES "
+				+ BranchDeletion.pressSheetButtonForTesting(argument, in: pane.window))
 			case "copy-name":
 				print("BRANCHES copy-name would copy:\n"
 					+ pane.copyNameTextForTesting().split(separator: "\n")

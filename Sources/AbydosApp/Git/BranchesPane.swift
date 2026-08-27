@@ -54,6 +54,10 @@ final class BranchesPane: NSView {
 	/// and a list that looks exactly as it did is indistinguishable from a
 	/// click that never landed.
 	private var pushingBranch: String?
+	/// The branches a delete is working on, if one is running. Same reason as
+	/// `pushingBranch`, and more of it: a delete that takes a worktree with it
+	/// spends its seconds on `rm -rf`, not on git.
+	private var deletingBranches: Set<String> = []
 	/// Kept alive while the recreate sheet is up: it is the combo's delegate,
 	/// and a delegate nobody holds is one nobody hears from.
 	private var tagSourceWatcher: TagSourceWatcher?
@@ -134,8 +138,6 @@ final class BranchesPane: NSView {
 	private var tableView: BranchesOutlineView!
 	/// Where this branch stands against its remote, for what the counter says.
 	private var trafficState: GitPush.State?
-	/// The delete whose sheet is up, held so its callbacks outlive the press.
-	private var openDeletion: BranchDeletion?
 	/// Where the head is when it is not on a branch, and what git has stopped
 	/// in the middle of — nil when there is nothing unusual to say. Drawn on
 	/// the repository row and as a row of its own at the top of Local.
@@ -1371,14 +1373,13 @@ final class BranchesPane: NSView {
 		)
 	}
 
-	/// Opens the real dialog, for a report of what is on it.
+	/// Opens the real dialog, for a report of what is on it — **through the
+	/// menu item's own action**, so a driven run is pressing what somebody
+	/// presses. A step of its own that did the same thing a little differently
+	/// is how a delete that did nothing at all went unnoticed: the report was of
+	/// a dialog nobody could have opened.
 	func askAboutDeletingForTesting() {
-		// Held for as long as the sheet is: the object owns the dialog's
-		// callbacks, and one let go of while its sheet is up takes them with
-		// it.
-		let made = deletion()
-		openDeletion = made
-		made.ask(about: deletableBranches, target: currentBranchName ?? "HEAD")
+		deleteBranch()
 	}
 
 	/// What is on the sheet that is up, with the frames it was laid out at.
@@ -1410,7 +1411,7 @@ final class BranchesPane: NSView {
 	}
 
 	/// Does the delete the dialog would do, with the checkbox as given — the
-	/// half a driven run cannot reach, because the dialog itself is AppKit's.
+	/// dialog skipped rather than answered.
 	func deleteForTesting(removingWorktrees: Bool) async {
 		let branches = deletableBranches
 		guard !branches.isEmpty else { return }
@@ -1485,6 +1486,15 @@ final class BranchesPane: NSView {
 					if ahead > 0 { marks.append("↑\(ahead) of the default") }
 				} else if branch.ahead > 0 || branch.behind > 0 {
 					marks.append("↑\(branch.ahead) ↓\(branch.behind)")
+				}
+				// The wheel, so a driven run can see the row is waiting on
+				// something without a screenshot of it turning — and asked of
+				// the *view*, not of the state behind it. A mark taken from the
+				// state would have said "spinner" for all the time the real one
+				// sat below a `return` and never appeared.
+				if let view = tableView.view(atColumn: 0, row: index, makeIfNecessary: false),
+					view.subviews.contains(where: { $0 is NSProgressIndicator }) {
+					marks.append("spinner")
 				}
 				if merged { marks.append("checkmark") }
 				else if branch.upstreamIsGone { marks.append("xmark.icloud") }
@@ -2177,10 +2187,28 @@ final class BranchesPane: NSView {
 		deletion().ask(about: deletableBranches, target: currentBranchName ?? "HEAD")
 	}
 
+	/// What a row is waiting on, which is also what it says while it waits —
+	/// nil for a row that is not waiting on anything.
+	///
+	/// **Local rows only.** A remote row's `name` is the branch's name without
+	/// its remote, so `origin/x` and `x` answer the same here, and pushing one
+	/// used to set the other spinning.
+	private func busyNote(for branch: GitBranch) -> String? {
+		guard case .local = branch.kind else { return nil }
+		if branch.name == pushingBranch { return "Pushing \(branch.name)…" }
+		if deletingBranches.contains(branch.name) { return "Deleting \(branch.name)…" }
+		return nil
+	}
+
 	/// One `BranchDeletion` per press, told what this pane knows: where the
 	/// repository is, what checkouts it has, and who to tell afterwards.
 	private func deletion() -> BranchDeletion {
 		let made = BranchDeletion(root: root, worktrees: worktrees, window: window)
+		made.onDeleting = { [weak self] names in
+			guard let self else { return }
+			self.deletingBranches = names
+			self.tableView.reloadData()
+		}
 		made.onFinished = { [weak self] in
 			self?.refresh()
 			self?.onRepositoryChanged?()
@@ -2379,7 +2407,7 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			return BranchRowView(
 				branch: branch,
 				display: display,
-				isPushing: branch.name == pushingBranch,
+				busy: busyNote(for: branch),
 				isMerged: branch.kind == .local && mergedBranches.contains(branch.name),
 				base: defaultBranch
 			)
@@ -2783,7 +2811,9 @@ private final class BranchRowView: NSView {
 	/// rather than all of it.
 	private let display: String
 	private let depth: Int
-	private let isPushing: Bool
+	/// What this row is waiting on — the sentence it says while it waits, or
+	/// nil when it is not waiting on anything.
+	private let busy: String?
 	/// Its work is already in the default branch: nothing on it that is not
 	/// somewhere else. Drawn faded, and never for the branch you are on.
 	private let isMerged: Bool
@@ -2796,14 +2826,14 @@ private final class BranchRowView: NSView {
 		branch: GitBranch,
 		display: String? = nil,
 		depth: Int = 0,
-		isPushing: Bool = false,
+		busy: String? = nil,
 		isMerged: Bool = false,
 		base: String? = nil
 	) {
 		self.branch = branch
 		self.display = display ?? branch.name
 		self.depth = depth
-		self.isPushing = isPushing
+		self.busy = busy
 		self.base = base
 		// **The branch you are standing on never dims, whatever the reading
 		// says.** The default branch is trivially merged into itself and any
@@ -2812,8 +2842,33 @@ private final class BranchRowView: NSView {
 		// something being wrong rather than as something being done.
 		self.isMerged = isMerged && !branch.isCurrent
 		super.init(frame: .zero)
-		guard !isPushing else {
-			toolTip = "Pushing \(branch.name)…"
+		if let busy {
+			toolTip = busy
+			// A real spinner rather than something drawn by hand: it has to
+			// keep turning while git works, and that is what this control is
+			// for.
+			//
+			// **It sat below a `return` for as long as it existed.** One guard
+			// left on a row that was waiting and a second one turned the
+			// spinner back on further down, so the branch being pushed showed
+			// a tooltip and nothing else — the thing the spinner was added to
+			// answer. One `if` for both halves now, and no way back into that.
+			let wheel = NSProgressIndicator()
+			wheel.style = .spinning
+			wheel.controlSize = .small
+			wheel.isIndeterminate = true
+			wheel.translatesAutoresizingMaskIntoConstraints = false
+			addSubview(wheel)
+			NSLayoutConstraint.activate([
+				wheel.centerYAnchor.constraint(equalTo: centerYAnchor),
+				wheel.trailingAnchor.constraint(
+					equalTo: trailingAnchor, constant: -Theme.current.scaled(10)
+				),
+				wheel.widthAnchor.constraint(equalToConstant: Theme.current.scaled(12)),
+				wheel.heightAnchor.constraint(equalToConstant: Theme.current.scaled(12)),
+			])
+			wheel.startAnimation(nil)
+			spinner = wheel
 			return
 		}
 		// **The words the symbols replaced live here.** A symbol on a row is a
@@ -2836,27 +2891,6 @@ private final class BranchRowView: NSView {
 			}
 		}
 		toolTip = notes.joined(separator: " — ")
-
-		guard isPushing else { return }
-		// A real spinner rather than something drawn by hand: it has to keep
-		// turning while a push waits on another machine, and that is exactly
-		// what this control is for.
-		let wheel = NSProgressIndicator()
-		wheel.style = .spinning
-		wheel.controlSize = .small
-		wheel.isIndeterminate = true
-		wheel.translatesAutoresizingMaskIntoConstraints = false
-		addSubview(wheel)
-		NSLayoutConstraint.activate([
-			wheel.centerYAnchor.constraint(equalTo: centerYAnchor),
-			wheel.trailingAnchor.constraint(
-				equalTo: trailingAnchor, constant: -Theme.current.scaled(10)
-			),
-			wheel.widthAnchor.constraint(equalToConstant: Theme.current.scaled(12)),
-			wheel.heightAnchor.constraint(equalToConstant: Theme.current.scaled(12)),
-		])
-		wheel.startAnimation(nil)
-		spinner = wheel
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -2958,9 +2992,10 @@ private final class BranchRowView: NSView {
 		let inner = countsWidth > 0 && symbolWidth > 0 ? Theme.current.scaled(5) : 0
 		let trailingWidth = countsWidth + inner + symbolWidth
 
-		// While pushing, the spinner has the right-hand end of the row.
+		// While it is waiting on something, the spinner has the right-hand end
+		// of the row.
 		let right = bounds.maxX - RowMetrics.trailingInset
-			- (isPushing ? Theme.current.scaled(18) : 0)
+			- (busy == nil ? 0 : Theme.current.scaled(18))
 		let gap = Theme.current.scaled(6)
 
 		RowMetrics.draw(
