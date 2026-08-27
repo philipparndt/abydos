@@ -1,9 +1,9 @@
 # Abydos 0.7.0
 
-Forty-five commits. Two of them are bugs that quietly lost your data, one is
-the largest single piece of housekeeping this repository has had, and the rest
-of the release is the git tool being rebuilt around one idea: a verb belongs on
-the row that draws the thing it acts on.
+Forty-five commits. Two of them are cases of something coming back empty
+without saying so, one is the largest single piece of housekeeping this
+repository has had, and the rest of the release is the git tool being rebuilt
+around one idea: a verb belongs on the row that draws the thing it acts on.
 
 ## The git tool has no header
 
@@ -97,15 +97,15 @@ tally's width further left than the `+25 −3` of the file beneath it, so readin
 down a nested tree the plus signs stepped in and out by a digit at every level.
 They are columns now.
 
-## Two bugs that lost things quietly
+## Two things that came back empty
 
-**An unsteady click no longer empties your clipboard.** tmux copies on
+**An unsteady click no longer empties the clipboard.** tmux copies on
 selection. This app forwards the click that activates a window straight through
 to the program, so that clicking from elsewhere onto a tmux pane selects it in
 one gesture rather than two. Together, a hand that moved two points between
 press and release sent tmux a drag — it entered copy mode, selected nothing, and
 on release copied that nothing over the system clipboard. The next paste was
-empty and nothing on screen ever said why.
+empty, and nothing on screen said why.
 
 The pointer now gets a whole terminal cell in each direction before the program
 hears about a drag at all. Waiting costs the selection nothing, which is what
@@ -113,7 +113,7 @@ makes a whole cell safe rather than merely generous: the program was already
 told where the button went down and anchors there, so this decides only *when* a
 selection starts, never where.
 
-**A busy machine no longer loses a subprocess's output.** The pipe readers ran
+**A busy machine no longer drops a subprocess's output.** The pipe readers ran
 on `DispatchQueue.global`, which overcommits to about sixty-four threads per
 quality of service — and every one of these reads blocks its thread until end of
 file. Run enough commands at once and the readers for the newest were still
@@ -121,9 +121,9 @@ file. Run enough commands at once and the readers for the newest were still
 had never begun.
 
 The caller then got exit code 0 and an empty string from a command that had
-worked. Nothing reported an error, because nothing failed: git ran, git
-succeeded, and its answer was dropped on the floor. Callers read that as "no
-changes", "no stashes", "no files in that commit". It surfaced as flaky tests —
+worked. Nothing reported an error, because nothing had failed: git ran, git
+succeeded, and its answer never got read. Callers took that as "no changes",
+"no stashes", "no files in that commit". It surfaced as flaky tests —
 49, 21 and 24 failures across three parallel runs, every one a value that should
 have been read coming back empty — but a test suite is not the only thing that
 runs git under load. The readers have a thread apiece now; those suites went to
