@@ -2,7 +2,7 @@ import AppKit
 
 /// Which tool window the sidebar is showing.
 enum SidebarToolKind {
-	case project, changes, branches, structure, scratches, history
+	case project, changes, branches, structure, scratches, history, pullRequests
 }
 
 /// A pane that docks under the editor and has a button on the rail.
@@ -34,6 +34,8 @@ final class ToolWindowBar: NSView {
 	var onToggleStructure: (() -> Void)?
 	var onToggleScratches: (() -> Void)?
 	var onToggleHistory: (() -> Void)?
+	/// Show the pull requests of this repository.
+	var onTogglePullRequests: (() -> Void)?
 	/// Show the backlog: the board and the list over `.abydos/backlog`.
 	var onToggleBacklog: (() -> Void)?
 	/// Bring an existing session forward, when there is one.
@@ -93,6 +95,7 @@ final class ToolWindowBar: NSView {
 			? "Git (⌘2)"
 			: "Git (⌘2) — " + parts.joined(separator: ", ")
 	}
+	private var pullRequestsButton: StripButton!
 	private var structureButton: StripButton!
 	private var scratchesButton: StripButton!
 	private var backlogButton: StripButton!
@@ -123,6 +126,7 @@ final class ToolWindowBar: NSView {
 		// the log are pages now, and the panes remain for what the driver and
 		// the popover reach for — so the button is lit for any of them.
 		gitButton.isSelected = visible && [.changes, .branches, .history].contains(tool)
+		pullRequestsButton.isSelected = visible && tool == .pullRequests
 		structureButton.isSelected = visible && tool == .structure
 		scratchesButton.isSelected = visible && tool == .scratches
 	}
@@ -132,6 +136,7 @@ final class ToolWindowBar: NSView {
 		switch tool {
 		case .project: return projectButton
 		case .changes, .branches, .history: return gitButton
+		case .pullRequests: return pullRequestsButton
 		case .structure: return structureButton
 		case .scratches: return scratchesButton
 		}
@@ -212,6 +217,17 @@ final class ToolWindowBar: NSView {
 			symbol: "arrow.trianglehead.branch", tooltip: "Git (⌘2)", enabled: true
 		)
 		gitButton.onClick = { [weak self] in self?.onToggleBranches?() }
+		// **Its own button, beside the git one rather than behind it.** What is
+		// behind the git button is one tree — the working copy, the stashes and
+		// the refs, all things this repository holds. A pull request is not one
+		// of those: it lives on somebody else's server, it is asked about over
+		// the network, and it is opened to read somebody else's work rather than
+		// to see where you are standing.
+		pullRequestsButton = StripButton(
+			symbol: "arrow.trianglehead.pull", tooltip: "Pull Requests", enabled: true
+		)
+		pullRequestsButton.onClick = { [weak self] in self?.onTogglePullRequests?() }
+
 		structureButton = StripButton(symbol: "list.bullet.indent", tooltip: "Structure (⌘3)", enabled: true)
 		structureButton.onClick = { [weak self] in self?.onToggleStructure?() }
 
@@ -226,6 +242,7 @@ final class ToolWindowBar: NSView {
 		let stack = NSStackView(views: [
 			projectButton,
 			gitButton,
+			pullRequestsButton,
 			structureButton,
 			scratchesButton,
 		])
@@ -235,7 +252,7 @@ final class ToolWindowBar: NSView {
 		// A little more air around the rules than between the icons they
 		// separate, or the grouping reads as an accident.
 		stack.setCustomSpacing(7, after: projectButton)
-		stack.setCustomSpacing(7, after: gitButton)
+		stack.setCustomSpacing(7, after: pullRequestsButton)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 
@@ -356,6 +373,7 @@ final class ToolWindowBar: NSView {
 			said("debug", debugButton),
 			said("terminal", terminalButton),
 			said("project", projectButton),
+			said("pullRequests", pullRequestsButton),
 		].joined(separator: " ")
 	}
 

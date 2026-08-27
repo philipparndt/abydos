@@ -1306,6 +1306,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				case "structure": controller?.sidebarForTesting.showSidebarTool(.structure)
 				case "history":   controller?.sidebarForTesting.showSidebarTool(.history)
 				case "scratches": controller?.sidebarForTesting.showSidebarTool(.scratches)
+				case "pull-requests": controller?.sidebarForTesting.showSidebarTool(.pullRequests)
 				default:          controller?.sidebarForTesting.showSidebarTool(.project)
 				}
 			}
@@ -1511,6 +1512,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let steps = options.commitPageSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.sidebarForTesting.commitPageForTesting(steps)
+			}
+		}
+
+		// Later than the pages, because this one is a network call rather than a
+		// `git` invocation: the list is not there to report on until `gh` has
+		// answered, and the report waits for it besides.
+		if let steps = options.pullRequestSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.sidebarForTesting.pullRequestsForTesting(steps)
 			}
 		}
 
@@ -3134,6 +3144,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		viewMenu.addItem(withTitle: "Git", action: #selector(MainWindowController.toggleBranchesView(_:)), keyEquivalent: "2")
 		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "3")
 		viewMenu.addItem(withTitle: "Scratches", action: #selector(MainWindowController.toggleScratchesView(_:)), keyEquivalent: "4")
+		// No number of its own: ⌘5 and ⌘6 are the two keys that moved and are
+		// still answering for the release, and a seventh number would be a
+		// shortcut nobody has room for. The rail carries the button.
+		viewMenu.addItem(
+			withTitle: "Pull Requests",
+			action: #selector(MainWindowController.togglePullRequestsView(_:)),
+			keyEquivalent: ""
+		)
 		// The keys that moved, for one release: they open the tool and say
 		// which key now opens what they used to, rather than doing nothing to
 		// fingers that have been typing them for months.
@@ -3152,6 +3170,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			keyEquivalent: "k"
 		)
 		commitItem.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(.separator())
+		// **Two questions about every diff in the app**, so they are here rather
+		// than on the pull request page: the commit view and the log page draw
+		// the same view, and a switch that only reached one of them would be a
+		// preference with a scope nobody could guess.
+		let sideBySide = viewMenu.addItem(
+			withTitle: "Side by Side Diff",
+			action: #selector(MainWindowController.toggleSideBySideDiff(_:)),
+			keyEquivalent: ""
+		)
+		sideBySide.state = Settings.shared.diffIsSideBySide ? .on : .off
+		let chrome = viewMenu.addItem(
+			withTitle: "Show Diff Headers",
+			action: #selector(MainWindowController.toggleDiffChrome(_:)),
+			keyEquivalent: ""
+		)
+		chrome.state = Settings.shared.diffShowsChrome ? .on : .off
 		viewMenu.addItem(.separator())
 		// How a file with a rendered form is shown. In a submenu of their own
 		// because "Split Right" is also what a second editor pane is called:

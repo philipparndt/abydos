@@ -71,6 +71,15 @@ final class SidebarController: NSObject {
 
 	private(set) var historyPane: HistoryPane?
 
+	/// Reviewing: the list, the page it opens, and the run that drives them.
+	///
+	/// **A collaborator rather than more of this class**, which was already at
+	/// the length where a file stops being read and starts being appended to.
+	/// The window wires it — see `MainWindowController.wireReviewing` — because
+	/// what it needs to be told is the editor area and the project, and both of
+	/// those are the window's.
+	let pullRequests = PullRequestReview()
+
 	var primaryToolView: NSView?
 
 	var primaryToolTop: NSLayoutConstraint?
@@ -637,6 +646,7 @@ final class SidebarController: NSObject {
 		structurePane = nil
 		scratchesPane = nil
 		historyPane = nil
+		pullRequests.paneWentAway()
 
 		// Built before anything is taken down. The panes that need a repository
 		// cannot be built until it has been read, and tearing the sidebar down
@@ -736,6 +746,11 @@ final class SidebarController: NSObject {
 				self?.showCommitDiff(commit: commit, file: file)
 			}
 			historyPane = pane
+			view = pane
+		case .pullRequests:
+			// Nothing until the repository has been read: a pull request is
+			// asked about by remote, and only the repository knows the remote.
+			guard project()?.git != nil, let pane = pullRequests.makePane() else { return nil }
 			view = pane
 		case .scratches:
 			let pane = ScratchesPane(projectRoot: project()?.root)
@@ -883,6 +898,9 @@ final class SidebarController: NSObject {
 			}
 		}
 	}
+
+	/// What the pull request list says, row by row — see `PullRequestReview`.
+	func pullRequestsForTesting(_ steps: String) { pullRequests.driveForTesting(steps) }
 
 	/// What the log page holds, and what its menu over a commit offers.
 	func logPageForTesting(_ steps: String, waiting: Int = 8) {

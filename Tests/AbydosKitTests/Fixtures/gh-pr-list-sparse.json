@@ -1,0 +1,46 @@
+[
+ {
+  "author": null,
+  "baseRefName": "main",
+  "headRefName": "delete-the-account",
+  "isDraft": false,
+  "number": 41,
+  "statusCheckRollup": [],
+  "title": "The author of this one no longer has an account",
+  "updatedAt": "2026-05-04T09:12:00Z",
+  "url": "https://github.com/owner/name/pull/41"
+ },
+ {
+  "author": {
+   "is_bot": false,
+   "login": "sam"
+  },
+  "number": 42,
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "conclusion": "",
+    "name": "build",
+    "status": "IN_PROGRESS"
+   }
+  ]
+ },
+ {
+  "author": {
+   "is_bot": false,
+   "login": "alex"
+  },
+  "baseRefName": "main",
+  "headRefName": "no-number-at-all",
+  "isDraft": true,
+  "statusCheckRollup": [
+   {
+    "__typename": "StatusContext",
+    "context": "ci/jenkins",
+    "state": "FAILURE"
+   }
+  ],
+  "title": "Nothing can be asked about this one",
+  "url": "https://github.com/owner/name/pull/0"
+ }
+]

@@ -49,6 +49,14 @@ import Foundation
 /// changes what the term means. Nothing is thrown away when they change, so
 /// turning an option back off brings the marks back with it — an accidental
 /// click on `Aa` costs nothing.
+///
+/// ## What a tick is, and where it lives now
+///
+/// The ticking itself is `Checklist`, which is shared with the pull request
+/// page's list of files. What is here is the *question* a set of ticks belongs
+/// to; what is there is a tick and the token it may one day be cleared by. A
+/// search passes no token and so nothing it ticks is ever invalidated, which is
+/// exactly how this behaved before tokens existed.
 public struct SearchChecklist: Equatable, Sendable {
 	/// The search a set of marks belongs to.
 	public struct Question: Hashable, Sendable {
@@ -79,7 +87,10 @@ public struct SearchChecklist: Equatable, Sendable {
 		}
 	}
 
-	private var done: [Question: Set<Mark>] = [:]
+	/// One checklist per question. `Checklist` is where a tick lives and where
+	/// the token that may one day clear it lives; this type is what says a tick
+	/// belongs to *this* search rather than to another.
+	private var lists: [Question: Checklist<Mark>] = [:]
 
 	public init() {}
 
@@ -103,12 +114,12 @@ public struct SearchChecklist: Equatable, Sendable {
 	}
 
 	public func isDone(_ mark: Mark, for question: Question) -> Bool {
-		done[question]?.contains(mark) ?? false
+		lists[question]?.isDone(mark) ?? false
 	}
 
 	/// Every mark held for one question, which is what an undo puts back.
 	public func marks(for question: Question) -> Set<Mark> {
-		done[question] ?? []
+		lists[question]?.subjects ?? []
 	}
 
 	/// Marks or unmarks a batch, and answers with the set as it was before.
@@ -116,30 +127,49 @@ public struct SearchChecklist: Equatable, Sendable {
 	/// The whole previous set rather than a diff, because that is what ⌘Z needs
 	/// and it is small: a set of marks is a few dozen short strings even after a
 	/// long session, and there is nothing here worth being clever about.
+	/// - Parameter tokens: what each tick is about, for a list that can say —
+	///   see `Checklist`. A search gives none, and nothing it ticks is ever
+	///   invalidated, which is exactly how it behaved before tokens existed.
 	@discardableResult
 	public mutating func set(
-		_ marks: [Mark], done isDone: Bool, for question: Question
+		_ marks: [Mark],
+		done isDone: Bool,
+		for question: Question,
+		tokens: [Mark: String] = [:]
 	) -> Set<Mark> {
-		let previous = done[question] ?? []
-		var current = previous
-		if isDone {
-			current.formUnion(marks)
-		} else {
-			current.subtract(marks)
-		}
-		// An empty set is dropped rather than kept, so a question somebody
+		var list = lists[question] ?? Checklist<Mark>()
+		let previous = list.set(marks, done: isDone, tokens: tokens)
+		// An empty list is dropped rather than kept, so a question somebody
 		// unticked entirely does not sit in here for the life of the window.
-		if current.isEmpty {
-			done[question] = nil
-		} else {
-			done[question] = current
-		}
+		lists[question] = list.isEmpty ? nil : list
 		return previous
 	}
 
 	/// Puts a whole question's marks back as they were, for ⌘Z.
 	public mutating func restore(_ marks: Set<Mark>, for question: Question) {
-		done[question] = marks.isEmpty ? nil : marks
+		guard !marks.isEmpty else {
+			lists[question] = nil
+			return
+		}
+		var list = lists[question] ?? Checklist<Mark>()
+		list.restore(marks)
+		lists[question] = list
+	}
+
+	/// Clears the ticks of one question whose subject has since changed.
+	///
+	/// - Returns: the marks whose ticks were cleared. Empty for a list that
+	///   passed no tokens, which is every list this type has today — the
+	///   capability is here because `Checklist` is shared with a list that does.
+	@discardableResult
+	public mutating func revalidate(
+		_ current: [Mark: String], for question: Question
+	) -> Set<Mark> {
+		guard var list = lists[question] else { return [] }
+		let cleared = list.revalidate(against: current)
+		guard !cleared.isEmpty else { return [] }
+		lists[question] = list.isEmpty ? nil : list
+		return cleared
 	}
 
 	/// How many of the matches now showing are marked done.
@@ -149,10 +179,10 @@ public struct SearchChecklist: Equatable, Sendable {
 	/// was edited, the term was narrowed — and "12 of 9 done" is worse than no
 	/// number at all.
 	public func doneCount(in results: [FileSearchResult], for question: Question) -> Int {
-		guard let held = done[question], !held.isEmpty else { return 0 }
+		guard let held = lists[question], !held.isEmpty else { return 0 }
 		var count = 0
 		for result in results {
-			for mark in Self.marks(for: result) where held.contains(mark) { count += 1 }
+			for mark in Self.marks(for: result) where held.isDone(mark) { count += 1 }
 		}
 		return count
 	}

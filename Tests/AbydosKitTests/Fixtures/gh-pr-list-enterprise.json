@@ -1,0 +1,58 @@
+[
+ {
+  "author": {
+   "is_bot": false,
+   "login": "j.doe"
+  },
+  "baseRefName": "release/24.2",
+  "headRefName": "feature/PLAT-1188-retry-the-upload",
+  "isDraft": true,
+  "number": 1188,
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-04-17T08:44:02Z",
+    "conclusion": "FAILURE",
+    "detailsUrl": "https://ghe.example.com/platform/uploader/actions/runs/44182/job/91277",
+    "name": "unit",
+    "startedAt": "2026-04-17T08:41:55Z",
+    "status": "COMPLETED",
+    "workflowName": "CI"
+   },
+   {
+    "__typename": "StatusContext",
+    "context": "jenkins/integration",
+    "state": "SUCCESS",
+    "targetUrl": "https://jenkins.example.com/job/uploader/2211/"
+   }
+  ],
+  "title": "PLAT-1188: retry the upload once before giving up",
+  "updatedAt": "2026-04-17T08:44:11Z",
+  "url": "https://ghe.example.com/platform/uploader/pull/1188"
+ },
+ {
+  "author": {
+   "is_bot": false,
+   "login": "k.nowak"
+  },
+  "baseRefName": "release/24.2",
+  "headRefName": "fix/PLAT-1190-log-the-body",
+  "isDraft": false,
+  "number": 1190,
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-04-17T09:02:40Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://ghe.example.com/platform/uploader/actions/runs/44190/job/91302",
+    "name": "unit",
+    "startedAt": "2026-04-17T09:00:01Z",
+    "status": "COMPLETED",
+    "workflowName": "CI"
+   }
+  ],
+  "title": "PLAT-1190: log the response body when a retry fails",
+  "updatedAt": "2026-04-17T09:02:51Z",
+  "url": "https://ghe.example.com/platform/uploader/pull/1190"
+ }
+]

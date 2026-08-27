@@ -78,6 +78,9 @@ public final class Settings {
 			Key.editorLineHeight: 1.4,
 			Key.tabWidth: 4,
 			Key.showHiddenFiles: true,
+			Key.reviewRequestsIncludeTeams: true,
+			Key.diffShowsChrome: false,
+			Key.diffIsSideBySide: false,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
 			Key.uiScale: 1.0,
 			// Big enough to read from the back of a room, and light, because a
@@ -131,6 +134,10 @@ public final class Settings {
 		static let showHiddenFiles = "showHiddenFiles"
 		static let compactsPackages = "compactsPackages"
 		static let commitFilesByFolder = "commitFilesByFolder"
+		static let reviewRequestsIncludeTeams = "reviewRequestsIncludeTeams"
+		static let reviewShowsWholeFile = "reviewShowsWholeFile"
+		static let diffShowsChrome = "diffShowsChrome"
+		static let diffIsSideBySide = "diffIsSideBySide"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let agentPermissions = "agentPermissions"
@@ -701,6 +708,60 @@ public final class Settings {
 	public var commitFilesByFolder: Bool {
 		get { defaults.bool(forKey: Key.commitFilesByFolder) }
 		set { set(newValue, Key.commitFilesByFolder) }
+	}
+
+	/// Whether "waiting on me" counts a review asked of a team this account is
+	/// in, or only one asked of it by name.
+	///
+	/// On, because a repository that assigns reviews to teams is the case where
+	/// the narrow answer is silently empty — somebody would open the list, see
+	/// nothing marked, and conclude nothing was waiting on them. The other way
+	/// round is merely a longer list, which is visibly a longer list.
+	public var reviewRequestsIncludeTeams: Bool {
+		get { defaults.bool(forKey: Key.reviewRequestsIncludeTeams) }
+		set { set(newValue, Key.reviewRequestsIncludeTeams) }
+	}
+
+	/// Whether a pull request's diff is shown inside the whole file rather than
+	/// as its hunks alone.
+	///
+	/// Off, because the hunks are what a diff is and they arrive with the diff;
+	/// the whole file costs a call per file. On is the thing a review in an
+	/// editor can do that a review in a browser cannot, which is why it is a
+	/// switch above the diff rather than a setting somebody has to find.
+	public var reviewShowsWholeFile: Bool {
+		get { defaults.bool(forKey: Key.reviewShowsWholeFile) }
+		set { set(newValue, Key.reviewShowsWholeFile) }
+	}
+
+	/// Whether a diff draws git's own preamble: `diff --git`, `index`, and the
+	/// two `---`/`+++` lines, and the `@@ hunk n` before each hunk.
+	///
+	/// **Off.** Every pane that shows a diff already says which file it is —
+	/// the tree beside it is a list of file names and one of them is selected —
+	/// so those four lines are four lines of a short diff spent repeating what
+	/// the window has just said. A five-line change arrived with the top half of
+	/// the pane explaining itself.
+	///
+	/// What is *not* dropped with them is the text after the `@@`, which is
+	/// git's guess at the declaration the hunk is inside. That is the one piece
+	/// of the preamble that says something the rest of the window does not, and
+	/// it is drawn on its own.
+	public var diffShowsChrome: Bool {
+		get { defaults.bool(forKey: Key.diffShowsChrome) }
+		set { set(newValue, Key.diffShowsChrome) }
+	}
+
+	/// Whether a diff draws the two sides beside each other rather than one
+	/// above the other.
+	///
+	/// Off, because unified is what a narrow pane can draw and what `git diff`
+	/// prints. Side by side is the better read of a rewritten block on a wide
+	/// window, which is what a review on a laptop screen and a review on a
+	/// desk monitor differ by.
+	public var diffIsSideBySide: Bool {
+		get { defaults.bool(forKey: Key.diffIsSideBySide) }
+		set { set(newValue, Key.diffIsSideBySide) }
 	}
 
 	/// Whether choosing another project opens a window or replaces this one.

@@ -117,6 +117,26 @@ public struct ProjectSession: Equatable, Sendable {
 	/// keep a scratch file of line numbers. Conditions come too — those are the
 	/// ones that took thought.
 	public var breakpoints: [String: [Breakpoint]]
+	/// Which files of which pull request have been read, and what each tick was
+	/// made against.
+	///
+	/// Keyed by the pull request's number as a string, then by path, with the
+	/// token the tick was recorded at — the hash of that file's diff at the head
+	/// it was read at. The token has to travel or the ticks cannot be checked
+	/// when the page opens again, and a set of ticks that cannot be checked is
+	/// exactly the false record this whole feature is against.
+	///
+	/// A number as a string because this is written as JSON, whose keys are.
+	///
+	/// Additive: absent from every session written before it existed, which
+	/// reads as nobody having read anything — the safe direction.
+	public var reviewTicks: [String: [String: String]]
+	/// Which checkouts were made to read a pull request, by path.
+	///
+	/// The mark `ReviewCheckouts` holds, written down so tomorrow's window knows
+	/// too. Not in `.git`, for the reason that type gives: it is this program's
+	/// opinion about a directory rather than a fact about the repository.
+	public var reviewCheckouts: [String: Int]
 
 	public init(
 		files: [OpenFile] = [],
@@ -127,10 +147,14 @@ public struct ProjectSession: Equatable, Sendable {
 		subprojectPath: String? = nil,
 		selectedConfiguration: String? = nil,
 		xcodeDestinations: [String: String] = [:],
-		breakpoints: [String: [Breakpoint]] = [:]
+		breakpoints: [String: [Breakpoint]] = [:],
+		reviewTicks: [String: [String: String]] = [:],
+		reviewCheckouts: [String: Int] = [:]
 	) {
 		self.xcodeDestinations = xcodeDestinations
 		self.breakpoints = breakpoints
+		self.reviewTicks = reviewTicks
+		self.reviewCheckouts = reviewCheckouts
 		self.files = files
 		self.activePath = activePath
 		self.terminals = terminals
@@ -143,7 +167,8 @@ public struct ProjectSession: Equatable, Sendable {
 	public var isEmpty: Bool {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
-			&& breakpoints.isEmpty && tmuxWindow == nil
+			&& breakpoints.isEmpty && tmuxWindow == nil && reviewTicks.isEmpty
+			&& reviewCheckouts.isEmpty
 	}
 
 	/// Which window a project being left should be remembered in.

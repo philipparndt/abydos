@@ -919,7 +919,12 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 	private func worktreeItem(
 		_ worktree: GitWorktree, current: String?, primaryName: String
 	) -> NSMenuItem {
-		let label = GitWorktrees.label(for: worktree, primaryName: primaryName)
+		// A checkout made to read a pull request says so here too, for the reason
+		// the branches pane says it: it is temporary and belongs to a review, and
+		// a menu that cannot tell the two apart is the menu that grows a row a
+		// day and stops being read.
+		let review = ReviewCheckouts.shared.number(of: worktree.path).map { " · PR #\($0)" } ?? ""
+		let label = GitWorktrees.label(for: worktree, primaryName: primaryName) + review
 		let item = NSMenuItem(
 			title: label.count > Self.worktreeTitleLimit
 				? label.prefix(Self.worktreeTitleLimit - 1) + "…"
