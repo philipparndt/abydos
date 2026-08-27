@@ -369,6 +369,10 @@ final class SidebarController: NSObject {
 			case "repo-fire": pane.fireRepositoryRowForTesting()
 			// The pinned row's whole claim is that scrolling does not take it
 			// away, and only a scrolled tree can say whether that is true.
+			// The strip above the tree while git is mid-operation, and its
+			// verbs: `banner`, `press:continue`, `press:skip`, `press:abort`.
+			case "banner":  print(pane.operationBannerForTesting())
+			case "press":   pane.pressBannerForTesting(argument)
 			case "scroll":  pane.scrollTreeForTesting(toBottom: argument != "top")
 			default:        print("BRANCHES: unknown step \(step)")
 			}

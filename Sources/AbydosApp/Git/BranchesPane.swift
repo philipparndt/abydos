@@ -120,9 +120,12 @@ final class BranchesPane: NSView {
 	/// tree that folded anything would hide work that has just appeared.
 
 	/// Said when a merge has stopped, and nothing else on screen says it.
-	private var conflictBanner: ConflictBanner!
+	private var conflictBanner: OperationBanner!
 	private var conflictHeight: NSLayoutConstraint!
 	private var conflictPaths: [String] = []
+	/// What git is in the middle of, as of the last refresh. The banner's
+	/// verbs are its verbs, so they are only offered while this is set.
+	private var currentOperation: GitConflicts.Operation?
 	/// The filter, when it is open. Nil is the ordinary state.
 	private var filterStrip: PaneFilterStrip?
 	/// The repository, drawn as the first row and pinned above the scrolling
@@ -277,7 +280,7 @@ final class BranchesPane: NSView {
 		tableView.onRowAction = { [weak self] in self?.fireSelectedRowAction() }
 		tableView.onLeaveTop = { [weak self] in self?.moveKeyboardToRepositoryRow() }
 
-		conflictBanner = ConflictBanner()
+		conflictBanner = OperationBanner()
 		conflictBanner.onOpenFiles = { [weak self] in
 			guard let self else { return }
 			self.onOpenFiles?(self.conflictPaths)
@@ -303,6 +306,10 @@ final class BranchesPane: NSView {
 				)
 			}
 		}
+
+		conflictBanner.onCarryOn = { [weak self] in self?.step(.carryOn) }
+		conflictBanner.onSkip = { [weak self] in self?.step(.skip) }
+		conflictBanner.onAbort = { [weak self] in self?.askAboutAborting() }
 
 		let scrollView = NSScrollView()
 		scrollView.documentView = tableView
@@ -410,20 +417,89 @@ final class BranchesPane: NSView {
 		let root = self.root
 		Task { @MainActor [weak self] in
 			guard let self else { return }
+			let operation = await GitConflicts.operation(in: root)
 			let paths = await GitConflicts.paths(in: root)
-			guard paths != self.conflictPaths else { return }
-			self.conflictPaths = paths
 
-			guard !paths.isEmpty else {
+			// **Not `paths != conflictPaths` any more.** That early return was
+			// what made the banner vanish the moment the last file was
+			// resolved: the paths went empty, the guard below hid the strip,
+			// and the rebase — still in progress, still needing a
+			// `--continue` — was left with nothing on screen saying so. The
+			// operation is the thing that decides, and it changes at moments
+			// the path list does not.
+			guard let operation else {
+				self.conflictPaths = paths
+				self.currentOperation = nil
 				self.conflictHeight.constant = 0
 				self.conflictBanner.isHidden = true
 				return
 			}
+			self.conflictPaths = paths
+			self.currentOperation = operation
+
 			let what = await GitConflicts.describe(in: root)
+			let staged = await GitWorkingCopy.status(in: root).staged.isEmpty == false
+			let progress = await GitConflicts.progress(in: root)
 			self.conflictBanner.isHidden = false
-			self.conflictBanner.show(count: paths.count, what: what)
-			self.conflictHeight.constant = Theme.current.scaled(56)
+			self.conflictBanner.show(
+				operation: operation, conflicted: paths.count, staged: staged,
+				what: what, progress: progress
+			)
+			// The strip asks for its own height: what it shows decides how
+			// much it needs, and a constant here was a second opinion about
+			// the same thing.
+			self.conflictHeight.constant = self.conflictBanner.wantedHeight
 		}
+	}
+
+	/// `--continue` or `--skip`, and what to do when git will not.
+	///
+	/// The whole flow this pane was missing. Resolving the files was as far as
+	/// it went; carrying the rebase on meant leaving for a terminal, and the
+	/// commit page — which is where somebody naturally goes next — makes an
+	/// ordinary commit, which is the wrong move in the middle of a rebase.
+	private func step(_ step: GitConflicts.Step) {
+		guard let operation = currentOperation else { return }
+		let root = self.root
+		Task { @MainActor [weak self] in
+			let outcome = await GitConflicts.run(step, on: operation, in: root)
+			guard let self else { return }
+			switch outcome {
+			case .finished:
+				Toast.post("\(operation.titled) finished", kind: .information)
+			case .stopped:
+				// It moved and stopped again — the next commit, or a conflict
+				// in it. Nothing to say: the banner is about to redraw itself
+				// with where it stopped, which says more than a toast could.
+				break
+			case .refused(let complaint):
+				// Git's own words. `you must edit all merge conflicts and then
+				// mark them as resolved using git add` is better advice than
+				// anything this could write over the top of it.
+				Toast.post(
+					"\(operation.titled) would not \(step == .skip ? "skip" : "continue")",
+					detail: complaint,
+					kind: .warning
+				)
+			}
+			self.refresh()
+		}
+	}
+
+	/// Throwing the operation away is asked about first: `--abort` puts the
+	/// work tree back where it was, and everything resolved since it stopped
+	/// goes with it.
+	private func askAboutAborting() {
+		guard let operation = currentOperation else { return }
+		let alert = NSAlert()
+		alert.messageText = "Abort the \(operation.noun)?"
+		alert.informativeText = "The work tree goes back to where it was before the "
+			+ "\(operation.noun) started. Anything resolved since it stopped is lost."
+		alert.addButton(withTitle: "Abort \(operation.titled)")
+		alert.addButton(withTitle: "Keep Going")
+		alert.alertStyle = .warning
+		guard alert.runModal() == .alertFirstButtonReturn else { return }
+		step(.abort)
 	}
 
 	/// Reads where the branch stands, and says it on the repository row.
@@ -438,10 +514,24 @@ final class BranchesPane: NSView {
 			let head = await GitRepository.head(in: self.root)
 			let operation = await GitConflicts.operation(in: self.root)
 			self.trafficState = state
-			self.headNotice = Self.notice(head: head, operation: operation)
-			self.repositoryRow.show(
-				branch: self.currentBranchName, state: state, notice: self.headNotice
+			// **The tree row says where, the banner says what.** Both of them
+			// saying both put `detached at c8bdfef0 · r…` in a row too narrow
+			// for either half. Off the banner — no operation in progress —
+			// the row is the only thing that can say it, so it says all of it.
+			self.headNotice = Self.notice(
+				head: head, operation: operation, sayingTheOperation: operation != nil ? false : true
 			)
+			// **Not on the repository row while the banner is up.** The strip
+			// above it already says the operation, at length and with the
+			// verbs — the row saying it too, truncated, put the same sentence
+			// on screen twice in twenty-four points. Off the banner, the row
+			// is the only thing that says it.
+			self.repositoryRow.show(
+				branch: self.currentBranchName,
+				state: state,
+				notice: operation == nil ? self.headNotice : nil
+			)
+
 			// The tree says it too: the local section has no checkmark on
 			// anything while the head is detached, and a row is where somebody
 			// looks for where they are.
@@ -452,11 +542,13 @@ final class BranchesPane: NSView {
 	/// The state of the head, in the words both the row and the tree use — or
 	/// nil when there is nothing out of the ordinary to say.
 	private static func notice(
-		head: GitRepository.Head, operation: GitConflicts.Operation?
+		head: GitRepository.Head,
+		operation: GitConflicts.Operation?,
+		sayingTheOperation: Bool = true
 	) -> String? {
 		var parts: [String] = []
 		if head.isDetached, let display = head.display { parts.append(display) }
-		if let operation {
+		if let operation, sayingTheOperation {
 			// Titled when it starts the notice, which is a row of its own —
 			// `Rebasing`, not `rebasing`. After a detached head it is the
 			// second clause and stays lowercase.
@@ -1306,6 +1398,16 @@ final class BranchesPane: NSView {
 		// what would be shown — titles included, which is where the count is.
 		menuNeedsUpdate(menu)
 		return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+	}
+
+	/// What the operation banner says and offers.
+	func operationBannerForTesting() -> String { conflictBanner.reportForTesting }
+
+	/// Presses one of its buttons — `continue`, `skip`, `abort`. Abort goes
+	/// straight to the verb: the alert in front of it is AppKit's and a driven
+	/// run cannot answer it.
+	func pressBannerForTesting(_ name: String) {
+		if name == "abort" { step(.abort) } else { conflictBanner.pressForTesting(name) }
 	}
 
 	func rowsForTesting() -> String {
@@ -2678,70 +2780,6 @@ private final class BranchesOutlineView: NSOutlineView {
 /// is the thing this app is for. Aborting is not here — the banner is about
 /// resolving, and abandoning belongs on the operation that started the merge,
 /// where what would be lost can be counted.
-private final class ConflictBanner: NSView {
-	var onOpenFiles: (() -> Void)?
-	var onOpenInFork: (() -> Void)?
-	var onCopyPrompt: (() -> Void)?
-
-	private let label = NSTextField(labelWithString: "")
-	private var buttons: NSStackView!
-
-	override init(frame frameRect: NSRect) {
-		super.init(frame: frameRect)
-		wantsLayer = true
-		layer?.backgroundColor = Theme.current.gitConflict.withAlphaComponent(0.16).cgColor
-		isHidden = true
-
-		label.font = Theme.current.uiFont(11.5, weight: .semibold)
-		label.textColor = Theme.current.gitConflict
-		label.lineBreakMode = .byTruncatingTail
-
-		func button(_ title: String, _ action: Selector) -> NSButton {
-			let made = NSButton(title: title, target: self, action: action)
-			made.bezelStyle = .rounded
-			made.controlSize = .small
-			made.font = Theme.current.uiFont(10.5)
-			return made
-		}
-
-		var offered = [button("Open Files", #selector(openFiles))]
-		// Absent rather than present and failing: Fork is not on every machine.
-		if ForkIntegration.applicationURL() != nil {
-			offered.append(button("Open in Fork", #selector(openInFork)))
-		}
-		offered.append(button("Copy Prompt", #selector(copyPrompt)))
-
-		buttons = NSStackView(views: offered)
-		buttons.orientation = .horizontal
-		buttons.spacing = Theme.current.scaled(6)
-
-		for view in [label, buttons] as [NSView] {
-			addSubview(view)
-			view.translatesAutoresizingMaskIntoConstraints = false
-		}
-		let inset = Theme.current.scaled(8)
-		NSLayoutConstraint.activate([
-			label.topAnchor.constraint(equalTo: topAnchor, constant: inset / 2),
-			label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
-
-			buttons.topAnchor.constraint(equalTo: label.bottomAnchor, constant: inset / 4),
-			buttons.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-		])
-	}
-
-	required init?(coder: NSCoder) { fatalError("not used") }
-
-	func show(count: Int, what: String?) {
-		let files = "\(count) file\(count == 1 ? "" : "s") conflicted"
-		label.stringValue = what.map { "\($0) — \(files)" } ?? files
-	}
-
-	@objc private func openFiles() { onOpenFiles?() }
-	@objc private func openInFork() { onOpenInFork?() }
-	@objc private func copyPrompt() { onCopyPrompt?() }
-}
-
 private final class BranchSectionView: ActionableRowView {
 	private let title: String
 
