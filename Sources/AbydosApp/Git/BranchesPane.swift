@@ -1085,16 +1085,21 @@ final class BranchesPane: NSView {
 			case let .branch(branch, _, display):
 				// What the row says on its right-hand end, which is now
 				// sometimes words rather than counts.
+				// The symbol by name, not the sentence it replaced: this is a
+				// report of what the row draws, and a row that says
+				// `not published` in a report and draws a cloud in the pane is
+				// a report that cannot catch the cloud being wrong.
+				let merged = branch.kind == .local
+					&& !branch.isCurrent
+					&& mergedBranches.contains(branch.name)
 				let tracking: String
-				if branch.upstreamIsGone { tracking = " [upstream gone]" }
-				else if branch.isUnpublished { tracking = " [not published]" }
+				if merged { tracking = " [checkmark]" }
+				else if branch.upstreamIsGone { tracking = " [xmark.icloud]" }
+				else if branch.isUnpublished { tracking = " [icloud.and.arrow.up]" }
 				else if branch.ahead > 0 || branch.behind > 0 {
 					tracking = " [↑\(branch.ahead) ↓\(branch.behind)]"
 				} else { tracking = "" }
-				let merged = branch.kind == .local
-					&& !branch.isCurrent
-					&& mergedBranches.contains(branch.name) ? " (merged)" : ""
-				return indent + display + (branch.isCurrent ? " *" : "") + tracking + merged
+				return indent + display + (branch.isCurrent ? " *" : "") + tracking
 			case let .worktree(worktree):
 				return indent + "= \(worktree.name)"
 			case let .stash(entry):
@@ -2424,12 +2429,19 @@ private final class BranchRowView: NSView {
 		// something being wrong rather than as something being done.
 		self.isMerged = isMerged && !branch.isCurrent
 		super.init(frame: .zero)
-		toolTip = isPushing
-			? "Pushing \(branch.name)…"
-			: (branch.subject.isEmpty ? branch.checkoutName : "\(branch.checkoutName) — \(branch.subject)")
-		if self.isMerged, !isPushing {
-			toolTip = (toolTip.map { $0 + " — " } ?? "") + "already merged"
+		guard !isPushing else {
+			toolTip = "Pushing \(branch.name)…"
+			return
 		}
+		// **The words the symbols replaced live here.** A symbol on a row is a
+		// note somebody has to be able to look up, and the row already had a
+		// tooltip to put it in.
+		var notes: [String] = [branch.checkoutName]
+		if !branch.subject.isEmpty { notes.append(branch.subject) }
+		if self.isMerged { notes.append("already merged") }
+		if branch.upstreamIsGone { notes.append("its upstream has been deleted") }
+		else if branch.isUnpublished { notes.append("never published") }
+		toolTip = notes.joined(separator: " — ")
 
 		guard isPushing else { return }
 		// A real spinner rather than something drawn by hand: it has to keep
@@ -2460,7 +2472,10 @@ private final class BranchRowView: NSView {
 		// already indented this view by its depth; anything added here is an
 		// offset of its own, and five row kinds each adding a different one is
 		// what made the tree look ragged.
-		var x = RowMetrics.textInset
+		//
+		// A constant now the trailing mark is right-aligned: nothing after the
+		// name needs to know where the name ended.
+		let x = RowMetrics.textInset
 
 		// **What kind of thing this row is, said by a glyph.** A folded prefix
 		// and a branch are both a name at a depth, and with only indentation to
@@ -2485,50 +2500,77 @@ private final class BranchRowView: NSView {
 			? NSFont.systemFont(ofSize: Theme.current.scaled(12), weight: .semibold)
 			: Theme.current.uiFont(12)
 
-		// Ahead/behind counts, which are the reason to look at this list at all
-		// when deciding whether to push or pull. Reserved first: they are the
-		// short part and the part worth keeping when a name is too long.
+		// **The trailing end of the row is a column**, right-aligned, so a list
+		// of these reads down rather than along a ragged edge made of whatever
+		// each name happened to leave. The changes tree's counts had the same
+		// fault and it is fixed the same way.
 		//
-		// **A branch with no upstream says so instead**, in words, because the
-		// counts cannot: nought ahead and nought behind is what a branch level
-		// with its remote reads, and a branch that has never been anywhere near
-		// a remote is the opposite of that. It used to be readable only on the
-		// repository row and only for the branch you were standing on; the
-		// repository row does not say it any more, and this row is where the
-		// branch is.
-		var tracking = ""
-		var trackingIsWords = false
-		if branch.upstreamIsGone {
-			tracking = "upstream gone"
-			trackingIsWords = true
-		} else if branch.isUnpublished {
-			tracking = "not published"
-			trackingIsWords = true
-		} else {
-			if branch.ahead > 0 { tracking += "↑\(branch.ahead)" }
-			if branch.behind > 0 { tracking += (tracking.isEmpty ? "" : " ") + "↓\(branch.behind)" }
+		// What sits in it is either news or a standing fact, and they are said
+		// differently. Ahead and behind are news — somebody moved — and they
+		// are numbers because the number is the point. Merged, never published,
+		// and an upstream that has been deleted are facts about the branch that
+		// do not change while you look at them, and they are symbols: two words
+		// of English on every row of a list is a paragraph nobody reads.
+		//
+		// **Merged outranks the other two.** A branch whose pull request was
+		// merged and whose remote branch went with it is both merged and
+		// upstream-gone, and of the two only one of them is what you wanted to
+		// know: the work is in, and this row can go. `not published` on a
+		// branch that is already merged is a note about how it got there.
+		//
+		// The other two are `icloud` symbols because both are about the copy on
+		// the other machine — one that was never made, one that has gone. The
+		// counts could never have said either: nought ahead and nought behind
+		// is what a branch level with its remote reads.
+		let standing: (symbol: String, said: String)? = {
+			if isMerged { return ("checkmark", "already merged") }
+			if branch.upstreamIsGone { return ("xmark.icloud", "upstream gone") }
+			if branch.isUnpublished { return ("icloud.and.arrow.up", "not published") }
+			return nil
+		}()
+
+		var counts = ""
+		if standing == nil {
+			if branch.ahead > 0 { counts += "↑\(branch.ahead)" }
+			if branch.behind > 0 { counts += (counts.isEmpty ? "" : " ") + "↓\(branch.behind)" }
 		}
 
 		let countsFont = Theme.current.uiFont(10.5)
-		let countsWidth = tracking.isEmpty ? 0 : NSAttributedString(
-			string: tracking, attributes: [.font: countsFont]
-		).size().width + Theme.current.scaled(6)
+		let trailingWidth: CGFloat = {
+			if standing != nil { return RowMetrics.trailingGlyphSize }
+			guard !counts.isEmpty else { return 0 }
+			return ceil(NSAttributedString(
+				string: counts, attributes: [.font: countsFont]
+			).size().width)
+		}()
 
 		// While pushing, the spinner has the right-hand end of the row.
-		let limit = bounds.maxX - RowMetrics.trailingInset
+		let right = bounds.maxX - RowMetrics.trailingInset
 			- (isPushing ? Theme.current.scaled(18) : 0)
-		x = RowMetrics.draw(
-			display, font: font, colour: colour,
-			at: x, in: bounds, limit: limit - countsWidth
-		)
-		guard !tracking.isEmpty else { return }
+		let gap = Theme.current.scaled(6)
 
 		RowMetrics.draw(
-			tracking, font: countsFont,
-			// Said quietly. A count is news — somebody moved — and a branch
-			// having no upstream is a standing fact about it.
-			colour: fade(trackingIsWords ? Theme.current.gitIgnored : Theme.current.gitModified),
-			at: x + Theme.current.scaled(6), in: bounds, limit: limit
+			display, font: font, colour: colour,
+			at: x, in: bounds,
+			limit: trailingWidth == 0 ? right : right - trailingWidth - gap
+		)
+
+		if let standing {
+			// **The tick is not faded, though everything beside it is.** It is
+			// the reason the row is dim, and dimming the answer along with the
+			// question leaves somebody looking at a grey row with nothing on it
+			// saying why.
+			RowMetrics.trailingGlyph(
+				standing.symbol,
+				colour: isMerged ? Theme.current.gitIgnored : fade(Theme.current.gitIgnored),
+				in: bounds, rightAt: right
+			)
+			return
+		}
+		guard !counts.isEmpty else { return }
+		RowMetrics.drawTrailing(
+			counts, font: countsFont,
+			colour: fade(Theme.current.gitModified), in: bounds, rightAt: right
 		)
 	}
 }

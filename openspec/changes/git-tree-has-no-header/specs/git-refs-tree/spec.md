@@ -63,10 +63,37 @@ fault the header was avoiding, reintroduced.
 - **THEN** the row says `level` and offers `Fetch`
 - **AND** it does not repeat the project or the branch the titlebar names
 
+### Requirement: The trailing end of a branch row is one column
+
+The ahead and behind counts, and the symbol that stands in for them, SHALL be
+drawn right-aligned on one edge shared by every branch row.
+
+Drawn after the name, a note sits wherever that name happened to end, so reading
+a list of them means reading a ragged edge — the same fault the changes tree's
+counts had, and fixed the same way.
+
+**A symbol is right-aligned on its own ink, not on the box it is fitted into.**
+A tick is taller than it is wide, so a centred fit lands it short of the edge
+that the text beside it sits flush on, and the column has a wobble in exactly
+the place it exists to remove.
+
+#### Scenario: four rows saying four different things
+
+- **GIVEN** one branch ahead and behind, one never published, one whose upstream
+  is gone, and one already merged
+- **THEN** all four right-hand marks end on the same x
+
 ### Requirement: A branch says whether it has ever been published
 
-A local branch with no upstream SHALL say so on its own row, in words, where the
-ahead and behind counts are drawn.
+A local branch with no upstream SHALL say so on its own row, as a symbol, in the
+column the ahead and behind counts are drawn in.
+
+**A symbol rather than the words.** `not published` and `upstream gone` are two
+words of English on every row of a list, which is a paragraph nobody reads. They
+are `icloud` symbols because both are about the copy on the other machine — one
+that was never made, one that has gone — and the words they replace SHALL be in
+the row's tooltip, because a symbol is a note somebody has to be able to look
+up.
 
 **The counts cannot say it.** Nought ahead and nought behind is what a branch
 level with its remote reads, and a branch that has never been near a remote is
@@ -82,13 +109,14 @@ reason the repository row gives.
 
 #### Scenario: a branch that has never been pushed
 
-- **GIVEN** a local branch with no upstream
-- **THEN** its row reads `not published` beside its name
+- **GIVEN** a local branch with no upstream, not merged
+- **THEN** its row draws a cloud with an upward arrow
+- **AND** its tooltip says `never published`
 
 #### Scenario: a branch whose remote branch was deleted
 
-- **GIVEN** a local branch tracking a ref that no longer exists
-- **THEN** its row reads `upstream gone`
+- **GIVEN** a local branch tracking a ref that no longer exists, not merged
+- **THEN** its row draws a cloud with a cross
 
 #### Scenario: a branch in step with its upstream
 
@@ -242,7 +270,18 @@ other puts it elsewhere.
 
 ### Requirement: A branch whose work is already merged is dimmed
 
-A local branch merged into the default branch SHALL be drawn dimmed.
+A local branch merged into the default branch SHALL be drawn dimmed, and SHALL
+carry a tick in the column at the end of the row.
+
+**The tick outranks the other two marks.** A branch whose pull request was
+merged and whose remote branch went with it is both merged and upstream-gone,
+and of the two only one is what anybody wanted to know: the work is in and this
+row can go. `not published` on a branch that is already merged is a note about
+how it got there.
+
+**The tick SHALL NOT be dimmed with the rest of the row.** It is the reason the
+row is dim, and fading the answer along with the question leaves a grey row with
+nothing on it saying why.
 
 A merged branch is finished: there is nothing on it that is not somewhere else.
 Saying so where the branch already is beats the two alternatives — moving it,
@@ -257,7 +296,13 @@ so a slow or failed answer costs appearance rather than correctness.
 #### Scenario: a branch that has been merged
 
 - **GIVEN** a local branch whose commits are all in the default branch
-- **THEN** its row is dimmed
+- **THEN** its row is dimmed and ends in a tick
+
+#### Scenario: a branch that is merged and whose upstream is gone
+
+- **GIVEN** a local branch merged into the default branch, tracking a ref that
+  has been deleted
+- **THEN** its row ends in a tick rather than a cross
 
 #### Scenario: a branch with work still on it
 

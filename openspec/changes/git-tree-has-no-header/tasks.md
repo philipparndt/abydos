@@ -132,6 +132,25 @@
       not only the values: a report of the values would have read the same
       before they lined up as after
 
+## 12. The trailing end of a branch row is a column
+
+- [x] 12.1 `RowMetrics.trailingGlyph` and `drawTrailing` — one right edge every
+      branch row draws its last mark on, instead of trailing whatever the name
+      left
+- [x] 12.2 The fitted glyph box is right-aligned on the image's own ink, not
+      centred in a square slot: a tick is taller than it is wide and landed
+      short of the edge the text beside it sat flush on
+- [x] 12.3 `not published` and `upstream gone` become `icloud.and.arrow.up` and
+      `xmark.icloud`; the words move to the tooltip
+- [x] 12.4 A merged branch draws a tick in the same column, undimmed, and it
+      outranks both cloud symbols
+- [x] 12.5 The report names the symbol rather than the sentence it replaced — a
+      report saying `not published` while the row draws a cloud cannot catch
+      the cloud being wrong
+- [x] 12.6 Driven with all four in one repository: `main * [↑2 ↓1]`,
+      `local-only [icloud.and.arrow.up]`, `orphaned [xmark.icloud]`,
+      `shipped [checkmark]`
+
 ## 7. Proving it
 
 - [x] 7.1 The tree begins at the top of the pane, under the repository row, and

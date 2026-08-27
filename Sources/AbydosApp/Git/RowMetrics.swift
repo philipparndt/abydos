@@ -41,6 +41,56 @@ enum RowMetrics {
 		))
 	}
 
+	/// How wide a trailing glyph's column is.
+	///
+	/// Narrower than `glyphSize`, which is the leading column's, because the
+	/// leading glyph says what kind of row this is and a trailing one says one
+	/// fact about it — and a symbol as big as the name beside it reads as the
+	/// subject of the row rather than a note on it.
+	static var trailingGlyphSize: CGFloat { Theme.current.scaled(13) }
+
+	/// Draws a glyph right-aligned on a column's edge.
+	///
+	/// **Right-aligned, because the trailing end of these rows is a column.**
+	/// A note drawn after the name sits wherever that name happened to end, so
+	/// reading a list of them means reading a ragged edge — the same fault the
+	/// changes tree's counts had, and fixed the same way.
+	static func trailingGlyph(
+		_ name: String, colour: NSColor, in bounds: NSRect, rightAt right: CGFloat
+	) {
+		let box = trailingGlyphSize
+		guard let image = Theme.symbol(name, size: 12 * Theme.current.scale, color: colour),
+		      image.size.width > 0, image.size.height > 0
+		else { return }
+
+		// **The fitted box is right-aligned, not the slot it fits into.**
+		// `drawFitted` centres the image in whatever it is given, so a symbol
+		// that is taller than it is wide — a tick — lands short of the edge
+		// while text beside it sits flush on it, and the column the whole
+		// arrangement exists for is a column with a wobble in it.
+		let scale = min(box / image.size.width, box / image.size.height)
+		let fitted = NSSize(
+			width: image.size.width * scale, height: image.size.height * scale
+		)
+		image.drawFitted(in: NSRect(
+			x: right - fitted.width, y: bounds.midY - fitted.height / 2,
+			width: fitted.width, height: fitted.height
+		))
+	}
+
+	/// Draws one line right-aligned on a column's edge, and says how wide it is.
+	@discardableResult
+	static func drawTrailing(
+		_ text: String, font: NSFont, colour: NSColor, in bounds: NSRect, rightAt right: CGFloat
+	) -> CGFloat {
+		let string = NSAttributedString(string: text, attributes: [
+			.font: font, .foregroundColor: colour,
+		])
+		let size = string.size()
+		string.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
+		return size.width
+	}
+
 	/// Draws one line, cut short with an ellipsis rather than run past, and
 	/// says where it ended.
 	@discardableResult
