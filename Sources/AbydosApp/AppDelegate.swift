@@ -1491,6 +1491,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.pillState {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				print(controller?.titlebarForTesting.branchPillForTesting() ?? "BRANCHPILL none")
+				fflush(stdout)
+			}
+		}
+
 		if let steps = options.branchRowSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.sidebarForTesting.branchRowsForTesting(steps)

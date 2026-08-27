@@ -391,7 +391,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// it happens to come into existence.
 	/// The whole of HEAD and not just its name: a branch with nothing committed
 	/// on it is drawn differently, and the capsule cannot tell from a string.
-	var branchRead: Task<GitRepository.Head?, Never>?
+	var branchRead: Task<GitRepository.HeadState?, Never>?
 	var toolStripWidthConstraint: NSLayoutConstraint!
 
 	var navigatorWidth: CGFloat = 260
@@ -600,8 +600,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// terminal is exactly the case this watcher exists for.
 				Task { @MainActor in
 					await current.loadGit()
-					let head = await current.git?.currentHead()
-					self.titlebar.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
+					let head = await current.git?.currentHeadState()
+					self.titlebar.setHead(head)
 					self.titlebar.relayout()
 				}
 			}

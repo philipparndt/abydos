@@ -327,11 +327,25 @@ final class SidebarController: NSObject {
 			case "focus-tree": pane.window?.makeFirstResponder(pane.tableViewForTesting)
 			// Several branches at once, and what the menu would then offer and
 			// copy. `+` between the names, as the other multi-row steps use.
+			// A row index selects that row; names select those branches. One
+			// verb rather than two because they are the same step asked in two
+			// ways — and because two `case "select"` in one switch is a warning
+			// saying the second is dead, which it was.
 			case "select":
-				print("BRANCHES select: "
-					+ pane.selectBranchesForTesting(argument.split(separator: "+").map(String.init)))
+				if let row = Int(argument) {
+					pane.selectRowForTesting(row)
+				} else {
+					print("BRANCHES select: " + pane.selectBranchesForTesting(
+						argument.split(separator: "+").map(String.init)
+					))
+				}
 			case "menu":
-				print("BRANCHES menu: \(pane.branchMenuTitlesForTesting().joined(separator: " | "))")
+				if let row = Int(argument) {
+					print("BRANCHES menu \(argument): " + pane.menuTitlesForTesting(row: row))
+				} else {
+					print("BRANCHES menu: "
+						+ pane.branchMenuTitlesForTesting().joined(separator: " | "))
+				}
 			case "delete-wording":
 				Task { @MainActor in
 					print("BRANCHES delete-wording: \(await pane.deleteWordingForTesting())")
@@ -342,9 +356,6 @@ final class SidebarController: NSObject {
 					+ pane.copyNameTextForTesting().split(separator: "\n")
 						.map { "  " + $0 }.joined(separator: "\n"))
 			case "unfind":  pane.hideFilter()
-			case "menu":
-				print("BRANCHES menu \(argument): "
-					+ pane.menuTitlesForTesting(row: Int(argument) ?? 0))
 			case "fstate":  print("BRANCHES filter: \(pane.filterStateForTesting())"
 				+ " · editor find \(editorFindBarIsShowing ? "open" : "shut")"
 				+ " · responder \(type(of: pane.window?.firstResponder ?? NSNull()))")
@@ -353,7 +364,6 @@ final class SidebarController: NSObject {
 			// two halves of "a row's action can be reached from the keyboard".
 			case "actions": print("BRANCHES actions:\n  "
 				+ pane.rowActionsForTesting().joined(separator: "\n  "))
-			case "select":  pane.selectRowForTesting(Int(argument) ?? 0)
 			case "fire":    pane.fireSelectedRowActionForTesting()
 			case "repo":    print("BRANCHES repo: \(pane.repositoryRowForTesting())")
 			case "repo-fire": pane.fireRepositoryRowForTesting()
@@ -362,6 +372,12 @@ final class SidebarController: NSObject {
 			case "scroll":  pane.scrollTreeForTesting(toBottom: argument != "top")
 			default:        print("BRANCHES: unknown step \(step)")
 			}
+			// Every step, because a driven run is killed rather than ended:
+			// stdout is a pipe, the buffer is never drained by the exit, and a
+			// report written after the last flushing step is simply lost. It
+			// cost half an hour of "the tree prints nothing" that was a report
+			// sitting in a buffer.
+			fflush(stdout)
 		}
 	}
 

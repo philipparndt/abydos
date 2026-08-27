@@ -84,9 +84,12 @@ struct GitHeadTests {
 		#expect(GitRepository.runSync(["checkout", "-q", "--detach"], in: root).exitCode == 0)
 
 		let head = await GitRepository.head(in: root)
-		#expect(head == .detached)
+		#expect(head.isDetached)
 		#expect(head.name == nil)
 		#expect(!head.isUnborn)
+		// It carries the commit it is on, and `display` is what the titlebar
+		// draws: a pill that says nothing is the bug this answers.
+		#expect(head.display?.hasPrefix("detached at ") == true, "\(head.display ?? "nothing")")
 	}
 
 	/// A directory that is not a work tree reads as no branch, which is the same

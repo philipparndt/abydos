@@ -71,6 +71,53 @@ struct GitConflictsTests {
 		#expect(said?.contains("side work") == true, "and which commit is coming in")
 	}
 
+	/// The verb on its own, which is what the titlebar pill has room for.
+	@Test func theOperationIsNamedWithoutAskingGitForTheCommit() async throws {
+		let root = try conflicted()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		#expect(await GitConflicts.operation(in: root) == .merge)
+		#expect(GitConflicts.Operation.merge.said == "merging")
+		#expect(GitConflicts.Operation.cherryPick.titled == "Cherry-picking")
+	}
+
+	/// **A rebase that stops without a conflict.** `--exec false` halts the
+	/// rebase with a clean work tree, so nothing is conflicted and the banner —
+	/// which is driven by conflicted paths — says nothing. The pill still has
+	/// to: this is the state where somebody most needs telling that the
+	/// repository is not where they left it.
+	@Test func aRebaseStoppedWithNoConflictIsStillAnOperation() async throws {
+		let root = try conflicted()
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(git(["merge", "--abort"], in: root) == 0)
+
+		// Replays main's own last commit onto its parent — nothing to conflict
+		// with — and `false` fails, which is what stops the rebase.
+		_ = git(["rebase", "--exec", "false", "HEAD~1"], in: root)
+
+		#expect(await GitConflicts.paths(in: root).isEmpty, "nothing is conflicted")
+		#expect(await GitConflicts.operation(in: root) == .rebase, "and yet a rebase is open")
+		#expect(await GitConflicts.describe(in: root) == "Rebasing")
+	}
+
+	/// A rebase detaches the head, and the pill used to draw nothing at all for
+	/// one: `Head.name` is nil, and that was the whole of what it asked.
+	@Test func aDetachedHeadSaysWhereItIs() async throws {
+		let root = try conflicted()
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(git(["merge", "--abort"], in: root) == 0)
+		#expect(git(["checkout", "-q", "--detach", "main"], in: root) == 0)
+
+		let repository = GitRepository(root: root)
+		await repository.refresh()
+		let state = await repository.currentHeadState()
+
+		#expect(state.name == nil, "there is no branch, and nothing may pretend there is")
+		#expect(state.isDetached)
+		#expect(state.display?.hasPrefix("detached at ") == true, "\(state.display ?? "nothing")")
+		#expect(state.operation == nil)
+	}
+
 	@Test func aCleanRepositoryHasNothingToSay() async throws {
 		let root = try conflicted()
 		defer { try? FileManager.default.removeItem(at: root) }
@@ -78,6 +125,7 @@ struct GitConflictsTests {
 
 		#expect(await GitConflicts.paths(in: root).isEmpty)
 		#expect(await GitConflicts.describe(in: root) == nil)
+		#expect(await GitConflicts.operation(in: root) == nil)
 		#expect(await GitConflicts.prompt(in: root) == nil)
 	}
 

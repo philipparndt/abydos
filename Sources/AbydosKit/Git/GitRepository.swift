@@ -68,7 +68,7 @@ public actor GitRepository {
 	/// when it never has been.
 	private var ignoreRulesFingerprint: String?
 
-	private var headState: Head = .detached {
+	private var headState: Head = .detached(nil) {
 		didSet { headSnapshot.value = headState }
 	}
 
@@ -102,7 +102,14 @@ public actor GitRepository {
 		/// No branch — a commit, tag or remote ref checked out directly. Also
 		/// what a directory that is not a work tree answers, which every caller
 		/// wants to read the same way: there is no branch name to show.
-		case detached
+		///
+		/// **It carries the commit it is on**, when there is one. There is no
+		/// branch name, but there is somewhere to be, and the titlebar drew
+		/// nothing at all — a pill that goes blank the moment a rebase stops on
+		/// a conflict says the app has lost its place rather than that git has
+		/// moved. The hash costs nothing: `rev-parse --verify HEAD` is already
+		/// run to tell a branch from an unborn one, and this is its answer.
+		case detached(String?)
 
 		/// The branch's name, or nil when there is not one.
 		public var name: String? {
@@ -112,11 +119,51 @@ public actor GitRepository {
 			}
 		}
 
-		/// A branch with nothing on it yet.
+		/// What to *show* for this head: the branch, or where a detached one is.
+		///
+		/// Separate from `name` on purpose. Callers that ask for a name are
+		/// asking what to hand to git — `checkout`, `push`, the log's scope —
+		/// and a detached head has no answer to that. Callers that draw are
+		/// asking what somebody is looking at, which is never nothing.
+		public var display: String? {
+			switch self {
+			case .branch(let name), .unborn(let name): return name
+			case .detached(let commit): return commit.map { "detached at \($0)" } ?? "detached"
+			}
+		}
+
+		public var isDetached: Bool {
+			if case .detached = self { return true }
+			return false
+		}
+
 		public var isUnborn: Bool {
 			if case .unborn = self { return true }
 			return false
 		}
+	}
+
+	/// The head, plus whatever git has stopped in the middle of.
+	///
+	/// One value because the titlebar shows one thing. Before this it showed
+	/// `Head.name`, which is nil for a detached head — so a stopped rebase, the
+	/// one moment somebody most needs the titlebar to say where they are, drew
+	/// an empty pill.
+	public struct HeadState: Equatable, Sendable {
+		public let head: Head
+		public let operation: GitConflicts.Operation?
+
+		public init(head: Head, operation: GitConflicts.Operation?) {
+			self.head = head
+			self.operation = operation
+		}
+
+		public var name: String? { head.name }
+		public var display: String? { head.display }
+		public var isUnborn: Bool { head.isUnborn }
+		public var isDetached: Bool { head.isDetached }
+
+		/// A branch with nothing on it yet.
 	}
 
 	/// Which branch the work tree is on, and whether anything is on it.
@@ -154,8 +201,10 @@ public actor GitRepository {
 			// Still awaited: an `async let` dropped without being read is a
 			// cancelled child task, and cancelling a subprocess we started is
 			// not what "we do not need the answer" should mean.
-			_ = await resolved
-			return .detached
+			// The commit it is sitting on, so the titlebar has something true to
+			// say. Short, because a pill has no room for forty characters.
+			let commit = await resolved.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+			return .detached(commit.isEmpty ? nil : String(commit.prefix(8)))
 		}
 		return await resolved.exitCode == 0 ? .branch(name) : .unborn(name)
 	}
@@ -182,6 +231,18 @@ public actor GitRepository {
 
 	/// The branch and whether it has anything on it, as of the last refresh.
 	public func currentHead() -> Head { headState }
+
+	/// Where the work tree stands, in the words a titlebar needs: the head, and
+	/// the operation that has stopped part-way through if one has.
+	///
+	/// Together rather than separately because the pill draws them together and
+	/// the two arriving in different turns is how it comes to say `main` while a
+	/// rebase is halfway through. The operation costs four `stat` calls
+	/// (`GitConflicts.operation`), which is why it can be asked for as often as
+	/// the head is.
+	public func currentHeadState() async -> HeadState {
+		HeadState(head: headState, operation: await GitConflicts.operation(in: root))
+	}
 
 	/// The same answer, without waiting for the actor.
 	///
@@ -669,7 +730,7 @@ public actor GitRepository {
 /// cost, against a hop and a continuation for the alternative.
 final class HeadSnapshot: @unchecked Sendable {
 	private let lock = NSLock()
-	private var stored: GitRepository.Head = .detached
+	private var stored: GitRepository.Head = .detached(nil)
 
 	var value: GitRepository.Head {
 		get { lock.withLock { stored } }

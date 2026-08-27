@@ -22,7 +22,7 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 	// What the window knows and this object asks for.
 	var project: () -> Project? = { nil }
 	var subprojectRoot: () -> URL? = { nil }
-	var branchRead: () -> Task<GitRepository.Head?, Never>? = { nil }
+	var branchRead: () -> Task<GitRepository.HeadState?, Never>? = { nil }
 	var devContainerRoot: () -> URL? = { nil }
 	var devContainerChoices: () -> [DevContainerFile.Choice] = { [] }
 	var choiceCarriedBy: (Any?) -> DevContainerFile.Choice? = { _ in nil }
@@ -66,6 +66,19 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 	func setBranch(_ name: String?, isUnborn: Bool) {
 		capsule?.isReadingBranch = false
 		capsule?.setBranch(name, isUnborn: isUnborn)
+		layoutTitlebarPills()
+	}
+
+	/// The whole of where the head is: the branch or the commit it is detached
+	/// at, and what git has stopped in the middle of.
+	func setHead(_ state: GitRepository.HeadState?) {
+		capsule?.isReadingBranch = false
+		capsule?.setBranch(
+			state?.display,
+			isUnborn: state?.isUnborn ?? false,
+			isDetached: state?.isDetached ?? false,
+			operation: state?.operation
+		)
 		layoutTitlebarPills()
 	}
 
@@ -646,6 +659,10 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 		}
 	}
 
+	func branchPillForTesting() -> String {
+		capsule?.branchPillForTesting() ?? "BRANCHPILL none"
+	}
+
 	func highlightPillsForTesting() {
 		capsule?.isMenuOpen = true
 	}
@@ -704,7 +721,12 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 			if let read = branchRead() {
 				Task { @MainActor in
 					let head = await read.value
-					capsule.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
+					capsule.setBranch(
+						head?.display,
+						isUnborn: head?.isUnborn ?? false,
+						isDetached: head?.isDetached ?? false,
+						operation: head?.operation
+					)
 				}
 			}
 			self.capsule = capsule

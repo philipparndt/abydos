@@ -19,6 +19,70 @@ public enum GitConflicts {
 		await GitCommits.conflictedPaths(in: root)
 	}
 
+	/// A git operation that has stopped part-way through.
+	///
+	/// Read from the marker files git leaves in `.git` and nothing else, so
+	/// asking costs four `stat` calls and no subprocess. That matters because
+	/// the titlebar asks on every refresh of the head, which is every
+	/// filesystem event that touches the repository.
+	public enum Operation: String, Sendable, CaseIterable {
+		case merge
+		case cherryPick
+		case revert
+		case rebase
+
+		/// The one word a pill has room for, lowercase because it sits after a
+		/// branch name rather than starting a sentence.
+		public var said: String {
+			switch self {
+			case .merge: return "merging"
+			case .cherryPick: return "cherry-picking"
+			case .revert: return "reverting"
+			case .rebase: return "rebasing"
+			}
+		}
+
+		/// The same thing at the start of a sentence, which is where the
+		/// banner puts it.
+		public var titled: String {
+			said.prefix(1).uppercased() + said.dropFirst()
+		}
+
+		/// The thing itself rather than the doing of it — `a merge is in
+		/// progress`, which the participle cannot say without reading as
+		/// broken English.
+		public var noun: String {
+			switch self {
+			case .merge: return "merge"
+			case .cherryPick: return "cherry-pick"
+			case .revert: return "revert"
+			case .rebase: return "rebase"
+			}
+		}
+	}
+
+	/// Which operation is under way, if one is.
+	///
+	/// **Separate from `describe` on purpose.** `describe` names the commit
+	/// coming in, which costs a `git log`; this answers only the verb, and the
+	/// titlebar wants the verb. It is also true in a case `describe` is not
+	/// asked in: a rebase that has stopped without a conflict — `edit`, a
+	/// failed `exec`, an empty commit — leaves no conflicted path, so nothing
+	/// in the window would otherwise admit the repository is mid-rebase.
+	public static func operation(in root: URL) async -> Operation? {
+		let directory = await gitDirectory(in: root)
+		guard let directory else { return nil }
+		let files = FileManager.default
+		func exists(_ name: String) -> Bool {
+			files.fileExists(atPath: directory.appendingPathComponent(name).path)
+		}
+		if exists("MERGE_HEAD") { return .merge }
+		if exists("CHERRY_PICK_HEAD") { return .cherryPick }
+		if exists("REVERT_HEAD") { return .revert }
+		if exists("rebase-merge") || exists("rebase-apply") { return .rebase }
+		return nil
+	}
+
 	/// What the merge is between, in the words the banner should use.
 	///
 	/// A merge names the branch coming in; a rebase names the commit being
@@ -39,17 +103,22 @@ public enum GitConflicts {
 			return said.isEmpty ? name : said
 		}
 
-		if let merging = await head("MERGE_HEAD") { return "Merging \(merging)" }
-		if let picking = await head("CHERRY_PICK_HEAD") { return "Cherry-picking \(picking)" }
-		if let reverting = await head("REVERT_HEAD") { return "Reverting \(reverting)" }
-		if FileManager.default.fileExists(
-			atPath: directory.appendingPathComponent("rebase-merge").path
-		) || FileManager.default.fileExists(
-			atPath: directory.appendingPathComponent("rebase-apply").path
-		) {
-			return "Rebasing"
+		switch await operation(in: root) {
+		case .merge:
+			return Operation.merge.titled + " " + (await head("MERGE_HEAD") ?? "MERGE_HEAD")
+		case .cherryPick:
+			return Operation.cherryPick.titled + " "
+				+ (await head("CHERRY_PICK_HEAD") ?? "CHERRY_PICK_HEAD")
+		case .revert:
+			return Operation.revert.titled + " " + (await head("REVERT_HEAD") ?? "REVERT_HEAD")
+		case .rebase:
+			// No commit named: a rebase's `.git/rebase-merge/head` is the branch
+			// being replayed rather than the commit stopped on, and `git log` on
+			// it says the wrong thing.
+			return Operation.rebase.titled
+		case nil:
+			return nil
 		}
-		return nil
 	}
 
 	/// How much of each conflicted file goes into the prompt.

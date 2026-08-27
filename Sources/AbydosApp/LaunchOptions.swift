@@ -328,6 +328,12 @@ struct LaunchOptions {
 	/// A comma-separated script for the changes tree: `report`, `stage:<path>`,
 	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`.
 	var changesSteps: String?
+	/// Print what the branch half of the titlebar pill says. See
+	/// `branchPillForTesting`.
+	///
+	/// Not `--branch-pill`, which is taken: that one opens the menu under the
+	/// pill and takes a number of seconds. This reads the pill itself.
+	var pillState = false
 	/// Drive the refs tree and print what it holds. See `branchRowsForTesting`.
 	var branchRowSteps: String?
 	/// Print what the menu over a commit in the log offers.
@@ -893,6 +899,7 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
 			case "--changes-tree": options.changesSteps = next()
+			case "--pill-state": options.pillState = true
 			case "--branch-rows": options.branchRowSteps = next()
 			case "--commit-menu": options.commitMenuRow = next().flatMap(Int.init)
 			case "--log-page": options.logPageSteps = next()

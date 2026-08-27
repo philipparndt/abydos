@@ -131,6 +131,10 @@ final class BranchesPane: NSView {
 	private var tableView: BranchesOutlineView!
 	/// Where this branch stands against its remote, for what the counter says.
 	private var trafficState: GitPush.State?
+	/// Where the head is when it is not on a branch, and what git has stopped
+	/// in the middle of — nil when there is nothing unusual to say. Drawn on
+	/// the repository row and as a row of its own at the top of Local.
+	private var headNotice: String?
 
 	enum Row {
 		case header(String)
@@ -151,6 +155,13 @@ final class BranchesPane: NSView {
 		case stash(GitStash.Entry)
 		/// One file inside an opened stash.
 		case stashFile(GitStash.Entry, GitCommitFile)
+		/// Where the head is when it is on no branch, and what git has stopped
+		/// in the middle of. A row rather than a decoration because that is
+		/// what the rest of this section is: `for-each-ref` marks nothing
+		/// current while the head is detached, so without this the list of
+		/// local branches simply has no tick anywhere in it and says nothing
+		/// about where you are.
+		case detachedHead(String)
 
 	}
 
@@ -176,6 +187,10 @@ final class BranchesPane: NSView {
 		}
 
 		fileprivate func add(_ child: GitNode) { children.append(child) }
+
+		fileprivate func insert(_ child: GitNode, at index: Int) {
+			children.insert(child, at: min(index, children.count))
+		}
 	}
 
 	init(root: URL) {
@@ -420,9 +435,34 @@ final class BranchesPane: NSView {
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			let state = await GitPush.state(in: self.root)
+			let head = await GitRepository.head(in: self.root)
+			let operation = await GitConflicts.operation(in: self.root)
 			self.trafficState = state
-			self.repositoryRow.show(branch: self.currentBranchName, state: state)
+			self.headNotice = Self.notice(head: head, operation: operation)
+			self.repositoryRow.show(
+				branch: self.currentBranchName, state: state, notice: self.headNotice
+			)
+			// The tree says it too: the local section has no checkmark on
+			// anything while the head is detached, and a row is where somebody
+			// looks for where they are.
+			self.rebuildRows()
 		}
+	}
+
+	/// The state of the head, in the words both the row and the tree use — or
+	/// nil when there is nothing out of the ordinary to say.
+	private static func notice(
+		head: GitRepository.Head, operation: GitConflicts.Operation?
+	) -> String? {
+		var parts: [String] = []
+		if head.isDetached, let display = head.display { parts.append(display) }
+		if let operation {
+			// Titled when it starts the notice, which is a row of its own —
+			// `Rebasing`, not `rebasing`. After a detached head it is the
+			// second clause and stays lowercase.
+			parts.append(parts.isEmpty ? operation.titled : operation.said)
+		}
+		return parts.isEmpty ? nil : parts.joined(separator: " · ")
 	}
 
 	/// Fetch, pull or push, whichever the counter is showing.
@@ -584,6 +624,14 @@ final class BranchesPane: NSView {
 		// Local first: it is what you switch between. Remotes and tags are
 		// there to branch from, not to live on.
 		appendSection("Local", matching.filter { $0.kind == .local })
+
+		// At the top of Local, and only when there is something to say. Inside
+		// the section rather than above it because it is standing in for the
+		// row that would have had the tick.
+		if let headNotice,
+			let local = roots.first(where: { $0.key == "section:Local" }) {
+			local.insert(GitNode(key: "head:detached", row: .detachedHead(headNotice)), at: 0)
+		}
 
 		let remotes = matching.filter { if case .remote = $0.kind { return true } else { return false } }
 		let byRemote = Dictionary(grouping: remotes) { branch -> String in
@@ -1272,6 +1320,8 @@ final class BranchesPane: NSView {
 			switch node.row {
 			case let .header(title):
 				return indent + mark + "# \(title)"
+			case let .detachedHead(notice):
+				return indent + mark + "! \(notice)"
 			case let .folder(_, display, count, _):
 				return indent + mark + "\(display)/ (\(count))"
 			case let .branch(branch, _, display):
@@ -2284,6 +2334,8 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			return StashRowView(entry: entry, applies: stashApplies[entry.commit])
 		case let .stashFile(_, file):
 			return StashFileRowView(file: file)
+		case let .detachedHead(notice):
+			return DetachedHeadRowView(notice: notice)
 		}
 	}
 
@@ -3135,6 +3187,41 @@ private final class StashFileRowView: NSView {
 }
 
 /// A prefix several branches share, and how many are under it.
+/// Where the head is when it is on no branch, and what git has stopped in the
+/// middle of.
+///
+/// It sits where the ticked branch would be, and takes the tick's place in the
+/// conflict colour rather than the added one: this is a place to be, but not a
+/// place to commit onto — a commit made here belongs to no branch until one is
+/// put on it, which is the thing this row exists to keep somebody from
+/// discovering afterwards.
+private final class DetachedHeadRowView: NSView {
+	private let notice: String
+	override var isFlipped: Bool { true }
+
+	init(notice: String) {
+		self.notice = notice
+		super.init(frame: .zero)
+		toolTip = "Not on a branch — \(notice). A commit here belongs to no branch "
+			+ "until one is put on it."
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func draw(_ dirtyRect: NSRect) {
+		RowMetrics.glyph(
+			"exclamationmark.triangle", colour: Theme.current.gitConflict, in: bounds
+		)
+		RowMetrics.draw(
+			notice,
+			font: Theme.current.uiFont(12, weight: .medium),
+			colour: Theme.current.gitConflict,
+			at: RowMetrics.textInset, in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+	}
+}
+
 private final class BranchFolderRowView: NSView {
 	private let display: String
 	private let count: Int
