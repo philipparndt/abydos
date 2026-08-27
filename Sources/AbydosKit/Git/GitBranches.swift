@@ -24,6 +24,35 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 	/// and a branch that has no upstream both count nothing, and only one of
 	/// them has somewhere to push to.
 	public let upstream: String?
+	/// The branch tracks an upstream that no longer exists — the ordinary end
+	/// of a branch whose pull request was merged and whose remote branch went
+	/// with it.
+	///
+	/// **Not the same as level, and it parses as level.**
+	/// `%(upstream:track)` says `[gone]` where it would otherwise say the
+	/// counts, so both come back nought and a row reading only the counts calls
+	/// the branch in step with a ref that is not there.
+	public let upstreamIsGone: Bool
+
+	/// How far this branch is from the repository's default branch.
+	///
+	/// Nil when nobody asked, or when the two share no history. Separate from
+	/// `ahead` and `behind`, which are about the upstream and answer a
+	/// different question: *is my copy of this branch in step with everybody
+	/// else's*, rather than *how much work is on it*.
+	public let aheadOfDefault: Int?
+	public let behindDefault: Int?
+
+	/// Never pushed anywhere: a local branch with no upstream at all.
+	///
+	/// Told apart from level for the reason `upstream` already gives, and said
+	/// out loud on the row because nothing else does. A tag has no upstream by
+	/// definition and a remote-tracking branch is the upstream, so neither is
+	/// ever unpublished.
+	public var isUnpublished: Bool {
+		guard case .local = kind else { return false }
+		return upstream == nil
+	}
 
 	public var id: String {
 		switch kind {
@@ -48,7 +77,10 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		subject: String = "",
 		ahead: Int = 0,
 		behind: Int = 0,
-		upstream: String? = nil
+		upstream: String? = nil,
+		upstreamIsGone: Bool = false,
+		aheadOfDefault: Int? = nil,
+		behindDefault: Int? = nil
 	) {
 		self.name = name
 		self.kind = kind
@@ -57,6 +89,9 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		self.ahead = ahead
 		self.behind = behind
 		self.upstream = upstream
+		self.upstreamIsGone = upstreamIsGone
+		self.aheadOfDefault = aheadOfDefault
+		self.behindDefault = behindDefault
 	}
 }
 
@@ -66,14 +101,53 @@ public enum GitBranches {
 	/// name or a commit subject.
 	private static let separator = "\u{1F}"
 
-	public static func list(in root: URL) async -> [GitBranch] {
-		let format = [
+	/// The local branches whose commits are all in `branch`.
+	///
+	/// **A set of names rather than a fact per branch**, and answered by one
+	/// `git branch --merged` alongside the reads the pane already does. A
+	/// branch the answer does not cover — because the read failed, or has not
+	/// come back, or there is no default branch to compare against — is simply
+	/// not in the set, so a slow or failed answer costs appearance rather than
+	/// correctness.
+	///
+	/// The branch itself is always in git's answer, being trivially merged into
+	/// itself, and is taken out here: *finished, nothing on it that is not
+	/// somewhere else* is not a thing to say about `main`.
+	public static func merged(into branch: String, in root: URL) async -> Set<String> {
+		let result = await GitRepository.run(
+			["branch", "--merged", branch, "--format=%(refname:short)"], in: root
+		)
+		guard result.exitCode == 0 else { return [] }
+		return Set(
+			result.stdout
+				.split(separator: "\n")
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+				.filter { !$0.isEmpty && $0 != branch }
+		)
+	}
+
+	/// Every ref worth a row, and how far each is from `comparedTo`.
+	///
+	/// - Parameter comparedTo: a branch to measure every ref against, usually
+	///   the repository's default. **This is the only thing that can say
+	///   anything about a branch that has never been pushed** — its upstream
+	///   counts are empty because it has no upstream, and `0 ahead, 0 behind`
+	///   is what a branch in step with a remote reads. What somebody wants to
+	///   know about a branch of their own is how far it has come from the
+	///   branch it will go back into.
+	///
+	///   Asked with `%(ahead-behind:)`, in the call that was already being
+	///   made rather than one `rev-list` per branch.
+	public static func list(in root: URL, comparedTo: String? = nil) async -> [GitBranch] {
+		var fields = [
 			"%(refname)",
 			"%(HEAD)",
 			"%(contents:subject)",
 			"%(upstream:track)",
 			"%(upstream:short)",
-		].joined(separator: separator)
+		]
+		if let comparedTo { fields.append("%(ahead-behind:\(comparedTo))") }
+		let format = fields.joined(separator: separator)
 
 		async let branches = GitRepository.run(
 			["for-each-ref", "--format=\(format)", "refs/heads", "refs/remotes"],
@@ -87,7 +161,17 @@ public enum GitBranches {
 			in: root
 		)
 
-		var result = parse(await branches.stdout)
+		let listed = await branches
+		// **`%(ahead-behind:)` arrived in git 2.41, and an older git refuses
+		// the whole command over it** — not the one field, the list. A branch
+		// pane that went empty on an older git would be this asking for a nicer
+		// number and taking every row away to get it.
+		guard listed.exitCode == 0 else {
+			guard comparedTo != nil else { return [] }
+			return await list(in: root)
+		}
+
+		var result = parse(listed.stdout)
 		result += parse(await tags.stdout)
 		return result
 	}
@@ -109,9 +193,16 @@ public enum GitBranches {
 			let subject = fields.count > 2 ? fields[2] : ""
 			let track = fields.count > 3 ? fields[3] : ""
 			let upstream = fields.count > 4 && !fields[4].isEmpty ? fields[4] : nil
+			// `%(ahead-behind:)` prints two numbers separated by a space, and
+			// prints nothing at all for a ref that shares no history with what
+			// it was compared against.
+			let against = fields.count > 5
+				? fields[5].split(separator: " ").compactMap { Int($0) }
+				: []
 
 			guard let (name, kind) = classify(refname: refname) else { continue }
 			let counts = parseTracking(track)
+			let isGone = upstream != nil && track.contains("gone")
 
 			result.append(GitBranch(
 				name: name,
@@ -120,7 +211,10 @@ public enum GitBranches {
 				subject: subject,
 				ahead: counts.ahead,
 				behind: counts.behind,
-				upstream: upstream
+				upstream: upstream,
+				upstreamIsGone: isGone,
+				aheadOfDefault: against.count == 2 ? against[0] : nil,
+				behindDefault: against.count == 2 ? against[1] : nil
 			))
 		}
 		return result

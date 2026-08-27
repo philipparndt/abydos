@@ -137,4 +137,42 @@ struct GitPushStateTests {
 		#expect(result.exitCode != 0)
 		#expect(result.stderr.contains("rejected") || result.stdout.contains("rejected"))
 	}
+
+	/// A branch whose remote branch was deleted — the ordinary end of a merged
+	/// pull request.
+	///
+	/// **It reads as level unless something says otherwise.** git puts `[gone]`
+	/// where it would put the counts, so both come back nought and a row that
+	/// only reads the counts says the branch is in sync with a ref that is not
+	/// there.
+	@Test func tellsAGoneUpstreamFromBeingLevel() async throws {
+		let root = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let remote = root.appendingPathExtension("remote.git")
+		defer { try? FileManager.default.removeItem(at: remote) }
+		_ = GitRepository.runSync(["init", "-q", "--bare", remote.path], in: root)
+		_ = GitRepository.runSync(["remote", "add", "origin", remote.path], in: root)
+		_ = await GitPush.push(in: root, setUpstream: true)
+		// On a branch of its own: a remote refuses to delete the branch its
+		// own HEAD points at, which `main` is.
+		_ = GitRepository.runSync(["checkout", "-qb", "feature"], in: root)
+		_ = await GitPush.push(in: root, setUpstream: true)
+
+		let level = await GitPush.state(in: root)
+		#expect(level?.upstreamIsGone == false)
+		#expect(level?.behind == 0)
+		#expect(level?.ahead == 0)
+
+		// The remote branch goes; the local branch still names it.
+		_ = GitRepository.runSync(["push", "-q", "origin", "--delete", "feature"], in: root)
+		_ = GitRepository.runSync(["fetch", "-q", "--prune"], in: root)
+
+		let gone = await GitPush.state(in: root)
+		#expect(gone?.upstreamIsGone == true)
+		// The counts are the same as level's, which is the whole point: they
+		// cannot be what tells the two apart.
+		#expect(gone?.behind == 0)
+		#expect(gone?.ahead == 0)
+	}
+
 }

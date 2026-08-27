@@ -149,4 +149,38 @@ struct GitBranchIntegrationTests {
 		_ = await GitRepository.run(["tag", "v0.1.0"], in: root)
 		#expect(await GitBranches.list(in: root).contains { $0.kind == .tag && $0.name == "v0.1.0" })
 	}
+
+	/// Which branches are finished: everything on them is somewhere else.
+	@Test func mergedAnswersWhichBranchesAreFinished() async throws {
+		let root = try await makeRepository()
+		let main = await GitBranches.list(in: root).first { $0.isCurrent }?.name ?? "main"
+
+		await GitBranches.create("done-work", from: nil, checkout: true, in: root)
+		try "b\n".write(to: root.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+		_ = await GitRepository.run(["add", "-A"], in: root)
+		_ = await GitRepository.run(["commit", "-qm", "two"], in: root)
+		_ = await GitRepository.run(["checkout", "-q", main], in: root)
+		_ = await GitRepository.run(["merge", "-q", "done-work"], in: root)
+
+		await GitBranches.create("still-going", from: nil, checkout: true, in: root)
+		try "c\n".write(to: root.appendingPathComponent("c.txt"), atomically: true, encoding: .utf8)
+		_ = await GitRepository.run(["add", "-A"], in: root)
+		_ = await GitRepository.run(["commit", "-qm", "three"], in: root)
+		_ = await GitRepository.run(["checkout", "-q", main], in: root)
+
+		let merged = await GitBranches.merged(into: main, in: root)
+		#expect(merged.contains("done-work"))
+		#expect(!merged.contains("still-going"))
+		// **The branch itself is not in the answer**, though git puts it there:
+		// it is trivially merged into itself, and *finished, nothing on it that
+		// is not somewhere else* is not a thing to say about the default branch.
+		#expect(!merged.contains(main))
+	}
+
+	/// A repository with no such branch costs appearance, not correctness.
+	@Test func mergedAnswersNothingWhenTheBranchIsNotThere() async throws {
+		let root = try await makeRepository()
+		#expect(await GitBranches.merged(into: "no-such-branch", in: root).isEmpty)
+	}
+
 }

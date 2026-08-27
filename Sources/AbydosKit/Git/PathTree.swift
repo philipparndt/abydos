@@ -73,13 +73,32 @@ public enum PathTree {
 	///
 	/// - Parameter folding: whether a folder with exactly one child is merged
 	///   into it, so `hotfix/0472` is one row reading `hotfix/0472`.
-	/// - Parameter promoting: leaves whose payload answers true sort before
-	///   their siblings. The branch you are on is the one you look for, and it
-	///   should not be four rows down its own list.
+	/// - Parameter promoting: leaves the payload gives a rank to sort before
+	///   their siblings, lowest rank first; `nil` is not promoted at all.
+	///
+	///   **A rank rather than a flag, because there is more than one winner.**
+	///   The branch you are on and the branch everything merges into are the
+	///   two anybody looks for and the two worst to hunt for, and they have an
+	///   order between them — which is what `BranchGrouping.arrange` already
+	///   pins for the branch pill in the titlebar. A flag can say *both of
+	///   these go first* and cannot say *this one of them goes first*, so the
+	///   two lists of the same branches would have disagreed about their order.
+	/// - Parameter keeping: folder names that are never folded away, whatever
+	///   `folding` says and however few children they hold.
+	///
+	///   **A folder that is an object cannot be flattened, because its verbs go
+	///   with it.** Folding is right for a prefix that merely happened to be
+	///   shared — `hotfix/0472` as one row — and wrong for `backup/`, which is
+	///   a folder this program makes and which the refs tree gives a verb of
+	///   its own: deleting the entries older than a given age. One backup ref
+	///   meant no backup folder, and no way to sweep the backups. The question
+	///   is not how many children a folder has but whether the tree names it in
+	///   its own right.
 	public static func build<Payload>(
 		_ items: [(path: String, payload: Payload)],
 		folding: Bool = false,
-		promoting: ((Payload) -> Bool)? = nil
+		keeping: Set<String> = [],
+		promoting: ((Payload) -> Int?)? = nil
 	) -> [PathNode<Payload>] {
 		let root = PathNode<Payload>(path: "", payload: nil)
 		var folders: [String: PathNode<Payload>] = ["": root]
@@ -95,7 +114,7 @@ public enum PathTree {
 			parent.add(PathNode(path: item.path, payload: item.payload))
 		}
 
-		if folding { fold(root) }
+		if folding { fold(root, keeping: keeping) }
 		sort(root, promoting: promoting)
 		root.tally()
 		return root.children
@@ -138,11 +157,17 @@ public enum PathTree {
 	/// row `a/b/c` rather than two passes' worth of half-folded chain. The
 	/// child keeps its own path — which is what git is given and what expansion
 	/// is remembered by — and takes a name that says the whole way down.
-	private static func fold<Payload>(_ node: PathNode<Payload>) {
-		for child in node.children { fold(child) }
+	private static func fold<Payload>(_ node: PathNode<Payload>, keeping: Set<String>) {
+		for child in node.children { fold(child, keeping: keeping) }
 
 		let folded = node.children.map { child -> PathNode<Payload> in
 			guard child.isFolder, child.children.count == 1 else { return child }
+			// Named in its own right, so it keeps its row: see `keeping`.
+			// Matched on the last component rather than the whole path, so a
+			// `backup` under a folder is still a `backup`.
+			guard !keeping.contains((child.path as NSString).lastPathComponent) else {
+				return child
+			}
 			let only = child.children[0]
 			// The name is built from the paths rather than by joining the two
 			// display names: `only` may itself be a folded row already, and
@@ -163,17 +188,23 @@ public enum PathTree {
 
 	private static func sort<Payload>(
 		_ node: PathNode<Payload>,
-		promoting: ((Payload) -> Bool)?
+		promoting: ((Payload) -> Int?)?
 	) {
 		// Folders first, then case-insensitive name order — the arrangement
 		// `FileNode.order` gives the project tree and `GitChangeNode` copies.
 		// A promoted leaf comes before its siblings and before the folders,
-		// which is the one departure: the branch you are on is the answer to
-		// the question the list is usually being asked.
+		// which is the one departure: the branch you are on, and the branch
+		// everything merges into, are the answers to the question the list is
+		// usually being asked.
 		node.replaceChildren(with: node.children.sorted { a, b in
-			let promotedA = a.payload.map { promoting?($0) ?? false } ?? false
-			let promotedB = b.payload.map { promoting?($0) ?? false } ?? false
-			if promotedA != promotedB { return promotedA }
+			let rankA = a.payload.flatMap { promoting?($0) ?? nil }
+			let rankB = b.payload.flatMap { promoting?($0) ?? nil }
+			switch (rankA, rankB) {
+			case let (first?, second?): if first != second { return first < second }
+			case (.some, .none):        return true
+			case (.none, .some):        return false
+			case (.none, .none):        break
+			}
 			if a.isFolder != b.isFolder { return a.isFolder }
 			return a.name.localizedStandardCompare(b.name) == .orderedAscending
 		})

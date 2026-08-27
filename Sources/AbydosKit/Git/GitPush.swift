@@ -20,6 +20,14 @@ public enum GitPush {
 		/// repository that has been `git init`ed and not committed to yet: the
 		/// branch is real and it is named, and there is no commit to send.
 		public let hasCommits: Bool
+		/// The branch tracks an upstream that no longer exists — the usual
+		/// cause being a remote branch deleted after it was merged.
+		///
+		/// Distinguished from level on purpose. `%(upstream:track)` says
+		/// `[gone]` where it would otherwise say the counts, so a gone upstream
+		/// parses as nought behind and nought ahead and reads as *level with
+		/// the remote* — which is a sentence about a ref that is not there.
+		public let upstreamIsGone: Bool
 
 		public init(
 			branch: String,
@@ -27,7 +35,8 @@ public enum GitPush {
 			ahead: Int = 0,
 			behind: Int = 0,
 			hasRemote: Bool = true,
-			hasCommits: Bool = true
+			hasCommits: Bool = true,
+			upstreamIsGone: Bool = false
 		) {
 			self.branch = branch
 			self.upstream = upstream
@@ -35,6 +44,7 @@ public enum GitPush {
 			self.behind = behind
 			self.hasRemote = hasRemote
 			self.hasCommits = hasCommits
+			self.upstreamIsGone = upstreamIsGone
 		}
 
 		/// Pushing would do something.
@@ -99,7 +109,9 @@ public enum GitPush {
 			.components(separatedBy: "\u{1F}")
 
 		let upstream = fields.count > 1 && !fields[1].isEmpty ? fields[1] : nil
-		let counts = GitBranches.parseTracking(fields.count > 2 ? fields[2] : "")
+		let track = fields.count > 2 ? fields[2] : ""
+		let counts = GitBranches.parseTracking(track)
+		let isGone = upstream != nil && track.contains("gone")
 
 		// A branch that was never pushed reports no counts, and every commit on
 		// it is one the remote has not seen.
@@ -112,7 +124,8 @@ public enum GitPush {
 			upstream: upstream,
 			ahead: ahead,
 			behind: counts.behind,
-			hasRemote: hasRemote
+			hasRemote: hasRemote,
+			upstreamIsGone: isGone
 		)
 	}
 

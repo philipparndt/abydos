@@ -2458,6 +2458,9 @@ final class EditorViewController: NSViewController {
 	private var pdfPreview: PdfFileView? { activeTab?.contentView as? PdfFileView }
 
 	/// Opens the find bar, seeded with the selection when there is one.
+	/// Whether the find bar is up, for a driven run asking who got ⌘F.
+	var findBarIsShowingForTesting: Bool { !findBar.isHidden }
+
 	func showFind() {
 		guard let tab = activeTab, tab.codeView != nil || pdfPreview != nil else { return }
 		tab.find.isShowing = true

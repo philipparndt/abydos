@@ -1,0 +1,468 @@
+# git-refs-tree
+
+## ADDED Requirements
+
+### Requirement: The repository is the first row, and it does not scroll away
+
+The tree SHALL begin with a row for the repository, and that row SHALL stay at
+the top of the pane while the rest of the tree scrolls.
+
+It says how far the branch the work tree is on is from its upstream, in words —
+`3 behind · 1 ahead`, `level`, `upstream gone`, or that there is no remote — and
+it is the control that follows from that: fetch when level, pull when behind,
+push when ahead.
+
+**It SHALL NOT name the project or the branch.** Both are written in the
+titlebar a few points above it, so a repository with nothing to report drew a
+glyph and two words already on screen. What is left is the one thing nothing
+else in the window says and the thing this row is pinned for.
+
+**An upstream that is gone SHALL NOT read as level.** `%(upstream:track)` says
+`[gone]` in place of the counts, so the naive reading is nought behind and
+nought ahead — a sentence about a ref that is not there. It is also the control: fetch when level, pull when behind, push when
+ahead, which is what the button above the tree used to be.
+
+**Drawn as a row because a verb hangs off the row that draws its object**, which
+is what this specification already says about folders of branches and what the
+traffic button's own comment gave as the reason it exists — the repository had
+no row, so its verb needed a button. Given a row, it does not.
+
+**Pinned because how far you are from the remote is state.** Everything else in
+this tree is a thing you go and look at; this is a thing you need to have
+noticed. A repository row that scrolls out of sight behind forty branches is the
+fault the header was avoiding, reintroduced.
+
+#### Scenario: a branch behind and ahead of its upstream
+
+- **GIVEN** a work tree on `main`, three commits behind and one ahead
+- **WHEN** the git tool is opened
+- **THEN** the first row names the project and `main`, and says three behind and
+  one ahead
+- **AND** pressing it pulls, because behind comes first
+
+#### Scenario: scrolling the tree
+
+- **GIVEN** a repository with more branches than the pane can show
+- **WHEN** the tree is scrolled to the bottom
+- **THEN** the repository row is still at the top of the pane
+
+#### Scenario: a repository with no remote
+
+- **GIVEN** a repository with no remote configured
+- **THEN** the row says so, and offers nothing to press
+
+#### Scenario: an upstream that has been deleted
+
+- **GIVEN** a branch tracking a remote branch that no longer exists
+- **THEN** the row says the upstream is gone rather than that it is level
+- **AND** pressing it fetches
+
+#### Scenario: nothing to report
+
+- **GIVEN** a branch level with its upstream
+- **THEN** the row says `level` and offers `Fetch`
+- **AND** it does not repeat the project or the branch the titlebar names
+
+### Requirement: The trailing end of a branch row is one column
+
+The ahead and behind counts, and the symbol that stands in for them, SHALL be
+drawn right-aligned on one edge shared by every branch row.
+
+Drawn after the name, a note sits wherever that name happened to end, so reading
+a list of them means reading a ragged edge — the same fault the changes tree's
+counts had, and fixed the same way.
+
+**A symbol is right-aligned on its own ink, not on the box it is fitted into.**
+A tick is taller than it is wide, so a centred fit lands it short of the edge
+that the text beside it sits flush on, and the column has a wobble in exactly
+the place it exists to remove.
+
+#### Scenario: four rows saying four different things
+
+- **GIVEN** one branch ahead and behind, one never published, one whose upstream
+  is gone, and one already merged
+- **THEN** all four right-hand marks end on the same x
+
+### Requirement: A branch says whether it has ever been published
+
+A local branch with no upstream SHALL say so on its own row, as a symbol, in the
+column the ahead and behind counts are drawn in.
+
+**A symbol rather than the words.** `not published` and `upstream gone` are two
+words of English on every row of a list, which is a paragraph nobody reads. They
+are `icloud` symbols because both are about the copy on the other machine — one
+that was never made, one that has gone — and the words they replace SHALL be in
+the row's tooltip, because a symbol is a note somebody has to be able to look
+up.
+
+**The counts cannot say it.** Nought ahead and nought behind is what a branch
+level with its remote reads, and a branch that has never been near a remote is
+the opposite of that — the same confusion `upstream` was given a doc comment
+about, drawn rather than typed.
+
+It was readable before only on the repository row and only for the branch the
+work tree was on. That row no longer names a branch, and this is the row the
+branch is on.
+
+A branch tracking an upstream that has gone SHALL say that instead, for the
+reason the repository row gives.
+
+#### Scenario: a branch that has never been pushed
+
+- **GIVEN** a local branch with no upstream, not merged
+- **THEN** its row draws a cloud with an upward arrow
+- **AND** its tooltip says `never published`
+
+#### Scenario: a branch whose remote branch was deleted
+
+- **GIVEN** a local branch tracking a ref that no longer exists, not merged
+- **THEN** its row draws a cloud with a cross
+
+#### Scenario: a branch in step with its upstream
+
+- **GIVEN** a local branch level with the remote
+- **THEN** its row says nothing beside its name, as it does today
+
+### Requirement: The working copy row carries the verb that acts on it
+
+The working copy row SHALL offer opening the commit view whenever it has
+anything to commit, and SHALL name that action after what is done there rather
+than after committing.
+
+Committing is the most frequent act in this pane and it had no visible
+affordance at all: it was reachable from the row's context menu, which has to be
+guessed at, and from `⇧⌘K`, which has to be known.
+
+**And the words matter.** `Commit…` reads as *commit now, after a
+confirmation*. Nothing is committed by pressing it — it opens the view where
+hunks are chosen and a message is written, and committing happens there, later,
+by a different press. The row already says how many changes there are, so the
+action reads as a sentence beside it: `Review 1 change…`.
+
+The context menu and the keyboard SHALL use the same words, so that the three
+ways to the same place do not disagree about what it is.
+
+#### Scenario: a working copy with changes
+
+- **GIVEN** a working copy with one changed file
+- **THEN** its row offers `Review 1 change…`
+- **AND** pressing it opens the commit view without committing anything
+
+#### Scenario: a clean working copy
+
+- **GIVEN** a working copy with nothing changed
+- **THEN** the row offers nothing to press
+
+#### Scenario: the other two ways in
+
+- **GIVEN** the same working copy
+- **WHEN** its context menu is opened, and when `⇧⌘K` is pressed
+- **THEN** both say and do what the row's action says and does
+
+### Requirement: A section row carries the verb that makes a new one
+
+The `LOCAL` section row SHALL offer making a branch.
+
+This specification already says a folder of branches is an object with verbs of
+its own. A section is a folder that git made rather than a name that folded, and
+the verb that belongs to the set of local branches is the one that adds to it —
+which is what the `New Branch…` button above the tree was.
+
+#### Scenario: making a branch from the section
+
+- **GIVEN** the git tool open
+- **WHEN** the `LOCAL` row's action is used
+- **THEN** the same dialog opens as the button above the tree opened
+
+### Requirement: A row's action can be reached from the keyboard
+
+Every action a row offers SHALL be reachable without a mouse.
+
+An action drawn on a row when the pointer is over it is a mouse-only feature,
+and these panes have just been fixed not to be: the arrows walk them, `←` and
+`→` open and shut them, and a verb that only a pointer can reach undoes that.
+
+`⏎` is taken — on a branch it checks it out — so a row that has both a default
+gesture and an action needs the two told apart rather than overloaded. What the
+keyboard offers SHALL be the same set the pointer offers, and the context menu
+remains the place where everything is named.
+
+#### Scenario: the repository row from the keyboard
+
+- **GIVEN** the repository row selected and a branch behind its upstream
+- **WHEN** the key that fires a row's action is pressed
+- **THEN** it pulls, as pressing the row does
+
+#### Scenario: a branch row, which has both
+
+- **GIVEN** a branch row selected
+- **THEN** `⏎` checks it out, and the row's other verbs are reachable by their
+  own gesture and from the context menu
+
+### Requirement: A folder the tree names in its own right is never folded away
+
+A folder that carries verbs of its own SHALL keep its row however few branches
+are under it.
+
+The rule that a folder holding exactly one branch stays flat is right for a
+prefix that happened to be shared: `hotfix/0472` is one row, and a folder made
+to hold it would have turned one row into two and said nothing.
+
+**It is wrong for a folder that is an object.** `backup/` is made by this
+program, and this specification already gives it a verb — deleting the entries
+older than a given age. Fold it away and the verb goes with it: one backup ref
+means no backup folder, and no way to sweep the backups. The question is not how
+many children a folder has but whether the tree names it in its own right.
+
+**And the verb SHALL actually be on it.** This specification has said the backup
+folder carries deleting the entries older than a given age since it was written,
+and `GitBackup.sweep` has done it for as long; the folder's menu offered the
+three verbs every folder has and no more. A folder kept for a verb it does not
+carry is a row that costs and says nothing.
+
+**The count comes before the choice.** A backup ref is the only copy of what it
+holds — that is what it is for — so *delete everything older than a month* is a
+sentence nobody can weigh without being told whether it means four refs or forty.
+
+#### Scenario: a single backup ref
+
+- **GIVEN** a repository with exactly one ref under `backup/`
+- **THEN** there is a `backup/` folder row with that one ref under it
+- **AND** its menu offers deleting the backups older than a chosen age
+
+#### Scenario: choosing an age
+
+- **GIVEN** the backup folder's menu open
+- **THEN** each age offered says how many of the backups it would take
+- **AND** an age that would take none cannot be chosen
+
+#### Scenario: a prefix that is only a prefix
+
+- **GIVEN** `hotfix/0472` and no other branch beginning `hotfix/`
+- **THEN** `hotfix/0472` is one row and there is no `hotfix/` folder
+
+### Requirement: The branch everything merges into is pinned to the top
+
+The refs tree SHALL pin the current branch and then the repository's default
+branch above the rest of the local branches.
+
+This is the order `BranchGrouping.arrange` already pins for the branch pill in
+the titlebar, and the reason it gives holds here too: they are the two anybody
+is most likely to want and the two most annoying to hunt for — the default
+especially, since it is almost never the most recently touched and so sinks in
+any list ordered by anything else.
+
+**Two lists of the same branches in one window SHALL NOT disagree about their
+order.** The pill lists, groups and filters the same branches this pane does;
+somebody who has learnt where `main` is in one of them has learnt nothing if the
+other puts it elsewhere.
+
+#### Scenario: a branch other than the default checked out
+
+- **GIVEN** a repository on `zeta` whose default branch is `main`
+- **THEN** `zeta` is the first local row and `main` is the second
+- **AND** the rest follow in the order they had
+
+#### Scenario: the default branch checked out
+
+- **GIVEN** a repository on `main`, which is also its default
+- **THEN** `main` appears once, at the top
+
+### Requirement: An unpublished branch counts its own commits
+
+A local branch with no upstream SHALL show how many commits it has that the
+default branch has not, in the column its ahead and behind counts would be in.
+
+**Its upstream counts cannot say anything**, there being no upstream: they are
+nought and nought, which is what a branch in step with a remote reads. What
+somebody wants to know about a branch of their own is how much work is on it
+that is not in the branch it will go back into.
+
+The symbol saying it is unpublished stays beside the count. Both are true and
+neither implies the other — three commits of your own, and nowhere else holding
+a copy of them.
+
+**How far the default branch has moved SHALL NOT be drawn as a down arrow, and
+is not drawn at all.** `↑` and `↓` are this pane's remote vocabulary — what is
+waiting to go up, what is waiting to come down — and `↓1557` against the default
+branch borrows the second to say something else entirely: not *there are commits
+to pull* but *main has moved on, and you may want to rebase*. It was read as the
+first, which is the only way it can be read on a row where every other arrow
+means that.
+
+`↑` survives because it does not change meaning between the two readings:
+commits this branch has that the other side has not, which is both the work on
+it and exactly what publishing would send.
+
+The figure that cannot be drawn without misleading SHALL be in the row's
+tooltip, in words, naming what it is measured against.
+
+It is asked with `%(ahead-behind:)` in the listing already being made, not one
+`rev-list` per branch. **That atom arrived in git 2.41 and an older git refuses
+the whole command over it** — not the field, the list — so the listing SHALL
+fall back to the format without it rather than show no branches at all.
+
+#### Scenario: a branch that has never been pushed
+
+- **GIVEN** a local branch with two commits the default branch has not got
+- **THEN** its row reads `↑2` beside the symbol saying it is unpublished
+
+#### Scenario: a branch the default has moved past
+
+- **GIVEN** an unpublished branch the default branch is 1557 commits ahead of
+- **THEN** no down arrow is drawn
+- **AND** the tooltip says the default branch has moved on by 1557 commits
+
+### Requirement: A branch row offers to open a pull request
+
+A local branch that is not the default branch SHALL offer opening a pull request
+from its context menu, wherever the repository has a forge.
+
+**The two halves are one entry each.** Making a pull request from a branch
+nobody else can see takes two steps, and having to know that — push first, then
+find the compare page — is what makes this the part of the job people leave the
+app to do. A branch the forge does not have SHALL offer publishing and opening
+in one verb, and one it has SHALL offer opening.
+
+**Whether the forge has it is asked of the listing, not of the upstream.** A
+branch is on the forge when a remote-tracking ref of the same name is. That is
+the better question in both directions: a branch pushed without `--set-upstream`
+is on the host and names no upstream, and a branch whose remote branch was
+deleted names one — `[gone]` — and is not there. A compare page for either
+absent case is the same 404.
+
+The publish SHALL happen first and the page SHALL NOT be opened if it fails: a
+browser tab explaining that a branch does not exist is a worse answer than
+saying why it could not be sent.
+
+**The compare page, not an API call.** Which pull request already belongs to a
+branch is a question only the host can answer, and answering it needs a token
+this app deliberately does not hold.
+
+#### Scenario: a branch that has been published
+
+- **GIVEN** a published local branch and a GitHub remote
+- **THEN** its menu offers `Open Pull Request…`
+
+#### Scenario: a branch that has not
+
+- **GIVEN** a local branch with no upstream and a GitHub remote
+- **THEN** its menu offers `Publish and Open Pull Request…`
+
+#### Scenario: a branch whose remote branch was deleted
+
+- **GIVEN** a local branch naming an upstream that no longer exists
+- **THEN** its menu offers `Publish and Open Pull Request…`, as an unpublished
+  branch's does
+
+#### Scenario: the default branch
+
+- **GIVEN** the default branch selected
+- **THEN** no pull request is offered, there being nothing to compare it against
+
+### Requirement: A ref is only opened on the forge when the forge has it
+
+Opening a ref's page on the forge SHALL be offered only where a remote-tracking
+ref of that name exists.
+
+A page for a branch the host has never heard of is a 404, which is a worse
+answer than not offering — and the offer was made on every local branch,
+including one that had never been pushed and one whose remote branch had been
+deleted.
+
+It is disabled rather than hidden, which is how this menu already says *this
+verb, not on this row*. Remote branches and tags are always on the forge, being
+what the forge sent.
+
+#### Scenario: a branch that has never been pushed
+
+- **GIVEN** an unpublished local branch and a GitHub remote
+- **THEN** `Open on GitHub` is shown and cannot be chosen
+
+#### Scenario: a branch that is there
+
+- **GIVEN** a published local branch, or any remote branch
+- **THEN** `Open on GitHub` can be chosen
+
+### Requirement: A branch whose work is already merged is dimmed
+
+A local branch merged into the default branch SHALL be drawn dimmed, and SHALL
+carry a tick in the column at the end of the row.
+
+**The tick outranks the other two marks.** A branch whose pull request was
+merged and whose remote branch went with it is both merged and upstream-gone,
+and of the two only one is what anybody wanted to know: the work is in and this
+row can go. `not published` on a branch that is already merged is a note about
+how it got there.
+
+**The tick SHALL NOT be dimmed with the rest of the row.** It is the reason the
+row is dim, and fading the answer along with the question leaves a grey row with
+nothing on it saying why.
+
+A merged branch is finished: there is nothing on it that is not somewhere else.
+Saying so where the branch already is beats the two alternatives — moving it,
+which means somebody hunts for a branch that was where they left it until it
+merged, and hiding it, which means a branch disappears at the moment it becomes
+safe to delete.
+
+It is drawn from one reading of what is merged, taken with the reads the pane
+already does. A branch the reading has not covered SHALL draw as it does now,
+so a slow or failed answer costs appearance rather than correctness.
+
+#### Scenario: a branch that has been merged
+
+- **GIVEN** a local branch whose commits are all in the default branch
+- **THEN** its row is dimmed and ends in a tick
+
+#### Scenario: a branch that is merged and whose upstream is gone
+
+- **GIVEN** a local branch merged into the default branch, tracking a ref that
+  has been deleted
+- **THEN** its row ends in a tick rather than a cross
+
+#### Scenario: a branch with work still on it
+
+- **GIVEN** a local branch with a commit the default branch does not have
+- **THEN** its row is drawn as it is today
+
+#### Scenario: the branch that is checked out
+
+- **GIVEN** the default branch itself, checked out
+- **THEN** it is not dimmed, whatever the reading says
+
+## MODIFIED Requirements
+
+### Requirement: Filtering flattens the tree
+
+Typing in the filter SHALL show matching refs as full names with no folders.
+
+A tree you have to expand to reach a name you have just typed is worse than no
+tree.
+
+**The filter SHALL be opened with `⌘F` rather than held in a field above the
+tree.** It was a permanent row — 22 points plus its inset, in a pane whose whole
+job is a list — for something reached occasionally, and it was the second branch
+filter in the window: the branch pill opens a popover that lists, groups and
+filters branches already, from the titlebar, without this pane being open.
+
+Opened, it sits over the list, closes on `esc` and closes when it is emptied, as
+the editor's find bar does. What it does once open is unchanged.
+
+#### Scenario: filtering to a nested branch
+
+- **GIVEN** the filter open and the text `tags`
+- **THEN** `feature/tags` is a row showing its whole name
+- **AND** there is no `feature/` folder row
+
+#### Scenario: opening and closing it
+
+- **GIVEN** the git tool with no filter showing
+- **WHEN** `⌘F` is pressed
+- **THEN** a filter opens over the list with the keyboard in it
+- **AND** `esc` closes it and the tree is unfiltered again
+
+#### Scenario: the tree's own height
+
+- **GIVEN** the git tool with no filter showing
+- **THEN** the tree begins at the top of the pane, under the repository row, and
+  nothing else takes height above it
