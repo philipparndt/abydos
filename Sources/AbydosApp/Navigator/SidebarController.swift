@@ -44,9 +44,6 @@ final class SidebarController: NSObject {
 	var isPanelVisible: () -> Bool = { false }
 	/// The repository read the window runs, which several panes ask to repeat.
 	var readGit: () -> Void = {}
-	/// Write what the project has open beside it — the window's, because only
-	/// the window knows what the terminals and the panel are doing.
-	var rememberSession: () -> Void = {}
 	/// Opening a checkout is the window's, the way every other route to one is.
 	var openProject: (URL) -> Void = { _ in }
 
@@ -54,25 +51,6 @@ final class SidebarController: NSObject {
 		self.editor = editor
 		self.navigator = navigator
 		super.init()
-
-		pullRequests.pane = { [weak self] in self?.pullRequestsPane }
-		pullRequests.showList = { [weak self] in self?.showSidebarTool(.pullRequests) }
-		pullRequests.rail = { [weak self] in self?.railReportForTesting() ?? "" }
-		pullRequests.repositoryRoot = { [weak self] in
-			self?.gitCommandRoot() ?? self?.project()?.root
-		}
-		pullRequests.existingPage = { [weak self] identifier in
-			self?.editor.activeGroup?.page(identifier: identifier)
-		}
-		pullRequests.rememberSession = { [weak self] in self?.rememberSession() }
-		pullRequests.openCheckout = { [weak self] path in self?.openProject(path) }
-		pullRequests.notify = { [weak self] title, body in self?.notify(title, body) }
-		pullRequests.openPage = { [weak self] page, title, identifier, symbol in
-			guard let self, let group = self.editor.activeGroup else { return }
-			self.leaveTerminalFullScreen()
-			group.openPage(page, title: title, identifier: identifier, symbol: symbol)
-			self.giveTheEditorTheWindow()
-		}
 	}
 
 	/// The rail itself, which the window puts down its left edge.
@@ -93,16 +71,13 @@ final class SidebarController: NSObject {
 
 	private(set) var historyPane: HistoryPane?
 
-	private(set) var pullRequestsPane: PullRequestsPane?
-
 	/// Reviewing: the list, the page it opens, and the run that drives them.
 	///
-	/// **A collaborator rather than more of this class.** This one is already at
-	/// the length where a file stops being read and starts being appended to,
-	/// and what a pull request needs — a page of its own, ticks, a checkout, a
-	/// pending review — is a lot more than a `case` in `makeToolView`. It owns
-	/// its own state and asks this object for the two things only the sidebar
-	/// knows.
+	/// **A collaborator rather than more of this class**, which was already at
+	/// the length where a file stops being read and starts being appended to.
+	/// The window wires it — see `MainWindowController.wireReviewing` — because
+	/// what it needs to be told is the editor area and the project, and both of
+	/// those are the window's.
 	let pullRequests = PullRequestReview()
 
 	var primaryToolView: NSView?
@@ -671,7 +646,7 @@ final class SidebarController: NSObject {
 		structurePane = nil
 		scratchesPane = nil
 		historyPane = nil
-		pullRequestsPane = nil
+		pullRequests.paneWentAway()
 
 		// Built before anything is taken down. The panes that need a repository
 		// cannot be built until it has been read, and tearing the sidebar down
@@ -773,28 +748,9 @@ final class SidebarController: NSObject {
 			historyPane = pane
 			view = pane
 		case .pullRequests:
-			// Nothing to show until the project's repository has been read: a
-			// pull request is asked about by remote, and the remote is
-			// something only the repository knows.
-			guard let project = project(), project.git != nil else { return nil }
-			let pane = PullRequestsPane(root: gitCommandRoot() ?? project.root)
-			pane.onOpen = { [weak self] request in self?.pullRequests.open(request) }
-			pane.onCheckOut = { [weak self] request in
-				self?.pullRequests.checkOut(request.number, opening: false)
-			}
-			pane.onFinishCheckout = { [weak self] request in
-				self?.pullRequests.finish(with: request.number)
-			}
-			// The one route that *does* point the window at the checkout, kept
-			// where somebody asking for it would look and out of the page,
-			// which loses everything when the project changes under it.
-			pane.onOpenCheckout = { [weak self] request in
-				self?.pullRequests.pointWindowAtCheckout(of: request.number)
-			}
-			pane.isCheckedOut = { [weak self] request in
-				self?.pullRequests.isCheckedOut(request.number) ?? false
-			}
-			pullRequestsPane = pane
+			// Nothing until the repository has been read: a pull request is
+			// asked about by remote, and only the repository knows the remote.
+			guard project()?.git != nil, let pane = pullRequests.makePane() else { return nil }
 			view = pane
 		case .scratches:
 			let pane = ScratchesPane(projectRoot: project()?.root)

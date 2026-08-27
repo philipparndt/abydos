@@ -14,7 +14,37 @@ import AbydosKit
 @MainActor
 final class PullRequestReview {
 	/// The list in the sidebar, while one is there.
-	var pane: () -> PullRequestsPane? = { nil }
+	///
+	/// Owned here rather than by the sidebar, which is the shape the file-size
+	/// check argues for: the pane's six closures all end up back in this object,
+	/// so having the sidebar hold it meant six lines there and six answers here.
+	private(set) var pane: PullRequestsPane?
+
+	/// Where git is run, which is the repository a pull request belongs to.
+	/// Builds the list, wired to everything a row can ask for.
+	func makePane() -> PullRequestsPane? {
+		guard let root = repositoryRoot() else { return nil }
+		let made = PullRequestsPane(root: root)
+		made.onOpen = { [weak self] request in self?.open(request) }
+		made.onCheckOut = { [weak self] request in
+			self?.checkOut(request.number, opening: false)
+		}
+		made.onFinishCheckout = { [weak self] request in self?.finish(with: request.number) }
+		// The one route that *does* point the window at the checkout, kept where
+		// somebody asking for it would look and out of the page, which loses
+		// everything when the project changes under it.
+		made.onOpenCheckout = { [weak self] request in
+			self?.pointWindowAtCheckout(of: request.number)
+		}
+		made.isCheckedOut = { [weak self] request in
+			self?.isCheckedOut(request.number) ?? false
+		}
+		pane = made
+		return made
+	}
+
+	/// The sidebar took the list down.
+	func paneWentAway() { pane = nil }
 	/// Put the list on screen, for a driven run that has not opened it.
 	var showList: () -> Void = {}
 	/// What the rail says, which a driven run asks for to prove the way in.
@@ -318,8 +348,8 @@ final class PullRequestReview {
 	/// the repository has no pull requests — which is exactly the sentence this
 	/// whole capability exists not to say by accident.
 	func driveForTesting(_ steps: String, waiting: Int = 20) {
-		if pane() == nil { showList() }
-		guard let pane = pane() else {
+		if pane == nil { showList() }
+		guard let pane else {
 			print("PULL-REQUESTS: no pane")
 			return
 		}
@@ -365,7 +395,7 @@ final class PullRequestReview {
 				print("PULL-REQUESTS: open #\(number) \(opened ? "opened" : "no such row")")
 			case "rail": print("PULL-REQUESTS rail: \(rail())")
 			case "row-menu":
-				guard let pane = self.pane() else { break }
+				guard let pane = self.pane else { break }
 				print("PULL-REQUESTS menu:\n" + pane.menuForTesting(row: Int(argument) ?? 0))
 			case "checkout":
 				checkOut(Int(argument) ?? lastOpened ?? 0, opening: false) {

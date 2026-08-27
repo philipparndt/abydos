@@ -119,7 +119,7 @@ extension MainWindowController {
 		toolStrip.onToggleScratches = { [weak self] in self?.sidebar.showSidebarTool(.scratches) }
 		toolStrip.onToggleHistory = { [weak self] in self?.sidebar.showSidebarTool(.history) }
 		toolStrip.onTogglePullRequests = { [weak self] in self?.sidebar.showSidebarTool(.pullRequests) }
-		sidebar.rememberSession = { [weak self] in self?.rememberOpenEditors() }
+		wireReviewing()
 		toolStrip.onToggleBacklog = { [weak self] in self?.showBacklog(nil) }
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(toastPosted(_:)), name: .abydosToast, object: nil
@@ -687,6 +687,33 @@ extension MainWindowController {
 	@objc func toggleHistoryView(_ sender: Any?) { sidebar.showSidebarTool(.history) }
 
 	@objc func togglePullRequestsView(_ sender: Any?) { sidebar.showSidebarTool(.pullRequests) }
+
+	/// Tells the review object the six things it cannot work out for itself.
+	///
+	/// **Wired from the window rather than from the sidebar**, which is where
+	/// this began: every one of these is about the editor area or the project,
+	/// and both belong to the window. The sidebar was only in the middle because
+	/// the list has a button on the rail.
+	private func wireReviewing() {
+		let reviewing = sidebar.pullRequests
+		reviewing.showList = { [weak self] in self?.sidebar.showSidebarTool(.pullRequests) }
+		reviewing.rail = { [weak self] in self?.sidebar.railReportForTesting() ?? "" }
+		reviewing.repositoryRoot = { [weak self] in
+			self?.gitCommandRoot ?? self?.project?.root
+		}
+		reviewing.existingPage = { [weak self] identifier in
+			self?.editor.activeGroup?.page(identifier: identifier)
+		}
+		reviewing.rememberSession = { [weak self] in self?.rememberOpenEditors() }
+		reviewing.openCheckout = { [weak self] path in self?.switchProject(to: path) }
+		reviewing.notify = { title, body in Toast.post(title, detail: body) }
+		reviewing.openPage = { [weak self] page, title, identifier, symbol in
+			guard let self, let group = self.editor.activeGroup else { return }
+			self.leaveTerminalFullScreen()
+			group.openPage(page, title: title, identifier: identifier, symbol: symbol)
+			self.giveTheEditorTheWindow()
+		}
+	}
 
 	/// The two questions every diff in this app answers, flipped from the View
 	/// menu. Each `DiffView` hears about it through the settings notification.
