@@ -1368,8 +1368,17 @@ final class TerminalView: NSView, NSTextInputClient {
 			let endX = (Self.horizontalInset + CGFloat(end) * cellWidth).rounded()
 			let resolved = attributes.resolved
 
-			let background = TerminalPalette.color(for: resolved.background, isForeground: false, bold: false)
-			if resolved.background != .default {
+			// **`isForeground` follows the swap, and that is the whole of the
+			// inverse fix.** `resolved` puts the foreground in the background
+			// slot for an inverse cell, so a `.default` sitting there means the
+			// default *foreground* — asking for it as a background gave back the
+			// background colour, which is what made `\u{1B}[7m` with no colours
+			// set draw exactly like plain text. Prompts, `less` and `man` all
+			// ask for it that way.
+			let background = TerminalPalette.color(
+				for: resolved.background, isForeground: attributes.inverse, bold: false
+			)
+			if resolved.background != .default || attributes.inverse {
 				background.setFill()
 				NSRect(x: x, y: y.rounded(), width: endX - x, height: cellHeight).fill()
 			}
