@@ -25,7 +25,7 @@ public enum ClaudeHookCommands {
 			case "install":
 				let updated = ClaudeHookSetup.adding(command: hookCommand, to: settings)
 				let backup = try ClaudeHookSetup.write(updated, to: url)
-				print("Wired ideai into \(url.path)")
+				print("Wired Abydos into \(url.path)")
 				print("  \(hookCommand)")
 				print("  events: \(ClaudeHookSetup.events.joined(separator: ", "))")
 				if let backup { print("  the file as it was: \(backup.lastPathComponent)") }
@@ -34,14 +34,14 @@ public enum ClaudeHookCommands {
 			case "remove":
 				let updated = ClaudeHookSetup.removing(from: settings)
 				let backup = try ClaudeHookSetup.write(updated, to: url)
-				print("Removed ideai\u{2019}s hooks from \(url.path)")
+				print("Removed Abydos\u{2019}s hooks from \(url.path)")
 				if let backup { print("  the file as it was: \(backup.lastPathComponent)") }
 
 			default:
 				let installed = ClaudeHookSetup.isInstalled(command: hookCommand, in: settings)
 				print(installed
-					? "ideai\u{2019}s Claude hooks are installed in \(url.path)"
-					: "ideai\u{2019}s Claude hooks are not installed \u{2014} run: abydos-hook install")
+					? "Abydos\u{2019}s Claude hooks are installed in \(url.path)"
+					: "Abydos\u{2019}s Claude hooks are not installed \u{2014} run: abydos-hook install")
 				print("  this binary: \(hookCommand)")
 			}
 		} catch {

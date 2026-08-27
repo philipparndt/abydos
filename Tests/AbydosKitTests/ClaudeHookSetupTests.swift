@@ -4,7 +4,17 @@ import Testing
 
 /// Editing somebody's own `~/.claude/settings.json`.
 struct ClaudeHookSetupTests {
-	private let command = "/Applications/ideai.app/Contents/MacOS/ideai claude-hook"
+	/// **The command as it actually is today.** These tests were written when the
+	/// app was called ideai and the hook was `ideai claude-hook`, and they went
+	/// on asserting against that string after the binary became `abydos-hook` —
+	/// so `isOurs`, which looked for `ideai` *and* `claude-hook`, was false for
+	/// every entry the app now writes and no test noticed. Remove did nothing
+	/// and a moved app left its old entry beside the new one.
+	private let command = "/Applications/Abydos.app/Contents/MacOS/abydos-hook"
+
+	/// What the entry looked like before the project was renamed, which an
+	/// upgrade still has to recognise and replace.
+	private let historical = "/Applications/ideai.app/Contents/MacOS/ideai claude-hook"
 
 	private func commands(_ settings: [String: Any], _ event: String) -> [String] {
 		let hooks = settings["hooks"] as? [String: Any] ?? [:]
@@ -48,10 +58,29 @@ struct ClaudeHookSetupTests {
 	}
 
 	@Test func anAppThatMovedReplacesItsOldEntry() {
-		let old = "/Users/x/dev/ideai/.build/debug/ideai claude-hook"
+		let old = "/Users/x/dev/abydos/.build/debug/abydos-hook"
 		var settings = ClaudeHookSetup.adding(command: old, to: [:])
 		settings = ClaudeHookSetup.adding(command: command, to: settings)
 		#expect(commands(settings, "Stop") == [command])
+	}
+
+	/// The upgrade path: a settings file written before the rename holds an
+	/// `ideai claude-hook` entry, and installing over it must replace that
+	/// rather than leave both — two entries announce everything twice.
+	@Test func theEntryFromBeforeTheRenameIsReplaced() {
+		var settings = ClaudeHookSetup.adding(command: historical, to: [:])
+		settings = ClaudeHookSetup.adding(command: command, to: settings)
+		#expect(commands(settings, "Stop") == [command])
+	}
+
+	/// And it can be taken out, which is what the switch in Settings needs: the
+	/// test for ours looked for a name the binary no longer has, so `remove`
+	/// removed nothing at all.
+	@Test func removingWorksForTheNameTheBinaryActuallyHas() {
+		let settings = ClaudeHookSetup.adding(command: command, to: [:])
+		let after = ClaudeHookSetup.removing(from: settings)
+		#expect(after["hooks"] == nil, "every entry was ours, so the key goes too")
+		#expect(!ClaudeHookSetup.isInstalled(command: command, in: after))
 	}
 
 	/// This replaces cmanager, and leaving both would set the same tmux option

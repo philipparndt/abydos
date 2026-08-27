@@ -768,8 +768,54 @@ final class SettingsPaneController: NSViewController {
 		]
 	}
 
+	/// Where the hook binary is, which is the string that goes in the settings.
+	///
+	/// Beside this app's own executable, because that is where the bundle puts
+	/// it — and by its real path, because Claude Code runs hooks through `sh -c`
+	/// with a minimal environment where a bare name resolves to nothing.
+	static var hookCommand: String {
+		let beside = Bundle.main.executableURL?
+			.deletingLastPathComponent()
+			.appendingPathComponent("abydos-hook")
+		return (beside ?? URL(fileURLWithPath: "abydos-hook")).resolvingSymlinksInPath().path
+	}
+
 	static func agentRows() -> [Row] {
 		[
+			// **Read from the file, not from a preference.** These entries live
+			// in `~/.claude/settings.json`, which this app does not own: another
+			// tool's uninstaller can take them out — cmanager's took the whole
+			// `hooks` block with it — and there was then nothing on this page
+			// that said so and no way to put them back without a terminal. A
+			// switch that reads the file cannot be wrong about it.
+			.toggle(
+				title: "Let Claude Code say what it is doing",
+				help: "Registers seven hooks in ~/.claude/settings.json, so a session's progress "
+					+ "shows on its terminal tab and in the tmux status line. Only the entries "
+					+ "that are ours are touched, and the file is backed up first. Sessions "
+					+ "already running pick it up when they are restarted.",
+				get: { ClaudeHookSetup.isRegisteredForAnyCopy() },
+				set: { wanted in
+					do {
+						let backup = try ClaudeHookSetup.setRegistered(wanted, command: hookCommand)
+						Toast.post(
+							wanted ? "Claude Code will report its progress" : "Claude hooks removed",
+							detail: backup.map { "The file as it was: \($0.lastPathComponent)" }
+								?? "~/.claude/settings.json",
+							kind: .information
+						)
+					} catch {
+						// The file belongs to somebody else and can be
+						// unreadable, unwritable or not JSON at all; saying so
+						// beats a switch that slides back with no explanation.
+						Toast.post(
+							"Could not change ~/.claude/settings.json",
+							detail: error.localizedDescription,
+							kind: .warning
+						)
+					}
+				}
+			),
 			.choice(
 				title: "What an agent may do",
 				help: "A review or a fix runs Claude Code. Accepting edits keeps it from stopping "

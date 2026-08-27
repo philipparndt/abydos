@@ -12,7 +12,7 @@
 5278 Sources/AbydosApp/Panel/BottomPanel.swift
 1465 Sources/AbydosApp/Panel/DebugPane.swift
 1079 Sources/AbydosApp/Panel/ResultChecklist.swift
-1005 Sources/AbydosApp/Settings/SettingsWindowController.swift
+1051 Sources/AbydosApp/Settings/SettingsWindowController.swift
 3661 Sources/AbydosApp/Terminal/TerminalView.swift
 1921 Sources/AbydosApp/Titlebar/ProjectSwitcherPopover.swift
 1555 Sources/AbydosKit/Debug/DebugSession.swift

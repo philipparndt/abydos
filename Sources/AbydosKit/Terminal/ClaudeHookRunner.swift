@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Claude Code announces its own events by running a command and handing it the
 /// event as JSON on stdin. This is that command: it marks the tmux window the
-/// session lives in, and tells any running ideai what happened so it can say so
+/// session lives in, and tells any running Abydos what happened so it can say so
 /// in the corner. It must be quick and it must never fail loudly — a hook that
 /// takes a second, or exits non-zero, is a hook that makes Claude worse to use.
 ///
