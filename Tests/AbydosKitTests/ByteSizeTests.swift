@@ -52,6 +52,58 @@ struct ByteSizeTests {
 		#expect(ByteSize.ofFile(at: URL(fileURLWithPath: "/tmp/nothing-here-\(UUID())")) == nil)
 	}
 
+	/// A directory is `du`, because a walk in Swift of a build directory is the
+	/// thing this is used in front of — a dialog asking whether to delete a
+	/// worktree, which wants to say what deleting it would free.
+	@Test func aDirectoryIsMeasuredWhole() async throws {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("abydos-du-\(UUID().uuidString)")
+		let nested = root.appendingPathComponent("a/b")
+		try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+		try Data(repeating: 0x41, count: 40_000).write(to: nested.appendingPathComponent("big"))
+
+		let measured = try #require(await ByteSize.ofDirectory(at: root))
+		// `du` counts blocks, so the answer is the file rounded up plus the
+		// directories holding it — more than the file and not much more.
+		#expect(measured >= 40_000, "\(measured)")
+		#expect(measured < 200_000, "\(measured)")
+	}
+
+	@Test func aDirectoryThatIsNotThereMeasuresNothing() async {
+		let missing = URL(fileURLWithPath: "/tmp/abydos-not-here-\(UUID())")
+		#expect(await ByteSize.ofDirectory(at: missing) == nil)
+	}
+
+	/// **The deadline reaches the process, not just the task.** Cancelling a
+	/// Swift task does not stop a `Process` — `waitUntilExit` waits either way
+	/// — so a first version of this held the dialog open for as long as `du`
+	/// felt like walking. Nothing measures the whole disk in a millisecond, so
+	/// this comes back empty-handed, which is the contract: a sentence loses a
+	/// clause and nothing else changes.
+	@Test func aMeasurementThatWouldTakeTooLongIsGivenUpOn() async {
+		let started = Date()
+		let measured = await ByteSize.ofDirectory(
+			at: URL(fileURLWithPath: "/"), within: .milliseconds(50)
+		)
+		// The answer is the claim, and it holds under any load: nothing
+		// measures the whole disk in a millisecond, so it comes back
+		// empty-handed and the sentence loses a clause.
+		#expect(measured == nil)
+
+		// **The clock is a separate claim, and it needs the load beside it.**
+		// This asserted `< 5 s` flatly and went red at 6.3 s under load 28 —
+		// which was not a walk of the disk but a detached task waiting for a
+		// core on a machine running the whole suite. That is the failure mode
+		// `Stopwatch` exists for.
+		let took = Date().timeIntervalSince(started)
+		guard Stopwatch.maySay("PERF du", "giving up on a measurement") else {
+			print("PERF du: gave up after \(Int(took * 1000)) ms. \(MachineLoad.said)")
+			return
+		}
+		#expect(took < 2, "gave up after \(Int(took * 1000)) ms. \(MachineLoad.said)")
+	}
+
 	@Test func aFileThatIsThereIsMeasured() throws {
 		let url = URL(fileURLWithPath: NSTemporaryDirectory())
 			.appendingPathComponent("abydos-bytesize-\(UUID().uuidString)")

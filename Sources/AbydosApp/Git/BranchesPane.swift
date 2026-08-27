@@ -134,6 +134,8 @@ final class BranchesPane: NSView {
 	private var tableView: BranchesOutlineView!
 	/// Where this branch stands against its remote, for what the counter says.
 	private var trafficState: GitPush.State?
+	/// The delete whose sheet is up, held so its callbacks outlive the press.
+	private var openDeletion: BranchDeletion?
 	/// Where the head is when it is not on a branch, and what git has stopped
 	/// in the middle of — nil when there is nothing unusual to say. Drawn on
 	/// the repository row and as a row of its own at the top of Local.
@@ -1364,20 +1366,59 @@ final class BranchesPane: NSView {
 	func deleteWordingForTesting() async -> String {
 		let branches = deletableBranches
 		guard !branches.isEmpty else { return "nothing deletable is selected" }
-		let target = currentBranchName ?? "HEAD"
-		var merged: [String] = []
-		var carrying: [String] = []
-		for branch in branches {
-			if await GitBranches.isMerged(branch.name, into: target, in: root) {
-				merged.append(branch.name)
-			} else {
-				carrying.append(branch.name)
+		return await deletion().wordingForTesting(
+			about: branches, target: currentBranchName ?? "HEAD"
+		)
+	}
+
+	/// Opens the real dialog, for a report of what is on it.
+	func askAboutDeletingForTesting() {
+		// Held for as long as the sheet is: the object owns the dialog's
+		// callbacks, and one let go of while its sheet is up takes them with
+		// it.
+		let made = deletion()
+		openDeletion = made
+		made.ask(about: deletableBranches, target: currentBranchName ?? "HEAD")
+	}
+
+	/// What is on the sheet that is up, with the frames it was laid out at.
+	///
+	/// A screenshot cannot see it — `--screenshot` captures the window and a
+	/// sheet is a window of its own — and the frame is the thing worth
+	/// checking: `NSAlert` lays its accessory out from the frame it is given
+	/// rather than the view's intrinsic size, so a checkbox at zero by zero is
+	/// a control that is there and cannot be seen.
+	func deleteSheetForTesting() -> String {
+		guard let sheet = window?.attachedSheet else { return "SHEET none" }
+		var lines: [String] = []
+		func walk(_ view: NSView) {
+			if let button = view as? NSButton, !button.title.isEmpty {
+				let kind = button.frame.size == .zero ? "ZERO-SIZED " : ""
+				lines.append("  \(kind)\(button.title)"
+					+ " [\(button.isEnabled ? "on" : "off")"
+					+ "\(button.hasDestructiveAction ? " destructive" : "")"
+					+ "\(button.state == .on ? " ticked" : "")"
+					+ " \(Int(button.frame.width))×\(Int(button.frame.height))]")
 			}
+			if let text = view as? NSTextField, !text.stringValue.isEmpty, !(view is NSButton) {
+				lines.append("  “\(text.stringValue.replacingOccurrences(of: "\n", with: " / "))”")
+			}
+			view.subviews.forEach(walk)
 		}
-		return "target=\(target) merged=[\(merged.joined(separator: " "))] "
-			+ "carrying=[\(carrying.joined(separator: " "))] "
-			+ "button=\(carrying.isEmpty ? "Delete" : "Delete Anyway") "
-			+ "destructive=\(!carrying.isEmpty)"
+		sheet.contentView.map(walk)
+		return "SHEET:\n" + lines.joined(separator: "\n")
+	}
+
+	/// Does the delete the dialog would do, with the checkbox as given — the
+	/// half a driven run cannot reach, because the dialog itself is AppKit's.
+	func deleteForTesting(removingWorktrees: Bool) async {
+		let branches = deletableBranches
+		guard !branches.isEmpty else { return }
+		await deletion().deleteForTesting(
+			about: branches,
+			target: currentBranchName ?? "HEAD",
+			removingWorktrees: removingWorktrees
+		)
 	}
 
 	/// What *Copy Name* would put on the pasteboard — **without putting it
@@ -2133,107 +2174,19 @@ final class BranchesPane: NSView {
 	}
 
 	@objc private func deleteBranch() {
-		let branches = deletableBranches
-		guard !branches.isEmpty else { return }
-
-		// **Asked before the question is put, because the answer is the
-		// question.** "Three branches, all merged" and "three branches, one
-		// carrying work nobody else has" are different things to be asked, and a
-		// dialog saying the same sentence either way teaches somebody to press
-		// Delete without reading it.
-		Task { @MainActor in
-			let target = self.currentBranchName ?? "HEAD"
-			var merged: [GitBranch] = []
-			var carrying: [GitBranch] = []
-			for branch in branches {
-				if await GitBranches.isMerged(branch.name, into: target, in: self.root) {
-					merged.append(branch)
-				} else {
-					carrying.append(branch)
-				}
-			}
-			self.askAboutDeleting(merged: merged, carrying: carrying, target: target)
-		}
+		deletion().ask(about: deletableBranches, target: currentBranchName ?? "HEAD")
 	}
 
-	/// The dialog, written from what was found rather than from what was asked.
-	private func askAboutDeleting(merged: [GitBranch], carrying: [GitBranch], target: String) {
-		let all = merged + carrying
-		let alert = NSAlert()
-		alert.messageText = all.count == 1
-			? "Delete branch “\(all[0].name)”?"
-			: "Delete \(all.count) branches?"
-
-		func list(_ branches: [GitBranch]) -> String {
-			branches.map { "  • \($0.name)" }.joined(separator: "\n")
+	/// One `BranchDeletion` per press, told what this pane knows: where the
+	/// repository is, what checkouts it has, and who to tell afterwards.
+	private func deletion() -> BranchDeletion {
+		let made = BranchDeletion(root: root, worktrees: worktrees, window: window)
+		made.onFinished = { [weak self] in
+			self?.refresh()
+			self?.onRepositoryChanged?()
 		}
-
-		var said: [String] = []
-		if !merged.isEmpty {
-			// The harmless case, said plainly: every commit on these is already
-			// on the branch being stood on, so the ref is the only thing going.
-			said.append(all.count == 1
-				? "Every commit on it is already on \(target), so nothing would be lost."
-				: "Already on \(target) — nothing would be lost:\n\(list(merged))")
-		}
-		if !carrying.isEmpty {
-			said.append(all.count == 1
-				? "It has commits that are not on \(target). They would be lost."
-				: "Not on \(target) — these would lose commits:\n\(list(carrying))")
-		}
-		alert.informativeText = said.joined(separator: "\n\n")
-
-		// The verb says which kind of delete this is, so it is not the same
-		// press for both.
-		alert.addButton(withTitle: carrying.isEmpty ? "Delete" : "Delete Anyway")
-		alert.addButton(withTitle: "Cancel")
-		// Destructive only where something would actually be lost. A merged
-		// branch is a name, and marking that red is the boy who cried wolf.
-		alert.buttons.first?.hasDestructiveAction = !carrying.isEmpty
-
-		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-			guard response == .alertFirstButtonReturn, let self else { return }
-			self.delete(merged: merged, carrying: carrying)
-		}
-		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
-	}
-
-	/// Deletes them, and says what happened once rather than per branch.
-	///
-	/// `-d` for the merged ones and `-D` only for those that carry work, so a
-	/// wrong ancestry answer is caught by git rather than forced past it. One at
-	/// a time, because `git branch -d` takes the repository's lock and a dozen
-	/// at once would be a dozen ways to fail.
-	private func delete(merged: [GitBranch], carrying: [GitBranch]) {
-		let forced = Set(carrying.map(\.name))
-		Task { @MainActor in
-			var failures: [String] = []
-			for branch in merged + carrying {
-				let result = await GitBranches.delete(
-					branch.name, force: forced.contains(branch.name), in: self.root
-				)
-				if result.exitCode != 0 {
-					let said = result.stderr.isEmpty ? result.stdout : result.stderr
-					failures.append(
-						"\(branch.name): \(said.trimmingCharacters(in: .whitespacesAndNewlines))"
-					)
-				}
-			}
-			let count = merged.count + carrying.count
-			if failures.isEmpty {
-				Toast.post(
-					count == 1
-						? "Deleted \((merged + carrying)[0].name)"
-						: "Deleted \(count) branches",
-					detail: nil,
-					kind: .information
-				)
-			} else {
-				self.presentFailure(failures.joined(separator: "\n"))
-			}
-			self.refresh()
-			self.onRepositoryChanged?()
-		}
+		made.onFailure = { [weak self] said in self?.presentFailure(said) }
+		return made
 	}
 
 	/// Copies what the selected branches are called, one a line.

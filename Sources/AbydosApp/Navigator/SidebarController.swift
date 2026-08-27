@@ -351,6 +351,16 @@ final class SidebarController: NSObject {
 					print("BRANCHES delete-wording: \(await pane.deleteWordingForTesting())")
 					fflush(stdout)
 				}
+			// The delete itself, with the dialog's checkbox as the argument —
+			// `delete:worktrees` ticks it, `delete` leaves it. The dialog is
+			// AppKit's and a driven run cannot answer it.
+			case "delete":
+				Task { @MainActor in
+					await pane.deleteForTesting(removingWorktrees: argument == "worktrees")
+				}
+			// The dialog itself, on screen, for a screenshot of it.
+			case "ask-delete": pane.askAboutDeletingForTesting()
+			case "sheet":      print(pane.deleteSheetForTesting())
 			case "copy-name":
 				print("BRANCHES copy-name would copy:\n"
 					+ pane.copyNameTextForTesting().split(separator: "\n")
