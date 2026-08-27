@@ -300,7 +300,14 @@ public actor GitRepository {
 			// `-z` so paths arrive literally: without it anything non-ASCII comes
 			// back octal-escaped inside quotes, and the tree would then key its
 			// status by a name no row actually has.
-			["status", "--porcelain=v1", "-unormal", "--no-renames", "-z"],
+			//
+			// `--ignore-submodules=dirty` comes with it, from the one place that
+			// spells this command: in a superproject the default recursion is
+			// 1.61 s over 200 submodules against 0.09 s without it, on a call
+			// that runs per filesystem event. `GitWorkingCopy.statusArguments`
+			// has the measurements and the reason it is `dirty` rather than
+			// `all`.
+			GitWorkingCopy.statusArguments,
 			in: root
 		)
 

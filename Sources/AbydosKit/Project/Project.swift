@@ -83,6 +83,15 @@ public final class Project {
 			await repo?.refresh()
 			self.git = repo
 			self.gitRoot = repo?.root
+			// Two git calls, 0.03 s over forty submodules and 0.01 s over two
+			// hundred, so it is read here rather than on demand: everything that
+			// wants it wants it while building a view, and a repository with no
+			// submodules pays for an empty `ls-files --stage` filter.
+			if let repo {
+				self.estate = await GitEstate.read(from: repo.root)
+			} else {
+				self.estate = GitEstate(root: scope ?? root)
+			}
 		}
 		loading = task
 		await task.value
@@ -91,6 +100,27 @@ public final class Project {
 
 	/// The load in flight, so a second caller joins it instead of starting one.
 	@MainActor private var loading: Task<Void, Never>?
+
+	/// The repository *and the submodules it holds*, for the verbs that have to
+	/// know which of them owns a path.
+	///
+	/// **`git` above is still the superproject, and deliberately.** Every caller
+	/// that has ever asked for `Project.git` meant "the repository this project
+	/// is", and in a checkout of two or three hundred microservices that is
+	/// still a true and useful answer — it is the repository the branch pill
+	/// names, the one the refs tree is rooted at, and the one a fetch of the
+	/// whole estate starts from. What it is *not* is the repository that stages
+	/// `svc-47/src/Main.java`, and this is what answers that.
+	///
+	/// So the two live side by side rather than one replacing the other. A
+	/// rename that made every existing call site compile against the estate
+	/// would have moved them all without anybody deciding that each was right,
+	/// and the ones that are wrong are wrong silently — the compiler cannot tell
+	/// "the repository" from "the repository that owns this path".
+	///
+	/// Empty until the first `loadGit`, and empty forever for a project with no
+	/// submodules, which is the same code path and not a special case.
+	@MainActor public private(set) var estate = GitEstate(root: URL(fileURLWithPath: "/"))
 
 	/// Every file in the project, by path, for finding one by name.
 	///
