@@ -612,7 +612,15 @@ final class BranchesPane: NSView {
 		// to the window. Remembered by key rather than by row, because a
 		// rebuild moves every row.
 		let hadFocus = window?.firstResponder === tableView
-		let selectedKey = selectedNode?.key
+		// **Every selected row, not the first.** This kept one key, so a rebuild
+		// — which happens on every filesystem event — quietly cut a selection of
+		// five branches down to one. Nobody notices until a menu that said
+		// "Delete 5 Branches…" says "Delete…" a moment later, which is the
+		// shrinking-selection fault `TreeSelection` exists for elsewhere in this
+		// app.
+		let selectedKeys = tableView.selectedRowIndexes.compactMap {
+			(tableView.item(atRow: $0) as? GitNode)?.key
+		}
 
 		// **The flag covers the selection too, and that is the whole of it.**
 		// Putting the selection back is a selection change as far as AppKit is
@@ -624,9 +632,13 @@ final class BranchesPane: NSView {
 		tableView.reloadData()
 		restoreExpansion(roots)
 
-		if let selectedKey, let again = node(forKey: selectedKey) {
+		let rows = selectedKeys.compactMap { key -> Int? in
+			guard let again = node(forKey: key) else { return nil }
 			let row = tableView.row(forItem: again)
-			if row >= 0 { tableView.selectRowIndexes([row], byExtendingSelection: false) }
+			return row >= 0 ? row : nil
+		}
+		if !rows.isEmpty {
+			tableView.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
 		}
 		isRestoring = false
 
@@ -1174,6 +1186,31 @@ final class BranchesPane: NSView {
 		}
 		tableView.selectRowIndexes(rows, byExtendingSelection: false)
 		return "selected \(rows.count)" + (missing.isEmpty ? "" : ", no row for \(missing.joined(separator: " "))")
+	}
+
+	/// What the delete dialog would say about the selection, **without deleting
+	/// anything**.
+	///
+	/// The sentence *is* the feature here: "nothing would be lost" and "these
+	/// would lose commits" are the two things somebody is being asked, and a
+	/// check that only counted branches could not tell them apart.
+	func deleteWordingForTesting() async -> String {
+		let branches = deletableBranches
+		guard !branches.isEmpty else { return "nothing deletable is selected" }
+		let target = currentBranchName ?? "HEAD"
+		var merged: [String] = []
+		var carrying: [String] = []
+		for branch in branches {
+			if await GitBranches.isMerged(branch.name, into: target, in: root) {
+				merged.append(branch.name)
+			} else {
+				carrying.append(branch.name)
+			}
+		}
+		return "target=\(target) merged=[\(merged.joined(separator: " "))] "
+			+ "carrying=[\(carrying.joined(separator: " "))] "
+			+ "button=\(carrying.isEmpty ? "Delete" : "Delete Anyway") "
+			+ "destructive=\(!carrying.isEmpty)"
 	}
 
 	/// What *Copy Name* would put on the pasteboard — **without putting it
@@ -1906,21 +1943,118 @@ final class BranchesPane: NSView {
 		run { await GitBranches.merge(branch.checkoutName, in: self.root) }
 	}
 
-	@objc private func deleteBranch() {
-		guard let branch = selectedBranch, case .local = branch.kind, !branch.isCurrent else { return }
+	/// The local branches a delete would act on: never the one checked out, and
+	/// never a remote branch or a tag.
+	///
+	/// Deleting a remote branch is a push, which `CLAUDE.md` forbids outright
+	/// except when somebody asks for it by name — so it is not something a
+	/// multiple selection should be able to do by accident.
+	private var deletableBranches: [GitBranch] {
+		selectedBranches.filter { $0.kind == .local && !$0.isCurrent }
+	}
 
+	@objc private func deleteBranch() {
+		let branches = deletableBranches
+		guard !branches.isEmpty else { return }
+
+		// **Asked before the question is put, because the answer is the
+		// question.** "Three branches, all merged" and "three branches, one
+		// carrying work nobody else has" are different things to be asked, and a
+		// dialog saying the same sentence either way teaches somebody to press
+		// Delete without reading it.
+		Task { @MainActor in
+			let target = self.currentBranchName ?? "HEAD"
+			var merged: [GitBranch] = []
+			var carrying: [GitBranch] = []
+			for branch in branches {
+				if await GitBranches.isMerged(branch.name, into: target, in: self.root) {
+					merged.append(branch)
+				} else {
+					carrying.append(branch)
+				}
+			}
+			self.askAboutDeleting(merged: merged, carrying: carrying, target: target)
+		}
+	}
+
+	/// The dialog, written from what was found rather than from what was asked.
+	private func askAboutDeleting(merged: [GitBranch], carrying: [GitBranch], target: String) {
+		let all = merged + carrying
 		let alert = NSAlert()
-		alert.messageText = "Delete branch “\(branch.name)”?"
-		alert.informativeText = "Unmerged commits on it would be lost."
-		alert.addButton(withTitle: "Delete")
+		alert.messageText = all.count == 1
+			? "Delete branch “\(all[0].name)”?"
+			: "Delete \(all.count) branches?"
+
+		func list(_ branches: [GitBranch]) -> String {
+			branches.map { "  • \($0.name)" }.joined(separator: "\n")
+		}
+
+		var said: [String] = []
+		if !merged.isEmpty {
+			// The harmless case, said plainly: every commit on these is already
+			// on the branch being stood on, so the ref is the only thing going.
+			said.append(all.count == 1
+				? "Every commit on it is already on \(target), so nothing would be lost."
+				: "Already on \(target) — nothing would be lost:\n\(list(merged))")
+		}
+		if !carrying.isEmpty {
+			said.append(all.count == 1
+				? "It has commits that are not on \(target). They would be lost."
+				: "Not on \(target) — these would lose commits:\n\(list(carrying))")
+		}
+		alert.informativeText = said.joined(separator: "\n\n")
+
+		// The verb says which kind of delete this is, so it is not the same
+		// press for both.
+		alert.addButton(withTitle: carrying.isEmpty ? "Delete" : "Delete Anyway")
 		alert.addButton(withTitle: "Cancel")
-		alert.buttons.first?.hasDestructiveAction = true
+		// Destructive only where something would actually be lost. A merged
+		// branch is a name, and marking that red is the boy who cried wolf.
+		alert.buttons.first?.hasDestructiveAction = !carrying.isEmpty
 
 		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
 			guard response == .alertFirstButtonReturn, let self else { return }
-			self.run { await GitBranches.delete(branch.name, force: false, in: self.root) }
+			self.delete(merged: merged, carrying: carrying)
 		}
 		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
+	}
+
+	/// Deletes them, and says what happened once rather than per branch.
+	///
+	/// `-d` for the merged ones and `-D` only for those that carry work, so a
+	/// wrong ancestry answer is caught by git rather than forced past it. One at
+	/// a time, because `git branch -d` takes the repository's lock and a dozen
+	/// at once would be a dozen ways to fail.
+	private func delete(merged: [GitBranch], carrying: [GitBranch]) {
+		let forced = Set(carrying.map(\.name))
+		Task { @MainActor in
+			var failures: [String] = []
+			for branch in merged + carrying {
+				let result = await GitBranches.delete(
+					branch.name, force: forced.contains(branch.name), in: self.root
+				)
+				if result.exitCode != 0 {
+					let said = result.stderr.isEmpty ? result.stdout : result.stderr
+					failures.append(
+						"\(branch.name): \(said.trimmingCharacters(in: .whitespacesAndNewlines))"
+					)
+				}
+			}
+			let count = merged.count + carrying.count
+			if failures.isEmpty {
+				Toast.post(
+					count == 1
+						? "Deleted \((merged + carrying)[0].name)"
+						: "Deleted \(count) branches",
+					detail: nil,
+					kind: .information
+				)
+			} else {
+				self.presentFailure(failures.joined(separator: "\n"))
+			}
+			self.refresh()
+			self.onRepositoryChanged?()
+		}
 	}
 
 	/// Copies what the selected branches are called, one a line.
@@ -2307,7 +2441,14 @@ extension BranchesPane: NSMenuDelegate {
 		menu.addItem(item(remoteMenuTitle, #selector(setRemote)))
 
 		if case .local = branch.kind {
-			menu.addItem(item("Delete…", #selector(deleteBranch), enabled: !branch.isCurrent))
+			// How many, for the same reason Copy Name says it: a menu opened over
+			// a selection of three must not read as being about one row.
+			let deleting = deletableBranches.count
+			menu.addItem(item(
+				deleting > 1 ? "Delete \(deleting) Branches…" : "Delete…",
+				#selector(deleteBranch),
+				enabled: deleting > 0
+			))
 		}
 		if case .tag = branch.kind {
 			menu.addItem(.separator())

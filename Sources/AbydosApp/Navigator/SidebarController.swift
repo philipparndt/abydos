@@ -332,6 +332,11 @@ final class SidebarController: NSObject {
 					+ pane.selectBranchesForTesting(argument.split(separator: "+").map(String.init)))
 			case "menu":
 				print("BRANCHES menu: \(pane.branchMenuTitlesForTesting().joined(separator: " | "))")
+			case "delete-wording":
+				Task { @MainActor in
+					print("BRANCHES delete-wording: \(await pane.deleteWordingForTesting())")
+					fflush(stdout)
+				}
 			case "copy-name":
 				print("BRANCHES copy-name would copy:\n"
 					+ pane.copyNameTextForTesting().split(separator: "\n")

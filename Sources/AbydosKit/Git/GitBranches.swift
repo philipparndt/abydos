@@ -298,6 +298,19 @@ public enum GitBranches {
 		await GitRepository.run(["branch", force ? "-D" : "-d", name], in: root)
 	}
 
+	/// Whether every commit on `branch` is already on `target`.
+	///
+	/// **`merge-base --is-ancestor`, and not `git branch -d`'s opinion.** The
+	/// house rules record why: `-d` refuses a branch that is merged into `main`
+	/// while sitting ahead of its own *stale* upstream ref — it says "not fully
+	/// merged" and means "your `origin/<branch>` is behind". Asking about
+	/// ancestry is the question that decides whether deleting loses anything.
+	public static func isMerged(_ branch: String, into target: String, in root: URL) async -> Bool {
+		await GitRepository.run(
+			["merge-base", "--is-ancestor", branch, target], in: root
+		).exitCode == 0
+	}
+
 	@discardableResult
 	public static func merge(_ name: String, in root: URL) async -> GitRepository.ProcessResult {
 		await GitRepository.run(["merge", "--no-edit", name], in: root)
