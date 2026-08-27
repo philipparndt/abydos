@@ -29,6 +29,7 @@ final class OperationBanner: NSView {
 	private let bar = NSProgressIndicator()
 	private var buttons: NSStackView!
 	private var helpers: NSStackView!
+	private var stack: NSStackView!
 
 	private let carryOnButton: NSButton
 	private let skipButton: NSButton
@@ -149,31 +150,29 @@ final class OperationBanner: NSView {
 		buttons.alignment = .leading
 		buttons.spacing = Theme.current.scaled(4)
 
-		for view in [label, bar, position, state, buttons] as [NSView] {
-			addSubview(view)
-			view.translatesAutoresizingMaskIntoConstraints = false
-		}
+		// **One stack, because hidden views must take no room.** The rows were
+		// pinned to each other, and a plain `isHidden` leaves the constraints
+		// standing: a merge — which has no `1 of n` to draw, so no bar and no
+		// position line — left a hole where they would have been and pushed the
+		// buttons out through the bottom of the strip and over the repository
+		// row. A stack view excludes what is hidden, which is the behaviour
+		// this needed all along.
+		let rows = NSStackView(views: [label, bar, position, state, buttons])
+		rows.orientation = .vertical
+		rows.alignment = .leading
+		rows.spacing = Theme.current.scaled(3)
+		rows.setHuggingPriority(.required, for: .vertical)
+		stack = rows
+
+		addSubview(rows)
+		rows.translatesAutoresizingMaskIntoConstraints = false
 		let inset = Theme.current.scaled(8)
 		NSLayoutConstraint.activate([
-			label.topAnchor.constraint(equalTo: topAnchor, constant: inset / 2),
-			label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
-
-			bar.topAnchor.constraint(equalTo: label.bottomAnchor, constant: inset / 2),
-			bar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-
-			position.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: inset / 3),
-			position.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			position.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
-
-			state.topAnchor.constraint(equalTo: position.bottomAnchor, constant: inset / 4),
-			state.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			state.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
-
-			buttons.topAnchor.constraint(equalTo: state.bottomAnchor, constant: inset / 2),
-			buttons.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			buttons.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
+			rows.topAnchor.constraint(equalTo: topAnchor, constant: inset / 2),
+			rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+			rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+			// The bar spans the strip; everything else sizes to its text.
+			bar.widthAnchor.constraint(equalTo: rows.widthAnchor),
 		])
 	}
 
@@ -259,12 +258,19 @@ final class OperationBanner: NSView {
 			: "Resolve the conflicted files first — git will not carry on over markers."
 	}
 
-	/// How tall the strip wants to be — three lines and a row of buttons, or
-	/// two lines and a row when git gives no count to draw.
+	/// How tall the strip wants to be — asked of what is in it rather than
+	/// counted in points.
+	///
+	/// **Measured, because the guess was wrong.** It was `66 or 100, plus 24
+	/// for the helpers`: three numbers standing in for what the strip is
+	/// actually showing, which is how a merge — no bar, no position line, two
+	/// rows of buttons — came out short and drew its second row over the
+	/// repository row beneath it. Nothing needs to know the line count now.
 	var wantedHeight: CGFloat {
-		var lines = Theme.current.scaled(bar.isHidden ? 66 : 100)
-		if !helpers.isHidden { lines += Theme.current.scaled(24) }
-		return lines
+		// The stack knows: it has excluded whatever is hidden and laid out the
+		// rest at the width it has been given.
+		layoutSubtreeIfNeeded()
+		return ceil(stack.fittingSize.height) + Theme.current.scaled(12)
 	}
 
 	/// What a driven run reads off the banner: the sentence, and which verbs
@@ -280,8 +286,14 @@ final class OperationBanner: NSView {
 		let counted = bar.isHidden
 			? ""
 			: " {\(bar.doubleValue)/\(Int(bar.maxValue)) \(position.stringValue)}"
+		// The two heights, because the strip getting them wrong is what a
+		// screenshot of the sidebar cannot show: a banner shorter than its
+		// content draws its buttons over the row below, and a shot of a pane
+		// with a translucent tint over nothing behind it looks wrong either
+		// way.
+		let sizes = "fits=\(Int(stack.fittingSize.height)) tall=\(Int(frame.height))"
 		return "BANNER \(isHidden ? "hidden" : "shown"): \(said)\(counted)"
-			+ " [\(offered.joined(separator: " "))]"
+			+ " [\(offered.joined(separator: " "))] \(sizes)"
 	}
 
 	func pressForTesting(_ name: String) {
