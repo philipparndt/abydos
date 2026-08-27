@@ -55,8 +55,26 @@ class ActionableRowView: NSView {
 	}
 	var onAction: (() -> Void)?
 
+	/// A second verb, to the left of the first, drawn as a glyph and never as
+	/// words.
+	///
+	/// **Glyph-only on purpose.** The width arithmetic below exists because a
+	/// row whose name was truncated to make space for a button has been made
+	/// worse by the button, and two sets of spellings competing for the same
+	/// trailing edge is that problem twice. A symbol is a fixed twenty points,
+	/// so what the row has left is still one subtraction.
+	///
+	/// One user so far: re-reading the repository, which is a verb on the
+	/// repository and had nowhere to live — this pane deliberately has no header
+	/// to put a button in, and its own comment says why.
+	var secondaryAction: RowAction? {
+		didSet { needsDisplay = true }
+	}
+	var onSecondaryAction: (() -> Void)?
+
 	private var isPointedAt = false
 	private var actionFrame: NSRect = .zero
+	private var secondaryFrame: NSRect = .zero
 
 	/// Whether the row this is in is selected, which the row view above knows.
 	var isRowSelected: Bool { (superview as? NSTableRowView)?.isSelected ?? false }
@@ -64,6 +82,11 @@ class ActionableRowView: NSView {
 	private var showsAction: Bool {
 		guard let action else { return false }
 		return action.isAlwaysShown || isPointedAt || isRowSelected
+	}
+
+	private var showsSecondary: Bool {
+		guard let secondaryAction else { return false }
+		return secondaryAction.isAlwaysShown || isPointedAt || isRowSelected
 	}
 
 	override func updateTrackingAreas() {
@@ -88,6 +111,13 @@ class ActionableRowView: NSView {
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+		// The second verb first: it sits inside the space the first one measured
+		// from, so asking in the other order would give every press to the first.
+		if showsSecondary, secondaryFrame.contains(point) {
+			firesSecondaryForTesting += 1
+			onSecondaryAction?()
+			return
+		}
 		if showsAction, actionFrame.contains(point) {
 			fireAction()
 			return
@@ -104,6 +134,7 @@ class ActionableRowView: NSView {
 	/// a dialog stops. The question the count answers is the one in doubt —
 	/// did the key reach the row — rather than what the row then did.
 	private(set) var firesForTesting = 0
+	private(set) var firesSecondaryForTesting = 0
 
 	func fireAction() {
 		guard action != nil else { return }
@@ -146,24 +177,37 @@ class ActionableRowView: NSView {
 	/// drawn to the full width and `Review 2 changes…` was then drawn on top of
 	/// it, and in a narrow pane the two were one unreadable row.
 	var actionWidth: CGFloat {
-		guard let action, showsAction else { return 0 }
-		let width = label(for: action).map { ceil($0.size().width) + padding * 2 }
-			?? Theme.current.scaled(20)
-		return width + RowMetrics.trailingInset
+		let first: CGFloat = {
+			guard let action, showsAction else { return 0 }
+			return label(for: action).map { ceil($0.size().width) + padding * 2 }
+				?? Theme.current.scaled(20)
+		}()
+		let second = showsSecondary ? secondaryWidth : 0
+		guard first > 0 || second > 0 else { return 0 }
+		return first + second + RowMetrics.trailingInset
 	}
+
+	/// A glyph and the gap before it, which is all a second verb ever takes.
+	private var secondaryWidth: CGFloat { Theme.current.scaled(24) }
 
 	/// Draws the action, at the width `actionWidth` promised.
 	func drawAction() {
 		actionFrame = .zero
+		secondaryFrame = .zero
+		drawSecondaryAction()
 		guard let action, showsAction else { return }
 
 		let colour = Theme.current.gitIgnored
 		let height = Theme.current.scaled(17)
 		let label = label(for: action)
-		let width = actionWidth - RowMetrics.trailingInset
+		let width = actionWidth - RowMetrics.trailingInset - (showsSecondary ? secondaryWidth : 0)
 
+		// To the left of the second verb when there is one, which is the whole
+		// reason `actionWidth` counts both: the first version put them at the
+		// same trailing edge and drew the glyph on top of `Push`.
 		let frame = NSRect(
-			x: bounds.maxX - RowMetrics.trailingInset - width,
+			x: bounds.maxX - RowMetrics.trailingInset - width
+				- (showsSecondary ? secondaryWidth : 0),
 			y: bounds.midY - height / 2,
 			width: width,
 			height: height
@@ -197,6 +241,41 @@ class ActionableRowView: NSView {
 		}
 
 		toolTip = action.help
+	}
+
+	/// The second verb, at the trailing edge, with the first one to its left.
+	private func drawSecondaryAction() {
+		guard let secondary = secondaryAction, showsSecondary else { return }
+		let height = Theme.current.scaled(17)
+		let frame = NSRect(
+			x: bounds.maxX - RowMetrics.trailingInset - secondaryWidth,
+			y: bounds.midY - height / 2,
+			width: secondaryWidth,
+			height: height
+		)
+		guard frame.minX > RowMetrics.textInset else { return }
+		secondaryFrame = frame
+
+		let path = NSBezierPath(
+			roundedRect: frame,
+			xRadius: Theme.current.scaled(4),
+			yRadius: Theme.current.scaled(4)
+		)
+		Theme.current.sidebarHeaderText.withAlphaComponent(isPointedAt ? 0.20 : 0.10).setFill()
+		path.fill()
+
+		guard let symbol = secondary.symbol,
+		      let icon = Theme.symbol(
+		      	symbol, size: 11 * Theme.current.scale,
+		      	color: Theme.current.gitIgnored, weight: .medium
+		      )
+		else { return }
+		icon.draw(in: NSRect(
+			x: frame.midX - icon.size.width / 2,
+			y: frame.midY - icon.size.height / 2,
+			width: icon.size.width,
+			height: icon.size.height
+		))
 	}
 
 	/// What a driven run reads: whether this row offers anything, and what.

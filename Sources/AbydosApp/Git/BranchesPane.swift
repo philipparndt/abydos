@@ -222,6 +222,20 @@ final class BranchesPane: NSView {
 		repositoryRow = RepositoryRowView()
 		repositoryRow.translatesAutoresizingMaskIntoConstraints = false
 		repositoryRow.onAction = { [weak self] in self?.trafficPressed() }
+		// **Re-reading the repository is a verb on the repository**, so it hangs
+		// off the row that draws one — this pane has no header to put a button
+		// in, and its own comment above says why it does not.
+		//
+		// It is here as well as on every filesystem event because the two are
+		// different questions: the watcher notices what happens *here*, and a
+		// fetch, a rebase or a branch deleted in another window happens
+		// somewhere else and arrives silently.
+		repositoryRow.secondaryAction = RowAction(
+			symbol: "arrow.clockwise",
+			help: "Read the repository again",
+			isAlwaysShown: true
+		)
+		repositoryRow.onSecondaryAction = { [weak self] in self?.refreshPressed() }
 		repositoryRow.onDownArrow = { [weak self] in self?.moveKeyboardIntoTree() }
 
 		tableView = BranchesOutlineView()
@@ -314,6 +328,19 @@ final class BranchesPane: NSView {
 	}
 
 	// MARK: - Data
+
+	/// The refresh verb: re-read everything this pane shows, and say that it is
+	/// happening.
+	///
+	/// The spinner is the point. `refresh` is several git calls and on a large
+	/// repository it takes long enough that a button with no feedback reads as a
+	/// button that did nothing — so somebody presses it again.
+	private func refreshPressed() {
+		activity = PaneActivityView.install(over: self, message: "Reading branches…")
+		refresh()
+		refreshConflicts()
+		refreshTraffic()
+	}
 
 	@objc func refresh() {
 		Task { @MainActor in
