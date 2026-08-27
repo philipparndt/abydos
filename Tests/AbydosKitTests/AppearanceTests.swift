@@ -5,9 +5,9 @@ import Testing
 /// Two questions about what the app looks like — which palette, and how light —
 /// where there used to be one list with an entry per pairing.
 struct AppearanceTests {
-	@Test func offersThreePalettesAndThreeLightnesses() {
-		#expect(Appearance.families.map(\.id) == ["abydos", "blue", "dracula"])
-		#expect(Appearance.families.map(\.title) == ["Abydos", "Blue", "Dracula"])
+	@Test func offersFourPalettesAndThreeLightnesses() {
+		#expect(Appearance.families.map(\.id) == ["abydos", "blue", "dracula", "gray"])
+		#expect(Appearance.families.map(\.title) == ["Abydos", "Blue", "Dracula", "Gray"])
 		#expect(Appearance.Mode.allCases.map(\.rawValue) == ["system", "light", "dark"])
 	}
 

@@ -342,7 +342,7 @@ struct BundledSchemeTests {
 	/// fail in the suite, not in somebody's window.
 	@Test func everyBundledSchemeReads() {
 		#expect(library.problems.isEmpty, "\(library.problems)")
-		#expect(library.schemes.map(\.id) == ["abydos", "blue", "dracula", "editor"])
+		#expect(library.schemes.map(\.id) == ["abydos", "blue", "dracula", "editor", "gray"])
 	}
 
 	/// Every palette names a terminal palette of its own. One added without a
