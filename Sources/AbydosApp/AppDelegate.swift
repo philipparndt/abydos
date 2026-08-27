@@ -3171,6 +3171,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		commitItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(.separator())
+		// **Two questions about every diff in the app**, so they are here rather
+		// than on the pull request page: the commit view and the log page draw
+		// the same view, and a switch that only reached one of them would be a
+		// preference with a scope nobody could guess.
+		let sideBySide = viewMenu.addItem(
+			withTitle: "Side by Side Diff",
+			action: #selector(MainWindowController.toggleSideBySideDiff(_:)),
+			keyEquivalent: ""
+		)
+		sideBySide.state = Settings.shared.diffIsSideBySide ? .on : .off
+		let chrome = viewMenu.addItem(
+			withTitle: "Show Diff Headers",
+			action: #selector(MainWindowController.toggleDiffChrome(_:)),
+			keyEquivalent: ""
+		)
+		chrome.state = Settings.shared.diffShowsChrome ? .on : .off
+		viewMenu.addItem(.separator())
 		// How a file with a rendered form is shown. In a submenu of their own
 		// because "Split Right" is also what a second editor pane is called:
 		// two commands with one name in one menu is a coin toss in the palette.

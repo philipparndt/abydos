@@ -98,6 +98,13 @@ final class PullRequestPage: NSView {
 		// **A file is ticked as it is read.** A reviewer's place in a long list
 		// is the thing most easily lost and the most annoying to find again.
 		fileList.allowsTicking = true
+		// Hiding the read rows can be turned on from the row menu as well as
+		// from the switch, and a switch that does not follow it is a switch
+		// that lies about what the list is showing.
+		fileList.onHidesDoneChanged = { [weak self] in
+			guard let self else { return }
+			self.hideReadSwitch.state = self.fileList.hidesDone ? .on : .off
+		}
 		fileList.onTicksChanged = { [weak self] in
 			guard let self else { return }
 			self.showProgress()
@@ -111,7 +118,21 @@ final class PullRequestPage: NSView {
 		// than none. The design left this open and this is the answer: not
 		// offered — and what the page gains instead is the switch below.
 		diffView.isReadOnly = true
-		diffView.onCommentOnLine = { [weak self] line in self?.writeComment(on: line) }
+		diffView.onCommentOnLines = { [weak self] from, to in
+			self?.writeComment(from: from, to: to)
+		}
+		diffView.onEditComment = { [weak self] comment in
+			guard let line = comment.line else { return }
+			self?.writeComment(from: comment.startLine ?? line, to: line)
+		}
+		diffView.onDeleteComment = { [weak self] comment in
+			guard let self, let line = comment.line, let path = self.fileList.selectedPath else {
+				return
+			}
+			self.pending.erase(on: path, line: line)
+			self.showComments(of: path)
+			self.showReviewState()
+		}
 
 		diffScroll = NSScrollView()
 		diffScroll.documentView = diffView
@@ -161,12 +182,23 @@ final class PullRequestPage: NSView {
 		// the diff: the language server, go-to-definition, the outline and the
 		// tests all need the code on disk, and a worktree is how it gets there
 		// without moving the branch under whatever was half-done.
+		// **A switch, not a door.** Pressing it used to point the window at the
+		// checkout, which threw away the page: the file you were reading, where
+		// you were in it, what you had ticked and what you had written. A review
+		// is context, and losing it to see the code on disk is a bad trade —
+		// especially since the code on disk is for the *language server*, which
+		// does not need the window pointed anywhere.
+		//
+		// So it says whether the branch is checked out and toggles it, staying
+		// pressed while it is. Opening it as a project is still there, in the
+		// list's own menu, for when that is what somebody means.
 		checkOutButton = NSButton(
 			title: "Check Out", target: self, action: #selector(checkOutPressed)
 		)
 		checkOutButton.controlSize = .small
 		checkOutButton.font = Theme.current.uiFont(11)
 		checkOutButton.bezelStyle = .rounded
+		checkOutButton.setButtonType(.pushOnPushOff)
 		checkOutButton.toolTip = "Check this branch out beside the project, to read it in place"
 
 		// **The point at which a review is finished** is the point at which it
@@ -323,9 +355,10 @@ final class PullRequestPage: NSView {
 	var onTicksChanged: ((Int, Checklist<String>) -> Void)?
 
 	/// Check the branch out beside the project, so it can be read in place.
-	var onCheckOut: (() -> Void)?
+	/// Answered with what happened, since it is a fetch and a checkout.
+	var onCheckOut: ((@escaping (String) -> Void) -> Void)?
 	/// Finish with that checkout.
-	var onFinish: (() -> Void)?
+	var onFinish: ((@escaping (String) -> Void) -> Void)?
 	/// Whether there is one to finish with.
 	var isCheckedOut: () -> Bool = { false }
 
@@ -365,7 +398,12 @@ final class PullRequestPage: NSView {
 		// have said as much as what anybody else has.
 		for (line, remark) in pending.comments(on: path) {
 			atLines[line, default: []].append(DiffView.Comment(
-				author: "you · not sent yet", when: "", body: remark.body
+				author: "you · not sent yet",
+				when: "",
+				body: remark.body,
+				isPending: true,
+				line: line,
+				startLine: remark.startLine
 			))
 		}
 		for comment in left {
@@ -373,7 +411,8 @@ final class PullRequestPage: NSView {
 				author: comment.author,
 				when: comment.createdAt.map { Self.commentDates.string(from: $0) } ?? "",
 				body: comment.body,
-				isOutdated: comment.isOutdated
+				isOutdated: comment.isOutdated,
+				line: comment.line
 			)
 			if let line = comment.line {
 				atLines[line, default: []].append(drawn)
@@ -433,37 +472,48 @@ final class PullRequestPage: NSView {
 		fileList.arrangesByFolder = Settings.shared.commitFilesByFolder
 	}
 
-	/// One button with two verbs, because there are only ever two states and the
+	/// One button with two states, because there are only ever two and the
 	/// second is the one somebody forgets: a checkout nobody finishes with is
 	/// how a repository grows a directory a day.
 	@objc private func checkOutPressed() {
-		if isCheckedOut() {
-			onFinish?()
-		} else {
-			onCheckOut?()
-		}
-		// After the work, which is asynchronous — so the title catches up on the
-		// next pass rather than lying about what the button now does.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+		// Drawn as the state being asked for at once, so the press has an
+		// answer while the work is going on; the state below puts it right if
+		// the work refuses — a checkout with changes in it, say.
+		let wanted = !isCheckedOut()
+		checkOutButton.state = wanted ? .on : .off
+		checkOutButton.isEnabled = false
+		let done: (String) -> Void = { [weak self] said in
+			self?.checkOutButton.isEnabled = true
 			self?.showCheckOutState()
+			self?.checkOutSaid = said
 		}
+		if wanted { onCheckOut?(done) } else { onFinish?(done) }
 	}
+
+	/// What the last checkout or removal said, for the report.
+	private(set) var checkOutSaid: String?
 
 	private func showCheckOutState() {
-		checkOutButton.title = isCheckedOut() ? "Finish With It" : "Check Out"
+		let out = isCheckedOut()
+		checkOutButton.state = out ? .on : .off
+		checkOutButton.title = out ? "Checked Out" : "Check Out"
+		checkOutButton.toolTip = out
+			? "The branch is checked out beside the project. Press to remove that checkout."
+			: "Check this branch out beside the project, to read it in place"
 	}
 
-	/// Writes, replaces or clears a remark on one line of the file on screen.
-	private func writeComment(on line: Int) {
+	/// Writes, replaces or clears a remark on a line or a run of them.
+	private func writeComment(from: Int, to: Int) {
 		guard let path = fileList.selectedPath else { return }
 		ReviewSheet.askForComment(
 			on: path,
-			line: line,
-			existing: pending.comment(on: path, line: line)?.body ?? "",
+			from: from,
+			to: to,
+			existing: pending.comment(on: path, line: to)?.body ?? "",
 			over: window
 		) { [weak self] written in
 			guard let self else { return }
-			self.pending.write(PendingComment(path: path, line: line, body: written))
+			self.pending.write(PendingComment(path: path, from: from, to: to, body: written))
 			self.showComments(of: path)
 			self.showReviewState()
 		}
@@ -563,6 +613,8 @@ final class PullRequestPage: NSView {
 		if let trouble { said.append("trouble=\(trouble)") }
 		let (done, total) = fileList.progress
 		said.append("read=\(done)/\(total)")
+		said.append("checkout=\(isCheckedOut() ? "yes" : "no")"
+			+ (checkOutSaid.map { " · \($0)" } ?? ""))
 		if !clearedByThePush.isEmpty {
 			said.append("cleared=" + clearedByThePush.sorted().joined(separator: ", "))
 		}
@@ -573,7 +625,7 @@ final class PullRequestPage: NSView {
 				"pending=\(pending.comments.count)"
 					+ (lastSubmission.map { " · \($0)" } ?? "")
 			)
-			said += pending.comments.map { "  wrote on \($0.path):\($0.line) — \($0.body)" }
+			said += pending.comments.map { "  wrote on \($0.path) \($0.place) — \($0.body)" }
 		}
 		said.append("diff=\(diffView.reportForTesting)")
 		said += diffView.commentsForTesting().map { "  " + $0 }
@@ -619,19 +671,75 @@ final class PullRequestPage: NSView {
 			: "cleared " + cleared.sorted().joined(separator: ", ") + ", \(done) of \(total) still read"
 	}
 
-	/// Writes a remark on a line, the way the sheet does when it is answered.
-	func writeCommentForTesting(line: Int, body: String) -> String {
+	/// Writes a remark over a run of lines, the way the sheet does when it is
+	/// answered.
+	func writeCommentForTesting(from: Int, to: Int, body: String) -> String {
 		guard let path = fileList.selectedPath else { return "nothing selected" }
-		pending.write(PendingComment(path: path, line: line, body: body))
+		pending.write(PendingComment(path: path, from: from, to: to, body: body))
 		showComments(of: path)
 		showReviewState()
-		return "wrote on \(path):\(line)"
+		return "wrote on \(path) "
+			+ (pending.comment(on: path, line: max(from, to))?.place ?? "nowhere")
+	}
+
+	/// Takes a remark back, the way the menu over one does.
+	func eraseCommentForTesting(line: Int) -> String {
+		guard let path = fileList.selectedPath else { return "nothing selected" }
+		pending.erase(on: path, line: line)
+		showComments(of: path)
+		showReviewState()
+		return "erased on \(path):\(line)"
+	}
+
+	/// Selects a run of lines and asks the diff what its menu would offer, which
+	/// is the gesture a pointer makes.
+	func commentMenuForTesting(from: Int, to: Int) -> String {
+		diffView.selectLinesForTesting(from: from, to: to)
+		let lines = diffView.selectedNewLines
+		guard let first = lines.min(), let last = lines.max() else { return "nothing selectable" }
+		return first == last ? "Comment on Line \(first)…" : "Comment on Lines \(first)–\(last)…"
+	}
+
+	/// Selects the remark on a line, the way a click on it does.
+	func selectCommentForTesting(onLine line: Int) -> String {
+		guard diffView.selectCommentForTesting(onLine: line) else { return "no remark there" }
+		return diffView.selectedCommentForTesting() ?? "nothing selected"
 	}
 
 	/// Whether the diff on screen has that line to comment on at all.
 	func canCommentForTesting(line: Int) -> Bool {
 		diffView.commentableLinesForTesting().contains(line)
 	}
+
+	/// Opens the sheet that asks for the verdict, so a run can photograph it.
+	func pressReviewForTesting() { reviewPressed() }
+
+	/// Opens the sheet that asks for a remark, likewise.
+	func pressCommentForTesting(from: Int, to: Int) { writeComment(from: from, to: to) }
+
+	/// Presses the checkout button, which is a switch rather than a door.
+	func pressCheckOutForTesting() { checkOutPressed() }
+
+	/// What the file list's row menu offers over the selected row.
+	func fileMenuForTesting() -> String { fileList.menuForTesting() }
+
+	/// Flips the arrangement, and says how long the rebuild took.
+	func arrangeForTesting() -> String {
+		Settings.shared.commitFilesByFolder.toggle()
+		arrangeControl.selectedSegment = Settings.shared.commitFilesByFolder ? 1 : 0
+		let started = ProcessInfo.processInfo.systemUptime
+		fileList.arrangesByFolder = Settings.shared.commitFilesByFolder
+		let took = (ProcessInfo.processInfo.systemUptime - started) * 1000
+		return String(
+			format: "%@ in %.1f ms over %d files",
+			Settings.shared.commitFilesByFolder ? "by folder" : "flat",
+			took,
+			fileList.files.count
+		)
+	}
+
+	/// Marks the selected file read or not, the way the row menu does.
+	func markReadForTesting(_ read: Bool) { fileList.setDoneAtSelection(read) }
 
 	/// Submits without the sheet, which is the half a driven run cannot click.
 	func submitForTesting(_ verdict: ReviewVerdict, body: String) {

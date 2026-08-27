@@ -688,6 +688,18 @@ extension MainWindowController {
 
 	@objc func togglePullRequestsView(_ sender: Any?) { sidebar.showSidebarTool(.pullRequests) }
 
+	/// The two questions every diff in this app answers, flipped from the View
+	/// menu. Each `DiffView` hears about it through the settings notification.
+	@objc func toggleSideBySideDiff(_ sender: Any?) {
+		Settings.shared.diffIsSideBySide.toggle()
+		(sender as? NSMenuItem)?.state = Settings.shared.diffIsSideBySide ? .on : .off
+	}
+
+	@objc func toggleDiffChrome(_ sender: Any?) {
+		Settings.shared.diffShowsChrome.toggle()
+		(sender as? NSMenuItem)?.state = Settings.shared.diffShowsChrome ? .on : .off
+	}
+
 	/// A key that used to open something and now opens the git tool.
 	///
 	/// **Doing nothing would be the worse answer.** ⌘2 and ⌘6 have been Commit

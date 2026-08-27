@@ -37,25 +37,49 @@ final class PaneActivityView: NSView {
 		caption.isSelectable = false
 		caption.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(caption)
-
-		NSLayoutConstraint.activate([
-			wheel.centerXAnchor.constraint(equalTo: centerXAnchor),
-			// Above the middle rather than in it: the caption sits under the
-			// spinner and the pair should read as centred, not the spinner.
-			wheel.centerYAnchor.constraint(
-				equalTo: centerYAnchor, constant: -Theme.current.scaled(12)
-			),
-			caption.topAnchor.constraint(
-				equalTo: wheel.bottomAnchor, constant: Theme.current.scaled(8)
-			),
-			caption.leadingAnchor.constraint(
-				equalTo: leadingAnchor, constant: Theme.current.scaled(12)
-			),
-			caption.trailingAnchor.constraint(
-				equalTo: trailingAnchor, constant: -Theme.current.scaled(12)
-			),
-		])
 	}
+
+	/// **Centred on what can be seen, not on what the view is.**
+	///
+	/// Constraints could say "the middle of this view", and that is the wrong
+	/// middle whenever the view is larger than the part of it on screen: a page
+	/// inside a scroll view, or one whose frame the editor has made wider than
+	/// the window. The spinner then sits somewhere off to one side of the empty
+	/// space it is meant to be explaining — which is exactly what a pull request
+	/// page did while it waited for GitHub.
+	///
+	/// `visibleRect` is the answer to that question and it changes as the pane
+	/// is scrolled or resized, so this is laid out by hand rather than pinned.
+	override func layout() {
+		super.layout()
+
+		// An empty visible rect — a view not on screen yet — falls back to the
+		// bounds, which is the same answer whenever the two agree.
+		let area = visibleRect.isEmpty ? bounds : visibleRect
+		let wheelSize = wheel.fittingSize
+		let gap = Theme.current.scaled(8)
+		let captionSize = caption.fittingSize
+		let stack = wheelSize.height + gap + captionSize.height
+
+		let top = area.midY - stack / 2
+		wheel.frame = NSRect(
+			x: area.midX - wheelSize.width / 2,
+			y: top,
+			width: wheelSize.width,
+			height: wheelSize.height
+		)
+		// The caption gets the width of the area, so a long one wraps rather
+		// than running out of the pane.
+		let inset = Theme.current.scaled(12)
+		caption.frame = NSRect(
+			x: area.minX + inset,
+			y: top + wheelSize.height + gap,
+			width: max(0, area.width - inset * 2),
+			height: captionSize.height
+		)
+	}
+
+	override var isFlipped: Bool { true }
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -67,7 +91,9 @@ final class PaneActivityView: NSView {
 	static func install(over pane: NSView, message: String) -> PaneActivityView {
 		let view = PaneActivityView(message: message)
 		view.translatesAutoresizingMaskIntoConstraints = false
-		pane.addSubview(view)
+		// Above whatever is already there: a pane that has been built has its
+		// own subviews, and a spinner behind them explains nothing.
+		pane.addSubview(view, positioned: .above, relativeTo: nil)
 		NSLayoutConstraint.activate([
 			view.topAnchor.constraint(equalTo: pane.topAnchor),
 			view.bottomAnchor.constraint(equalTo: pane.bottomAnchor),

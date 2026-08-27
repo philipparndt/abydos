@@ -779,6 +779,21 @@ final class SidebarController: NSObject {
 			guard let project = project(), project.git != nil else { return nil }
 			let pane = PullRequestsPane(root: gitCommandRoot() ?? project.root)
 			pane.onOpen = { [weak self] request in self?.pullRequests.open(request) }
+			pane.onCheckOut = { [weak self] request in
+				self?.pullRequests.checkOut(request.number, opening: false)
+			}
+			pane.onFinishCheckout = { [weak self] request in
+				self?.pullRequests.finish(with: request.number)
+			}
+			// The one route that *does* point the window at the checkout, kept
+			// where somebody asking for it would look and out of the page,
+			// which loses everything when the project changes under it.
+			pane.onOpenCheckout = { [weak self] request in
+				self?.pullRequests.pointWindowAtCheckout(of: request.number)
+			}
+			pane.isCheckedOut = { [weak self] request in
+				self?.pullRequests.isCheckedOut(request.number) ?? false
+			}
 			pullRequestsPane = pane
 			view = pane
 		case .scratches:

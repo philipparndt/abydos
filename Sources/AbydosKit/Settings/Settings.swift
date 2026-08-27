@@ -79,6 +79,8 @@ public final class Settings {
 			Key.tabWidth: 4,
 			Key.showHiddenFiles: true,
 			Key.reviewRequestsIncludeTeams: true,
+			Key.diffShowsChrome: false,
+			Key.diffIsSideBySide: false,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
 			Key.uiScale: 1.0,
 			// Big enough to read from the back of a room, and light, because a
@@ -134,6 +136,8 @@ public final class Settings {
 		static let commitFilesByFolder = "commitFilesByFolder"
 		static let reviewRequestsIncludeTeams = "reviewRequestsIncludeTeams"
 		static let reviewShowsWholeFile = "reviewShowsWholeFile"
+		static let diffShowsChrome = "diffShowsChrome"
+		static let diffIsSideBySide = "diffIsSideBySide"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let agentPermissions = "agentPermissions"
@@ -728,6 +732,36 @@ public final class Settings {
 	public var reviewShowsWholeFile: Bool {
 		get { defaults.bool(forKey: Key.reviewShowsWholeFile) }
 		set { set(newValue, Key.reviewShowsWholeFile) }
+	}
+
+	/// Whether a diff draws git's own preamble: `diff --git`, `index`, and the
+	/// two `---`/`+++` lines, and the `@@ hunk n` before each hunk.
+	///
+	/// **Off.** Every pane that shows a diff already says which file it is —
+	/// the tree beside it is a list of file names and one of them is selected —
+	/// so those four lines are four lines of a short diff spent repeating what
+	/// the window has just said. A five-line change arrived with the top half of
+	/// the pane explaining itself.
+	///
+	/// What is *not* dropped with them is the text after the `@@`, which is
+	/// git's guess at the declaration the hunk is inside. That is the one piece
+	/// of the preamble that says something the rest of the window does not, and
+	/// it is drawn on its own.
+	public var diffShowsChrome: Bool {
+		get { defaults.bool(forKey: Key.diffShowsChrome) }
+		set { set(newValue, Key.diffShowsChrome) }
+	}
+
+	/// Whether a diff draws the two sides beside each other rather than one
+	/// above the other.
+	///
+	/// Off, because unified is what a narrow pane can draw and what `git diff`
+	/// prints. Side by side is the better read of a rewritten block on a wide
+	/// window, which is what a review on a laptop screen and a review on a
+	/// desk monitor differ by.
+	public var diffIsSideBySide: Bool {
+		get { defaults.bool(forKey: Key.diffIsSideBySide) }
+		set { set(newValue, Key.diffIsSideBySide) }
 	}
 
 	/// Whether choosing another project opens a window or replaces this one.

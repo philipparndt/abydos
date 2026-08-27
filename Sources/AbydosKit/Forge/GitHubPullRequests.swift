@@ -342,9 +342,7 @@ public enum GitHubPullRequests {
 		if !body.isEmpty { payload["body"] = body }
 		if let head { payload["commit_id"] = head }
 		if !pending.isEmpty {
-			payload["comments"] = pending.map {
-				["path": $0.path, "line": $0.line, "side": "RIGHT", "body": $0.body]
-			}
+			payload["comments"] = pending.map(\.payload)
 		}
 
 		guard let data = try? JSONSerialization.data(withJSONObject: payload) else {

@@ -130,14 +130,17 @@ final class PullRequestReview {
 			self.ticks[number] = list
 			self.rememberSession()
 		}
-		page.onCheckOut = { [weak self] in self?.checkOut(request.number) }
-		page.onSubmitted = { [weak self] title, detail in self?.notify(title, detail) }
-		page.onFinish = { [weak self] in self?.finish(with: request.number) }
-		page.isCheckedOut = { [weak self] in
-			guard let root = self?.repositoryRoot() else { return false }
-			let path = PullRequestCheckout.path(for: request.number, in: root)
-			return FileManager.default.fileExists(atPath: path.path)
+		// **Checked out beside the project, and the page stays where it is.**
+		// Opening the checkout as a project is a different thing to want, and
+		// it lives in the list's own menu.
+		page.onCheckOut = { [weak self] done in
+			self?.checkOut(request.number, opening: false, then: done)
 		}
+		page.onFinish = { [weak self] done in
+			self?.finish(with: request.number, then: done)
+		}
+		page.onSubmitted = { [weak self] title, detail in self?.notify(title, detail) }
+		page.isCheckedOut = { [weak self] in self?.isCheckedOut(request.number) ?? false }
 		pages[request.number] = WeakPage(page: page)
 		openPage(page, "PR #\(request.number)", identifier, "arrow.trianglehead.pull")
 		// Opened to be read, and read with the arrows.
@@ -230,6 +233,27 @@ final class PullRequestReview {
 		}
 	}
 
+	/// Whether there is a checkout of this pull request beside the project.
+	func isCheckedOut(_ number: Int) -> Bool {
+		guard let root = repositoryRoot() else { return false }
+		let path = PullRequestCheckout.path(for: number, in: root)
+		return FileManager.default.fileExists(atPath: path.path)
+	}
+
+	/// Points the window at the checkout made for a pull request.
+	///
+	/// The one route that changes what the window is showing, and it is asked
+	/// for by name from the list's menu — never a side effect of checking out.
+	func pointWindowAtCheckout(of number: Int) {
+		guard let root = repositoryRoot() else { return }
+		let path = PullRequestCheckout.path(for: number, in: root)
+		guard FileManager.default.fileExists(atPath: path.path) else {
+			notify("Pull request #\(number)", "There is no checkout of it to open.")
+			return
+		}
+		openCheckout(path)
+	}
+
 	/// The checkouts of this repository, for a driven run to count.
 	func checkoutsForTesting(then said: @escaping (String) -> Void) {
 		restoreMarks()
@@ -268,13 +292,22 @@ final class PullRequestReview {
 	/// - `keys:down+down` — walk the file list, as `--log-page` does
 	/// - `diff` — the first lines of the diff on screen
 	/// - `comments` — every remark on it, whichever file it is on
-	/// - `write:40=what to say` — leave a remark on a line of the file on screen
+	/// - `write:40=what to say` — leave a remark on a line, or `36-40=…` on a run
+	/// - `erase:40` — take a remark back, as the menu over one does
+	/// - `menu:36-40` — what the diff's menu offers over that run of lines
+	/// - `select-comment:40` — click the remark on that line
+	/// - `press-checkout` — the page's checkout switch
+	/// - `sheet` — open the verdict sheet; `sheet:36-40` opens the remark one
+	/// - `mark:on` / `mark:off` — mark the selected file read, as the row menu does
+	/// - `file-menu` — what the file list offers over the selected row
+	/// - `arrange` — flip flat/by folder, and say how long the rebuild took
 	/// - `submit:APPROVE` — send what is written, as that verdict
 	/// - `moved:<sha>` — what the submission would say about a head that moved
 	/// - `checkout:123` — check its branch out beside the project
 	/// - `open-checkout:123` — point the window at that checkout
 	/// - `finish:123` — remove it again
 	/// - `checkouts` — what `git worktree list` holds, with the marks on it
+	/// - `row-menu:0` — what the list offers over that row
 	/// - `settle` / `settle:2` — wait, because a network call is in flight
 	///
 	/// Every step that addresses the page waits for it to have answered, for
@@ -331,6 +364,9 @@ final class PullRequestReview {
 				lastOpened = opened ? number : nil
 				print("PULL-REQUESTS: open #\(number) \(opened ? "opened" : "no such row")")
 			case "rail": print("PULL-REQUESTS rail: \(rail())")
+			case "row-menu":
+				guard let pane = self.pane() else { break }
+				print("PULL-REQUESTS menu:\n" + pane.menuForTesting(row: Int(argument) ?? 0))
 			case "checkout":
 				checkOut(Int(argument) ?? lastOpened ?? 0, opening: false) {
 					print("PULL-REQUESTS checkout: \($0)")
@@ -347,7 +383,8 @@ final class PullRequestReview {
 			case "number":
 				open(number: Int(argument) ?? 0) { print("PULL-REQUESTS: \($0)") }
 			case "page", "whole", "pick", "keys", "diff", "read", "next", "hide", "push",
-			     "comments", "write", "submit", "moved":
+			     "comments", "write", "submit", "moved", "erase", "menu", "select-comment",
+			     "press-checkout", "mark", "sheet", "file-menu", "arrange":
 				// The page is a second round of network calls, so a step that
 				// addresses it waits — and takes the rest of the script with it
 				// rather than running the tail against a page that is not there.
@@ -369,12 +406,42 @@ final class PullRequestReview {
 				switch step.prefix(while: { $0 != ":" }) {
 				case "comments": print("PULL-REQUEST PAGE comments:\n\(page.commentsForTesting())")
 				case "write":
-					// `line=what was written`, the two things a remark is.
+					// `40=what was written`, or `36-40=…` for a run of lines.
 					let parts = argument.split(separator: "=", maxSplits: 1).map(String.init)
-					let line = Int(parts.first ?? "") ?? 0
+					let place = (parts.first ?? "").split(separator: "-").compactMap { Int($0) }
 					print("PULL-REQUEST PAGE: " + page.writeCommentForTesting(
-						line: line, body: parts.count > 1 ? parts[1] : ""
+						from: place.first ?? 0,
+						to: place.last ?? place.first ?? 0,
+						body: parts.count > 1 ? parts[1] : ""
 					))
+				case "erase":
+					print("PULL-REQUEST PAGE: "
+						+ page.eraseCommentForTesting(line: Int(argument) ?? 0))
+				case "menu":
+					let place = argument.split(separator: "-").compactMap { Int($0) }
+					print("PULL-REQUEST PAGE menu: " + page.commentMenuForTesting(
+						from: place.first ?? 0, to: place.last ?? place.first ?? 0
+					))
+				case "select-comment":
+					print("PULL-REQUEST PAGE selected: "
+						+ page.selectCommentForTesting(onLine: Int(argument) ?? 0))
+				case "press-checkout":
+					page.pressCheckOutForTesting()
+				case "sheet":
+					if argument.isEmpty {
+						page.pressReviewForTesting()
+					} else {
+						let place = argument.split(separator: "-").compactMap { Int($0) }
+						page.pressCommentForTesting(
+							from: place.first ?? 0, to: place.last ?? place.first ?? 0
+						)
+					}
+				case "mark":
+					page.markReadForTesting(argument != "off")
+				case "file-menu":
+					print("PULL-REQUEST PAGE file menu:\n" + page.fileMenuForTesting())
+				case "arrange":
+					print("PULL-REQUEST PAGE arrange: " + page.arrangeForTesting())
 				case "submit":
 					guard let verdict = ReviewVerdict(rawValue: argument) else {
 						print("PULL-REQUEST PAGE: no such verdict \(argument)")

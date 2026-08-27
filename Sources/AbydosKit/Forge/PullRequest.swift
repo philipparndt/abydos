@@ -145,15 +145,57 @@ public struct ReviewComment: Equatable, Sendable, Identifiable {
 }
 
 /// A remark written here and not yet sent.
+///
+/// Two line numbers because a remark is usually about a block rather than a
+/// line: pointing at the first line of a five-line mistake makes the author
+/// find the other four. `startLine` is nil when it really is one line, which is
+/// also what GitHub wants — it refuses a range whose start equals its end.
 public struct PendingComment: Equatable, Sendable {
 	public let path: String
+	/// The last line of the range, which is where GitHub anchors the remark.
 	public let line: Int
+	/// The first line, when the remark covers more than one.
+	public let startLine: Int?
 	public let body: String
 
-	public init(path: String, line: Int, body: String) {
+	public init(path: String, line: Int, startLine: Int? = nil, body: String) {
 		self.path = path
 		self.line = line
+		// A range of one is a line, and saying it twice is how the API is made
+		// to refuse a perfectly ordinary remark.
+		self.startLine = startLine == line ? nil : startLine
 		self.body = body
+	}
+
+	/// The two numbers as a range, whichever way round they were given.
+	public init(path: String, from: Int, to: Int, body: String) {
+		self.init(
+			path: path,
+			line: max(from, to),
+			startLine: min(from, to) == max(from, to) ? nil : min(from, to),
+			body: body
+		)
+	}
+
+	/// How the remark reads when it has to be named: `40` or `36–40`.
+	public var place: String {
+		guard let startLine else { return "line \(line)" }
+		return "lines \(startLine)–\(line)"
+	}
+
+	/// Whether this remark covers that line.
+	public func covers(_ candidate: Int) -> Bool {
+		candidate >= (startLine ?? line) && candidate <= line
+	}
+
+	/// What GitHub is sent for it.
+	public var payload: [String: Any] {
+		var made: [String: Any] = ["path": path, "line": line, "side": "RIGHT", "body": body]
+		if let startLine {
+			made["start_line"] = startLine
+			made["start_side"] = "RIGHT"
+		}
+		return made
 	}
 }
 

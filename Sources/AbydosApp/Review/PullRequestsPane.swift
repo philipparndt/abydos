@@ -21,6 +21,13 @@ import AbydosKit
 final class PullRequestsPane: NSView {
 	/// Somebody chose one to read.
 	var onOpen: ((PullRequest) -> Void)?
+	/// Check its branch out beside the project, or finish with that checkout.
+	var onCheckOut: ((PullRequest) -> Void)?
+	var onFinishCheckout: ((PullRequest) -> Void)?
+	/// Point the window at the checkout made for it.
+	var onOpenCheckout: ((PullRequest) -> Void)?
+	/// Whether there is a checkout of it to open or finish with.
+	var isCheckedOut: (PullRequest) -> Bool = { _ in false }
 
 	private let root: URL
 	private var requests: [PullRequest] = []
@@ -110,6 +117,7 @@ final class PullRequestsPane: NSView {
 		table.target = self
 		table.doubleAction = #selector(rowDoubleClicked)
 		table.onOpenSelection = { [weak self] in self?.openSelection() }
+		table.onMenu = { [weak self] row in self?.menu(forRow: row) }
 
 		scroll = NSScrollView()
 		scroll.documentView = table
@@ -206,6 +214,74 @@ final class PullRequestsPane: NSView {
 
 	@objc private func rowDoubleClicked() { openSelection() }
 
+	/// What a right-click over a pull request offers.
+	///
+	/// **A double click is not a way anybody finds.** Starting a review is the
+	/// thing this whole pane exists for, and until now it was a gesture with no
+	/// sign of itself — so it is the first item of a menu, in words, with
+	/// everything else that can be done to a row under it.
+	private func menu(forRow row: Int) -> NSMenu? {
+		guard requests.indices.contains(row) else { return nil }
+		// The selection moves to what was aimed at, so the commands act on it.
+		table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+		let request = requests[row]
+
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		func add(_ title: String, _ action: Selector) {
+			let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+			item.target = self
+			menu.addItem(item)
+		}
+
+		add("Review #\(request.number)…", #selector(openSelected))
+		menu.addItem(.separator())
+		if isCheckedOut(request) {
+			add("Open the Checkout", #selector(openCheckoutOfSelected))
+			add("Finish With the Checkout", #selector(finishCheckoutOfSelected))
+		} else {
+			add("Check Out the Branch", #selector(checkOutSelected))
+		}
+		menu.addItem(.separator())
+		add("Copy Link", #selector(copyLinkOfSelected))
+		add("Open in Browser", #selector(openSelectedInBrowser))
+		menu.addItem(.separator())
+		add("Ask GitHub Again", #selector(refreshPressed))
+		return menu
+	}
+
+	private var selectedRequest: PullRequest? {
+		requests.indices.contains(table.selectedRow) ? requests[table.selectedRow] : nil
+	}
+
+	@objc private func openSelected() { openSelection() }
+
+	@objc private func checkOutSelected() {
+		guard let request = selectedRequest else { return }
+		onCheckOut?(request)
+	}
+
+	@objc private func finishCheckoutOfSelected() {
+		guard let request = selectedRequest else { return }
+		onFinishCheckout?(request)
+	}
+
+	@objc private func openCheckoutOfSelected() {
+		guard let request = selectedRequest else { return }
+		onOpenCheckout?(request)
+	}
+
+	@objc private func copyLinkOfSelected() {
+		guard let url = selectedRequest?.url else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(url.absoluteString, forType: .string)
+	}
+
+	@objc private func openSelectedInBrowser() {
+		guard let url = selectedRequest?.url else { return }
+		NSWorkspace.shared.open(url)
+	}
+
 	private func openSelection() {
 		guard requests.indices.contains(table.selectedRow) else { return }
 		onOpen?(requests[table.selectedRow])
@@ -247,6 +323,15 @@ final class PullRequestsPane: NSView {
 		return said.joined(separator: "\n")
 	}
 
+	/// What the menu over a row offers, one item per line.
+	///
+	/// A list rather than a photograph of an open menu, for the reason the
+	/// commit menu's report gives: a list diffs and a picture does not.
+	func menuForTesting(row: Int) -> String {
+		guard let menu = menu(forRow: row) else { return "no menu" }
+		return menu.items.map { $0.isSeparatorItem ? "--" : $0.title }.joined(separator: "\n")
+	}
+
 	/// Opens one by number, for a driven run that knows which it wants.
 	@discardableResult
 	func openForTesting(number: Int) -> Bool {
@@ -286,6 +371,14 @@ extension PullRequestsPane: NSTableViewDataSource, NSTableViewDelegate {
 /// A table that opens the selected row on ↩.
 private final class PullRequestTable: NSTableView {
 	var onOpenSelection: (() -> Void)?
+	/// What to offer over a row.
+	var onMenu: ((Int) -> NSMenu?)?
+
+	override func menu(for event: NSEvent) -> NSMenu? {
+		let row = self.row(at: convert(event.locationInWindow, from: nil))
+		guard row >= 0 else { return nil }
+		return onMenu?(row)
+	}
 
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 

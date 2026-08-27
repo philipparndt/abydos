@@ -29,23 +29,33 @@ public struct PendingReview: Equatable, Sendable {
 
 	public var isEmpty: Bool { comments.isEmpty && body.isEmpty }
 
-	/// Adds a remark, replacing anything already written on that line.
+	/// Adds a remark, replacing anything already written over those lines.
 	///
 	/// Replacing rather than appending: leaving two comments on one line by
 	/// writing twice is not something anybody means to do, and the second is
-	/// what they decided to say.
+	/// what they decided to say. A range replaces every remark it covers, for
+	/// the same reason — a remark about lines 10 to 20 is about the one on 14.
 	public mutating func write(_ comment: PendingComment) {
-		comments.removeAll { $0.path == comment.path && $0.line == comment.line }
+		comments.removeAll {
+			$0.path == comment.path
+				&& (comment.covers($0.line) || $0.covers(comment.line))
+		}
 		guard !comment.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 		comments.append(comment)
 	}
 
-	/// What was written on a line, if anything was.
-	public func comment(on path: String, line: Int) -> PendingComment? {
-		comments.first { $0.path == path && $0.line == line }
+	/// Takes a remark back.
+	public mutating func erase(on path: String, line: Int) {
+		comments.removeAll { $0.path == path && $0.covers(line) }
 	}
 
-	/// Everything written on one file, by line.
+	/// What was written on a line, if anything was — including a remark whose
+	/// range covers it.
+	public func comment(on path: String, line: Int) -> PendingComment? {
+		comments.first { $0.path == path && $0.covers(line) }
+	}
+
+	/// Everything written on one file, by the line each remark is anchored to.
 	public func comments(on path: String) -> [Int: PendingComment] {
 		Dictionary(
 			comments.filter { $0.path == path }.map { ($0.line, $0) },

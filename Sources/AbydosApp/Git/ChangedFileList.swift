@@ -23,7 +23,18 @@ final class ChangedFileList: NSView {
 	/// What git answered, which stays the source of truth: `roots` is only the
 	/// shape it is drawn in.
 	private(set) var files: [GitCommitFile] = []
+	/// The same files by path.
+	///
+	/// **A row used to find its file with `first(where:)`.** That is a scan of
+	/// every file for every row drawn, and every row is redrawn on every
+	/// arrangement change — so a pull request of four hundred files spent its
+	/// time comparing strings, and switching between flat and folders took long
+	/// enough to feel broken.
+	private var filesByPath: [String: GitCommitFile] = [:]
 	private var roots: [GitChangeNode] = []
+	/// How many files under each folder have been read, worked out once per
+	/// rebuild rather than per drawn row.
+	private var readUnder: [ObjectIdentifier: Int] = [:]
 	/// What `--numstat` said, so a rebuild — a change of arrangement — does not
 	/// have to ask again.
 	private var lineCounts: [String: GitLineCount] = [:]
@@ -91,6 +102,7 @@ final class ChangedFileList: NSView {
 		outline.onSelectionChange = { [weak self] in self?.selectionChanged() }
 		outline.onExpandAll = { [weak self] in self?.expandEveryFolder() }
 		outline.onKey = { [weak self] event in self?.handleKey(event) ?? false }
+		outline.onMenu = { [weak self] row in self?.menu(forRow: row) }
 
 		scroll.documentView = outline
 		scroll.hasVerticalScroller = true
@@ -116,7 +128,11 @@ final class ChangedFileList: NSView {
 	/// before it — and a page that has both at once should not have to reload
 	/// twice to say so.
 	func setFiles(_ files: [GitCommitFile], lineCounts: [String: GitLineCount] = [:]) {
+		// A new set of files is a new answer about all of them, so the file on
+		// screen is worth drawing again even if it is the same one.
+		lastAnnounced = nil
 		self.files = files
+		self.filesByPath = Dictionary(files.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
 		self.lineCounts = lineCounts
 		rebuild()
 	}
@@ -131,18 +147,42 @@ final class ChangedFileList: NSView {
 
 	/// Builds the rows for the file list from what git answered.
 	private func rebuild() {
+		StallWatch.mark("changed files") { rebuildMarked() }
+	}
+
+	private func rebuildMarked() {
 		let previous = selectedPath
 		// Hidden rather than removed: `files` is still what git answered, so
 		// turning the switch back off brings them back without asking again.
 		let showing = hidesDone ? files.filter { !ticks.isDone($0.path) } : files
 		roots = Self.rows(for: showing, byFolder: arrangesByFolder)
 		for row in roots { row.applyLineCounts(lineCounts) }
+		countRead()
 		outline.reloadData()
 		expandEveryFolder(keepingSelection: false)
 		// By path, because the two arrangements put the same file at different
 		// depths and different indices — so a row number means a *different*
 		// file after a change of arrangement, which looks like it worked.
 		if let previous { select(path: previous) }
+	}
+
+	/// How much of each folder has been read, in one walk of the tree.
+	///
+	/// Per rebuild and not per drawn row: the folder row used to walk its own
+	/// subtree every time it was drawn, which for a nested tree is the tree
+	/// walked once per folder on every scroll.
+	private func countRead() {
+		readUnder = [:]
+		guard allowsTicking else { return }
+
+		@discardableResult
+		func count(_ node: GitChangeNode) -> Int {
+			guard node.holdsFiles else { return ticks.isDone(node.path) ? 1 : 0 }
+			let under = node.children.reduce(0) { $0 + count($1) }
+			readUnder[ObjectIdentifier(node)] = under
+			return under
+		}
+		for root in roots { count(root) }
 	}
 
 	/// One arrangement or the other, from the same files.
@@ -227,11 +267,21 @@ final class ChangedFileList: NSView {
 		// The token travels with the tick: what was read is that diff, and a
 		// tick with no record of what it was about is one nothing can clear.
 		ticks.set([path], done: isDone, tokens: tokens[path].map { [path: $0] } ?? [:])
-		// Ticking with the done rows hidden takes the row out from under the
-		// selection, so the next one is chosen before the rebuild loses it.
-		let next = hidesDone && isDone ? pathAfter(path) : nil
-		rebuild()
-		if let next { select(path: next) }
+
+		if hidesDone {
+			// The row goes when it is ticked, so the next one is chosen before
+			// the rebuild loses the selection.
+			let next = isDone ? pathAfter(path) : nil
+			rebuild()
+			if let next { select(path: next) }
+		} else {
+			// **The row and its folders, not the whole list.** Nothing moved —
+			// a tick strikes a row through — so rebuilding the tree would throw
+			// away the expansion state and the scroll position to redraw one
+			// line.
+			countRead()
+			reloadRow(of: path)
+		}
 		onTicksChanged?()
 	}
 
@@ -265,12 +315,125 @@ final class ChangedFileList: NSView {
 		return false
 	}
 
+	/// Redraws one file's row and the folders above it, which are the only
+	/// rows a tick changes.
+	private func reloadRow(of path: String) {
+		guard let node = Self.find(path: path, in: roots) else {
+			outline.reloadData()
+			return
+		}
+		var rows = IndexSet()
+		var item: GitChangeNode? = node
+		while let current = item {
+			let row = outline.row(forItem: current)
+			if row >= 0 { rows.insert(row) }
+			item = parent(of: current, in: roots)
+		}
+		guard !rows.isEmpty else {
+			outline.reloadData()
+			return
+		}
+		outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+	}
+
+	private func parent(of node: GitChangeNode, in nodes: [GitChangeNode]) -> GitChangeNode? {
+		for candidate in nodes {
+			if candidate.children.contains(where: { $0 === node }) { return candidate }
+			if let found = parent(of: node, in: candidate.children) { return found }
+		}
+		return nil
+	}
+
 	/// The file after this one, in git's own order.
 	private func pathAfter(_ path: String) -> String? {
 		guard let index = files.firstIndex(where: { $0.path == path }) else { return nil }
 		let rest = files[(index + 1)...].first(where: { !ticks.isDone($0.path) })
 		return (rest ?? files.first { !ticks.isDone($0.path) })?.path
 	}
+
+	/// What a right-click over a row offers.
+	///
+	/// **The keyboard is not the only way to tick something off.** ␣ is the key
+	/// and it is the fast way, but a gesture nobody can find is a feature nobody
+	/// has: the menu says the word, says the key beside it, and is where anybody
+	/// would look first.
+	private func menu(forRow row: Int) -> NSMenu? {
+		guard allowsTicking else { return nil }
+		guard let node = outline.item(atRow: row) as? GitChangeNode else { return nil }
+
+		// Over a row that is not the selection, the selection moves there first,
+		// so the command acts on what was aimed at.
+		if selectedPath != node.path, !node.holdsFiles {
+			outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+		}
+
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		if node.holdsFiles {
+			// A folder ticks off everything under it, which is what somebody
+			// means by right-clicking a folder of generated files.
+			folderUnderTheMenu = node
+			for (title, action) in [
+				("Mark Every File in \(node.name) as Read", #selector(markFolderRead)),
+				("Mark Every File in \(node.name) as Not Read", #selector(markFolderUnread)),
+			] {
+				let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+				item.target = self
+				menu.addItem(item)
+			}
+		} else {
+			let isRead = ticks.isDone(node.path)
+			// Spelled out in both directions rather than one title that
+			// changes: a menu that reads "Mark as Read" over a row that is
+			// already read is a menu that has to be read twice. The rule the
+			// results checklist keeps, kept here.
+			for (title, action, enabled) in [
+				("Mark as Read", #selector(markRead), !isRead),
+				("Mark as Not Read", #selector(markUnread), isRead),
+			] {
+				let item = NSMenuItem(title: title, action: action, keyEquivalent: " ")
+				item.keyEquivalentModifierMask = []
+				item.target = self
+				item.isEnabled = enabled
+				menu.addItem(item)
+			}
+		}
+		menu.addItem(.separator())
+		let hide = NSMenuItem(
+			title: hidesDone ? "Show Files Marked Read" : "Hide Files Marked Read",
+			action: #selector(toggleHideDone),
+			keyEquivalent: ""
+		)
+		hide.target = self
+		menu.addItem(hide)
+		return menu
+	}
+
+	/// The folder the menu was opened over, for the two verbs that act on one.
+	private var folderUnderTheMenu: GitChangeNode?
+
+	@objc private func markRead() { setDoneAtSelection(true) }
+	@objc private func markUnread() { setDoneAtSelection(false) }
+	@objc private func toggleHideDone() {
+		setHidesDone(!hidesDone)
+		onHidesDoneChanged?()
+	}
+
+	@objc private func markFolderRead() { setFolderDone(true) }
+	@objc private func markFolderUnread() { setFolderDone(false) }
+
+	private func setFolderDone(_ done: Bool) {
+		guard let folder = folderUnderTheMenu else { return }
+		let paths = files.map(\.path).filter { $0.hasPrefix(folder.path + "/") }
+		guard !paths.isEmpty else { return }
+		ticks.set(paths, done: done, tokens: tokens.filter { paths.contains($0.key) })
+		rebuild()
+		onTicksChanged?()
+	}
+
+	/// Told when hiding the read rows was turned on or off from in here, so a
+	/// switch above this view can follow it.
+	var onHidesDoneChanged: (() -> Void)?
 
 	private func handleKey(_ event: NSEvent) -> Bool {
 		guard allowsTicking else { return false }
@@ -317,8 +480,18 @@ final class ChangedFileList: NSView {
 		select(path: files[index].path)
 	}
 
+	/// The path the host was last told about, so it is not told again.
+	private var lastAnnounced: String?
+
 	private func selectionChanged() {
 		guard let file = selectedFile else { return }
+		// **The same file is not a new selection.** Every rebuild puts the
+		// selection back where it was, and each of those announcements had the
+		// page re-render the diff — a parse of the patch and two tree-sitter
+		// passes over a whole file. So changing the arrangement, or ticking a
+		// row, cost a full redraw of a file nobody had moved off.
+		guard file.path != lastAnnounced else { return }
+		lastAnnounced = file.path
 		onSelect?(file)
 	}
 
@@ -340,13 +513,12 @@ final class ChangedFileList: NSView {
 	/// handed.
 	func expandEveryFolder(keepingSelection: Bool = true) {
 		let held = keepingSelection ? selectedPath : nil
-		var row = 0
-		while row < outline.numberOfRows {
-			if let item = outline.item(atRow: row), outline.isExpandable(item) {
-				outline.expandItem(item)
-			}
-			row += 1
-		}
+		// **One call, not one per row.** Walking the rows and expanding each in
+		// turn makes the view rebuild its row map once per folder — and each
+		// rebuild makes more rows to walk. `expandChildren` does the whole tree
+		// in a single pass, which is the difference between an arrangement
+		// change being instant and being something you wait for.
+		outline.expandItem(nil, expandChildren: true)
 		if let held { select(path: held) }
 	}
 
@@ -381,6 +553,16 @@ final class ChangedFileList: NSView {
 			let read = !node.holdsFiles && ticks.isDone(node.path) ? " [read]" : ""
 			return indent + said + read + shut + selected
 		}
+	}
+
+	/// What the row menu offers over the selected row, one item per line.
+	func menuForTesting() -> String {
+		let row = outline.selectedRow
+		guard row >= 0, let menu = menu(forRow: row) else { return "no menu" }
+		return menu.items.map { item in
+			guard !item.isSeparatorItem else { return "--" }
+			return item.title + (item.isEnabled ? "" : " (off)")
+		}.joined(separator: "\n")
 	}
 
 	/// Works the file list from the keyboard, and says what happened.
@@ -490,8 +672,8 @@ extension ChangedFileList: NSOutlineViewDataSource, NSOutlineViewDelegate {
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor column: NSTableColumn?, item: Any) -> NSView? {
 		guard let node = item as? GitChangeNode else { return nil }
-		guard let file = files.first(where: { $0.path == node.path }) else {
-			return CommitFolderRowView(node: node, read: readCount(under: node))
+		guard let file = filesByPath[node.path] else {
+			return CommitFolderRowView(node: node, read: readUnder[ObjectIdentifier(node)])
 		}
 		return CommitFileRowView(file: file, lines: node.lines, isRead: ticks.isDone(file.path))
 	}
@@ -500,16 +682,9 @@ extension ChangedFileList: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		ThemedRowView()
 	}
 
-	/// How many of a folder's files have been read, or nil where nothing is
-	/// being ticked and the number would mean nothing.
-	private func readCount(under node: GitChangeNode) -> Int? {
-		guard allowsTicking else { return nil }
-		return paths(under: node).filter { ticks.isDone($0) }.count
-	}
-
-	private func paths(under node: GitChangeNode) -> [String] {
-		guard node.holdsFiles else { return [node.path] }
-		return node.children.flatMap { paths(under: $0) }
+	/// The rows are all one height, which an outline has to be told.
+	func outlineView(_ outlineView: NSOutlineView, heightOfRow row: Int) -> CGFloat {
+		(outlineView as? FileOutlineView)?.rowHeightOverride ?? Theme.current.scaled(22)
 	}
 
 	func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -547,6 +722,15 @@ private final class FileOutlineView: NSOutlineView {
 
 	/// A press the list may want before the table gets it. True when it took it.
 	var onKey: ((NSEvent) -> Bool)?
+	/// What to offer over a row.
+	var onMenu: ((Int) -> NSMenu?)?
+
+	override func menu(for event: NSEvent) -> NSMenu? {
+		let point = convert(event.locationInWindow, from: nil)
+		let row = self.row(at: point)
+		guard row >= 0 else { return nil }
+		return onMenu?(row)
+	}
 
 	override func keyDown(with event: NSEvent) {
 		// The character, not the key code: `*` is shift-8 on an ANSI layout and
