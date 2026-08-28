@@ -194,6 +194,20 @@ final class ChangesPane: NSView {
 	private var hasPlacedDivider = false
 	private var draftButton: NSButton?
 	private var bodyView: NSTextView!
+	/// Opens the description, which the page starts with put away.
+	private var descriptionChevron: NSButton!
+	/// The description's own height, turned off while it is collapsed.
+	private var descriptionHeight: NSLayoutConstraint!
+	/// The scroll view around the description, which is what is hidden: an
+	/// `NSStackView` collapses a hidden arranged subview, and hiding rather than
+	/// removing is what keeps the text through being put away.
+	private var descriptionBox: NSScrollView!
+	/// Kept for as long as the page is open, so somebody who writes a
+	/// description opens it once rather than once per commit.
+	private var isDescriptionShowing = false
+	/// The summary, description and commit row together, for saying where they
+	/// ended up.
+	private var messageStack: NSStackView!
 	private var amendCheckbox: NSButton!
 	private var commitButton: NSButton!
 	private var pushButton: NSButton!
@@ -312,6 +326,13 @@ final class ChangesPane: NSView {
 		commitButton.bezelStyle = .rounded
 		commitButton.controlSize = .small
 		commitButton.keyEquivalent = "\r"
+		// **⌘Return, not Return.** The button carried plain Return, which is the
+		// key the summary field now uses to open the description — and a page
+		// where the summary cannot be committed from the keyboard at all would be
+		// worse than either. ⌘Return is what a page with a text area on it means
+		// by "commit" everywhere else, and it works from the description too,
+		// where Return has always been a newline.
+		commitButton.keyEquivalentModifierMask = [.command]
 
 		// Beside commit rather than inside it: "commit and push" is one gesture
 		// people want, but pushing what somebody else committed is a different
@@ -321,6 +342,9 @@ final class ChangesPane: NSView {
 		pushButton.bezelStyle = .rounded
 		pushButton.controlSize = .small
 		pushButton.isEnabled = false
+		// The two swap `\r` between them in `updateCommitButton`, so the modifier
+		// belongs to both or the swap would give Return back.
+		pushButton.keyEquivalentModifierMask = [.command]
 
 		// Commit then push: that is the order the two happen in, and reading the
 		// row left to right should not be backwards from doing it.
@@ -425,22 +449,25 @@ final class ChangesPane: NSView {
 		lists.spacing = 0
 		unstaged.heightAnchor.constraint(equalTo: staged.heightAnchor).isActive = true
 
-		let split = NSSplitView()
-		split.isVertical = true
-		split.dividerStyle = .thin
-		split.addArrangedSubview(lists)
-		split.addArrangedSubview(diffScroll)
-		// The list gives way first: a diff with its right-hand columns cut off
-		// is unreadable, where a path that has lost a folder or two is not.
-		split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-		split.translatesAutoresizingMaskIntoConstraints = false
-		pageSplit = split
+		// **The description starts put away.** The message area cost a fixed 224
+		// points at every height — a 26-point summary, a description pinned at
+		// 150, the commit row, two gaps and the insets — so a short page showed
+		// four lines of diff under a box nobody had typed in. The sidebar keeps
+		// the one-line case; this page is reached because somebody wants the
+		// diff or a longer message, and the diff is the half that is already
+		// there.
+		descriptionChevron = NSButton(
+			title: "", target: self, action: #selector(toggleDescription)
+		)
+		descriptionChevron.bezelStyle = .accessoryBarAction
+		descriptionChevron.controlSize = .small
+		descriptionChevron.imagePosition = .imageOnly
 
 		// **The draft sits beside the summary**, because that is the field it
 		// fills and the one that is hardest to start. Absent rather than
 		// disabled when there is no `claude` to run: a control that fails when
 		// pressed is worse than one that is not there.
-		var summaryRow: [NSView] = [subjectField]
+		var summaryRow: [NSView] = [descriptionChevron, subjectField]
 		if ClaudeDraft.isAvailable {
 			draftButton = NSButton(title: "Draft", target: self, action: #selector(draftMessage))
 			draftButton?.bezelStyle = .rounded
@@ -452,32 +479,79 @@ final class ChangesPane: NSView {
 		summary.orientation = .horizontal
 		summary.spacing = Theme.current.scaled(6)
 
+		descriptionBox = body
 		let message = NSStackView(views: [summary, body, commitRow])
+		messageStack = message
 		message.orientation = .vertical
 		message.spacing = Theme.current.scaled(6)
+		message.edgeInsets = NSEdgeInsets(
+			top: Theme.current.scaled(8), left: Theme.current.scaled(8),
+			bottom: Theme.current.scaled(8), right: Theme.current.scaled(8)
+		)
 
-		for view in [split, message] as [NSView] {
-			addSubview(view)
-			view.translatesAutoresizingMaskIntoConstraints = false
-		}
+		// **The message belongs to the diff, not to the page.** It used to span
+		// the whole width, under the file lists as well — which cost the tree
+		// height for a message that has nothing to do with it. In the split's
+		// right-hand side it is the diff's width, and the divider moves the two
+		// together.
+		let commitSide = NSStackView(views: [diffScroll, message])
+		commitSide.orientation = .vertical
+		commitSide.spacing = 0
 
-		let inset = Theme.current.scaled(8)
+		let split = NSSplitView()
+		split.isVertical = true
+		split.dividerStyle = .thin
+		split.addArrangedSubview(lists)
+		split.addArrangedSubview(commitSide)
+		// The list gives way first: a diff with its right-hand columns cut off
+		// is unreadable, where a path that has lost a folder or two is not.
+		split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+		split.translatesAutoresizingMaskIntoConstraints = false
+		pageSplit = split
+
+		addSubview(split)
+
+		descriptionHeight = body.heightAnchor.constraint(
+			equalToConstant: Theme.current.scaled(150)
+		)
 		NSLayoutConstraint.activate([
 			split.topAnchor.constraint(equalTo: topAnchor),
 			split.leadingAnchor.constraint(equalTo: leadingAnchor),
 			split.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-			message.topAnchor.constraint(equalTo: split.bottomAnchor, constant: inset),
-			message.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			message.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-			message.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+			split.bottomAnchor.constraint(equalTo: bottomAnchor),
 
 			subjectField.heightAnchor.constraint(equalToConstant: Theme.current.scaled(26)),
-			// Room for a paragraph, which is the whole reason this page exists.
-			body.heightAnchor.constraint(equalToConstant: Theme.current.scaled(150)),
 			lists.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(280)),
 			diffScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(320)),
 		])
+
+		// Collapsed at build, and the same at every height: a description that
+		// appeared and disappeared as the page was resized would be a layout
+		// nobody can predict, and the height at which it changed a number nobody
+		// knows.
+		setDescription(showing: false)
+	}
+
+	/// Shows or hides the description, keeping whatever is in it.
+	private func setDescription(showing: Bool) {
+		// The sidebar arrangement has no chevron and no description of its own:
+		// it is the one-line case, and the `…` beside it is how a message gets
+		// somewhere with room. Called from the draft, which both arrangements
+		// offer.
+		guard descriptionChevron != nil else { return }
+		isDescriptionShowing = showing
+		descriptionBox.isHidden = !showing
+		descriptionHeight.isActive = showing
+		descriptionChevron.image = NSImage(
+			systemSymbolName: showing ? "chevron.down" : "chevron.right",
+			accessibilityDescription: showing ? "Hide the description" : "Write a description"
+		)
+		descriptionChevron.toolTip = showing ? "Hide the description" : "Write a description"
+	}
+
+	@objc private func toggleDescription() {
+		setDescription(showing: !isDescriptionShowing)
+		if isDescriptionShowing { window?.makeFirstResponder(bodyView) }
 	}
 
 	/// Puts the divider somewhere sensible the first time there is a width for
@@ -1354,6 +1428,13 @@ final class ChangesPane: NSView {
 				if self.bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
 					self.bodyView.string = draft.description
 				}
+				// The one moment the description fills without anybody typing in
+				// it, and so the one moment the collapsed default would hide work
+				// that has just been done. A draft that wrote three paragraphs
+				// behind a chevron would read as a draft that failed.
+				if !self.bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
+					self.setDescription(showing: true)
+				}
 				self.updateCommitButton()
 			case .failure(.nothingStaged):
 				Toast.post("Nothing is staged", detail: "There is no commit to describe yet.")
@@ -1490,7 +1571,42 @@ final class ChangesPane: NSView {
 		said.append("body=\(bodyView.string.isEmpty ? "empty" : "\(bodyView.string.count) characters")")
 		said.append("draft=\(draftButton == nil ? "absent" : "offered")")
 		said.append("diff=\(diffView?.reportForTesting ?? "none")")
+		said.append(layoutReportForTesting())
 		return said.joined(separator: "\n")
+	}
+
+	/// Where the message ended up and how much height the diff kept.
+	///
+	/// The numbers are the claim. "The diff has the height the box would have
+	/// taken" is not something a photograph can be compared against, and "the
+	/// message is under the diff only" is a question about two x positions.
+	private func layoutReportForTesting() -> String {
+		guard arrangement == .page, let messageStack, let diffScroll = diffView?.enclosingScrollView else {
+			return "geometry=none"
+		}
+		let message = convert(messageStack.bounds, from: messageStack)
+		let diff = convert(diffScroll.bounds, from: diffScroll)
+		func round(_ value: CGFloat) -> Int { Int(value.rounded()) }
+		return "description=\(isDescriptionShowing ? "showing" : "collapsed")"
+			+ " message=(x \(round(message.minX)) w \(round(message.width)) h \(round(message.height)))"
+			+ " diff=(x \(round(diff.minX)) w \(round(diff.width)) h \(round(diff.height)))"
+			+ " pane=(w \(round(bounds.width)) h \(round(bounds.height)))"
+	}
+
+	/// Presses the chevron, the way somebody would.
+	func toggleDescriptionForTesting() {
+		toggleDescription()
+	}
+
+	/// Return at the end of the summary, through the delegate a key would reach.
+	func pressReturnInSummaryForTesting() {
+		guard let textView = subjectField.currentEditor() as? NSTextView else {
+			window?.makeFirstResponder(subjectField)
+			guard let editor = subjectField.currentEditor() as? NSTextView else { return }
+			_ = control(subjectField, textView: editor, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+			return
+		}
+		_ = control(subjectField, textView: textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
 	}
 
 	/// How much changed, for a driven report — and nothing at all when git gave
@@ -1816,6 +1932,24 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 extension ChangesPane: NSTextFieldDelegate {
 	func controlTextDidChange(_ notification: Notification) {
 		updateCommitButton()
+	}
+
+	/// Return in the summary opens the description rather than committing.
+	///
+	/// It is the reflex from every mail client — the subject is finished and
+	/// there is more to say — and in a single-line field it did nothing at all.
+	/// **⌘Return still commits**: that is the commit button's own key equivalent
+	/// and is untouched, so the key that makes a commit is the key it was.
+	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+		guard control === subjectField, selector == #selector(NSResponder.insertNewline(_:)) else {
+			return false
+		}
+		// Only the page has one. The sidebar's field is the one-line case and has
+		// no description to open.
+		guard descriptionChevron != nil else { return false }
+		if !isDescriptionShowing { setDescription(showing: true) }
+		window?.makeFirstResponder(bodyView)
+		return true
 	}
 }
 

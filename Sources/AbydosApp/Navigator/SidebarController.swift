@@ -944,8 +944,15 @@ final class SidebarController: NSObject {
 			case "keys":   print("COMMIT-PAGE keys: " + page.keysForTesting(argument))
 			case "select": page.selectChangeForTesting(argument)
 			case "type":   page.carrySummaryForTesting(argument)
+			case "chevron": page.toggleDescriptionForTesting()
+			case "return":  page.pressReturnInSummaryForTesting()
+			// A script that says so ends the run. Without it the process is
+			// killed by whatever is waiting on it, and a killed process never
+			// flushes: the report was written and never reached the terminal.
+			case "exit":   fflush(stdout); exit(0)
 			default:       print("COMMIT-PAGE: unknown step \(step)")
 			}
+			fflush(stdout)
 		}
 	}
 
