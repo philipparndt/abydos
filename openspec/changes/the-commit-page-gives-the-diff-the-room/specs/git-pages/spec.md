@@ -87,6 +87,41 @@ page opened afresh starts collapsed.
 - **WHEN** the next message is written on the same page
 - **THEN** the description is still open
 
+### Requirement: The commit page does not take the window
+
+Opening the commit page SHALL NOT maximise the editor.
+
+It did, along with the log, because it was unreadable small — and it was
+unreadable small for a reason this change removes rather than for what it holds:
+a fixed 224 points of message area across the whole width, leaving four lines of
+diff on a short page. With the message two rows tall and under the diff, the page
+reads at the size it is given, and taking somebody's tree and terminal away to
+show them a commit is a thing to do only when the page cannot be read otherwise.
+
+The log page and the review page are unchanged: a graph, a list of commits and a
+diff still want the room.
+
+**The page therefore opens at whatever share the editor has**, and where the
+terminal panel is holding most of the window that is a small page — measured on a
+1200×560 window with the panel up: 120 points for the page and 56 for the diff.
+That is chosen rather than overlooked. The panel's height is the person's own
+arrangement, and rearranging it to show them a commit is the mode `giveTheEditor‑
+TheWindow` already refuses to undo on the way out. Somebody who wants the room
+has the same two gestures they always had: double-click the tab, or the View
+menu.
+
+#### Scenario: opening the commit page beside a tree
+
+- **GIVEN** a window with the project tree showing
+- **WHEN** the commit page is opened
+- **THEN** the tree is still showing, and the page has the editor's share of the
+  window
+
+#### Scenario: the log still takes it
+
+- **WHEN** the log page is opened
+- **THEN** the editor takes the window, as it does today
+
 ### Requirement: Return at the end of the summary opens the description
 
 Pressing Return in the summary field SHALL open the description and put the

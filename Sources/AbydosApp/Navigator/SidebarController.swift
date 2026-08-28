@@ -907,8 +907,13 @@ final class SidebarController: NSObject {
 			}
 		}
 		commitPage = page
+		// **No longer takes the window.** It did because the page was unreadable
+		// small: a fixed 224 points of message area left four lines of diff on a
+		// short page. The message is two rows now and under the diff rather than
+		// across the width, so the page is worth opening at whatever size it is
+		// given — and taking somebody's tree and terminal away to show them a
+		// commit is a thing to do only when the page cannot be read otherwise.
 		group.openPage(page, title: "Commit", identifier: "commit", symbol: "checkmark.circle")
-		giveTheEditorTheWindow()
 		DispatchQueue.main.async { [weak page] in page?.focusList() }
 
 		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
