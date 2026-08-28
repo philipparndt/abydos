@@ -80,6 +80,44 @@ extension EditorAreaController {
 		exit(0)
 	}
 
+	/// Replaces, and says what the highlights are left at.
+	///
+	/// **The offsets are printed three times on purpose**: before the edit, the
+	/// instant after it, and once the debounced search has run. The picture this
+	/// was written for is a file searched and then edited, still drawing bands of
+	/// the old length at the old offsets over words that matched nothing — and
+	/// every *count* in that picture was right. Only the offsets show it.
+	func exerciseReplaceForTesting(query: String, replacement: String, all: Bool, regex: Bool) {
+		print("REPLACE before:\n\(activeGroup?.findReportForTesting ?? "no group")")
+		fflush(stdout)
+
+		let said = activeGroup?.replaceForTesting(
+			query: query, replacement: replacement, all: all, regex: regex
+		) ?? "no group"
+		print("REPLACE did: \(said)")
+		fflush(stdout)
+
+		// The search an edit asks for is debounced, like every other one.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+			print("REPLACE settled:\n\(self?.activeGroup?.findReportForTesting ?? "no group")")
+			let text = self?.activeGroup?.textForTesting ?? ""
+			for line in text.split(separator: "\n", omittingEmptySubsequences: false).prefix(12) {
+				print("TEXT: |\(line)|")
+			}
+
+			// **One ⌘Z, whatever the number of matches.** A Replace All is one
+			// edit over the span the matches lie in, so this is the claim that
+			// stands or falls here: press undo once and the file is what it was.
+			self?.activeGroup?.undoForTesting()
+			let back = self?.activeGroup?.textForTesting ?? ""
+			for line in back.split(separator: "\n", omittingEmptySubsequences: false).prefix(12) {
+				print("UNDONE: |\(line)|")
+			}
+			fflush(stdout)
+			exit(0)
+		}
+	}
+
 	/// Drags a tab onto the group's right-hand zone, the way another group would.
 	///
 	/// **The regression check for the drop path**, which this change edited: a

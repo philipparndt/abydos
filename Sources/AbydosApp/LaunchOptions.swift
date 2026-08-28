@@ -18,6 +18,20 @@ struct LaunchOptions {
 	var expandNavigator = false
 	/// Text typed into the editor before capture, for verifying the edit path.
 	var typeText: String?
+	/// What to make of what `--find` found: `--replace` types a replacement into
+	/// the bar, and `--replace-all` presses the second button rather than the
+	/// first.
+	var replaceWith: String?
+	var replaceAll = false
+	/// Select the first place this string appears and say which other places lit
+	/// up: `--select-text`. `--select-lines` cannot ask this — a whole line
+	/// carries its newline, and a selection with a line break in it lights
+	/// nothing by rule.
+	var selectText: String?
+	/// Turns the bar's `.*` switch on, so `--find` is a pattern and `--replace`
+	/// a template. Without it there is no way to drive the half of replace that
+	/// capture groups are.
+	var findRegex = false
 	/// Collapse every fold before capture, for verifying folding.
 	var collapseFolds = false
 	/// Opened as a provisional tab, as a single click in the tree would.
@@ -859,6 +873,10 @@ struct LaunchOptions {
 			case "--delay":      options.screenshotDelay = next().flatMap(Double.init) ?? 1.5
 			case "--expand":     options.expandNavigator = true
 			case "--type":       options.typeText = next()
+			case "--replace":    options.replaceWith = next()
+			case "--replace-all": options.replaceAll = true
+			case "--select-text": options.selectText = next()
+			case "--regex":      options.findRegex = true
 			case "--collapse":   options.collapseFolds = true
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true

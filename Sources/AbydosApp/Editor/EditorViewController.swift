@@ -67,6 +67,11 @@ final class EditorViewController: NSViewController {
 			var isShowing = false
 			var query = ""
 			var options = SearchOptions()
+			/// What the matches should become, and whether the bar is asking.
+			/// Kept here so a tab comes back to the bar it was left with, the
+			/// way its query already does.
+			var replacement = ""
+			var isReplacing = false
 			/// UTF-16 offsets into *this* tab's document, and nowhere else.
 			var matches: [SearchMatch] = []
 			var current: Int?
@@ -436,6 +441,13 @@ final class EditorViewController: NSViewController {
 		findBar.onNext = { [weak self] in self?.stepMatch(by: 1) }
 		findBar.onPrevious = { [weak self] in self?.stepMatch(by: -1) }
 		findBar.onClose = { [weak self] in self?.closeFind() }
+		findBar.onReplace = { [weak self] delta in self?.replaceCurrent(steppingBy: delta) }
+		findBar.onReplaceAll = { [weak self] in self?.replaceAll() }
+		// Kept on the tab as it is typed, so switching away and back brings it
+		// with the query rather than losing it.
+		findBar.onReplacementChanged = { [weak self] text in
+			self?.activeTab?.find.replacement = text
+		}
 
 		serverBanner = LanguageServerBanner()
 		serverBanner.isHidden = true
@@ -586,6 +598,10 @@ final class EditorViewController: NSViewController {
 		tab.codeView?.onLinesChanged = { [weak self, weak tab] first, removed, inserted in
 			guard let tab else { return }
 			self?.onLinesChanged?(tab.url, first, removed, inserted)
+		}
+		tab.codeView?.onTextReplaced = { [weak self, weak tab] range, inserted in
+			guard let tab else { return }
+			self?.textReplaced(in: tab, replacing: range, insertedLength: inserted)
 		}
 		tab.codeView?.onSetOtherBreakpointsEnabled = { [weak self, weak tab] line, enabled in
 			guard let tab else { return }
@@ -886,13 +902,15 @@ final class EditorViewController: NSViewController {
 	/// checking.
 	var findReportForTesting: String {
 		var lines: [String] = []
-		lines.append("bar showing=\(!findBar.isHidden) \(findBar.statusReportForTesting)")
+		lines.append("bar showing=\(!findBar.isHidden) replacing=\(findBar.isReplacing)"
+			+ " \(findBar.statusReportForTesting)")
 		for (index, tab) in tabs.enumerated() {
 			let mark = tab === activeTab ? "*" : " "
 			let length = tab.document?.rope.utf16Count ?? 0
 			lines.append("\(mark) \(index) \(tab.url.lastPathComponent)"
 				+ " showing=\(tab.find.isShowing) query=\u{201C}\(tab.find.query)\u{201D}"
 				+ " matches=\(tab.find.matches.count) current=\(tab.find.current.map(String.init) ?? "none")"
+				+ " at=[\(tab.find.matches.prefix(8).map { "\($0.utf16Range.lowerBound)..<\($0.utf16Range.upperBound)" }.joined(separator: ","))]"
 				+ " caret=\(tab.codeView?.caretOffset ?? -1) of \(length)")
 		}
 		return lines.joined(separator: "\n")
@@ -1461,6 +1479,10 @@ final class EditorViewController: NSViewController {
 		}
 		codeView.onLinesChanged = { [weak self] first, removed, inserted in
 			self?.onLinesChanged?(fileURL, first, removed, inserted)
+		}
+		codeView.onTextReplaced = { [weak self, weak tab] range, inserted in
+			guard let tab else { return }
+			self?.textReplaced(in: tab, replacing: range, insertedLength: inserted)
 		}
 		codeView.onRunLine = { [weak self] line in
 			// Already 1-based: the gutter converts before reporting a run.
@@ -2464,6 +2486,10 @@ final class EditorViewController: NSViewController {
 	func showFind() {
 		guard let tab = activeTab, tab.codeView != nil || pdfPreview != nil else { return }
 		tab.find.isShowing = true
+		// The tab's mode, which ⌘F reports rather than changes: somebody who
+		// pressed it to re-read their query has not asked for the replacement
+		// they typed to go away.
+		findBar.setReplacing(tab.find.isReplacing)
 		showFindBar(true)
 
 		if let selected = selectedTextForSearch() {
@@ -2471,6 +2497,123 @@ final class EditorViewController: NSViewController {
 		}
 		findBar.focusField()
 		runFind(query: findBar.query, options: findBar.options)
+	}
+
+	/// Opens the bar in replace mode, or switches an open one to it.
+	///
+	/// Only where there is something to edit. A PDF is searched through PDFKit
+	/// and has no text to change, so ⌘R leaves its bar alone rather than putting
+	/// up two buttons that cannot fire.
+	func showReplace() {
+		guard let tab = activeTab, tab.codeView != nil, tab.document != nil else { return }
+
+		// A bar already up keeps what it was searching for: ⌘R is a switch, and
+		// re-seeding from the selection would take away the query somebody is
+		// part-way through replacing.
+		let wasShowing = tab.find.isShowing
+		tab.find.isShowing = true
+		tab.find.isReplacing = true
+		findBar.setReplacing(true)
+		showFindBar(true)
+
+		// **Only when the bar was closed.** A search that is already showing has
+		// its answer in hand, and running it again is not free of consequence:
+		// `runFind` starts from the caret and `setSearchMatches` leaves the caret
+		// at the end of whichever match it made current — so asking twice walks
+		// the current match forward one. Driving this caught it: ⌘R over a bar
+		// showing `1 of 4` replaced the *third* match.
+		if !wasShowing {
+			if let selected = selectedTextForSearch() { findBar.setQuery(selected) }
+			runFind(query: findBar.query, options: findBar.options)
+		}
+		findBar.focusReplaceField()
+	}
+
+	/// Replaces the match the bar calls current, and shows the one after it.
+	///
+	/// The step is only about *showing*: the edit itself takes this match out of
+	/// the list and leaves the next one current, through the same
+	/// `onTextReplaced` every other edit goes through. Showing it is the part
+	/// that matters — pressing Replace again edits whatever is current, and
+	/// something off the bottom of the pane is not something to edit unseen.
+	private func replaceCurrent(steppingBy delta: Int) {
+		guard let tab = activeTab, let document = tab.document, let codeView = tab.codeView else { return }
+		guard findBar.isPatternValid, findBar.isTemplateValid else { return }
+		guard let current = tab.find.current, tab.find.matches.indices.contains(current) else { return }
+
+		let match = tab.find.matches[current]
+		// Asked of the text as it is now. A match found before an edit is a range
+		// and not a promise, and `replacement` answers nil rather than replacing
+		// something else that happens to be there.
+		guard let text = TextSearch.replacement(
+			forMatchAt: match.utf16Range,
+			in: document.rope.string,
+			query: tab.find.query,
+			options: tab.find.options,
+			template: findBar.replacement
+		) else { return }
+
+		codeView.replace(utf16Range: match.utf16Range, with: text)
+		stepMatch(by: delta > 0 ? 0 : -1)
+	}
+
+	/// Replaces every match, as one edit.
+	///
+	/// One `document.replace` over the span from the first match to the last, so
+	/// the undo history gets one entry and the parser one edit — not one of each
+	/// per match. What lies between the matches and did not match is carried
+	/// through untouched.
+	private func replaceAll() {
+		guard let tab = activeTab, let document = tab.document, let codeView = tab.codeView else { return }
+		guard findBar.isPatternValid, findBar.isTemplateValid else { return }
+		guard let edit = TextSearch.replaceAll(
+			in: document.rope.string,
+			query: tab.find.query,
+			options: tab.find.options,
+			template: findBar.replacement
+		) else { return }
+
+		codeView.replace(utf16Range: edit.utf16Range, with: edit.text)
+	}
+
+	/// Drives a replace the way the buttons do, and says what it did.
+	///
+	/// Every step is the one a person takes — the bar is opened, the query and
+	/// the replacement are typed into it, and the button's own verb is called —
+	/// so what this proves is the path and not a private shortcut through it.
+	/// Selects the first place a string appears and says what lit up because of
+	/// it, once the scan has settled.
+	func selectTextForTesting(_ text: String) -> Bool {
+		guard let codeView = activeTab?.codeView else { return false }
+		return codeView.selectTextForTesting(text)
+	}
+
+	var occurrenceReportForTesting: String {
+		activeTab?.codeView?.occurrenceReportForTesting ?? "no code view"
+	}
+
+	func replaceForTesting(query: String, replacement: String, all: Bool, regex: Bool) -> String {
+		// The same refusal `--type` is held to, and for the same reason: this
+		// verb edits whatever is in front, `--open` is a request rather than a
+		// guarantee, and a run that rewrote a stranger's file would be the third
+		// incident of that shape rather than the first.
+		guard codeViewToDrive("--replace") != nil else { return "refused" }
+		showReplace()
+		findBar.setReplacement(replacement)
+		// Only a query this run has not already typed, and for the same reason
+		// `showReplace` will not re-run one: asking again moves the match the
+		// buttons are about.
+		if findBar.query != query || regex != findBar.options.isRegex {
+			// The switches as this run named them, rather than as the last run
+			// left them: a driven run says what it wants and inherits nothing.
+			findBar.setQueryWithoutSearching(query, options: SearchOptions(isRegex: regex))
+			// The bar debounces; a run nobody is watching cannot wait for it.
+			runFind(query: findBar.query, options: findBar.options)
+		}
+
+		let before = activeTab?.find.matches.count ?? 0
+		if all { replaceAll() } else { replaceCurrent(steppingBy: 1) }
+		return "all=\(all) matched=\(before)\n\(findReportForTesting)"
 	}
 
 	func setFindQuery(_ query: String) {
@@ -2487,6 +2630,8 @@ final class EditorViewController: NSViewController {
 			tab.codeView?.clearSearchMatches()
 		}
 		showFindBar(false)
+		findBar.setReplacing(false)
+		findBar.setReplacement("")
 		pdfPreview?.clearFind()
 		focusActiveEditor()
 	}
@@ -2494,7 +2639,7 @@ final class EditorViewController: NSViewController {
 	/// The one bar, shown or hidden. Which tab it is *about* is the tab's.
 	private func showFindBar(_ showing: Bool) {
 		findBar.isHidden = !showing
-		findBarHeight.constant = showing ? Theme.current.scaled(34) : 0
+		findBarHeight.constant = showing ? findBar.wantedHeight : 0
 	}
 
 	/// Puts the arriving tab's find state into the bar.
@@ -2503,6 +2648,9 @@ final class EditorViewController: NSViewController {
 	/// about responders: where the keyboard goes after a tab switch is settled
 	/// there, twice, with the measurements in the comments.
 	private func restoreFind(for tab: Tab) {
+		// The mode before the height, which is worked out from it.
+		findBar.setReplacing(tab.find.isReplacing)
+		findBar.setReplacement(tab.find.replacement)
 		showFindBar(tab.find.isShowing)
 		guard tab.find.isShowing else {
 			// **Emptied, not just hidden.** Driving this caught the bar still
@@ -2512,6 +2660,8 @@ final class EditorViewController: NSViewController {
 			// holding another tab's answer is the same class of fault as the
 			// matches were.
 			findBar.setQueryWithoutSearching("", options: SearchOptions())
+			findBar.setReplacing(false)
+			findBar.setReplacement("")
 			findBar.setStatus(matchCount: 0, currentIndex: nil)
 			return
 		}
@@ -2525,16 +2675,21 @@ final class EditorViewController: NSViewController {
 	var isFindVisible: Bool { activeTab?.find.isShowing ?? false }
 
 	/// Debounced so a search does not run on every keystroke of a long query.
-	private func scheduleFind(query: String, options: SearchOptions) {
+	private func scheduleFind(query: String, options: SearchOptions, movingCaret: Bool = true) {
 		findDebounce?.cancel()
 		let work = DispatchWorkItem { [weak self] in
-			self?.runFind(query: query, options: options)
+			self?.runFind(query: query, options: options, movingCaret: movingCaret)
 		}
 		findDebounce = work
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
 	}
 
-	private func runFind(query: String, options: SearchOptions) {
+	/// - Parameter movingCaret: whether the current match should be selected and
+	///   scrolled to. True for a search somebody asked for by typing a query;
+	///   false for the one an edit triggers, where the caret is where they are
+	///   typing and taking it to the nearest match would make the file
+	///   impossible to type in with find open.
+	private func runFind(query: String, options: SearchOptions, movingCaret: Bool = true) {
 		// A PDF has no rope to search, so PDFKit searches it and the bar is told
 		// the same two numbers it is told for a source file. Whole-word and regex
 		// are not offered by `PDFDocument.findString`, so those switches do
@@ -2578,13 +2733,69 @@ final class EditorViewController: NSViewController {
 		let matches = TextSearch.matches(in: document.rope, query: query, options: options)
 		// Start from the match nearest the caret rather than the top of the file.
 		let caret = codeView.caretOffset
-		let current = matches.firstIndex { $0.utf16Range.lowerBound >= caret }
+		let nearestToCaret = matches.firstIndex { $0.utf16Range.lowerBound >= caret }
 			?? (matches.isEmpty ? nil : 0)
+
+		// **A search an edit asked for keeps the match the edit left current.**
+		// The caret rule alone moves on one every time: an edit — a replacement
+		// above all — leaves the caret at the end of what it put in, and the
+		// first match at or after that is the *next* one. Driving it showed the
+		// wobble plainly: Replace lit `1 of 3`, and a tenth of a second later the
+		// same three matches were `2 of 3` with nothing having happened.
+		let current: Int?
+		if movingCaret {
+			current = nearestToCaret
+		} else {
+			let wanted = tab.find.current.flatMap {
+				tab.find.matches.indices.contains($0) ? tab.find.matches[$0].utf16Range : nil
+			}
+			current = wanted.flatMap { range in matches.firstIndex { $0.utf16Range == range } }
+				?? nearestToCaret
+		}
 		tab.find.matches = matches
 		tab.find.current = current
 
-		codeView.setSearchMatches(matches, current: current)
+		if movingCaret {
+			codeView.setSearchMatches(matches, current: current)
+		} else {
+			codeView.updateSearchMatches(matches, current: current)
+		}
 		findBar.setStatus(matchCount: matches.count, currentIndex: current)
+	}
+
+	/// The text moved under a tab's matches.
+	///
+	/// **Nothing used to ask.** `runFind` was called from the find field, from a
+	/// tab coming to the front and from ⌘G, and from no edit anywhere — so the
+	/// matches were offsets into the text as it had been when the search ran. A
+	/// file searched for a path and then edited to take that path off eight of
+	/// its ten lines drew eight bands of the old length at the old offsets, over
+	/// words holding nothing of the sort. They are not only drawn, either: the
+	/// current one sets a caret.
+	///
+	/// Two halves, and each is wrong alone. The matches are moved now, so nothing
+	/// false is ever on screen; the search is asked again on the debounce it
+	/// already runs on, because an edit can make a match as easily as destroy
+	/// one and only searching knows.
+	private func textReplaced(in tab: Tab, replacing range: Range<Int>, insertedLength: Int) {
+		// A file nobody is searching pays nothing for this.
+		guard tab.find.isShowing else { return }
+
+		let adjusted = MatchesAfterEdit.adjusted(
+			tab.find.matches,
+			current: tab.find.current,
+			replacing: range,
+			insertedLength: insertedLength
+		)
+		tab.find.matches = adjusted.matches
+		tab.find.current = adjusted.current
+
+		// The bar and the bands are the active tab's. A background tab keeps its
+		// adjusted matches and is drawn from them when it comes forward.
+		guard tab === activeTab else { return }
+		tab.codeView?.updateSearchMatches(adjusted.matches, current: adjusted.current)
+		findBar.setStatus(matchCount: adjusted.matches.count, currentIndex: adjusted.current)
+		scheduleFind(query: tab.find.query, options: tab.find.options, movingCaret: false)
 	}
 
 	private func stepMatch(by delta: Int) {

@@ -847,6 +847,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let text = options.selectText {
+			// After `--find` has had its say, so that the run which asks whether
+			// find's matches win is the same shape as the one that does not.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.reportOccurrencesForTesting(
+					selecting: text, thenExit: options.screenshotPath == nil
+				)
+			}
+		}
+
+		if let replacement = options.replaceWith {
+			// After `--find` has typed its query and the debounced search has
+			// run: replacing before there are matches proves nothing.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.editorForTesting.exerciseReplaceForTesting(
+					query: options.findQuery ?? "",
+					replacement: replacement,
+					all: options.replaceAll,
+					regex: options.findRegex
+				)
+			}
+		}
+
 		if options.findAcrossTabs {
 			// After `--find` has typed its query and the debounced search has
 			// run; stepping before there are matches proves nothing.
@@ -2986,6 +3009,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		findInProject.keyEquivalentModifierMask = [.command, .shift]
 		editMenu.addItem(findInProject)
+		editMenu.addItem(
+			withTitle: "Replace\u{2026}",
+			action: #selector(MainWindowController.replaceInFile(_:)),
+			keyEquivalent: "r"
+		)
 		editMenu.addItem(withTitle: "Find Next", action: #selector(MainWindowController.findNext(_:)), keyEquivalent: "g")
 		let findPrevious = NSMenuItem(
 			title: "Find Previous",

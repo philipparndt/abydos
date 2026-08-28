@@ -99,6 +99,7 @@ public enum SchemeRole: String, CaseIterable, Sendable {
 	case editorText, gutterText, gutterCurrentLineText, currentLineBackground, caret
 	case selectionBackground, selectionBackgroundInactive
 	case searchMatchBackground, searchMatchCurrentBackground
+	case selectionOccurrenceBackground
 	case foldPlaceholderBackground, foldPlaceholderText, indentGuide
 
 	/// The roles a file may leave out, and the reason there are any.
@@ -121,6 +122,7 @@ public enum SchemeRole: String, CaseIterable, Sendable {
 		.selectionBackgroundInactive,
 		.searchMatchBackground,
 		.searchMatchCurrentBackground,
+		.selectionOccurrenceBackground,
 	]
 }
 
@@ -342,6 +344,16 @@ public extension Scheme {
 			guard let strong = roles[.selectionBackground],
 			      let current = roles[.searchMatchCurrentBackground] else { return nil }
 			return .midway(strong, current)
+		}
+		// And the places the selected text also appears: halfway from the ground
+		// to the selection, which is what those places *are* — the ones that
+		// would look selected if you selected them. A pale form of the selection
+		// says that; a pale form of the find band would say "a weaker answer to a
+		// question you asked", which is not what this is.
+		try read(.selectionOccurrenceBackground) {
+			guard let ground = roles[.editorBackground],
+			      let selection = roles[.selectionBackground] else { return nil }
+			return .midway(ground, selection)
 		}
 
 		guard let syntaxSection = section["syntax"] else { throw SchemeProblem.missing("app.syntax") }

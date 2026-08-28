@@ -404,6 +404,14 @@ extension MainWindowController {
 		editor.showFind()
 	}
 
+	/// Edit ▸ Replace…, which is ⌘R.
+	///
+	/// Free to take: Run is ⌃R, Go Run ⌃⌘R and Review Branch ⇧⌘R, so the one
+	/// chord every editor uses for replace was bound to nothing here.
+	@objc func replaceInFile(_ sender: Any?) {
+		editor.showReplace()
+	}
+
 	/// Edit ▸ Toggle Comment, which is ⌘/.
 	///
 	/// The work is `CodeView.toggleLineComment()` and through it `LineComment`;

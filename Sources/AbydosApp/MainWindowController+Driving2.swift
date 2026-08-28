@@ -875,6 +875,34 @@ extension MainWindowController {
 		editor.simulateTyping(text)
 	}
 
+	/// Selects a string and says which other places lit up because of it.
+	///
+	/// Two prints, half a second apart: the scan is debounced like every other
+	/// one here, and a report taken the instant the selection is made would show
+	/// an empty list and prove nothing.
+	/// - Parameter thenExit: false when a shot has been asked for, since the
+	///   claim this makes is about what something looks like and a run that quit
+	///   before the shutter would photograph nothing.
+	func reportOccurrencesForTesting(selecting text: String, thenExit: Bool = true) {
+		let found = editor.selectTextForTesting(text)
+		print("OCCURRENCES selected=\(found ? "yes" : "not found") \(editor.occurrenceReportForTesting)")
+		fflush(stdout)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+			guard let self else { return }
+			print("OCCURRENCES settled: \(self.editor.occurrenceReportForTesting)")
+			fflush(stdout)
+			if thenExit { exit(0) }
+		}
+	}
+
+	/// Replaces from the find bar and says what happened, for a driven run.
+	func replaceForTesting(query: String, replacement: String, all: Bool, regex: Bool) -> String {
+		editor.replaceForTesting(query: query, replacement: replacement, all: all, regex: regex)
+	}
+
+	/// The file as it now reads, for saying what a replace made of it.
+	var textForTesting: String? { editor.textForTesting }
+
 	/// Walks a sequence of theme settings and says what each one resolved to.
 	///
 	/// The sequence is the point: switching to "system" after a fixed theme is

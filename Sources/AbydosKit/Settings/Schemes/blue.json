@@ -33,6 +33,7 @@
 		"selectionBackgroundInactive": { "light": "#D9DBE1", "dark": "#383C46" },
 		"searchMatchBackground": { "light": "#FBE6AC", "dark": "#5A4A2E" },
 		"searchMatchCurrentBackground": { "light": "#F5A623", "dark": "#A9662A" },
+		"selectionOccurrenceBackground": { "light": "#DDEAFC", "dark": "#283A5B" },
 		"foldPlaceholderBackground": { "light": "#E4E6EA", "dark": "#363A45" },
 		"foldPlaceholderText": { "light": "#5A5F6A", "dark": "#A0A5B3" },
 		"indentGuide": { "light": "#E6E8EC", "dark": "#2F323B" },
