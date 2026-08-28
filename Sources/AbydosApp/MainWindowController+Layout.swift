@@ -282,8 +282,10 @@ extension MainWindowController {
 			// the two places that could move the window and nowhere else.
 			guard !LaunchOptions.parse().isDrivenRun else { return }
 			// Following, so the same rule as a shell that moved: the panel is
-			// where the change came from and is not to be moved by it.
-			self.switchProject(to: root, followingTerminal: true)
+			// where the change came from and is not to be moved by it. Through
+			// the same classification too — a pane's root is a directory like
+			// any other, and whether it is a project is not the pane's to say.
+			self.follow(reported: root)
 		}
 		bottomPanel.onRunAgain = { [weak self] in self?.run.runSelectedConfiguration(debug: false) }
 		bottomPanel.onDebugAgain = { [weak self] in self?.run.runSelectedConfiguration(debug: true) }

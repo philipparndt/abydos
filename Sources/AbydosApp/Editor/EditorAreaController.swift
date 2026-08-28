@@ -450,7 +450,7 @@ final class EditorAreaController: NSViewController {
 	private func recordOpenScratches() {
 		guard let project, !isClosing, suppressedRecording == 0 else { return }
 		let open = groups.flatMap(\.openScratchURLs).map(\.path)
-		OpenScratches().record(open, forProject: project.root)
+		OpenScratches().record(open, forProject: project.sessionRoot)
 
 		// And what is open generally, on every change rather than at quit: a
 		// window that never gets to say goodbye — a crash, a force quit, a
@@ -460,11 +460,11 @@ final class EditorAreaController: NSViewController {
 		// here; the terminals, the panel, the subproject and the chosen
 		// configuration belong to the window, and writing what this knows over
 		// what it does not would drop them every time a tab changed.
-		var session = SessionStore.read(in: project.root) ?? ProjectSession()
+		var session = SessionStore.read(in: project.sessionRoot) ?? ProjectSession()
 		let captured = captureSession()
 		session.files = captured.files
 		session.activePath = captured.activePath
-		try? SessionStore.write(session, in: project.root)
+		try? SessionStore.write(session, in: project.sessionRoot)
 	}
 
 	/// Emptying and refilling the window is not the user closing tabs.

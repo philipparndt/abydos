@@ -161,7 +161,7 @@ extension MainWindowController {
 		// and whose `subprojectRoot` has just been cleared. So the session on disk
 		// was rewritten without its `subproject` before the line that needed it
 		// looked.
-		let remembered = SessionStore.read(in: project.root)
+		let remembered = SessionStore.read(in: project.sessionRoot)
 
 		self.project = project
 		subprojectRoot = nil
@@ -258,7 +258,7 @@ extension MainWindowController {
 			// asked for every window, not for the ones whose session happens to
 			// agree.
 			setPanelVisible(true)
-			let remembered = SessionStore.read(in: project.root)
+			let remembered = SessionStore.read(in: project.sessionRoot)
 			// A panel with nothing in it is not a terminal being open. The
 			// session's own terminals come back a moment later if it had any;
 			// this is for the window that has none.

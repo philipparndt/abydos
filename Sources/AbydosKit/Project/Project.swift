@@ -5,9 +5,42 @@ public final class Project {
 	public let root: URL
 	public private(set) var git: GitRepository?
 
-	public init(root: URL) {
+	/// Whether this root is a folder the window was merely pointed at rather
+	/// than a project.
+	///
+	/// True only for a folder a shell walked into that is in no working copy.
+	/// Everything that asks "where does this session go" and "is this worth
+	/// recording as a recent" reads this one property, rather than each of them
+	/// asking the file system the same question and one of them getting it
+	/// wrong.
+	///
+	/// False for every explicit open — Open in the File menu, `abydos <dir>`, a
+	/// folder dropped on the editor, the recents list. Opening a folder is a
+	/// deliberate act and makes a project of it whatever is or is not above it;
+	/// it is also what writes the `.abydos` that makes the folder a project the
+	/// next time a shell walks in. Had the marker test governed opening as well,
+	/// a folder somebody chose would never get one written, so it could never
+	/// become a project, and it would throw its tabs away on every `cd` into a
+	/// subdirectory.
+	public let isLooseFolder: Bool
+
+	public init(root: URL, isLooseFolder: Bool = false) {
 		self.root = root.standardizedFileURL
+		self.isLooseFolder = isLooseFolder
 	}
+
+	/// Where this project's session lives: beside it, or nil for the one file
+	/// every folder shares.
+	///
+	/// **One property rather than `isLooseFolder ? nil : root` at each call
+	/// site**, and it is here because writing it out was tried first and missed
+	/// two of them. `EditorAreaController` writes the editor's half of the
+	/// session on every tab change; it was left keyed on `root`, so a folder
+	/// somebody merely walked into got a `.abydos` written into it after all —
+	/// in the home directory, which then counted as a project root for every
+	/// directory below it. A rule spread across five call sites is a rule that
+	/// holds in three of them.
+	public var sessionRoot: URL? { isLooseFolder ? nil : root }
 
 	public var name: String { root.lastPathComponent }
 
