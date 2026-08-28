@@ -47,6 +47,11 @@ final class ChangesPane: NSView {
 	var repositoryRoot: URL { root }
 
 	private var status = GitWorkingCopyStatus()
+
+	/// The submodules this repository holds, and what each of them has changed.
+	/// See `EstateChanges` — empty for a repository that has none, down the
+	/// same code path.
+	private let submodules: EstateChanges
 	private var unstagedTable: ChangesOutlineView!
 	private var stagedTable: ChangesOutlineView!
 
@@ -220,6 +225,7 @@ final class ChangesPane: NSView {
 
 	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
+		self.submodules = EstateChanges(root: root)
 		self.arrangement = layout
 		super.init(frame: .zero)
 		wantsLayer = true
@@ -241,7 +247,24 @@ final class ChangesPane: NSView {
 	deinit { NotificationCenter.default.removeObserver(self) }
 
 	@objc private func workingCopyMayHaveChanged() {
+		// No paths with it, so nothing here knows what moved. That is the right
+		// answer for what posts this: a commit, a checkout, a pull, a branch
+		// switch — every one of which can move every gitlink in the estate, and
+		// none of which happens per keystroke. The event that *does* arrive
+		// dozens a minute is a file being written, and that one comes through
+		// `refresh(after:)` with its paths.
 		refresh()
+	}
+
+	/// Re-reads only the repositories the filesystem event named.
+	///
+	/// **This is what makes a superproject affordable to hold open.** Sweeping
+	/// an estate is 0.45 s over two hundred submodules and this is called on
+	/// every write inside the project; re-reading the one repository the write
+	/// landed in is 0.01 s. `GitEstateRefresh` does the attribution, from the
+	/// paths the navigator's watcher already has.
+	func refresh(after change: FileSystemChange) {
+		refresh(submodules.read(after: change))
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -596,14 +619,16 @@ final class ChangesPane: NSView {
 
 	// MARK: - Data
 
-	func refresh() {
-		guard !isBusy else { return }
+	func refresh() { refresh(.everything) }
+
+	private func refresh(_ read: EstateChanges.Read) {
+		guard !isBusy, read != .nothing else { return }
 		// Outside the comparison below: a clean working copy produces the same
 		// status every time, and the branch can still have moved ahead of its
 		// remote since the last look.
 		refreshPushState()
 		Task { @MainActor in
-			let fresh = await GitWorkingCopy.status(in: root)
+			let fresh = await submodules.refresh(read)
 			// Taken down before the comparison below, not after it. An
 			// unchanged status is still an answer, and a spinner that only
 			// stopped when something had changed span for ever over a clean
@@ -660,7 +685,14 @@ final class ChangesPane: NSView {
 		for staged in [false, true] {
 			let outline = staged ? stagedTable! : unstagedTable!
 			Task { @MainActor in
-				let counts = await GitLineCounts.workingCopy(staged: staged, in: root)
+				// Per repository that has changes, and none for the rest: the
+				// superproject's `--numstat` says nothing about a file inside a
+				// submodule, so every service's rows carried no counts at all.
+				let counts = await GitEstateLineCounts.workingCopy(
+					staged: staged,
+					in: self.submodules.estate,
+					status: self.submodules.status
+				)
 				// The tree may have been rebuilt while this was out; the roots
 				// read here are whichever ones are on screen now.
 				for root in self.side(for: outline).roots { root.applyLineCounts(counts) }
@@ -716,7 +748,7 @@ final class ChangesPane: NSView {
 	) {
 		let selected = selectedPaths(in: outline)
 		let collapsed = collapsedPaths(in: outline)
-		let roots = GitChangeTree.build(changes, against: other)
+		let roots = GitChangeTree.build(changes, against: other, in: submodules.estate)
 		let byPath = GitChangeTree.index(roots)
 		if staged {
 			stagedSide.roots = roots
@@ -905,7 +937,17 @@ final class ChangesPane: NSView {
 	private func fill(_ node: GitChangeNode, in outline: ChangesOutlineView, staged: Bool) {
 		let path = node.path
 		Task { @MainActor in
-			let files = await GitWorkingCopy.untrackedFiles(inDirectory: path, in: root)
+			// The same question as the diff: an untracked directory inside a
+			// submodule is listed by that submodule, and asking the
+			// superproject for it lists nothing.
+			let estate = self.submodules.estate
+			let files = await GitWorkingCopy.untrackedFiles(
+				inDirectory: estate.relativePath(of: path),
+				in: estate.repositoryRoot(containing: path)
+			).map { inside -> String in
+				guard let submodule = estate.submodule(containing: path) else { return inside }
+				return "\(submodule.path)/\(inside)"
+			}
 			let rows = GitChangeTree.contents(
 				ofUntrackedDirectory: path, files: files, staged: staged
 			)
@@ -1312,9 +1354,18 @@ final class ChangesPane: NSView {
 		// folder and counts what git has never seen, which no general dialog
 		// could — so what is borrowed from the safety net is the ref, made
 		// before anything is restored, and the toast that says where it went.
-		run {
-			await DestructiveAsk.insureWorkingCopy(in: self.root)
-			return await GitWorkingCopy.discard(paths: target.paths, in: self.root)
+		// **The safety net is asked once for the whole operation and every
+		// repository is insured before any file is discarded.** Insuring and
+		// discarding repository by repository has no way back from a failure
+		// part way through — the ones before it have moved and only some were
+		// recorded. Two hundred questions is also no question at all: a dialogue
+		// repeated per repository is answered by holding Return, and two hundred
+		// toasts afterwards are read by nobody.
+		runAcrossOwners(target.paths, reporting: false) { paths, estate in
+			let insured = await DestructiveAsk.insureEstate(estate.grouped(paths))
+			let outcomes = await GitEstateOperation.discard(paths: paths, in: estate)
+			DestructiveAsk.sayWhatHappened("discarded", outcomes, insured: insured)
+			return outcomes
 		}
 	}
 
@@ -1334,12 +1385,12 @@ final class ChangesPane: NSView {
 
 	@objc private func stageClicked() {
 		guard let clicked = clickedNode else { return }
-		run { await GitWorkingCopy.stage(paths: [clicked.node.path], in: self.root) }
+		runAcrossOwners([clicked.node.path]) { await GitEstateOperation.stage(paths: $0, in: $1) }
 	}
 
 	@objc private func unstageClicked() {
 		guard let clicked = clickedNode else { return }
-		run { await GitWorkingCopy.unstage(paths: [clicked.node.path], in: self.root) }
+		runAcrossOwners([clicked.node.path]) { await GitEstateOperation.unstage(paths: $0, in: $1) }
 	}
 
 	/// Stages what is selected — a folder as one path, which is the whole of
@@ -1352,14 +1403,14 @@ final class ChangesPane: NSView {
 		let paths = GitChangeTree.reduce(selectedPaths(in: unstagedTable))
 		guard !paths.isEmpty else { return }
 		rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
-		run { await GitWorkingCopy.stage(paths: paths, in: self.root) }
+		runAcrossOwners(paths) { await GitEstateOperation.stage(paths: $0, in: $1) }
 	}
 
 	private func unstageSelected() {
 		let paths = GitChangeTree.reduce(selectedPaths(in: stagedTable))
 		guard !paths.isEmpty else { return }
 		rememberWhereTheSelectionGoes(in: stagedTable, staged: true)
-		run { await GitWorkingCopy.unstage(paths: paths, in: self.root) }
+		runAcrossOwners(paths) { await GitEstateOperation.unstage(paths: $0, in: $1) }
 	}
 
 	/// Clicks into the details field and types, and says what happened.
@@ -1507,6 +1558,47 @@ final class ChangesPane: NSView {
 	}
 
 	/// Runs a git command, then refreshes both this view and the navigator.
+	/// Stages, unstages or discards, in whichever repositories own the paths.
+	///
+	/// One command per owning repository, which is correctness before it is
+	/// thrift: `git add`, `restore`, `reset` and `clean` resolve a pathspec
+	/// against the repository they run in, so a submodule's file handed to the
+	/// superproject stages nothing and says `pathspec did not match`. See
+	/// `GitEstateOperation`.
+	/// - Parameter reporting: whether to say what failed. False where the
+	///   operation says more than that for itself — a discard reports every
+	///   repository and its backup ref, and two reports would be one too many.
+	private func runAcrossOwners(
+		_ paths: [String],
+		reporting: Bool = true,
+		_ operation: @escaping ([String], GitEstate) async -> [GitEstateOutcome]
+	) {
+		let estate = submodules.estate
+		isBusy = true
+		Task { @MainActor in
+			let outcomes = await operation(paths, estate)
+			isBusy = false
+			if reporting { report(outcomes) }
+			refresh()
+			onWorkingCopyChanged?()
+		}
+	}
+
+	/// Says what failed, per repository, and says nothing when nothing did.
+	///
+	/// Named repositories rather than one summary: an estate operation that
+	/// half-worked is a state somebody has to act on, and "git reported a
+	/// problem" over two hundred repositories is not something anybody can.
+	private func report(_ outcomes: [GitEstateOutcome]) {
+		let failed = outcomes.filter(\.didFail)
+		guard !failed.isEmpty else { return }
+		let detail = failed.map { outcome -> String in
+			guard case .failed(let why) = outcome.result else { return outcome.name }
+			return "\(outcome.name): \(why)"
+		}.joined(separator: "\n")
+		presentFailure(detail)
+	}
+
 	private func run(_ operation: @escaping () async -> GitRepository.ProcessResult) {
 		isBusy = true
 		Task { @MainActor in
@@ -1552,6 +1644,13 @@ final class ChangesPane: NSView {
 	}
 
 	/// Selects a change by path, in whichever list holds it.
+	/// Puts the selection on the row for this path, in whichever list has it.
+	///
+	/// Named for the driver because that is what asked for it first, and used by
+	/// the estate overview too: opening a submodule from there means landing on
+	/// its row here rather than in a page that looks the same as before.
+	func select(path: String) { selectChangeForTesting(path) }
+
 	func selectChangeForTesting(_ path: String) {
 		for table in [unstagedTable, stagedTable].compactMap({ $0 }) {
 			for row in 0..<table.numberOfRows {
@@ -1607,6 +1706,39 @@ final class ChangesPane: NSView {
 			return
 		}
 		_ = control(subjectField, textView: textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+	}
+
+	/// Every row of both trees, with what each one is.
+	///
+	/// A repository row is marked `[repo]` and a moved gitlink `[moved]`, which
+	/// is the whole of what an estate adds to this pane and therefore the whole
+	/// of what a driven run has to be able to see. Indented by depth, because
+	/// the claim being checked is that a submodule sits *above* its folders.
+	/// The diff the page is showing, for the row named — which is the claim a
+	/// screenshot of an empty pane cannot be asked about.
+	func diffForTesting() -> String {
+		guard let diffView else { return "no diff view" }
+		let text = diffView.reportForTesting
+		return text.isEmpty ? "empty" : text
+	}
+
+	func rowsForTesting() -> String {
+		func lines(_ nodes: [GitChangeNode], depth: Int) -> [String] {
+			nodes.flatMap { node -> [String] in
+				var marks: [String] = []
+				if node.isRepository { marks.append("[repo]") }
+				if node.gitlink != nil { marks.append("[moved]") }
+				let tally = node.isFolder
+					? (node.isPartial ? " \(node.count) of \(node.total)" : " \(node.count)")
+					: (node.lines.map { " +\($0.added)/-\($0.removed)" } ?? "")
+				let line = String(repeating: "  ", count: depth)
+					+ node.name + tally
+					+ (marks.isEmpty ? "" : " " + marks.joined(separator: " "))
+				return [line] + lines(node.children, depth: depth + 1)
+			}
+		}
+		return (["unstaged:"] + lines(unstagedSide.roots, depth: 1)
+			+ ["staged:"] + lines(stagedSide.roots, depth: 1)).joined(separator: "\n")
 	}
 
 	/// How much changed, for a driven report — and nothing at all when git gave
@@ -1918,8 +2050,17 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		}
 		Task { @MainActor [weak self] in
 			guard let self else { return }
+			// **In the repository that owns the path.** `git diff -- svc-2/…`
+			// run in the superproject answers nothing at all: the superproject
+			// does not track that file, so the pane went blank for every file
+			// inside a submodule and looked like a file with no changes. The
+			// path has to be relative to that repository too, for the reason
+			// `Project.gitRoot` records.
+			let estate = self.submodules.estate
 			let text = await GitWorkingCopy.diff(
-				for: change.path, staged: change.isStaged, in: self.root
+				for: estate.relativePath(of: change.path),
+				staged: change.isStaged,
+				in: estate.repositoryRoot(containing: change.path)
 			)
 			diffView.setDiff(
 				text, staged: change.isStaged,

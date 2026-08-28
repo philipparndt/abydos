@@ -31,6 +31,22 @@ final class RepositoryRowView: ActionableRowView {
 	/// stopped on `edit` or a failed `exec` does not have.
 	private var headNotice: String?
 
+	/// How many submodules this repository holds, when it holds any.
+	///
+	/// **Said here because it changes what everything below means.** `level` on
+	/// a superproject is a true sentence about the superproject and says nothing
+	/// about the forty services under it, and a reader who does not know this is
+	/// a superproject has no reason to look further.
+	///
+	/// **Only said, and not given a verb.** This row's action is the remote
+	/// traffic — fetch when level, pull when behind, push when ahead — and that
+	/// is the whole reason this specification draws the repository as a row at
+	/// all: a verb hangs off the row that draws its object. A second verb here
+	/// would dilute the one thing the row was pinned for. The way to the
+	/// overview is the Submodules section's own header, which is the row that
+	/// draws *that* object, and ⇧⌘M.
+	private var submoduleCount = 0
+
 	/// Focus is its own, because it is outside the outline: the tree cannot
 	/// select a row it does not contain.
 	private var hasKeyboard = false
@@ -50,10 +66,13 @@ final class RepositoryRowView: ActionableRowView {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
-	func show(branch: String?, state: GitPush.State?, notice: String? = nil) {
+	func show(
+		branch: String?, state: GitPush.State?, notice: String? = nil, submodules: Int = 0
+	) {
 		self.branch = branch
 		self.state = state
 		self.headNotice = notice
+		self.submoduleCount = submodules
 		updateAction()
 		needsDisplay = true
 	}
@@ -176,7 +195,7 @@ final class RepositoryRowView: ActionableRowView {
 			)
 		}
 		drawnDistance = distance
-		RowMetrics.draw(
+		x = RowMetrics.draw(
 			drawnDistance,
 			font: font,
 			colour: Theme.current.sidebarHeaderText,
@@ -184,6 +203,16 @@ final class RepositoryRowView: ActionableRowView {
 			in: bounds,
 			limit: limit
 		)
+		if submoduleCount > 0 {
+			RowMetrics.draw(
+				" · \(submoduleCount) submodules",
+				font: font,
+				colour: Theme.current.gitIgnored,
+				at: x,
+				in: bounds,
+				limit: limit
+			)
+		}
 
 		drawAction()
 	}
@@ -192,6 +221,7 @@ final class RepositoryRowView: ActionableRowView {
 	var reportForTesting: String {
 		(headNotice.map { $0 + " · " } ?? "")
 			+ "\(drawnDistance.isEmpty ? distance : drawnDistance)"
+			+ (submoduleCount > 0 ? " · \(submoduleCount) submodules" : "")
 			+ " · \(action?.title ?? "nothing to press")"
 	}
 }

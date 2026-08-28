@@ -32,6 +32,26 @@ public enum GitDestructive {
 		case moveTag(String, from: String)
 		/// Writing over commits on a remote.
 		case forcePush(branch: String, overwriting: Int)
+
+		/// What a remembered answer about this operation is filed under.
+		///
+		/// The *kind* and not the particulars: "always stash and switch" is an
+		/// answer about switching branches, not about switching to `main` with
+		/// four files changed, and a key carrying the particulars would ask
+		/// again every time anything about the situation differed — which is
+		/// every time.
+		public var kind: String {
+			switch self {
+			case .switchBranch: return "switchBranch"
+			case .discard:      return "discard"
+			case .reset:        return "reset"
+			case .rebase:       return "rebase"
+			case .amend:        return "amend"
+			case .deleteBranch: return "deleteBranch"
+			case .moveTag:      return "moveTag"
+			case .forcePush:    return "forcePush"
+			}
+		}
 	}
 
 	/// One of the ways out of a dialog.

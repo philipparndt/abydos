@@ -769,6 +769,7 @@ final class SidebarController: NSObject {
 			// already had one. The backlog card, the project switcher and now
 			// the titlebar all go through the same door.
 			pane.onOpenCommitPage = { [weak self] in self?.showCommitPage(carrying: nil) }
+			pane.onOpenEstate = { [weak self] in self?.showEstatePage() }
 			pane.onOpenFiles = { [weak self] paths in
 				guard let self, let project = self.project() else { return }
 				for path in paths {
@@ -920,6 +921,71 @@ final class SidebarController: NSObject {
 		page.refresh()
 	}
 
+	/// Every submodule in the estate, as a page — see `EstateOverviewPage`.
+	func showEstatePage() {
+		leaveTerminalFullScreen()
+		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return }
+
+		let page = (group.page(identifier: "estate") as? EstateOverviewPage)
+			?? EstateOverviewPage(root: gitCommandRoot() ?? project.root)
+		page.onOpenPullRequest = { [weak self] number, root in
+			_ = self?.pullRequests.openFromEstate(number: number, in: root)
+		}
+		page.onOpenSubmodule = { [weak self] path in
+			// The submodule's own changes, in the page that already draws them —
+			// landing on that repository's row, not merely opening a page that
+			// looks the same as it did before the row was pressed.
+			guard let self else { return }
+			showCommitPage(carrying: nil)
+			// After the page has read the working copy, or the row it is being
+			// asked to select does not exist yet.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+				self?.commitPage?.select(path: path)
+			}
+		}
+		estatePage = page
+		group.openPage(
+			page, title: "Submodules", identifier: "estate", symbol: "square.stack.3d.up"
+		)
+		giveTheEditorTheWindow()
+	}
+
+	/// The estate page, while one is open, for the driver to read.
+	private(set) weak var estatePage: EstateOverviewPage?
+
+	/// What the estate page says, row by row.
+	func estateForTesting(_ steps: String, waiting: Int = 8) {
+		if estatePage == nil { showEstatePage() }
+		guard let page = estatePage else {
+			print("ESTATE: no page")
+			return
+		}
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			if step.hasPrefix("settle") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.estateForTesting(rest, waiting: waiting)
+				}
+				return
+			}
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "rows":   print("ESTATE rows:\n\(page.rowsForTesting())")
+			case "filter": page.filterForTesting(argument)
+			case "take":
+				// `svc-1:theirs`, or `svc-1:<commit>` for a third one.
+				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+				if parts.count == 2 { page.resolveForTesting(path: parts[0], to: parts[1]) }
+			default:       print("ESTATE: unknown step \(step)")
+			}
+		}
+	}
+
 	/// What the commit page holds.
 	func commitPageForTesting(_ steps: String, waiting: Int = 8) {
 		if commitPage == nil { showCommitPage(carrying: nil) }
@@ -945,6 +1011,9 @@ final class SidebarController: NSObject {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("COMMIT-PAGE:\n\(page.pageReportForTesting())")
+			case "rows":   print("COMMIT-PAGE rows:\n\(page.rowsForTesting())")
+			case "diff":   print("COMMIT-PAGE diff: \(page.diffForTesting())")
+			case "stage":  page.stageForTesting(paths: [argument], staged: false)
 			case "who":    print("COMMIT-PAGE \(page.keyboardReportForTesting())")
 			case "keys":   print("COMMIT-PAGE keys: " + page.keysForTesting(argument))
 			case "select": page.selectChangeForTesting(argument)

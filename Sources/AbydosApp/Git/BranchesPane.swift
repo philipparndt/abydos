@@ -14,6 +14,8 @@ final class BranchesPane: NSView {
 	var onOpenWorktree: ((URL) -> Void)?
 	/// Somebody wants the commit page.
 	var onOpenCommitPage: (() -> Void)?
+	/// Opens the submodules overview, from the section that lists them.
+	var onOpenEstate: (() -> Void)?
 	/// Open these paths in the editor.
 	var onOpenFiles: (([String]) -> Void)?
 	/// Somebody wants the log, for a ref or for the repository.
@@ -138,6 +140,10 @@ final class BranchesPane: NSView {
 	private var tableView: BranchesOutlineView!
 	/// Where this branch stands against its remote, for what the counter says.
 	private var trafficState: GitPush.State?
+	/// The submodules, and what each of them has to report. Empty for a
+	/// repository that holds none, which is most of them.
+	private let submodules: EstateChanges
+	private var estateRows: [GitEstateRow] = []
 	/// Where the head is when it is not on a branch, and what git has stopped
 	/// in the middle of — nil when there is nothing unusual to say. Drawn on
 	/// the repository row and as a row of its own at the top of Local.
@@ -169,6 +175,8 @@ final class BranchesPane: NSView {
 		/// local branches simply has no tick anywhere in it and says nothing
 		/// about where you are.
 		case detachedHead(String)
+		/// One submodule, and everything the overview knows about it.
+		case submodule(GitEstateRow)
 
 	}
 
@@ -202,6 +210,7 @@ final class BranchesPane: NSView {
 
 	init(root: URL) {
 		self.root = root
+		self.submodules = EstateChanges(root: root)
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
@@ -376,15 +385,23 @@ final class BranchesPane: NSView {
 			// it will go back into is the only thing that can be said about it.
 			self.defaultBranch = await BranchGrouping.defaultBranch(in: root)
 			let fresh = await GitBranches.list(in: root, comparedTo: self.defaultBranch)
-			self.working = await GitWorkingCopy.status(in: root)
+			self.working = await self.readEstate()
 			// Before the trees are built, so `add(changes:)` fills from a cache
 			// that holds only directories git still reports.
 			let directories = Set(
 				(self.working.unstaged + self.working.staged).filter(\.isDirectory).map(\.path)
 			)
 			self.untrackedContents = self.untrackedContents.filter { directories.contains($0.key) }
-			self.unstagedRoots = GitChangeTree.build(self.working.unstaged, against: self.working.staged)
-			self.stagedRoots = GitChangeTree.build(self.working.staged, against: self.working.unstaged)
+			// In the estate, so a submodule is a repository row above its folders —
+			// the same tree the commit page draws, from the same paths.
+			self.unstagedRoots = GitChangeTree.build(
+				self.working.unstaged, against: self.working.staged,
+				in: self.submodules.estate
+			)
+			self.stagedRoots = GitChangeTree.build(
+				self.working.staged, against: self.working.unstaged,
+				in: self.submodules.estate
+			)
 			// Only the repository's own checkouts, and only when there is more
 			// than one: a repository nobody has added a worktree to should not
 			// carry a section explaining that it has one.
@@ -533,7 +550,8 @@ final class BranchesPane: NSView {
 			self.repositoryRow.show(
 				branch: self.currentBranchName,
 				state: state,
-				notice: operation == nil ? self.headNotice : nil
+				notice: operation == nil ? self.headNotice : nil,
+				submodules: self.submodules.estate.count
 			)
 
 			// The tree says it too: the local section has no checkmark on
@@ -754,6 +772,14 @@ final class BranchesPane: NSView {
 			}
 		}
 
+		// The submodules, after the refs and before the places. They are things
+		// this repository *has*, which is why `One tree holds everything the
+		// repository has` puts them here rather than in a tool of their own —
+		// and a section of two hundred rows would break that same requirement's
+		// other half, that every row says enough to be understood. So: only the
+		// ones with something to report, and a count of the rest.
+		appendSubmodules(matching: needle)
+
 		// Stashes last, and only when there are any: work put aside belongs
 		// with the branches it was put aside from, which is what saves this
 		// from being another view of its own.
@@ -878,6 +904,78 @@ final class BranchesPane: NSView {
 			// once it has been opened, and they are rows like any others.
 			guard change.holdsFiles else { continue }
 			add(changes: change.children, staged: staged, to: node)
+		}
+	}
+
+	/// The submodules worth a row, and how many are not.
+	///
+	/// **Two hundred submodules each holding branches, stashes and tags is not
+	/// a tree anybody scrolls.** So the section shows what needs something —
+	/// conflicted, changed, ahead, or pointing somewhere the superproject does
+	/// not record — and says how many are clean rather than listing them. All
+	/// of them are readable on the overview, which the header opens.
+	/// Reads the submodules and gives back the estate's changes as one status.
+	///
+	/// **The estate's changes, not the superproject's.** With
+	/// `--ignore-submodules=dirty` the superproject reports moved gitlinks and
+	/// nothing about a submodule's dirty work tree — so a working-copy row
+	/// built from it alone said `1` while three submodules were dirty. Driving
+	/// an estate is what showed that; the flattened status is what the commit
+	/// page already draws, and the two views must agree.
+	///
+	/// The branches are one cheap call a submodule, bounded, so this section
+	/// and the overview say the same thing about the same repository. They
+	/// differed: with no branch read, a submodule with commits to push fell
+	/// through to `moved`, which is true and is not what the overview said.
+	///
+	/// A repository with no submodules pays two git calls that answer nothing —
+	/// 0.01 s — and gets exactly the status it always got.
+	private func readEstate() async -> GitWorkingCopyStatus {
+		let status = await submodules.refresh(.everything)
+		let branches = await GitEstateBranches.branches(
+			of: submodules.estate.submodules, in: root
+		)
+		estateRows = GitEstateOverview.rows(
+			in: submodules.estate,
+			status: submodules.status,
+			branches: branches
+		)
+		return status
+	}
+
+	private func appendSubmodules(matching needle: String) {
+		guard !estateRows.isEmpty else { return }
+
+		let matching = needle.isEmpty
+			? estateRows
+			: estateRows.filter { $0.path.lowercased().contains(needle) }
+		let worthARow = matching.filter(\.needsSomething)
+		let quiet = matching.count - worthARow.count
+
+		// A filter that matched nothing here is a section with nothing to say,
+		// rather than a section saying "200 clean".
+		guard !matching.isEmpty else { return }
+
+		let title = worthARow.isEmpty
+			? "Submodules · \(quiet) clean"
+			: (quiet > 0 ? "Submodules · and \(quiet) clean" : "Submodules")
+		let section = GitNode(key: "section:Submodules", row: .header(title))
+		roots.append(section)
+
+		for row in worthARow {
+			let node = GitNode(key: "submodule:\(row.path)", row: .submodule(row))
+			section.add(node)
+			// **Its changed files, and not its branches.** Opening a submodule's
+			// own refs is opening that repository, which is a different thing
+			// from reading this one — and it is what would turn this section
+			// into two hundred trees.
+			guard let own = submodules.status.status(of: row.path) else { continue }
+			for change in GitChangeTree.build(own.unstaged, against: own.staged) {
+				node.add(GitNode(
+					key: "submodulechange:\(row.path):\(change.path)",
+					row: .change(change, staged: false, depth: 0)
+				))
+			}
 		}
 	}
 
@@ -1521,6 +1619,8 @@ final class BranchesPane: NSView {
 				return indent + mark + change.name + (change.isFolder ? "/" : "")
 			case let .stashFile(_, file):
 				return indent + file.name
+			case let .submodule(row):
+				return indent + mark + "\u{25A0} \(row.path) · \(SubmoduleRowView.said(row))"
 			}
 		}.joined(separator: "\n")
 	}
@@ -2380,6 +2480,16 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 				)
 				view.onAction = { [weak self] in self?.newBranch() }
 			}
+			// The section shows what needs something; all of them are on the
+			// overview, which is where a refactoring across forty services is read.
+			if title.hasPrefix("Submodules") {
+				view.action = RowAction(
+					symbol: "square.stack.3d.up",
+					help: "Open the submodules overview",
+					isAlwaysShown: false
+				)
+				view.onAction = { [weak self] in self?.onOpenEstate?() }
+			}
 			return view
 		case let .workingCopy(changed):
 			let view = WorkingCopyRowView(changed: changed)
@@ -2419,6 +2529,8 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			return StashFileRowView(file: file)
 		case let .detachedHead(notice):
 			return DetachedHeadRowView(notice: notice)
+		case let .submodule(row):
+			return SubmoduleRowView(row: row)
 		}
 	}
 
@@ -3375,6 +3487,71 @@ private final class StashRowView: NSView {
 
 /// A worktree: where it is, what is checked out there, and whether it is still
 /// on disk.
+/// One submodule: what it is called, and the one thing about it that needs
+/// somebody.
+///
+/// **Not a branch row wearing a different hat.** A branch row says ahead and
+/// behind against a remote; this says whichever of four different things is
+/// currently true — its merge is unresolved, it has uncommitted work, it has
+/// commits to push, or the superproject records it somewhere else. Which of
+/// them it is, is the whole reason the row is in this section rather than
+/// counted into the clean ones.
+/// Internal rather than private only so the driven row report can borrow
+/// `said`: what a row draws and what a report claims it draws must be the one
+/// sentence, or the report cannot catch the row being wrong.
+final class SubmoduleRowView: NSView {
+	private let row: GitEstateRow
+	override var isFlipped: Bool { true }
+
+	init(row: GitEstateRow) {
+		self.row = row
+		super.init(frame: .zero)
+		toolTip = "\(row.path) — \(Self.said(row))"
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	/// What the row says about itself, in the same words the overview uses.
+	static func said(_ row: GitEstateRow) -> String {
+		switch row.state {
+		case .conflicted:         return row.conflict != nil ? "gitlink conflict" : "conflicted"
+		case .changed(let count): return "\(count) changed"
+		case .ahead(let count):   return "\(count) to push"
+		case .moved:              return "moved"
+		case .clean:              return "clean"
+		case .unread:             return "reading\u{2026}"
+		case .absent:             return "not checked out"
+		}
+	}
+
+	private var tint: NSColor {
+		switch row.state {
+		case .conflicted:    return Theme.current.gitConflict
+		case .changed:       return Theme.current.gitModified
+		case .ahead, .moved: return Theme.current.gitAdded
+		default:             return Theme.current.gitIgnored
+		}
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		RowMetrics.glyph("shippingbox", colour: tint, in: bounds)
+		let after = RowMetrics.draw(
+			row.path,
+			font: Theme.current.uiFont(12),
+			colour: Theme.current.sidebarText,
+			at: RowMetrics.textInset, in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset - Theme.current.scaled(90)
+		)
+		RowMetrics.draw(
+			Self.said(row),
+			font: Theme.current.uiFont(10.5),
+			colour: tint,
+			at: after + Theme.current.scaled(6), in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset
+		)
+	}
+}
+
 private final class WorktreeRowView: NSView {
 	private let worktree: GitWorktree
 	override var isFlipped: Bool { true }
