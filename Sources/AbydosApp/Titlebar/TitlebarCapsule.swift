@@ -42,6 +42,24 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private static var chevronWidth: CGFloat { Theme.current.scaled(9) }
 	private static var minimumWidth: CGFloat { Theme.current.scaled(300) }
 
+	/// The widest the capsule may be.
+	///
+	/// **Unbounded, it was as wide as the project's name plus its branch's — and
+	/// a toolbar that cannot fit an item does not shrink it.** It moves the item
+	/// to the overflow menu and leaves a chevron, so the one item that says
+	/// which project this is was the item that disappeared: `vehub-user-service`
+	/// on `fix/dev-user-service-memory-limit` showed no capsule at all in a
+	/// 1400-point window, while `git-repo` on `main` showed it in the same
+	/// window. It was reported as "no title is shown at all", which is exactly
+	/// what it looks like.
+	///
+	/// The item's `visibilityPriority` stays `.standard`. Something has to give
+	/// in a narrow window and the argument for the switcher going first — it is
+	/// in the menu bar too — is sound. What was wrong is that it went first at a
+	/// width where it would have fitted, had it been willing to shorten a branch
+	/// name nobody needs in full.
+	private static var maximumWidth: CGFloat { Theme.current.scaled(360) }
+
 	/// How far the drawn shape sits inside the frame it is given.
 	///
 	/// Not zero — a hairline of air keeps the shape from touching the capsule
@@ -162,7 +180,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// right edge.
 	private var branchWidth: CGFloat {
 		let hintWidth = width(of: Self.hint, font: Self.hintFont)
-		guard let shown = branchText else { return Self.padding + hintWidth + Self.padding }
+		guard let shown = shownBranch else { return Self.padding + hintWidth + Self.padding }
 		return Self.padding
 			+ width(of: shown, font: Self.labelFont)
 			+ Self.gap + Self.chevronWidth
@@ -171,15 +189,67 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	}
 
 	private var projectWidth: CGFloat {
-		Self.padding + width(of: name, font: Self.nameFont)
+		Self.padding + width(of: shownName, font: Self.nameFont)
 			+ Self.gap + Self.chevronWidth + Self.padding
 	}
 
 	override var intrinsicContentSize: NSSize {
 		NSSize(
-			width: Self.inset * 2 + max(Self.minimumWidth, projectWidth + branchWidth),
+			width: Self.inset * 2
+				+ min(Self.maximumWidth, max(Self.minimumWidth, projectWidth + branchWidth)),
 			height: heightConstraint?.constant ?? Self.wantedHeight
 		)
+	}
+
+	// MARK: - Fitting the room there is
+
+	/// The project name as it is drawn: the whole of it, or as much as fits.
+	///
+	/// Kept to a share of the capsule so that a long name cannot take the room
+	/// the branch needs. In practice no name reaches this — eighteen characters
+	/// of `vehub-user-service` is well under it — and the clamp is here for the
+	/// folder somebody names in a sentence.
+	private var shownName: String {
+		shortened(name, toFit: Self.maximumWidth * 0.55, font: Self.nameFont)
+	}
+
+	/// The branch as it is drawn: the whole of it, or as much as the room left
+	/// over from the project half allows.
+	private var shownBranch: String? {
+		guard let branchText else { return nil }
+		let room = Self.maximumWidth
+			- Self.inset * 2
+			- projectWidth
+			- Self.padding * 2
+			- Self.gap * 2
+			- Self.chevronWidth
+			- width(of: Self.hint, font: Self.hintFont)
+		return shortened(branchText, toFit: room, font: Self.labelFont)
+	}
+
+	/// `text`, with its middle replaced by an ellipsis until it fits `room`.
+	///
+	/// The middle rather than either end, because a branch's two ends are the
+	/// informative ones: `fix/` says what kind of work it is and `memory-limit`
+	/// says which piece of it, while the words between them are the part a
+	/// reader can infer. Tail truncation would have left
+	/// `fix/dev-user-servi…`, which is the half that could have been guessed.
+	private func shortened(_ text: String, toFit room: CGFloat, font: NSFont) -> String {
+		guard room > 0 else { return "…" }
+		guard width(of: text, font: font) > room else { return text }
+
+		// Character by character rather than by bisection: a capsule is a few
+		// dozen characters wide, this runs when the name or the branch changes
+		// and not per frame, and a loop anybody can read is worth more here than
+		// the handful of measurements a bisection would save.
+		var keep = text.count - 1
+		while keep > 1 {
+			let head = (keep + 1) / 2
+			let candidate = String(text.prefix(head)) + "…" + String(text.suffix(keep - head))
+			if width(of: candidate, font: font) <= room { return candidate }
+			keep -= 1
+		}
+		return "…"
 	}
 
 	/// Takes the height the zoom asks for, or as much of it as the row has.
@@ -325,7 +395,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	}
 
 	private func drawProject(in shape: NSRect) {
-		let attributed = NSAttributedString(string: name, attributes: [
+		let attributed = NSAttributedString(string: shownName, attributes: [
 			.font: Self.nameFont,
 			.foregroundColor: Theme.current.sidebarHeaderText,
 		])
@@ -363,7 +433,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 		let hintX = shape.maxX - Self.padding - ceil(hintSize.width)
 		hint.draw(at: NSPoint(x: hintX, y: shape.midY - hintSize.height / 2))
 
-		guard let branch = branchText else { return }
+		guard let branch = shownBranch else { return }
 		let attributed = NSAttributedString(string: branch, attributes: [
 			.font: Self.labelFont,
 			// The dimmer of the two, and the same one the ⇧⌘P hint is drawn in:
