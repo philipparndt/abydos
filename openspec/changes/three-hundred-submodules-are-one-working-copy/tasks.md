@@ -1,12 +1,16 @@
-> **Where this stands.** Groups 1, 2 and 8, and most of 4 and 6, are built and
-> tested in `AbydosKit`: the inventory, ownership, the two-question status, the
-> bounded fan-out, the event-attribution rule, estate-wide staging and the
-> commit run, and how far a gitlink has moved. `make test` and `make warnings`
-> are clean over them. What is left is the half that needs a window — the trees,
-> the refs tree, the overview page, the gitlink conflict and the safety net —
-> plus wiring the attribution rule into the app's watcher, and the pull request
-> set, which waits on `review-a-pull-request`. Unticked boxes below are
-> unstarted, not half-done.
+> **Where this stands.** Groups 1–6 and 8–10 are built, tested and driven
+> against a real estate: the inventory, ownership, the two-question status, the
+> bounded fan-out, event attribution, estate-wide staging and the commit run,
+> gitlink movement, the changes tree with its repository rows, and the overview
+> page with its ordering, filter and summary. `make test` (3728) and
+> `make warnings` are clean.
+>
+> What is left: the refs tree's own submodules section (5.3, 5.4), the gitlink
+> conflict (group 7), pushing the estate (8.5), the safety net's partial-run
+> report and per-repository remembered choice (10.3, 10.4), and the pull request
+> set (group 11), which waits on `review-a-pull-request`. The overview is
+> reached from View ▸ Submodules (⇧⌘M) meanwhile, so nothing is unreachable.
+> Unticked boxes below are unstarted, not half-done.
 
 ## 1. The estate: what a superproject is, before anything is drawn from it
 
@@ -46,14 +50,12 @@
 
 ## 3. Staying true without sweeping
 
-- [ ] 3.1 One `RepositoryWatcher` over the superproject's `.git` covers every
+- [x] 3.1 One `RepositoryWatcher` over the superproject's `.git` covers every
       submodule, because each submodule's git directory is
-      `.git/modules/<name>`. Assert that layout rather than assume it —
-      *the assertion is written (`GitEstateLiveTests`); the app's watcher is
-      not yet pointed through `GitEstateRefresh`*
+      `.git/modules/<name>`. Assert that layout rather than assume it
 - [x] 3.2 A filesystem event names directories; resolve each to its owner and
       re-read only those repositories
-- [ ] 3.3 The full sweep runs on open and when `.git/index` or `.gitmodules`
+- [x] 3.3 The full sweep runs on open and when `.git/index` or `.gitmodules`
       moves, and at no other time
 - [x] 3.4 Test: a write under one submodule re-reads that one and no other; a new
       gitlink in the index re-reads the inventory; loose objects re-read nothing
@@ -62,7 +64,7 @@
 
 - [x] 4.1 Stage, unstage and discard group their paths by owner and run one
       command per repository, each with paths relative to that repository
-- [ ] 4.2 Diff, blame, log and the code links ask the estate which root a path
+- [x] 4.2 Diff, blame, log and the code links ask the estate which root a path
       belongs to
 - [x] 4.3 `ProjectRoot`'s climbing rule is unchanged, and a test says why: a
       terminal entering a submodule does not move the window, while a file inside
@@ -73,10 +75,10 @@
 
 ## 5. The trees gain a repository, and only where there is one
 
-- [ ] 5.1 `GitChangeTree`/`PathTree` take a repository above the folders. A
+- [x] 5.1 `GitChangeTree`/`PathTree` take a repository above the folders. A
       project with no submodules gains no row: a level with one child that is
       always the same child says nothing
-- [ ] 5.2 The same path changed in two submodules is two rows, not one
+- [x] 5.2 The same path changed in two submodules is two rows, not one
 - [ ] 5.3 The refs tree's submodules section lists only what has something to
       report and counts the clean ones. A submodule row expands to its changed
       files, never to its branches
@@ -89,10 +91,8 @@
 
 - [x] 6.1 A gitlink row reads `12 ahead`, `3 behind` or diverged, from one
       `rev-list --count --left-right`, and names the subject it now points at
-- [ ] 6.2 No line count on a gitlink, and none counted into its parent folder —
-      *`GitGitlinkMovement` carries commits and no lines; the tree does not read
-      it yet*
-- [ ] 6.3 Moved and dirty are two facts on one row, in that order
+- [x] 6.2 No line count on a gitlink, and none counted into its parent folder
+- [x] 6.3 Moved and dirty are two facts on one row, in that order
 - [x] 6.4 Counts are asked only of repositories known to have changed — six
       commands for six changed submodules out of two hundred
 
@@ -118,13 +118,13 @@
 
 ## 9. The overview
 
-- [ ] 9.1 A page: a row per submodule with changes, branch, distance, gitlink
+- [x] 9.1 A page: a row per submodule with changes, branch, distance, gitlink
       movement, and room for a pull request state
-- [ ] 9.2 Drawn from the inventory before any status lands. A row without a
+- [x] 9.2 Drawn from the inventory before any status lands. A row without a
       status says so and never says clean
-- [ ] 9.3 Ordered by what needs something — conflicted, changed, ahead, clean —
+- [x] 9.3 Ordered by what needs something — conflicted, changed, ahead, clean —
       and filterable, saying how many rows a filter hid
-- [ ] 9.4 The row's model is computed when its status lands, not while drawing,
+- [x] 9.4 The row's model is computed when its status lands, not while drawing,
       and the view is virtualised: three hundred rows cost what thirty do.
       Measured, with the load said
 - [ ] 9.5 A way in from the refs tree's submodules section and from the
@@ -132,9 +132,9 @@
 
 ## 10. The safety net across repositories
 
-- [ ] 10.1 One question for the whole operation, naming how many repositories it
+- [x] 10.1 One question for the whole operation, naming how many repositories it
       covers
-- [ ] 10.2 Every backup made before any repository is touched
+- [x] 10.2 Every backup made before any repository is touched
 - [ ] 10.3 A partial run names what changed, what did not, and every backup ref
 - [ ] 10.4 A remembered choice stays with the repository it was given for
 

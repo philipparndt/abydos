@@ -300,6 +300,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	// here, one line each, and the work is the sidebar's.
 	@objc func showLogPage(_ sender: Any?) { sidebar.showLogPage(scopedTo: nil) }
 	@objc func showCommitPage(_ sender: Any?) { sidebar.showCommitPage(carrying: nil) }
+	@objc func showEstatePage(_ sender: Any?) { sidebar.showEstatePage() }
 
 	/// Flips how the git page arranges a commit's files, and ticks itself.
 	@objc func toggleCommitFilesByFolder(_ sender: Any?) {

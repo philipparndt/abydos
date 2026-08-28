@@ -1559,6 +1559,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// Later than the pages, because this one is a network call rather than a
 		// `git` invocation: the list is not there to report on until `gh` has
 		// answered, and the report waits for it besides.
+		// The estate reads three answers a repository, each bounded, so it is
+		// given the same head start the pages get.
+		if let steps = options.estateSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.sidebarForTesting.estateForTesting(steps)
+			}
+		}
+
 		if let steps = options.pullRequestSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.sidebarForTesting.pullRequestsForTesting(steps)
@@ -3216,6 +3224,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			keyEquivalent: "k"
 		)
 		commitItem.keyEquivalentModifierMask = [.command, .shift]
+		// The estate, for a checkout that holds submodules. Beside the log and
+		// the commit page because it is the third question about the same
+		// repository — where the work is, rather than where it has been or what
+		// is about to go in. It is offered whatever the project is: a repository
+		// with no submodules opens a page that says so in words, which is a
+		// better answer than a menu item that is there some days and not others.
+		let estateItem = viewMenu.addItem(
+			withTitle: "Submodules", action: #selector(MainWindowController.showEstatePage(_:)),
+			keyEquivalent: "m"
+		)
+		estateItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(.separator())
 		// **Two questions about every diff in the app**, so they are here rather
 		// than on the pull request page: the commit view and the log page draw

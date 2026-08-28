@@ -1622,6 +1622,13 @@ final class ChangesPane: NSView {
 	}
 
 	/// Selects a change by path, in whichever list holds it.
+	/// Puts the selection on the row for this path, in whichever list has it.
+	///
+	/// Named for the driver because that is what asked for it first, and used by
+	/// the estate overview too: opening a submodule from there means landing on
+	/// its row here rather than in a page that looks the same as before.
+	func select(path: String) { selectChangeForTesting(path) }
+
 	func selectChangeForTesting(_ path: String) {
 		for table in [unstagedTable, stagedTable].compactMap({ $0 }) {
 			for row in 0..<table.numberOfRows {
