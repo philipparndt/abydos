@@ -19,6 +19,8 @@ final class DebugCoordinator {
 
 	/// The session, when there is one. Owned by the panel that shows it.
 	var debugSession: () -> DebugSession? = { nil }
+	/// The project the window is showing, which is whose breakpoints these are.
+	var projectRoot: () -> URL? = { nil }
 	/// The window a breakpoint's options sheet is put on.
 	var hostWindow: () -> NSWindow? = { nil }
 	/// Written where a project's breakpoints are remembered.
@@ -116,18 +118,49 @@ final class DebugCoordinator {
 	/// one, since it holds what the adapter has confirmed, and the pending set
 	/// otherwise.
 	func breakpointsToRemember() -> [String: [Breakpoint]] {
-		panel.activeDebugSession?.breakpoints ?? pendingBreakpoints
+		currentDebugSession?.breakpoints ?? pendingBreakpoints
 	}
 
-	func showPendingBreakpoints() {
-		var marks: [String: [Int: CodeView.BreakpointMark]] = [:]
-		var conditional: [String: Set<Int>] = [:]
-		for (file, list) in pendingBreakpoints {
-			marks[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, Self.mark(for: $0)) })
-			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
-		}
-		editor.setBreakpoints(marks)
-		editor.setConditionalBreakpoints(conditional)
+	/// The running session, when it is this project's.
+	///
+	/// Everything below asks the session first and the pending set second, and
+	/// a session outlives the project switch that leaves it running — so asked
+	/// plainly, a debug pane still running in the project you came from answers
+	/// for the one you are in now. Its breakpoints are then drawn in this
+	/// project's gutter and written into this project's session file, as this
+	/// project's own.
+	///
+	/// The pane knows which project it is debugging, and a subproject scope
+	/// counts as inside it: a session launched in one module of a repository is
+	/// still that repository's.
+	///
+	/// Nil root means nobody has said which project this is, and then the old
+	/// answer is the only one there is.
+	private var currentDebugSession: DebugSession? {
+		guard let pane = panel.activeDebugPane else { return nil }
+		guard let root = projectRoot() else { return pane.debugSession }
+		return FilePath.isInside(pane.debuggedProject, of: root) ? pane.debugSession : nil
+	}
+
+	/// Whether a session handed in from outside is the one this project started.
+	private func belongsToCurrentProject(_ session: DebugSession) -> Bool {
+		projectRoot() == nil || currentDebugSession === session
+	}
+
+	/// The breakpoints of a project the window has just arrived at, in place of
+	/// whatever it was holding.
+	///
+	/// Including none, for a project that has never had one. Nothing used to
+	/// take the old set away — the gutter was filled from the session file only
+	/// *if it was empty* — so the first project worked in kept its breakpoints
+	/// across every switch after it, and each project visited then wrote them
+	/// down as its own. A `screencasts` checkout with no debugger ever pointed
+	/// at it held breakpoints in an unrelated Java application and in a Go
+	/// example, and would have gone on collecting one from every project ever
+	/// debugged in that window.
+	func adoptBreakpoints(_ breakpoints: [String: [Breakpoint]]) {
+		pendingBreakpoints = breakpoints
+		publishPendingBreakpoints()
 	}
 
 	func toggleBreakpoint(file: URL, line: Int) {
@@ -139,7 +172,7 @@ final class DebugCoordinator {
 		// file still looks the way it did when it was clicked.
 		defer { scheduleAnchoring(inFile: file) }
 
-		if let session = panel.activeDebugSession {
+		if let session = currentDebugSession {
 			session.toggleBreakpoint(file: path, line: line)
 			syncBreakpointsToEditor(from: session)
 			onRememberBreakpoints()
@@ -162,12 +195,12 @@ final class DebugCoordinator {
 	/// A file's breakpoints, from the session when one is running and from the
 	/// pending set otherwise — the two are kept in step, so either answers.
 	func breakpoints(inFile path: String) -> [Breakpoint] {
-		panel.activeDebugSession?.breakpoints(inFile: path) ?? pendingBreakpoints[path] ?? []
+		currentDebugSession?.breakpoints(inFile: path) ?? pendingBreakpoints[path] ?? []
 	}
 
 	/// Puts a file's breakpoints back, wherever they are being kept.
 	func replaceBreakpoints(inFile path: String, with list: [Breakpoint]) {
-		if let session = panel.activeDebugSession {
+		if let session = currentDebugSession {
 			session.replaceBreakpoints(inFile: path, with: list)
 			syncBreakpointsToEditor(from: session)
 			return
@@ -191,7 +224,7 @@ final class DebugCoordinator {
 	}
 
 	private func applyAnchors(_ anchors: [Int: BreakpointAnchors.Anchor], inFile path: String) {
-		if let session = panel.activeDebugSession {
+		if let session = currentDebugSession {
 			session.setBreakpointAnchors(inFile: path, anchors)
 			pendingBreakpoints = session.breakpoints
 			return
@@ -243,7 +276,7 @@ final class DebugCoordinator {
 	/// Turns a breakpoint off, or on again, wherever it is kept.
 	func setBreakpoint(file: URL, line: Int, enabled: Bool) {
 		let path = FilePath.canonical(file)
-		if let session = panel.activeDebugSession {
+		if let session = currentDebugSession {
 			session.setBreakpoint(file: path, line: line, enabled: enabled)
 			syncBreakpointsToEditor(from: session)
 			return
@@ -260,7 +293,7 @@ final class DebugCoordinator {
 	/// Takes a breakpoint away — dragging it out of the gutter, or Delete.
 	func deleteBreakpoint(file: URL, line: Int) {
 		let path = FilePath.canonical(file)
-		if let session = panel.activeDebugSession {
+		if let session = currentDebugSession {
 			session.removeBreakpoint(file: path, line: line)
 			syncBreakpointsToEditor(from: session)
 			return
@@ -274,7 +307,7 @@ final class DebugCoordinator {
 	/// Silences every breakpoint but one, or brings them all back.
 	func setOtherBreakpoints(file: URL, line: Int, enabled: Bool) {
 		let path = FilePath.canonical(file)
-		if let session = panel.activeDebugSession {
+		if let session = currentDebugSession {
 			session.setOtherBreakpoints(file: path, line: line, enabled: enabled)
 			syncBreakpointsToEditor(from: session)
 			return
@@ -303,6 +336,12 @@ final class DebugCoordinator {
 	}
 
 	func syncBreakpointsToEditor(from session: DebugSession) {
+		// Not for a session running behind the window in the project it came
+		// from: it is still reporting its breakpoints as they are verified, and
+		// each report would replace the gutter of the project on screen and be
+		// kept as that project's to write down.
+		guard belongsToCurrentProject(session) else { return }
+
 		var mapped: [String: [Int: CodeView.BreakpointMark]] = [:]
 		var conditional: [String: Set<Int>] = [:]
 		for (file, list) in session.breakpoints {
@@ -325,7 +364,7 @@ final class DebugCoordinator {
 		hitCondition: String?,
 		logMessage: String?
 	) {
-		if let session = panel.activeDebugSession {
+		if let session = currentDebugSession {
 			session.setBreakpointOptions(
 				file: path, line: line,
 				condition: condition, hitCondition: hitCondition, logMessage: logMessage
@@ -354,7 +393,7 @@ final class DebugCoordinator {
 
 		// Works whether or not anything is running: conditions are nearly always
 		// set while writing the code, before the first launch.
-		let session = panel.activeDebugSession
+		let session = currentDebugSession
 		let existing = session?.breakpoint(file: path, line: line)
 			?? pendingBreakpoints[path]?.first { $0.line == line }
 			?? {

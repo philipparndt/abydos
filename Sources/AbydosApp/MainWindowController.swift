@@ -123,6 +123,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func makeDebug() -> DebugCoordinator {
 		let coordinator = DebugCoordinator(editor: editor, panel: bottomPanel)
 		coordinator.debugSession = { [weak self] in self?.bottomPanel.activeDebugSession }
+		coordinator.projectRoot = { [weak self] in self?.project?.root }
 		coordinator.hostWindow = { [weak self] in self?.window }
 		coordinator.onRememberBreakpoints = { [weak self] in self?.rememberBreakpoints() }
 		coordinator.onDebugContinue = { [weak self] in self?.debugContinue($0) }

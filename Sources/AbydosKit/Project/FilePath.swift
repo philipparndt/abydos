@@ -61,6 +61,19 @@ public enum FilePath {
 		canonicalEvenIfMissing(url.path)
 	}
 
+	/// Whether one place is another, or somewhere below it.
+	///
+	/// Canonical on both sides, or the answer is about spelling rather than
+	/// about the disk: `/tmp/x` is inside `/private/tmp` and a plain comparison
+	/// says it is not. And the separator is part of the question —
+	/// `/p/abydos-examples` is not inside `/p/abydos`, which a bare `hasPrefix`
+	/// cheerfully claims.
+	public static func isInside(_ inner: URL, of outer: URL) -> Bool {
+		let inside = canonicalEvenIfMissing(inner)
+		let around = canonicalEvenIfMissing(outer)
+		return inside == around || inside.hasPrefix(around + "/")
+	}
+
 	/// Every name a directory holds, or nil when it is not one.
 	///
 	/// For the question "is there a `WORKSPACE` in here", which
