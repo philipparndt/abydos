@@ -28,7 +28,7 @@
 		"selectionBackgroundInactive": { "light": "#E5D9C2", "dark": "#3A2E24" },
 		"searchMatchBackground": { "light": "#F6DFAE", "dark": "#5A4A2A" },
 		"searchMatchCurrentBackground": { "light": "#E8901F", "dark": "#C77B3B" },
-		"selectionOccurrenceBackground": { "light": "#F8E8C7", "dark": "#3F270E" },
+		"selectionOccurrenceBackground": { "light": "#FBF0DA", "dark": "#2D1E0F" },
 		"foldPlaceholderBackground": { "light": "#EFE4CE", "dark": "#2A2118" },
 		"foldPlaceholderText": { "light": "#6B5741", "dark": "#C0A582" },
 		"indentGuide": { "light": "#EAE0CC", "dark": "#2A2118" },

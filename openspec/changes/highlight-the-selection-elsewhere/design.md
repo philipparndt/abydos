@@ -116,8 +116,17 @@ and a band over it would be one claim covering a louder one.
 ### A colour of its own, derived rather than demanded
 
 A new `SchemeRole` joins the `optional` set with a derivation from colours a
-scheme already has, quieter than `searchMatchBackground` — a find match is an
-answer somebody asked for and this is not.
+scheme already has: most of the way back to the editor's ground from the
+selection.
+
+**The separation that matters is from the selection, and getting that wrong is
+the one thing here that was reported.** The colours were first chosen to stay
+under the find band, which is the wrong axis — find's matches win while find is
+showing, so the two never share a page — and they landed four fifths of the way
+*to* the selection, at 1.04–1.13 against it. They look like a selection because
+they nearly are one. Nearer the ground: 1.23 against the ground and 1.35 against
+the selection, measured on screen in the dark schemes, which is the proportion
+VS Code's own selection highlight keeps.
 
 The mechanism is already built and already argued for: schemes are files people
 keep in dotfiles repositories, and a colour that arrived later must not refuse

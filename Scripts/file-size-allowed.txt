@@ -1,5 +1,5 @@
 3460 Sources/AbydosApp/AppDelegate.swift
-4137 Sources/AbydosApp/Editor/CodeView.swift
+4142 Sources/AbydosApp/Editor/CodeView.swift
 4605 Sources/AbydosApp/Editor/EditorViewController.swift
 3606 Sources/AbydosApp/Editor/LanguageService.swift
 3431 Sources/AbydosApp/Git/BranchesPane.swift

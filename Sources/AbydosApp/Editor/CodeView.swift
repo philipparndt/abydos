@@ -2314,6 +2314,11 @@ final class CodeView: NSView, NSTextInputClient {
 		selectionAnchor = hit.location
 		caret = hit.location + hit.length
 		needsDisplay = true
+		// With the keyboard, because a person selecting text has it. The
+		// selection is drawn in two colours and the unfocused one is the dimmer
+		// of them — a shot taken without this compares the bands against a
+		// selection nobody would be looking at.
+		window?.makeFirstResponder(self)
 		// Through the funnel a mouse or a key would go through, so what this
 		// proves is the path and not a private shortcut into it.
 		reportCaretPosition()

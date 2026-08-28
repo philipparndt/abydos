@@ -101,8 +101,8 @@
       "dark": "#9E7C36"
     },
     "selectionOccurrenceBackground": {
-      "light": "#E9E9E4",
-      "dark": "#383836"
+      "light": "#EFEFEB",
+      "dark": "#2E2E2D"
     },
     "foldPlaceholderBackground": {
       "light": "#E6E6E1",

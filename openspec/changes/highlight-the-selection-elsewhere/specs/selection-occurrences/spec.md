@@ -78,14 +78,23 @@ noise as `e` with more of it.
 - **WHEN** a run of spaces or tabs is selected
 - **THEN** nothing is highlighted
 
-### Requirement: The bands are quieter than a find match, and behind the selection
+### Requirement: The bands are plainly quieter than the selection that made them
 
-The highlights SHALL be drawn in a colour of the scheme's own, quieter than a
-find match, and at the depth the non-current find matches are drawn at — over the
-line background and under the selection.
+The highlights SHALL be drawn in a colour of the scheme's own, plainly quieter
+than the selection, and at the depth the non-current find matches are drawn at —
+over the line background and under the selection.
 
-A find match is the answer to a question somebody asked; this is information
-nobody asked for, and the two must not look alike.
+**Told apart from the selection, and not from a find match.** Find's matches win
+while find is showing, so a band of this colour and a find band never share a
+page; what this shares a page with, always, is the selection that produced it.
+The first colours chosen measured 1.04 to 1.13 against the selection — reported,
+correctly, as looking exactly like one. They now sit nearer the editor's ground
+than the selection: measured on screen in the dark schemes, 1.23 against the
+ground and 1.35 against the selection.
+
+The light schemes have less room to work in, and the requirement is the same: the
+band is dim rather than distinct where a scheme's own selection is only 1.22
+above its ground.
 
 The colour SHALL be one a scheme may leave out, with a stated derivation from
 colours it already has. Schemes are files people keep in dotfiles repositories,
@@ -102,6 +111,12 @@ and a colour that arrived later must not refuse a file written before it existed
 
 - **GIVEN** a selection extended over a place its own text appears again
 - **THEN** the selection is what is drawn there, at full strength
+
+#### Scenario: beside the selection that made them
+
+- **GIVEN** a selection with its occurrences highlighted on the same screen
+- **THEN** the selection is the louder of the two, plainly enough that neither is
+  mistaken for the other
 
 ### Requirement: Find's matches win while find is showing
 
