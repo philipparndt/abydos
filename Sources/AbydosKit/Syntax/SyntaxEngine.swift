@@ -106,13 +106,33 @@ public final class SyntaxEngine {
 
 		// Predicates such as (#match? @x "^[A-Z]") need to read document text.
 		//
-		// The NSRange handed to the provider comes from `Node.range`, which
-		// SwiftTreeSitter derives as byteOffset / 2 because it assumes UTF-16
-		// input. We parse as UTF-8, so `.byteRange` (which multiplies by 2) is
-		// what recovers the true byte offsets.
-		let context = Predicate.Context(textProvider: { range, _ in
-			let bytes = range.byteRange
-			return rope.string(in: Int(bytes.lowerBound)..<Int(bytes.upperBound))
+		// **From the point range, not the byte range, and the difference is a
+		// bug that hid for a long time.** `Node.range` is `byteRange.range`,
+		// which is `lowerBound / 2` — an integer division, because
+		// SwiftTreeSitter assumes UTF-16 input. We parse as UTF-8, so the
+		// obvious recovery is `.byteRange`, which multiplies by 2 again. That
+		// round trip is lossless only for *even* offsets: a node starting at
+		// byte 227 comes back as 226, and the text handed to the predicate
+		// begins one byte early.
+		//
+		// One byte is the whole of it. `(#match? @comment.documentation
+		// "^///[^/]")` sees "\n/// Durchmesser …" instead of "/// Durchmesser
+		// …", the anchor fails, and that `///` line is highlighted as an
+		// ordinary comment while the one above it — which happened to start at
+		// an even offset — is highlighted as documentation. In a file of doc
+		// comments about half of them land on each side, which reads as random
+		// lines being the wrong colour and is what somebody reported.
+		//
+		// The point range is exact and always was: tree-sitter fills `column`
+		// in bytes for a UTF-8 parse, so the line's own byte offset plus the
+		// column is the offset, with nothing divided.
+		let context = Predicate.Context(textProvider: { _, points in
+			let lower = rope.byteOffset(ofLine: Int(points.lowerBound.row))
+				+ Int(points.lowerBound.column)
+			let upper = rope.byteOffset(ofLine: Int(points.upperBound.row))
+				+ Int(points.upperBound.column)
+			guard lower <= upper else { return nil }
+			return rope.string(in: lower..<upper)
 		})
 
 		var matches: [QueryMatch] = []
