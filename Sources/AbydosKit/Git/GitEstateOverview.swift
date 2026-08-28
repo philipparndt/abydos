@@ -173,6 +173,12 @@ public struct GitEstateRow: Sendable, Equatable, Identifiable {
 	/// How many changes are in its work tree, whatever the state says.
 	public let changeCount: Int
 
+	/// The superproject's own conflict about where this submodule points, when
+	/// there is one — which is a different thing from a conflict *inside* it.
+	public let conflict: GitGitlinkConflict?
+	/// How far the two sides of that conflict are apart, once asked.
+	public let conflictDistance: GitGitlinkMovement.Relation?
+
 	public var id: String { submodule.path }
 	public var path: String { submodule.path }
 	public var needsSomething: Bool { state.rank <= State.moved.rank }
@@ -182,13 +188,17 @@ public struct GitEstateRow: Sendable, Equatable, Identifiable {
 		state: State,
 		branch: GitSubmoduleBranch?,
 		movement: GitGitlinkMovement?,
-		changeCount: Int
+		changeCount: Int,
+		conflict: GitGitlinkConflict? = nil,
+		conflictDistance: GitGitlinkMovement.Relation? = nil
 	) {
 		self.submodule = submodule
 		self.state = state
 		self.branch = branch
 		self.movement = movement
 		self.changeCount = changeCount
+		self.conflict = conflict
+		self.conflictDistance = conflictDistance
 	}
 }
 
@@ -203,7 +213,9 @@ public enum GitEstateOverview {
 		in estate: GitEstate,
 		status: GitEstateStatus,
 		branches: [String: GitSubmoduleBranch] = [:],
-		movements: [String: GitGitlinkMovement] = [:]
+		movements: [String: GitGitlinkMovement] = [:],
+		conflicts: [String: GitGitlinkConflict] = [:],
+		conflictDistances: [String: GitGitlinkMovement.Relation] = [:]
 	) -> [GitEstateRow] {
 		let moved = Set(status.movedGitlinks(in: estate).map(\.path))
 
@@ -217,7 +229,12 @@ public enum GitEstateOverview {
 				state = .absent
 			} else if own == nil {
 				state = .unread
-			} else if own?.hasConflicts == true {
+			} else if own?.hasConflicts == true || conflicts[submodule.path] != nil {
+				// Two different conflicts lead to the same row. One is inside
+				// the submodule — text, somebody else's to resolve — and the
+				// other is the superproject's about where the submodule points,
+				// which nothing but this can resolve. Both stop the merge, so
+				// both come first; which of them it is, the row says.
 				state = .conflicted
 			} else if count > 0 {
 				state = .changed(count)
@@ -234,7 +251,9 @@ public enum GitEstateOverview {
 				state: state,
 				branch: branch,
 				movement: movements[submodule.path],
-				changeCount: count
+				changeCount: count,
+				conflict: conflicts[submodule.path],
+				conflictDistance: conflictDistances[submodule.path]
 			)
 		}
 		.sorted {

@@ -101,23 +101,48 @@ public enum GitSubmodules {
 		return parseStage(result.stdout)
 	}
 
-	/// Parses `git ls-files --stage -z`, keeping only gitlinks.
+	/// Parses `git ls-files --stage -z`, keeping only gitlinks — one per path.
 	///
 	/// Records are `<mode> SP <object> SP <stage> TAB <path>`, NUL-separated.
 	/// `-z` because without it git escapes any path that is not plain ASCII, and
 	/// the escaped form is not a path any later command can find — the same
 	/// reason `GitWorkingCopy.status` asks for it.
+	///
+	/// **One entry per path, and the stage is why.** An unmerged path has no
+	/// stage 0: it has stage 1 for the common ancestor, 2 for ours and 3 for
+	/// theirs. A parser that took every record listed a conflicted submodule
+	/// three times — three rows on the overview, and a superproject with one
+	/// conflicted submodule reporting "3 conflicted". Driving a real merge is
+	/// what found it; nothing in an unconflicted repository can.
+	///
+	/// Ours wins when there is no stage 0, because ours is what the work tree is
+	/// on and therefore what every other question asked about this submodule
+	/// will be answered against.
 	static func parseStage(_ output: String) -> [(path: String, commit: String)] {
-		var found: [(path: String, commit: String)] = []
+		var byPath: [String: (stage: Int, commit: String)] = [:]
+		var order: [String] = []
+
 		for record in output.split(separator: "\0", omittingEmptySubsequences: true) {
 			guard let tab = record.firstIndex(of: "\t") else { continue }
 			let fields = record[record.startIndex..<tab].split(separator: " ")
-			guard fields.count >= 2, fields[0] == gitlinkMode else { continue }
+			guard fields.count >= 3, fields[0] == gitlinkMode,
+			      let stage = Int(fields[2])
+			else { continue }
 			let path = String(record[record.index(after: tab)...])
 			guard !path.isEmpty else { continue }
-			found.append((path: path, commit: String(fields[1])))
+
+			if byPath[path] == nil { order.append(path) }
+			// Lower rank wins: stage 0 if it is there, then ours, then theirs,
+			// then the ancestor.
+			let rank = [0: 0, 2: 1, 3: 2, 1: 3][stage] ?? 4
+			let heldRank = byPath[path].map { [0: 0, 2: 1, 3: 2, 1: 3][$0.stage] ?? 4 } ?? Int.max
+			if rank < heldRank { byPath[path] = (stage: stage, commit: String(fields[1])) }
 		}
-		return found
+
+		return order.compactMap { path in
+			guard let held = byPath[path] else { return nil }
+			return (path: path, commit: held.commit)
+		}
 	}
 
 	/// What `.gitmodules` says, keyed by the path it gives — which is the only

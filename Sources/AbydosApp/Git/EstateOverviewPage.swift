@@ -85,18 +85,53 @@ final class EstateOverviewPage: NSView {
 			let movements = await submodules.movements()
 			self.movements = movements
 			reloadRows()
+
+			await readConflicts()
 		}
 	}
 
 	private var branches: [String: GitSubmoduleBranch] = [:]
 	private var movements: [String: GitGitlinkMovement] = [:]
+	private var conflicts: [String: GitGitlinkConflict] = [:]
+	private var conflictDistances: [String: GitGitlinkMovement.Relation] = [:]
+
+	/// The superproject's own conflicts about where its submodules point.
+	///
+	/// One `git ls-files -u` for the lot, and it is only asked at all when the
+	/// superproject's status says something is unmerged: a repository that is
+	/// not mid-merge — which is nearly always — pays nothing.
+	private func readConflicts() async {
+		guard submodules.status.superproject.hasConflicts else {
+			guard !conflicts.isEmpty else { return }
+			conflicts = [:]
+			conflictDistances = [:]
+			reloadRows()
+			return
+		}
+
+		let found = await GitGitlinkConflicts.conflicts(in: root)
+		conflicts = Dictionary(uniqueKeysWithValues: found.map { ($0.path, $0) })
+		reloadRows()
+
+		// The distance is a second call a conflict, and there are never many:
+		// a merge that conflicted in two hundred submodules at once is not the
+		// case this is sized for.
+		var distances: [String: GitGitlinkMovement.Relation] = [:]
+		for conflict in found {
+			distances[conflict.path] = await GitGitlinkConflicts.distance(of: conflict, in: root)
+		}
+		conflictDistances = distances
+		reloadRows()
+	}
 
 	private func reloadRows() {
 		rows = GitEstateOverview.rows(
 			in: submodules.estate,
 			status: submodules.status,
 			branches: branches,
-			movements: movements
+			movements: movements,
+			conflicts: conflicts,
+			conflictDistances: conflictDistances
 		)
 		reload()
 	}
@@ -122,7 +157,9 @@ final class EstateOverviewPage: NSView {
 	static func columns(for row: GitEstateRow) -> (state: String, branch: String, moved: String) {
 		let state: String
 		switch row.state {
-		case .conflicted:        state = "conflicted"
+		case .conflicted:
+			// Which conflict it is, because the two need different people.
+			state = row.conflict != nil ? "gitlink conflict" : "conflicted"
 		case .changed(let count): state = "\(count) changed"
 		case .ahead(let count):  state = "\(count) to push"
 		case .moved:             state = "moved"
@@ -136,6 +173,22 @@ final class EstateOverviewPage: NSView {
 			branch = carried.isDetached ? "detached" : (carried.branch ?? "")
 			if carried.behind > 0 { branch += " · \(carried.behind) behind" }
 			if carried.ahead > 0 { branch += " · \(carried.ahead) ahead" }
+		}
+
+		// A gitlink conflict is two commits, and the row says what is between
+		// them: "conflicted" alone leaves somebody to run `git log` by hand
+		// before they can choose a side.
+		if row.conflict != nil {
+			let between: String
+			switch row.conflictDistance {
+			case .diverged(let ahead, let behind)?:
+				between = "theirs \(ahead) on, ours \(behind) on, from a shared commit"
+			case .ahead(let count)?:  between = "theirs is \(count) past ours"
+			case .behind(let count)?: between = "ours is \(count) past theirs"
+			case .notHere?:           between = "the two sides share no history this copy has"
+			case .level?, nil:        between = "both sides moved it"
+			}
+			return (state, branch, between)
 		}
 
 		// Commits, never lines. A gitlink's whole content is one object name, so
@@ -221,6 +274,12 @@ final class EstateOverviewPage: NSView {
 		table.target = self
 		table.doubleAction = #selector(openClicked)
 		table.style = .inset
+		// Built when it opens rather than held: what a row offers depends on
+		// whether that row is conflicted, and the rows are rebuilt three times
+		// while the answers arrive.
+		let contextMenu = NSMenu()
+		contextMenu.delegate = self
+		table.menu = contextMenu
 
 		let scroll = NSScrollView()
 		scroll.documentView = table
@@ -253,9 +312,140 @@ final class EstateOverviewPage: NSView {
 
 	@objc private func filterChanged() { filterForTesting(filterField.stringValue) }
 
+	// MARK: - Resolving a gitlink conflict
+
+	/// The three ways out of a gitlink conflict, as a menu on the row.
+	///
+	/// **No merge tool opens one of these**, which is why they are here rather
+	/// than left to the editor as a text conflict is. What is in conflict is
+	/// which commit of another repository this one points at, so the resolution
+	/// is a commit: take one side, take the other, or go and merge them inside
+	/// the submodule and take what that leaves — which is what git's own hint
+	/// tells you to do when it gives up on the merge.
+	func menu(for row: GitEstateRow) -> NSMenu? {
+		guard let conflict = row.conflict else { return nil }
+		let menu = NSMenu()
+
+		for side in conflict.sides {
+			let item = menu.addItem(
+				withTitle: "Take \(side.name) — \(String(side.commit.prefix(7)))",
+				action: #selector(takeSide(_:)), keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = [conflict.path, side.commit]
+		}
+
+		if conflict.theirs != nil {
+			menu.addItem(.separator())
+			let item = menu.addItem(
+				withTitle: "Merge Theirs Inside \(row.path)…",
+				action: #selector(mergeInside(_:)), keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = conflict.path
+		}
+		return menu
+	}
+
+	@objc private func takeSide(_ sender: NSMenuItem) {
+		guard let pair = sender.representedObject as? [String],
+		      pair.count == 2,
+		      let conflict = conflicts[pair[0]]
+		else { return }
+		resolve(conflict, to: pair[1])
+	}
+
+	/// Merges the other side inside the submodule and takes what that leaves.
+	///
+	/// The commit that results is neither side, and it is the resolution git's
+	/// hint describes: "go to submodule, and either merge commit … or update to
+	/// an existing commit which has merged those changes".
+	@objc private func mergeInside(_ sender: NSMenuItem) {
+		guard let path = sender.representedObject as? String,
+		      let conflict = conflicts[path], let theirs = conflict.theirs
+		else { return }
+
+		Task { @MainActor in
+			let submodule = root.appendingPathComponent(path)
+			let merged = await GitRepository.run(
+				["merge", "--no-edit", theirs], in: submodule
+			)
+			guard merged.exitCode == 0 else {
+				Toast.post(
+					"The merge inside \(path) stopped",
+					detail: merged.stderr.isEmpty ? merged.stdout : merged.stderr,
+					kind: .warning
+				)
+				// Left where it is on purpose: the submodule now has a text
+				// conflict of its own, which is a thing to open in the editor
+				// and not a thing to undo on somebody's behalf.
+				refresh()
+				return
+			}
+			let head = await GitRepository.run(["rev-parse", "HEAD"], in: submodule)
+				.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !head.isEmpty else { return }
+			resolve(conflict, to: head)
+		}
+	}
+
+	private func resolve(_ conflict: GitGitlinkConflict, to commit: String) {
+		Task { @MainActor in
+			let result = await GitGitlinkConflicts.resolve(conflict, to: commit, in: root)
+			if result.exitCode != 0 {
+				Toast.post(
+					"\(conflict.path) could not be resolved",
+					detail: result.stderr.isEmpty ? result.stdout : result.stderr,
+					kind: .warning
+				)
+			} else {
+				Toast.post(
+					"\(conflict.path) now points at \(String(commit.prefix(7)))",
+					detail: "Staged in the superproject. Its work tree is at that commit."
+				)
+			}
+			refresh()
+		}
+	}
+
+	/// Resolves from a driven run, so the three ways out are checkable.
+	func resolveForTesting(path: String, to side: String) {
+		guard let conflict = conflicts[path] else {
+			print("ESTATE: \(path) has no gitlink conflict")
+			return
+		}
+		switch side {
+		case "ours":   conflict.ours.map { resolve(conflict, to: $0) }
+		case "theirs": conflict.theirs.map { resolve(conflict, to: $0) }
+		default:       resolve(conflict, to: side)
+		}
+	}
+
+	/// The row a context menu is about, which is the clicked one and not the
+	/// selected one: right-clicking a row does not select it.
+	private func rowUnderTheMenu() -> GitEstateRow? {
+		let index = table.clickedRow
+		guard index >= 0, index < shown.count else { return nil }
+		return shown[index]
+	}
+
 	@objc private func openClicked() {
 		guard table.clickedRow >= 0, table.clickedRow < shown.count else { return }
 		onOpenSubmodule?(shown[table.clickedRow].path)
+	}
+}
+
+extension EstateOverviewPage: NSMenuDelegate {
+	/// The row under the pointer decides the menu: a conflicted row offers its
+	/// ways out, and every other row offers nothing rather than a menu of
+	/// items that would do nothing.
+	func menuNeedsUpdate(_ menu: NSMenu) {
+		menu.removeAllItems()
+		guard let row = rowUnderTheMenu(), let built = self.menu(for: row) else { return }
+		for item in built.items {
+			built.removeItem(item)
+			menu.addItem(item)
+		}
 	}
 }
 

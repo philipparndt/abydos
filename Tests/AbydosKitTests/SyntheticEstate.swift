@@ -105,13 +105,21 @@ struct SyntheticEstate {
 
 	/// Moves a submodule's HEAD past what the superproject records: a moved
 	/// gitlink, which the superproject must report.
+	///
+	/// **`saying` matters more than it looks.** A commit's hash is its content,
+	/// its parent, its author and its timestamp — and a timestamp has
+	/// second-resolution — so two empty commits made on the same parent, in the
+	/// same second, with the same message are *the same commit*. Two branches
+	/// advanced with the default label therefore do not diverge at all, and a
+	/// merge of them fast-forwards. That cost an afternoon of a conflict test
+	/// that reported no conflict, and git was right every time.
 	@discardableResult
-	func advance(_ name: String, by commits: Int = 1) -> Int32 {
+	func advance(_ name: String, by commits: Int = 1, saying label: String = "moved") -> Int32 {
 		let directory = root.appendingPathComponent(name)
 		var last: Int32 = 0
 		for index in 0..<commits {
 			last = Self.git(
-				["commit", "-q", "--allow-empty", "-m", "moved \(index)"], in: directory
+				["commit", "-q", "--allow-empty", "-m", "\(label) \(index)"], in: directory
 			)
 		}
 		return last

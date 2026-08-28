@@ -973,6 +973,10 @@ final class SidebarController: NSObject {
 			switch step.prefix(while: { $0 != ":" }) {
 			case "rows":   print("ESTATE rows:\n\(page.rowsForTesting())")
 			case "filter": page.filterForTesting(argument)
+			case "take":
+				// `svc-1:theirs`, or `svc-1:<commit>` for a third one.
+				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+				if parts.count == 2 { page.resolveForTesting(path: parts[0], to: parts[1]) }
 			default:       print("ESTATE: unknown step \(step)")
 			}
 		}

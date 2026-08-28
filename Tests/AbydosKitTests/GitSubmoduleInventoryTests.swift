@@ -31,6 +31,32 @@ struct GitSubmoduleInventoryTests {
 		#expect(GitSubmodules.parseStage(output).map(\.path) == ["my services/svc one"])
 	}
 
+	/// An unmerged path has no stage 0 — it has 1 for the ancestor, 2 for ours
+	/// and 3 for theirs — so a parser that took every record listed a conflicted
+	/// submodule three times. Ours wins, because ours is what the work tree is
+	/// on and what every other question will be answered against.
+	@Test func aConflictedSubmoduleIsStillOneSubmodule() {
+		let output = [
+			"160000 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1\tsvc-1",
+			"160000 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 2\tsvc-1",
+			"160000 cccccccccccccccccccccccccccccccccccccccc 3\tsvc-1",
+			"160000 dddddddddddddddddddddddddddddddddddddddd 0\tsvc-2",
+		].joined(separator: "\0") + "\0"
+
+		let found = GitSubmodules.parseStage(output)
+		#expect(found.map(\.path) == ["svc-1", "svc-2"])
+		#expect(found[0].commit == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "ours")
+	}
+
+	/// Added on both sides of a merge: no ancestor, and still one submodule.
+	@Test func aSubmoduleAddedOnBothSidesIsStillOneSubmodule() {
+		let output = [
+			"160000 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 2\tsvc-1",
+			"160000 cccccccccccccccccccccccccccccccccccccccc 3\tsvc-1",
+		].joined(separator: "\0") + "\0"
+		#expect(GitSubmodules.parseStage(output).count == 1)
+	}
+
 	@Test func anIndexWithNoGitlinksIsNoEstate() {
 		let output = "100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tREADME.md\0"
 		#expect(GitSubmodules.parseStage(output).isEmpty)

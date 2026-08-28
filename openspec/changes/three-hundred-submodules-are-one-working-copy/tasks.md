@@ -5,12 +5,24 @@
 > page with its ordering, filter and summary. `make test` (3728) and
 > `make warnings` are clean.
 >
-> What is left: the refs tree's own submodules section (5.3, 5.4), the gitlink
-> conflict (group 7), pushing the estate (8.5), the safety net's partial-run
-> report and per-repository remembered choice (10.3, 10.4), and the pull request
-> set (group 11), which waits on `review-a-pull-request`. The overview is
-> reached from View ▸ Submodules (⇧⌘M) meanwhile, so nothing is unreachable.
-> Unticked boxes below are unstarted, not half-done.
+> Group 7 is done too: a gitlink conflict is read from `ls-files -u`, described
+> in commits, and resolved three ways — take either side, or merge inside the
+> submodule and take what that leaves, which is what git's own hint tells you to
+> do.
+>
+> What is left: the refs tree's own submodules section (5.3, 5.4), pushing the
+> estate (8.5), the safety net's partial-run report and per-repository
+> remembered choice (10.3, 10.4), and the pull request set (group 11), which
+> waits on `review-a-pull-request`. The overview is reached from
+> View ▸ Submodules (⇧⌘M) meanwhile, so nothing is unreachable. Unticked boxes
+> below are unstarted, not half-done.
+>
+> **The refs tree section is worth deciding before it is built.** The design's
+> own open question asked whether the overview should be a page or the refs tree
+> grown up; now that the page exists and works, a second listing of the same
+> submodules in a 300 pt column may be duplication rather than the tree keeping
+> its promise to hold everything. That is a judgement about this program, not a
+> gap in the work.
 
 ## 1. The estate: what a superproject is, before anything is drawn from it
 
@@ -98,11 +110,11 @@
 
 ## 7. Conflicts a merge tool cannot open
 
-- [ ] 7.1 `GitConflicts` gains the gitlink kind: both sides' commits, their
+- [x] 7.1 `GitConflicts` gains the gitlink kind: both sides' commits, their
       subjects, and what lies between them
-- [ ] 7.2 Three ways out — take either side, or a third commit from the
+- [x] 7.2 Three ways out — take either side, or a third commit from the
       submodule's history — each a `git add` of the gitlink
-- [ ] 7.3 A text conflict inside a submodule stays a text conflict in that
+- [x] 7.3 A text conflict inside a submodule stays a text conflict in that
       repository and is not confused with a conflict about the gitlink
 
 ## 8. Committing the estate
