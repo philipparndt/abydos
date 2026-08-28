@@ -92,6 +92,66 @@ struct SyntheticEstate {
 		}
 	}
 
+	// MARK: - Nesting and worktrees
+
+	/// Puts a submodule inside one of this estate's submodules.
+	///
+	/// The shape the design deferred and this now covers: a platform library
+	/// held by a service, held in turn by the superproject.
+	@discardableResult
+	func nest(_ name: String, inside parent: String, at path: String) throws -> String {
+		let directory = pool.appendingPathComponent(name)
+		try FileManager.default.createDirectory(
+			at: directory.appendingPathComponent("src"), withIntermediateDirectories: true
+		)
+		try "nested\n".write(
+			to: directory.appendingPathComponent("src/Inner.java"),
+			atomically: true, encoding: .utf8
+		)
+		_ = Self.run(["init", "-q", "-b", "main", "."], in: directory)
+		_ = Self.run(["config", "user.email", "t@example.com"], in: directory)
+		_ = Self.run(["config", "user.name", "T"], in: directory)
+		_ = Self.run(["add", "-A"], in: directory)
+		_ = Self.run(["commit", "-qm", "the nested one"], in: directory)
+
+		// **An absolute path, deliberately.** A relative submodule URL is
+		// resolved against the *parent's remote*, not against the filesystem —
+		// and a submodule added by `SyntheticEstate.make` has an origin of its
+		// own, so `../leaf` would be looked for beside that rather than beside
+		// this directory. A test should not turn on which of those git picks.
+		let holder = root.appendingPathComponent(parent)
+		_ = Self.run(["submodule", "add", "-q", directory.path, path], in: holder)
+		_ = Self.run(["add", "-A"], in: holder)
+		_ = Self.run(["commit", "-qm", "holds \(name)"], in: holder)
+
+		// **Sent back to the pool the parent was cloned from.** A worktree
+		// populates its submodules by cloning from that pool, and the commit
+		// just made here exists only in this checkout — so without this the
+		// clone succeeds and then cannot find the commit the superproject
+		// records: `fatal: Fetched in submodule path 'svc-1', but it did not
+		// contain …`. The pool copy is detached first, because pushing to the
+		// branch a non-bare repository has checked out is refused.
+		let origin = pool.appendingPathComponent(parent)
+		_ = Self.run(["checkout", "-q", "--detach"], in: origin)
+		_ = Self.run(["push", "-q", "origin", "HEAD:main"], in: holder)
+
+		// And the superproject records where its submodule got to.
+		_ = Self.run(["add", parent], in: root)
+		_ = Self.run(["commit", "-qm", "bump \(parent)"], in: root)
+		return "\(parent)/\(path)"
+	}
+
+	/// A linked worktree of the superproject, with its submodules populated.
+	///
+	/// Its `.git` is a file pointing at `<main>/.git/worktrees/<name>`, and its
+	/// submodules live under *that* — not under the main `.git/modules`.
+	func worktree(named name: String, on branch: String) -> URL {
+		let path = root.deletingLastPathComponent().appendingPathComponent(name)
+		_ = Self.run(["worktree", "add", "-q", path.path, "-b", branch], in: root)
+		_ = Self.run(["submodule", "update", "-q", "--init", "--recursive"], in: path)
+		return path
+	}
+
 	// MARK: - Disturbing it
 
 	/// Writes into a submodule's work tree without committing: a dirty work

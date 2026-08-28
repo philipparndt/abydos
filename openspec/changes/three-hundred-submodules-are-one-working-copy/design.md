@@ -40,9 +40,9 @@ estate and are quoted here as ratios, not budgets.
 - **`git submodule` as a user-facing verb.** No `init`, `deinit`, `sync`,
   `--recurse-submodules` checkbox. The program knows what the index says and what
   is on disk; the estate is read, not administered.
-- **Nested submodules deeper than one level** in this change. The inventory
-  records the depth it finds; only the first level is acted on. See Open
-  Questions.
+- **Cloning an estate is still out**, but nesting and worktrees are no longer:
+  see the decision below. What is still not done is a submodule *of* a linked
+  worktree of a submodule, which nobody has described wanting.
 - **Forges other than GitHub.** `gh` is the only forge client here.
 - **Cloning an estate.** The superproject is already checked out and its
   submodules already populated. A submodule the index names and disk does not
@@ -197,6 +197,58 @@ without bumping the gitlinks leaves the superproject dirty and the estate
 half-recorded; bumping them automatically commits something the user did not
 review. Both readings are defensible and this is not resolved.
 
+### One rule covers nesting and worktrees, and it is about git directories
+
+Both were deferred as non-goals, and both turned out to be the same fact, which
+is worth stating once: **a submodule's git directory is always its parent's git
+directory plus `modules/<name>`.** Checked against a real repository in all four
+combinations —
+
+    ordinary checkout   .git                    → .git/modules/svc
+    nested in that                              → .git/modules/svc/modules/lib/leaf
+    linked worktree     .git/worktrees/wt       → …/worktrees/wt/modules/svc
+    nested in that                              → …/worktrees/wt/modules/svc/modules/lib/leaf
+
+So the estate carries its own git directory — `rev-parse --absolute-git-dir`,
+which is *not* `root/.git` for a worktree — and every submodule carries the
+suffix its own directory sits at. One watcher over that directory still sees
+every submodule's refs at any depth, in a worktree or not, and the attribution
+rule became simpler rather than more complicated.
+
+**The worktree case was a silent failure, not a missing feature.** A worktree's
+`.git` is a file pointing outside the work tree, so the old rule — look for
+`.git/` under the work tree — matched nothing, and a commit or a checkout made
+in a worktree changed no row at all. The pull request review flow creates
+worktrees, so this was reachable from a verb this program already offers.
+
+**Ruled out — `git submodule status --recursive` for the nested inventory.** It
+answers exactly the right thing, and it is the serial walk this design exists to
+avoid: 0.16 s against 0.01 s for one `ls-files` here, and it was 5.37 s over 200
+flat submodules when the same comparison was made at the top of this document.
+
+**Ruled out — `ls-files --stage --recurse-submodules`.** It reads like one call
+for the whole nested inventory and is not: it descends into submodules and lists
+the *files* inside them, with no `160000` entries at all. Checked rather than
+assumed.
+
+So the inventory recurses itself, **gated on a `.gitmodules` existing in the
+submodule** — a stat, not a process. Recursing unconditionally is one `ls-files`
+per submodule, which is two hundred processes on the path whose whole point is
+that the rows appear in ten milliseconds. What the gate misses is a gitlink left
+in an index after `.gitmodules` was deleted; git cannot clone or update that one
+either, so it is a broken state rather than a shape this refuses to read.
+
+**Depth is bounded at eight.** A bound rather than a belief: a cycle would
+otherwise walk until something gave out.
+
+**Writing works outwards from the deepest.** A nested submodule's commit is what
+moves its parent's gitlink, which is what moves the superproject's — so
+committing outwards records where the inner ones were *before* they moved, and
+pushing outwards publishes a gitlink whose commit nobody else can fetch. A
+parent stages its own children's gitlinks before committing, because a gitlink
+is the containing repository's index entry: `svc/lib/leaf` is staged in `svc`
+and never in the superproject, which has no such path.
+
 ### The pull request set is keyed by branch, and its state is never stored
 
 A set is: one branch name, one title, one body, and the repositories it was
@@ -259,15 +311,10 @@ which is the point of not branching on "is this a superproject".
 
 ## Open Questions
 
-- **Nested submodules.** A submodule containing submodules is real in some
-  estates. The inventory can record depth cheaply; acting at depth multiplies
-  every decision here. Deferred, not dismissed.
 - **Where the concurrency bound lives** — beside `GitRepository.run` or inside
   it. See the decision above.
 - **Whether the superproject's gitlink commit is automatic** after a
   cross-repository commit. See the decision above.
-- **Submodules inside a linked worktree**, which the pull request review flow
-  creates.
 - **What "one message" means when the change differs per repository.** A shared
   message is right for a mechanical refactoring and wrong for a change that means
   something different in each service. Whether a per-repository override is worth

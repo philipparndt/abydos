@@ -9,12 +9,20 @@ import Foundation
 /// that cannot.
 ///
 /// The events arrive on two watchers and not six hundred, because of how git
-/// lays a superproject out: every submodule's git directory is inside the
-/// superproject's own `.git/modules`, and every submodule's work tree is a
-/// directory inside the superproject's. So one `RepositoryWatcher` over `.git`
-/// sees every submodule's refs and index, and one `FileSystemWatcher` over the
-/// work tree sees every submodule's files. What is missing is only the
-/// attribution, which is this.
+/// lays a superproject out: **a submodule's git directory is always its
+/// parent's git directory plus `modules/<name>`**, at any depth, and every
+/// submodule's work tree is a directory inside the superproject's. So one
+/// `RepositoryWatcher` over the estate's git directory sees every submodule's
+/// refs and index, and one `FileSystemWatcher` over the work tree sees every
+/// submodule's files. What is missing is only the attribution, which is this.
+///
+/// **The estate's git directory is not always `root/.git`.** A linked
+/// worktree's is `<main>/.git/worktrees/<name>`, which is not under the work
+/// tree at all — and its submodules are under *that*, not under the main
+/// `.git/modules`. A rule that looked for `.git/` inside the work tree
+/// attributed nothing there, so a commit or a checkout made in a worktree
+/// changed no row. All four arrangements were checked against a real
+/// repository; see `GitSubmodule.gitDirectorySuffix`.
 public enum GitEstateRefresh {
 	/// The repositories to re-read, and whether the inventory itself moved.
 	public struct Work: Sendable, Equatable {
@@ -51,45 +59,35 @@ public enum GitEstateRefresh {
 	public static func work(forChangedPaths paths: [URL], in estate: GitEstate) -> Work {
 		var work = Work()
 		var stale = Set<String>()
-		let namesToPaths = submoduleNames(in: estate)
+		let bySuffix = gitDirectorySuffixes(in: estate)
+		let gitDirectory = estate.gitDirectoryOrDefault
 
 		for path in paths {
-			guard let relative = relativePath(of: path, under: estate.root) else { continue }
-
-			// Inside the superproject's git directory, which is also where every
-			// submodule's git directory lives.
-			if relative == ".git" || relative.hasPrefix(".git/") {
-				let inside = relative == ".git" ? "" : String(relative.dropFirst(".git/".count))
-
-				if inside.hasPrefix("modules/") {
-					let name = String(inside.dropFirst("modules/".count))
-					if let owned = submodulePath(forGitDirectory: name, in: namesToPaths) {
-						stale.insert(owned)
-					} else {
-						// A git directory under a name this inventory does not
-						// know is a submodule that has been added or removed
-						// since it was read.
-						work.inventory = true
-					}
-					continue
-				}
-
-				work.superproject = true
-				// `.git/index` is where the gitlinks live, so a write to it can
-				// have changed which submodules exist. The bare `.git` counts
-				// too: a watcher that reports directories rather than files
-				// cannot tell an index write from a ref write, and re-reading
-				// the inventory is 0.01 s — cheap enough to be conservative
-				// about, which sweeping two hundred repositories would not be.
-				if inside.isEmpty || inside == "index" { work.inventory = true }
+			// **The git directory first, and it is not always inside the work
+			// tree.** A linked worktree's `.git` is a file pointing at
+			// `<main>/.git/worktrees/<name>`, so a rule that only looked under
+			// the work tree attributed nothing at all there — a commit or a
+			// checkout made in a worktree changed no row. Asked before the work
+			// tree because in an ordinary checkout the git directory *is* under
+			// it, and the longer prefix is the right answer.
+			if let inside = relativePath(of: path, under: gitDirectory) {
+				attribute(insideGitDirectory: inside, bySuffix: bySuffix,
+					work: &work, stale: &stale)
 				continue
 			}
 
+			guard let relative = relativePath(of: path, under: estate.root) else { continue }
+
 			// `.gitmodules` is decoration rather than truth, but a change to it
 			// is the usual thing to happen alongside a submodule being added.
-			if relative == ".gitmodules" {
-				work.superproject = true
+			// A nested one has its own, which is a fact about *that* repository.
+			if relative == ".gitmodules" || relative.hasSuffix("/.gitmodules") {
 				work.inventory = true
+				if let submodule = estate.submodule(containing: relative) {
+					stale.insert(submodule.path)
+				} else {
+					work.superproject = true
+				}
 				continue
 			}
 
@@ -104,41 +102,72 @@ public enum GitEstateRefresh {
 		return work
 	}
 
+	/// What a path inside the estate's git directory makes stale.
+	private static func attribute(
+		insideGitDirectory inside: String,
+		bySuffix: [String: String],
+		work: inout Work,
+		stale: inout Set<String>
+	) {
+		if inside.hasPrefix("modules/") {
+			if let owned = submodulePath(forGitDirectory: inside, in: bySuffix) {
+				stale.insert(owned)
+			} else {
+				// A git directory this inventory does not know is a submodule
+				// added or removed since it was read — at any depth.
+				work.inventory = true
+			}
+			return
+		}
+
+		work.superproject = true
+		// `index` is where the gitlinks live, so a write to it can have changed
+		// which submodules exist. The bare git directory counts too: a watcher
+		// that reports directories rather than files cannot tell an index write
+		// from a ref write, and re-reading the inventory is 0.01 s — cheap
+		// enough to be conservative about, which sweeping two hundred
+		// repositories would not be.
+		if inside.isEmpty || inside == "index" { work.inventory = true }
+	}
+
 	/// The same question for the directories a `RepositoryWatcher` reports.
 	public static func work(forChangedDirectories directories: [URL], in estate: GitEstate) -> Work {
 		work(forChangedPaths: directories, in: estate)
 	}
 
-	/// Submodule paths by the name their git directory is filed under.
+	/// Submodule paths by where their git directory sits, relative to the
+	/// estate's own.
 	///
-	/// `.git/modules` is keyed by a submodule's *name*, and a name is not its
+	/// Keyed by that rather than by name, because the name alone stops being
+	/// enough as soon as anything nests: `modules/svc` and
+	/// `modules/svc/modules/lib/leaf` are both "the git directory of a
+	/// submodule", and only the whole suffix says which. The suffix is built
+	/// with the inventory, where the chain of names is known.
+	///
+	/// A name is still what git files each level under, and a name is not a
 	/// path: a submodule moved with `git mv` keeps the name it was added with,
-	/// so the directory stays `.git/modules/old-name` while the work tree is
-	/// somewhere else entirely. Matching on the path would then attribute every
-	/// ref change in that submodule to nothing.
-	static func submoduleNames(in estate: GitEstate) -> [String: String] {
-		var byName: [String: String] = [:]
+	/// so the directory stays `modules/old-name` while the work tree is
+	/// somewhere else entirely.
+	static func gitDirectorySuffixes(in estate: GitEstate) -> [String: String] {
+		var bySuffix: [String: String] = [:]
 		for submodule in estate.submodules {
-			// The name defaults to the path, which is what `submodule add`
-			// gives it and what a `.gitmodules` this program could not read
-			// leaves us assuming.
-			byName[submodule.name ?? submodule.path] = submodule.path
+			bySuffix[submodule.gitDirectorySuffix] = submodule.path
 		}
-		return byName
+		return bySuffix
 	}
 
-	/// Which submodule a path under `.git/modules` belongs to.
+	/// Which submodule a path inside the estate's git directory belongs to.
 	///
-	/// The remainder after `modules/` is the name followed by whatever inside
-	/// that git directory changed — `svc-47/refs/heads` — and a name may itself
-	/// hold slashes, so the longest name that prefixes the remainder wins.
+	/// The remainder is a suffix followed by whatever inside that git directory
+	/// changed — `modules/svc-47/refs/heads` — and both a name and a nesting
+	/// chain may hold slashes, so the longest suffix that prefixes it wins.
 	static func submodulePath(
 		forGitDirectory remainder: String,
-		in namesToPaths: [String: String]
+		in bySuffix: [String: String]
 	) -> String? {
 		var candidate = remainder
 		while true {
-			if let path = namesToPaths[candidate] { return path }
+			if let path = bySuffix[candidate] { return path }
 			guard let slash = candidate.lastIndex(of: "/") else { return nil }
 			candidate = String(candidate[candidate.startIndex..<slash])
 		}

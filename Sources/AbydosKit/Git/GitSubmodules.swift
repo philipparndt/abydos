@@ -31,6 +31,32 @@ public struct GitSubmodule: Equatable, Sendable, Identifiable {
 	/// administered.
 	public let isCheckedOut: Bool
 
+	/// Where this submodule's git directory sits, relative to the *estate's*
+	/// git directory.
+	///
+	/// **One rule covers every arrangement**, which is why this is a suffix
+	/// rather than a path: a submodule's git directory is always its parent's
+	/// git directory plus `modules/<name>`. Verified in all four combinations —
+	///
+	///     ordinary checkout   .git → .git/modules/svc
+	///     nested in that      → .git/modules/svc/modules/lib/leaf
+	///     linked worktree     .git/worktrees/wt → …/worktrees/wt/modules/svc
+	///     nested in that      → …/worktrees/wt/modules/svc/modules/lib/leaf
+	///
+	/// — and it is what lets one watcher over the estate's git directory see
+	/// every submodule's refs at any depth, in a worktree or not. The name and
+	/// not the path is what git files it under, and a `git mv` leaves those two
+	/// differing for good.
+	public let gitDirectorySuffix: String
+
+	/// How far down this submodule is: 0 for one the superproject itself holds.
+	///
+	/// Kept because order depends on it. A nested submodule's commit is what
+	/// moves its parent's gitlink, which is what moves the superproject's, so
+	/// anything that commits or pushes an estate has to work from the deepest
+	/// outwards.
+	public let depth: Int
+
 	public var id: String { path }
 	public var displayName: String { name ?? path }
 
@@ -39,13 +65,19 @@ public struct GitSubmodule: Equatable, Sendable, Identifiable {
 		recordedCommit: String,
 		name: String? = nil,
 		url: String? = nil,
-		isCheckedOut: Bool = true
+		isCheckedOut: Bool = true,
+		gitDirectorySuffix: String? = nil,
+		depth: Int = 0
 	) {
 		self.path = path
 		self.recordedCommit = recordedCommit
 		self.name = name
 		self.url = url
 		self.isCheckedOut = isCheckedOut
+		// Defaulted to the first-level spelling, which is what it is unless the
+		// inventory says otherwise.
+		self.gitDirectorySuffix = gitDirectorySuffix ?? "modules/\(name ?? path)"
+		self.depth = depth
 	}
 }
 
@@ -70,28 +102,107 @@ public enum GitSubmodules {
 	/// `.gitmodules`, and one added to the index by somebody whose `.gitmodules`
 	/// you have not pulled, are both ordinary states mid-refactoring.
 	public static func inventory(in root: URL) async -> [GitSubmodule] {
+		await inventory(in: root, under: "", gitDirectory: "", depth: 0)
+			.sorted { $0.path < $1.path }
+	}
+
+	/// How deep this will follow submodules inside submodules.
+	///
+	/// A bound rather than a belief. Nesting is real — a platform library held
+	/// by every service, held in turn by the superproject — but a cycle, or a
+	/// repository that holds itself through a chain of others, would otherwise
+	/// walk until something gave out. Eight is far past any estate anybody has
+	/// described and close enough to stop a mistake being expensive.
+	static let maximumDepth = 8
+
+	/// One level of the inventory, and whatever is inside it.
+	///
+	/// - Parameter under: the path prefix everything found here sits below,
+	///   relative to the superproject.
+	/// - Parameter gitDirectory: the prefix, relative to the *estate's* git
+	///   directory, that this repository's own git directory sits at.
+	private static func inventory(
+		in root: URL, under prefix: String, gitDirectory: String, depth: Int
+	) async -> [GitSubmodule] {
 		let listed = await gitlinks(in: root)
 		guard !listed.isEmpty else { return [] }
 
 		let configured = await configuredSubmodules(in: root)
 		let manager = FileManager.default
 
-		return listed
-			.map { entry in
-				let decoration = configured[entry.path]
-				// `.git` rather than the directory: an empty directory is what
-				// an uninitialised submodule leaves behind, and it exists.
-				let dotGit = root.appendingPathComponent(entry.path)
-					.appendingPathComponent(".git")
-				return GitSubmodule(
-					path: entry.path,
-					recordedCommit: entry.commit,
-					name: decoration?.name,
-					url: decoration?.url,
-					isCheckedOut: manager.fileExists(atPath: dotGit.path)
-				)
+		var found: [GitSubmodule] = []
+		var deeper: [(root: URL, prefix: String, gitDirectory: String)] = []
+
+		for entry in listed {
+			let decoration = configured[entry.path]
+			let directory = root.appendingPathComponent(entry.path)
+			// `.git` rather than the directory: an empty directory is what an
+			// uninitialised submodule leaves behind, and it exists.
+			let isCheckedOut = manager.fileExists(
+				atPath: directory.appendingPathComponent(".git").path
+			)
+			let name = decoration?.name ?? entry.path
+			let suffix = gitDirectory.isEmpty
+				? "modules/\(name)"
+				: "\(gitDirectory)/modules/\(name)"
+			let path = prefix.isEmpty ? entry.path : "\(prefix)/\(entry.path)"
+
+			found.append(GitSubmodule(
+				path: path,
+				recordedCommit: entry.commit,
+				name: decoration?.name,
+				url: decoration?.url,
+				isCheckedOut: isCheckedOut,
+				gitDirectorySuffix: suffix,
+				depth: depth
+			))
+
+			// **The gate, and it is what keeps a flat estate free.** Recursing
+			// unconditionally is one `ls-files` per submodule — two hundred
+			// processes on the path whose whole point is that the rows appear in
+			// ten milliseconds. A repository with no `.gitmodules` has no
+			// submodules to declare, and asking the filesystem is a stat rather
+			// than a process.
+			//
+			// What it misses: a gitlink left in an index after `.gitmodules` was
+			// deleted. Git cannot clone or update that one either, so it is a
+			// broken state rather than a shape this refuses to read, and paying
+			// two hundred processes on every estate to notice it is not the
+			// trade.
+			guard depth + 1 < maximumDepth, isCheckedOut else { continue }
+			guard manager.fileExists(
+				atPath: directory.appendingPathComponent(".gitmodules").path
+			) else { continue }
+			deeper.append((root: directory, prefix: path, gitDirectory: suffix))
+		}
+
+		guard !deeper.isEmpty else { return found }
+
+		// Fanned out, because a superproject whose every service holds the same
+		// platform library is a real shape and reading it one at a time is the
+		// serial walk this design exists to avoid.
+		let inside = await withTaskGroup(of: [GitSubmodule].self) { group -> [GitSubmodule] in
+			var next = 0
+			var collected: [GitSubmodule] = []
+
+			func addWork() -> Bool {
+				guard next < deeper.count, !Task.isCancelled else { return false }
+				let step = deeper[next]
+				next += 1
+				group.addTask {
+					await inventory(
+						in: step.root, under: step.prefix,
+						gitDirectory: step.gitDirectory, depth: depth + 1
+					)
+				}
+				return true
 			}
-			.sorted { $0.path < $1.path }
+
+			for _ in 0..<min(GitEstateReader.concurrency, deeper.count) { _ = addWork() }
+			while let some = await group.next() { collected += some; _ = addWork() }
+			return collected
+		}
+		return found + inside
 	}
 
 	/// The gitlinks in the index: one `git ls-files --stage`, filtered by mode.

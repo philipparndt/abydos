@@ -21,24 +21,55 @@ public struct GitEstate: Sendable {
 	/// The superproject's work tree root.
 	public let root: URL
 
-	/// Every submodule the index names, sorted by path.
+	/// Every submodule the index names, at every depth, sorted by path.
 	public let submodules: [GitSubmodule]
+
+	/// The estate's own git directory, which is not always `root/.git`.
+	///
+	/// **A linked worktree is why this exists.** Its `.git` is a file pointing
+	/// at `<main>/.git/worktrees/<name>`, which is not under the work tree at
+	/// all — so a rule that looked for `.git/` inside the work tree attributed
+	/// nothing, and a commit or a checkout made in a worktree changed no row.
+	/// Verified: `rev-parse --absolute-git-dir` in a worktree answers
+	/// `…/super/.git/worktrees/wt`, and its submodules live under
+	/// `…/worktrees/wt/modules/`.
+	///
+	/// Nil until it has been read, which is the same as saying `root/.git` — the
+	/// ordinary case, and the one a hand-built estate in a test means.
+	public let gitDirectory: URL?
+
+	/// Where this estate's git directory actually is.
+	public var gitDirectoryOrDefault: URL {
+		gitDirectory ?? root.appendingPathComponent(".git")
+	}
 
 	/// Submodules by their path, for answering ownership in the depth of the
 	/// path rather than the size of the estate. See `submodule(containing:)`.
 	private let byPath: [String: GitSubmodule]
 
-	public init(root: URL, submodules: [GitSubmodule] = []) {
+	public init(root: URL, submodules: [GitSubmodule] = [], gitDirectory: URL? = nil) {
 		self.root = root.standardizedFileURL
+		self.gitDirectory = gitDirectory?.standardizedFileURL
 		self.submodules = submodules.sorted { $0.path < $1.path }
 		self.byPath = Dictionary(
 			submodules.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first }
 		)
 	}
 
-	/// Reads the inventory. Two git calls, neither growing with the estate.
+	/// Reads the inventory, and where this repository keeps its refs.
+	///
+	/// Three git calls for a flat estate, none of which grows with it: the
+	/// gitlinks, `.gitmodules`, and the git directory. Nesting costs one more
+	/// pair per submodule that declares submodules of its own, and nothing at
+	/// all for one that does not — see `GitSubmodules.inventory`.
 	public static func read(from root: URL) async -> GitEstate {
-		GitEstate(root: root, submodules: await GitSubmodules.inventory(in: root))
+		async let submodules = GitSubmodules.inventory(in: root)
+		async let gitDirectory = RepositoryWatcher.directory(forRepositoryAt: root)
+		return GitEstate(
+			root: root,
+			submodules: await submodules,
+			gitDirectory: await gitDirectory
+		)
 	}
 
 	public var holdsSubmodules: Bool { !submodules.isEmpty }
@@ -161,6 +192,19 @@ public struct GitEstate: Sendable {
 		return groups
 	}
 
+	/// Every submodule, deepest first, then by path.
+	///
+	/// **The order anything that writes has to use.** A nested submodule's
+	/// commit is what moves its parent's gitlink, which is what moves the
+	/// superproject's — so committing outwards records where the inner ones
+	/// were before they moved, and pushing outwards publishes a gitlink whose
+	/// commit nobody else can fetch yet.
+	public var deepestFirst: [GitSubmodule] {
+		submodules.sorted {
+			$0.depth != $1.depth ? $0.depth > $1.depth : $0.path < $1.path
+		}
+	}
+
 	/// Every repository in the estate, superproject first.
 	public var repositoryRoots: [URL] {
 		[root] + submodules.filter(\.isCheckedOut).map { root.appendingPathComponent($0.path) }
@@ -181,6 +225,8 @@ extension GitEstate: Equatable {
 	/// `byPath` is derived from `submodules`, so comparing it would be comparing
 	/// the same fact twice.
 	public static func == (lhs: GitEstate, rhs: GitEstate) -> Bool {
-		lhs.root == rhs.root && lhs.submodules == rhs.submodules
+		lhs.root == rhs.root
+			&& lhs.gitDirectory == rhs.gitDirectory
+			&& lhs.submodules == rhs.submodules
 	}
 }

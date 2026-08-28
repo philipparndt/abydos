@@ -79,18 +79,80 @@ it in half a second.
 - **THEN** its row says it is not checked out
 - **AND** nothing is cloned or fetched on its behalf
 
+### Requirement: A submodule inside a submodule is a submodule
+
+The inventory SHALL follow submodules into submodules, and every repository the
+estate holds SHALL be read, owned and acted on the same way whatever its depth.
+
+A platform library held by every service, held in turn by the superproject, is
+an ordinary shape for the estates this exists for. `git ls-files --stage` in the
+superproject names only the first level — a nested one is in *its parent's*
+index — so an inventory that did not recurse would report a repository that is
+not there and miss one that is.
+
+**Recursion SHALL be gated on the submodule declaring submodules of its own.**
+Asking every submodule is one process each: two hundred of them on the path
+whose whole point is that the rows appear before any status does. A repository
+with no `.gitmodules` has none to declare, and asking the filesystem is a stat.
+
+**Depth SHALL be bounded.** A cycle, or a repository that holds itself through a
+chain of others, would otherwise walk until something gave out.
+
+`git submodule status --recursive` answers exactly this and SHALL NOT be used:
+it is the serial walk this capability exists to avoid, measured at 0.16 s
+against 0.01 s for one `ls-files`. `ls-files --stage --recurse-submodules` SHALL
+NOT be used either — it descends into submodules and lists the files inside
+them, with no gitlinks at all.
+
+#### Scenario: a submodule inside a submodule
+
+- **GIVEN** a superproject holding `svc-1`, which holds `lib/leaf`
+- **WHEN** the inventory is read
+- **THEN** both `svc-1` and `svc-1/lib/leaf` are in it
+- **AND** the nested one is recorded as one level deeper
+
+#### Scenario: a flat estate pays nothing for nesting it does not have
+
+- **GIVEN** an estate of submodules none of which declares any
+- **WHEN** the inventory is read
+- **THEN** no submodule is asked for an inventory of its own
+
+#### Scenario: a file inside a nested submodule
+
+- **GIVEN** `svc-1/lib/leaf/src/Inner.java` changed
+- **THEN** it belongs to `svc-1/lib/leaf` and not to `svc-1`
+- **AND** it is staged in `svc-1/lib/leaf`, relative to that repository
+
 ### Requirement: One watcher covers every submodule, and an event re-reads one repository
 
 The estate SHALL be kept true by the two watchers the project already has, and a
 filesystem event SHALL cause exactly the repositories it names to be re-read.
 
-Every submodule's git directory lives under the superproject's own
-`.git/modules/<name>` — its `.git` is a file reading `gitdir:
-../.git/modules/<name>`, which is the same fact `ProjectRoot.isSubmodulePointer`
-already relies on. So one `RepositoryWatcher` over the superproject's `.git` sees
-every submodule's refs, HEAD and index, and one `FileSystemWatcher` over the work
-tree sees every submodule's files, because a submodule's work tree is a directory
-inside the superproject's.
+**A submodule's git directory is always its parent's git directory plus
+`modules/<name>`.** That one rule covers every arrangement, and each was checked
+against a real repository:
+
+    ordinary checkout   .git               → .git/modules/svc
+    nested in that                         → .git/modules/svc/modules/lib/leaf
+    linked worktree     .git/worktrees/wt  → …/worktrees/wt/modules/svc
+    nested in that                         → …/worktrees/wt/modules/svc/modules/lib/leaf
+
+So one `RepositoryWatcher` over the estate's git directory sees every
+submodule's refs, HEAD and index at any depth, and one `FileSystemWatcher` over
+the work tree sees every submodule's files, because a submodule's work tree is a
+directory inside the superproject's.
+
+**The estate's git directory SHALL be read rather than assumed to be
+`root/.git`.** A linked worktree's is `<main>/.git/worktrees/<name>`, which is
+not under the work tree at all, and its submodules live under that rather than
+under the main `.git/modules`. A rule that looked for `.git/` inside the work
+tree attributes nothing in a worktree, so a commit or a checkout made in one
+changes no row — and the pull request review flow creates worktrees, so that is
+reachable from a verb this program already offers.
+
+Attribution SHALL be by that whole suffix and not by the submodule's name alone:
+`modules/svc` and `modules/svc/modules/lib/leaf` are both the git directory of a
+submodule, and only the whole suffix says which.
 
 Three hundred submodules SHALL therefore need two watchers, not six hundred.
 
@@ -114,6 +176,20 @@ three hundred object stores rather than one.
 - **GIVEN** an open superproject
 - **WHEN** a new gitlink is committed into the index
 - **THEN** the inventory is read again and the new submodule gets a row
+
+#### Scenario: a ref written in a nested submodule
+
+- **GIVEN** an estate holding `svc-1`, which holds `svc-1/lib/leaf`
+- **WHEN** a ref is written under the leaf's git directory
+- **THEN** `svc-1/lib/leaf` is re-read and `svc-1` is not
+
+#### Scenario: a commit made in a linked worktree
+
+- **GIVEN** a project opened on a linked worktree of a superproject
+- **WHEN** a ref or the index moves in it
+- **THEN** the repository it belongs to is re-read
+- **AND** the fact that the git directory is outside the work tree changes
+  nothing about which repository that is
 
 #### Scenario: a fetch writes thousands of objects
 

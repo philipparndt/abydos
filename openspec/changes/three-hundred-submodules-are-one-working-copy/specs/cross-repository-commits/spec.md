@@ -47,6 +47,18 @@ Committing the estate SHALL commit each dirty submodule with the shared message,
 then stage the gitlinks those commits moved and commit the superproject; and it
 SHALL record, per repository, what happened.
 
+**It SHALL work outwards from the deepest.** A nested submodule's commit is
+what moves its parent's gitlink, which is what moves the superproject's, so
+committing outwards records where the inner ones were *before* they moved — a
+superproject pointing at a commit that is already history the moment it is
+written. A repository SHALL stage the gitlinks of whatever it holds and has just
+committed, before committing itself: a gitlink is the containing repository's
+index entry, so `svc/lib/leaf` is staged in `svc` and never in the superproject,
+which has no such path.
+
+Pushing SHALL work outwards for the same reason: a repository pushed before what
+it points at publishes a gitlink whose commit nobody else can fetch.
+
 **It SHALL NOT claim to be atomic.** Nothing this program can do makes two
 hundred commits one transaction, and the rollback that would pretend otherwise is
 `git reset --hard` in repositories somebody may already have fetched — the exact
@@ -68,6 +80,15 @@ way.
 - **THEN** each of the six is committed with that message
 - **AND** the six moved gitlinks are staged in the superproject
 - **AND** each repository's new commit is named in the report
+
+#### Scenario: a submodule inside a submodule
+
+- **GIVEN** a superproject holding `svc-1`, which holds `svc-1/lib/leaf`, with
+  changes staged in the leaf
+- **WHEN** the estate is committed
+- **THEN** the leaf is committed first, then `svc-1` recording where it got to,
+  then the superproject recording where `svc-1` got to
+- **AND** nothing is left uncommitted at any of the three levels
 
 #### Scenario: one repository refuses the commit
 

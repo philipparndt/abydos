@@ -267,7 +267,10 @@ public enum GitEstatePullRequests {
 		let shared = await sharedAbsence(in: estate)
 		var outcomes: [GitEstateOutcome] = []
 
-		for submodule in estate.submodules {
+		// Deepest first, for the reason committing and pushing are: a review of
+		// a repository that points at another is worth opening once the thing
+		// it points at is there to be read.
+		for submodule in estate.deepestFirst {
 			let root = estate.root.appendingPathComponent(submodule.path)
 			guard submodule.isCheckedOut else {
 				outcomes.append(GitEstateOutcome(
@@ -280,6 +283,8 @@ public enum GitEstatePullRequests {
 				submodule: submodule, in: root, draft: draft, shared: shared
 			))
 		}
+
+		outcomes.sort { ($0.submodule?.path ?? "") < ($1.submodule?.path ?? "") }
 
 		// The superproject last, because its pull request is the one that
 		// records where the submodules got to, and that is only true once

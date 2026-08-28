@@ -16,9 +16,16 @@
 > superproject's gitlink commit is automatic is still the caller's to say, which
 > is where it was left deliberately.
 >
-> Still open, and unstarted: nested submodules deeper than one level, and
-> submodules inside a linked worktree. Both are named as non-goals in
-> `design.md`.
+> Nested submodules and linked worktrees were the two remaining non-goals and
+> are now done. They turned out to be one fact — a submodule's git directory is
+> always its parent's plus `modules/<name>` — and the worktree half was a silent
+> failure rather than a missing feature: a worktree's git directory is outside
+> its work tree, so the attribution rule matched nothing there and a commit made
+> in one changed no row. The pull request review flow creates worktrees, so that
+> was reachable from a verb this program already offers.
+>
+> What is still not done: a submodule of a linked worktree *of a submodule*,
+> which nobody has described wanting.
 >
 > **On the suite's reliability here.** Under load above about four runnable
 > threads a core — which this machine sat at while this was being written, from

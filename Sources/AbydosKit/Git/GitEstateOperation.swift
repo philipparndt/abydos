@@ -131,9 +131,13 @@ public enum GitEstateOperation {
 		stagingGitlinks: Bool = true
 	) async -> [GitEstateOutcome] {
 		var outcomes: [GitEstateOutcome] = []
-		var committed: [String] = []
+		var committed: Set<String> = []
 
-		for submodule in estate.submodules {
+		// **Deepest first.** A nested submodule's commit is what moves its
+		// parent's gitlink, so committing outwards would record where the inner
+		// ones were *before* they moved — a superproject pointing at a commit
+		// that is already history the moment it is written.
+		for submodule in estate.deepestFirst {
 			let root = estate.root.appendingPathComponent(submodule.path)
 
 			guard submodule.isCheckedOut else {
@@ -150,10 +154,22 @@ public enum GitEstateOperation {
 				))
 				continue
 			}
-			guard !own.staged.isEmpty else {
+
+			// Whatever its own submodules just recorded, before it commits.
+			// Without this a middle repository commits its files and leaves its
+			// children's gitlinks behind, which is the same half-recorded estate
+			// one level down.
+			let bumped = stagingGitlinks
+				? await stageChildGitlinks(
+					of: submodule, in: estate, committed: committed, at: root
+				)
+				: []
+
+			let fresh = bumped.isEmpty ? own : await GitWorkingCopy.status(in: root)
+			guard !fresh.staged.isEmpty else {
 				outcomes.append(GitEstateOutcome(
 					submodule: submodule, root: root,
-					result: .skipped(own.isEmpty ? "nothing changed" : "nothing staged")
+					result: .skipped(fresh.isEmpty ? "nothing changed" : "nothing staged")
 				))
 				continue
 			}
@@ -162,7 +178,7 @@ public enum GitEstateOperation {
 				subject: subject, body: body, amend: false, in: root
 			)
 			if result.exitCode == 0 {
-				committed.append(submodule.path)
+				committed.insert(submodule.path)
 				outcomes.append(GitEstateOutcome(
 					submodule: submodule, root: root,
 					result: .done(await headCommit(in: root))
@@ -177,11 +193,44 @@ public enum GitEstateOperation {
 			}
 		}
 
+		// Reported in path order however they were run, so a report over two
+		// hundred repositories reads the same way twice.
+		outcomes.sort { ($0.submodule?.path ?? "") < ($1.submodule?.path ?? "") }
+
 		outcomes.append(await commitSuperproject(
 			subject: subject, body: body, in: estate, status: status,
-			bumping: stagingGitlinks ? committed : []
+			bumping: stagingGitlinks ? directChildren(of: nil, in: estate, committed: committed) : []
 		))
 		return outcomes
+	}
+
+	/// The submodules one level under `parent` that have just been committed,
+	/// as paths relative to `parent`.
+	///
+	/// One level and not all of them: a gitlink is the *containing*
+	/// repository's index entry, so `svc/lib/leaf` is staged in `svc` and never
+	/// in the superproject, which has no such path.
+	static func directChildren(
+		of parent: GitSubmodule?, in estate: GitEstate, committed: Set<String>
+	) -> [String] {
+		let depth = parent.map { $0.depth + 1 } ?? 0
+		let prefix = parent.map { "\($0.path)/" } ?? ""
+		return estate.submodules
+			.filter { $0.depth == depth && committed.contains($0.path) }
+			.filter { prefix.isEmpty || $0.path.hasPrefix(prefix) }
+			.map { String($0.path.dropFirst(prefix.count)) }
+			.sorted()
+	}
+
+	/// Stages the gitlinks of whatever this submodule holds and has just
+	/// committed. Answers which they were.
+	static func stageChildGitlinks(
+		of submodule: GitSubmodule, in estate: GitEstate, committed: Set<String>, at root: URL
+	) async -> [String] {
+		let children = directChildren(of: submodule, in: estate, committed: committed)
+		guard !children.isEmpty else { return [] }
+		_ = await GitWorkingCopy.stage(paths: children, in: root)
+		return children
 	}
 
 	private static func commitSuperproject(
@@ -243,7 +292,10 @@ public enum GitEstateOperation {
 	) async -> [GitEstateOutcome] {
 		var outcomes: [GitEstateOutcome] = []
 
-		for submodule in estate.submodules {
+		// Deepest first, for the reason committing is: a repository pushed
+		// before what it points at publishes a gitlink whose commit nobody else
+		// can fetch.
+		for submodule in estate.deepestFirst {
 			let root = estate.root.appendingPathComponent(submodule.path)
 			guard submodule.isCheckedOut else {
 				outcomes.append(GitEstateOutcome(
@@ -253,6 +305,7 @@ public enum GitEstateOperation {
 			}
 			outcomes.append(await push(submodule: submodule, at: root, setUpstream: setUpstream))
 		}
+		outcomes.sort { ($0.submodule?.path ?? "") < ($1.submodule?.path ?? "") }
 
 		outcomes.append(await push(submodule: nil, at: estate.root, setUpstream: setUpstream))
 		return outcomes
