@@ -81,6 +81,38 @@ public struct GitEstateStatus: Sendable, Equatable {
 		return all
 	}
 
+	/// The estate's changes as one pair of lists, with every path written
+	/// relative to the superproject.
+	///
+	/// This is what a tree over the whole estate is built from, and what
+	/// `GitEstate.grouped` takes back apart when something is staged. The
+	/// rewriting is the whole of it: a submodule reports `src/Main.java`,
+	/// because that is the path its own repository knows, and two hundred
+	/// submodules reporting the same path is two hundred rows only if each
+	/// keeps the repository it came from in front of it.
+	///
+	/// The superproject's own entries are kept as they are, gitlinks included —
+	/// `GitChangeTree.build` folds those onto the repository row rather than
+	/// leaving them as rows of their own.
+	public func flattened(in estate: GitEstate) -> GitWorkingCopyStatus {
+		var flat = superproject
+		for submodule in estate.submodules {
+			guard let own = submodules[submodule.path] else { continue }
+			flat.staged += own.staged.map { prefixed($0, with: submodule.path) }
+			flat.unstaged += own.unstaged.map { prefixed($0, with: submodule.path) }
+		}
+		return flat
+	}
+
+	private func prefixed(_ change: GitChange, with submodulePath: String) -> GitChange {
+		GitChange(
+			path: "\(submodulePath)/\(change.path)",
+			kind: change.kind,
+			isStaged: change.isStaged,
+			isDirectory: change.isDirectory
+		)
+	}
+
 	/// The submodules with something in their work tree, in path order.
 	public func changedSubmodules(in estate: GitEstate) -> [GitSubmodule] {
 		estate.submodules.filter { submodules[$0.path]?.isEmpty == false }

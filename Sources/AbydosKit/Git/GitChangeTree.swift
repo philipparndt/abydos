@@ -40,6 +40,39 @@ public final class GitChangeNode {
 	public var name: String { (path as NSString).lastPathComponent }
 	public var isFolder: Bool { change == nil }
 
+	/// The submodule this row *is*, when the row is a repository rather than a
+	/// folder somebody's paths happened to invent.
+	///
+	/// In an estate the tree is built from paths relative to the superproject —
+	/// `svc-47/src/Main.java` — so a submodule already arrives as a folder row
+	/// without anything being added. What it does not arrive as is a
+	/// *repository*, and the difference decides three things: which git the row
+	/// is staged in, that `src/main/java` under `svc-3` and under `svc-47` are
+	/// different folders rather than one, and that the row has a branch and a
+	/// gitlink to say something about.
+	public private(set) var submodule: GitSubmodule?
+
+	public var isRepository: Bool { submodule != nil }
+
+	/// The superproject's own entry for this submodule, when its recorded commit
+	/// has moved.
+	///
+	/// Held on the repository row rather than drawn as a row of its own, because
+	/// there is one submodule and it should be one row. "This submodule points
+	/// somewhere new" and "this submodule has uncommitted work in it" are two
+	/// facts about the same thing, and a refactoring produces them in that
+	/// order.
+	public private(set) var gitlink: GitChange?
+
+	/// How far the gitlink moved, once somebody has asked. A row draws commits
+	/// here where a file row draws lines — see `GitGitlinkMovement`.
+	public var movement: GitGitlinkMovement?
+
+	fileprivate func mark(as submodule: GitSubmodule, gitlink: GitChange?) {
+		self.submodule = submodule
+		self.gitlink = gitlink
+	}
+
 	/// Whether this row has files under it — a folder this tree invented, *or* a
 	/// directory git reported as a single entry because everything inside it is
 	/// untracked.
@@ -218,9 +251,35 @@ public enum GitChangeTree {
 
 	/// The roots of the tree for `changes`, told what is on the other side so
 	/// each folder can say whether it is whole.
-	public static func build(_ changes: [GitChange], against other: [GitChange] = []) -> [GitChangeNode] {
+	///
+	/// - Parameter estate: the submodules the paths may be inside, when the
+	///   changes come from more than one repository. Paths are then relative to
+	///   the superproject, a submodule with anything under it becomes a
+	///   repository row above its folders, and its gitlink — if the
+	///   superproject reports one as moved — is folded onto that same row.
+	///
+	///   **A project with no submodules gains nothing from this.** The estate is
+	///   empty, no row is marked, and the tree is the tree it always was: a
+	///   level with one child that is always the same child would say nothing,
+	///   and there is no branch on "is this a superproject" to keep true.
+	public static func build(
+		_ changes: [GitChange],
+		against other: [GitChange] = [],
+		in estate: GitEstate? = nil
+	) -> [GitChangeNode] {
 		let root = GitChangeNode(path: "", change: nil)
 		var folders: [String: GitChangeNode] = ["": root]
+
+		// The superproject's entry for a submodule is not a row of its own. It
+		// is the same submodule the folder rows below are about, and two rows
+		// reading `svc-47` — one a gitlink, one a folder — would be the same
+		// thing twice with different verbs on it.
+		var gitlinks: [String: GitChange] = [:]
+		let changes = changes.filter { change in
+			guard let estate, estate.submodule(at: change.path) != nil else { return true }
+			gitlinks[GitEstate.normalised(change.path)] = change
+			return false
+		}
 
 		for change in changes {
 			let parent = folder(for: (change.path as NSString).deletingLastPathComponent,
@@ -244,6 +303,19 @@ public enum GitChangeTree {
 					break
 				}
 				path = (path as NSString).deletingLastPathComponent
+			}
+		}
+
+		// After the folders exist and before the sort, so a repository row that
+		// only moved — nothing dirty inside it — still gets made. `build` makes
+		// a folder only where something changed under it, and "the submodule
+		// points somewhere new" is a change with nothing under it.
+		if let estate {
+			for submodule in estate.submodules {
+				let hasContents = folders[submodule.path] != nil
+				guard hasContents || gitlinks[submodule.path] != nil else { continue }
+				let node = folder(for: submodule.path, in: &folders, under: root)
+				node.mark(as: submodule, gitlink: gitlinks[submodule.path])
 			}
 		}
 

@@ -369,7 +369,9 @@ extension MainWindowController {
 		navigator.onFilesChanged = { [weak self] change in
 			// Something wrote inside the project — possibly a file that is open.
 			self?.editor.reloadExternallyChangedFiles()
-			self?.sidebar.changesPane?.refresh()
+			// With the change, so a superproject re-reads the one submodule the
+			// write landed in — 0.01 s — rather than sweeping all of them.
+			self?.sidebar.changesPane?.refresh(after: change)
 			// A new main.go or Makefile target should get its play button
 			// without reopening the project — but only when what was written
 			// could be one. See `run.refreshRunConfigurations(because:)`.
