@@ -151,3 +151,60 @@ struct GitEstateChangeTreeTests {
 		#expect(groups[0].paths == ["."])
 	}
 }
+
+/// How much changed, across an estate.
+struct GitEstateLineCountTests {
+	/// The superproject's `--numstat` says nothing about a file inside a
+	/// submodule — it does not track it — so every service's rows carried no
+	/// counts at all until this asked the repository that owns them.
+	@Test func countsComeFromTheRepositoryThatOwnsTheFile() async throws {
+		let estate = try SyntheticEstate.make(count: 3, named: "counts")
+		defer { estate.remove() }
+		try estate.dirty("svc-2", text: "one\ntwo\nthree\n")
+
+		let read = await GitEstate.read(from: estate.root)
+		let status = await GitEstateReader.status(of: read)
+		let counts = await GitEstateLineCounts.workingCopy(
+			staged: false, in: read, status: status
+		)
+
+		// Two added and none removed: the file was `one`, and the first line of
+		// what replaced it is still `one`.
+		#expect(counts["svc-2/src/Main.java"]?.added == 2)
+		#expect(counts["svc-2/src/Main.java"]?.removed == 0)
+	}
+
+	/// Two hundred processes to annotate six rows is the rule `Asking how much
+	/// changed does not make a repository slow to read` broken at estate scale.
+	@Test func nothingIsAskedOfARepositoryWithNoChanges() async throws {
+		let estate = try SyntheticEstate.make(count: 4, named: "countsclean")
+		defer { estate.remove() }
+		try estate.dirty("svc-3")
+
+		let read = await GitEstate.read(from: estate.root)
+		let status = await GitEstateReader.status(of: read)
+		#expect(status.changedSubmodules(in: read).map(\.path) == ["svc-3"],
+			"one repository to ask, not four")
+
+		let counts = await GitEstateLineCounts.workingCopy(
+			staged: false, in: read, status: status
+		)
+		#expect(counts.keys.contains("svc-3/src/Main.java"))
+		#expect(!counts.keys.contains(where: { $0.hasPrefix("svc-1/") }))
+	}
+
+	@Test func aRepositoryWithNoSubmodulesCountsAsItAlwaysDid() async throws {
+		let estate = try SyntheticEstate.make(count: 0, named: "countsplain")
+		defer { estate.remove() }
+		try "# changed\nand again\n".write(
+			to: estate.root.appendingPathComponent("README.md"),
+			atomically: true, encoding: .utf8
+		)
+
+		let read = await GitEstate.read(from: estate.root)
+		let counts = await GitEstateLineCounts.workingCopy(
+			staged: false, in: read, status: await GitEstateReader.status(of: read)
+		)
+		#expect(counts["README.md"]?.added == 2)
+	}
+}

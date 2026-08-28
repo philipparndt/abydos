@@ -550,7 +550,8 @@ final class BranchesPane: NSView {
 			self.repositoryRow.show(
 				branch: self.currentBranchName,
 				state: state,
-				notice: operation == nil ? self.headNotice : nil
+				notice: operation == nil ? self.headNotice : nil,
+				submodules: self.submodules.estate.count
 			)
 
 			// The tree says it too: the local section has no checkmark on

@@ -1012,6 +1012,7 @@ final class SidebarController: NSObject {
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("COMMIT-PAGE:\n\(page.pageReportForTesting())")
 			case "rows":   print("COMMIT-PAGE rows:\n\(page.rowsForTesting())")
+			case "diff":   print("COMMIT-PAGE diff: \(page.diffForTesting())")
 			case "stage":  page.stageForTesting(paths: [argument], staged: false)
 			case "who":    print("COMMIT-PAGE \(page.keyboardReportForTesting())")
 			case "keys":   print("COMMIT-PAGE keys: " + page.keysForTesting(argument))

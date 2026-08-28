@@ -137,6 +137,59 @@ public struct GitEstateStatus: Sendable, Equatable {
 	}
 }
 
+/// How much changed, across an estate.
+public enum GitEstateLineCounts {
+	/// The line counts for the whole estate, keyed by superproject-relative
+	/// path.
+	///
+	/// **One command per repository that has changes, and none for the rest.**
+	/// `git diff --numstat` run in the superproject answers nothing about a file
+	/// inside a submodule — the superproject does not track it — so the rows for
+	/// two hundred services would carry no counts at all. Asking every
+	/// repository instead would be two hundred processes to annotate six rows,
+	/// which is the rule `Asking how much changed does not make a repository
+	/// slow to read` at estate scale.
+	///
+	/// Which repositories have changes is already known before this runs: the
+	/// superproject's status named the moved gitlinks and the fan-out named the
+	/// dirty submodules. So the answer to "which shall I ask" costs nothing.
+	public static func workingCopy(
+		staged: Bool, in estate: GitEstate, status: GitEstateStatus
+	) async -> [String: GitLineCount] {
+		var counts = await GitLineCounts.workingCopy(staged: staged, in: estate.root)
+
+		let changed = status.changedSubmodules(in: estate)
+		guard !changed.isEmpty else { return counts }
+
+		let perSubmodule = await withTaskGroup(
+			of: (String, [String: GitLineCount]).self
+		) { group -> [(String, [String: GitLineCount])] in
+			var next = 0
+			var collected: [(String, [String: GitLineCount])] = []
+
+			func addWork() -> Bool {
+				guard next < changed.count, !Task.isCancelled else { return false }
+				let submodule = changed[next]
+				next += 1
+				let root = estate.root.appendingPathComponent(submodule.path)
+				group.addTask {
+					(submodule.path, await GitLineCounts.workingCopy(staged: staged, in: root))
+				}
+				return true
+			}
+
+			for _ in 0..<min(GitEstateReader.concurrency, changed.count) { _ = addWork() }
+			while let answer = await group.next() { collected.append(answer); _ = addWork() }
+			return collected
+		}
+
+		for (path, own) in perSubmodule {
+			for (file, count) in own { counts["\(path)/\(file)"] = count }
+		}
+		return counts
+	}
+}
+
 /// Reading every repository in an estate, in parallel and under a ceiling.
 public enum GitEstateReader {
 	/// How many `git` processes may run at once.

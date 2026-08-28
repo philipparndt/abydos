@@ -32,12 +32,18 @@ this tree is a thing you go and look at; this is a thing you need to have
 noticed. A repository row that scrolls out of sight behind forty branches is the
 fault the header was avoiding, reintroduced.
 
-**Where the repository holds submodules the row says so and how many**, and its
-verb becomes the estate's: fetch, pull or push acts on the superproject and every
-submodule, bounded and reported per repository. The count is the one thing about
-a superproject that changes what everything below it means, and a row that read
-`level` while forty submodules were ahead would be a true sentence about the
-wrong repository.
+**Where the repository holds submodules the row SHALL say so and how many.** The
+count is the one thing about a superproject that changes what everything below it
+means: `level` on a superproject is a true sentence about the superproject and
+says nothing about the forty services under it, and a reader who does not know
+this is a superproject has no reason to look further.
+
+**The row SHALL NOT gain a second verb for it.** This row's action is the remote
+traffic — fetch when level, pull when behind, push when ahead — and that is the
+whole reason this specification draws the repository as a row rather than a
+header: a verb hangs off the row that draws its object. A second verb here would
+dilute the one thing the row is pinned for. The way to the overview hangs off the
+row that draws *that* object, which is the Submodules section's own header.
 
 **The superproject's own distance is still what the row states.** It is not
 summed with its submodules': `3 behind` about a superproject and `3 behind`
@@ -82,14 +88,12 @@ overview's sentence to say, and the row carries the way to it.
 - **WHEN** the git tool is opened
 - **THEN** the row says it holds 200 submodules
 - **AND** the distance it states is the superproject's own, not a sum
-- **AND** it offers a way to the overview
 
-#### Scenario: fetching an estate
+#### Scenario: the row keeps the verb it had
 
-- **GIVEN** the same superproject
-- **WHEN** the row's fetch is pressed
-- **THEN** the superproject and every submodule are fetched, bounded
-- **AND** each repository's outcome is reported
+- **GIVEN** the same superproject, its branch level with its upstream
+- **THEN** the row's verb is still `Fetch`
+- **AND** the way to the overview is the Submodules section's header, not this row
 
 ## ADDED Requirements
 

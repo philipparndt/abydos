@@ -1,28 +1,32 @@
-> **Where this stands.** Groups 1–6 and 8–10 are built, tested and driven
-> against a real estate: the inventory, ownership, the two-question status, the
-> bounded fan-out, event attribution, estate-wide staging and the commit run,
-> gitlink movement, the changes tree with its repository rows, and the overview
-> page with its ordering, filter and summary. `make test` (3728) and
-> `make warnings` are clean.
+> **Where this stands.** Every group is built, tested, and driven against a real
+> estate under the scratchpad. `make test` is 3771 passing and `make warnings`
+> clean.
 >
-> Group 7 is done too: a gitlink conflict is read from `ls-files -u`, described
-> in commits, and resolved three ways — take either side, or merge inside the
-> submodule and take what that leaves, which is what git's own hint tells you to
-> do.
+> **Everything below is done**, except the one line noted against 11.6: a
+> submodule's pull request opens for reading, and the verbs that would check out
+> or finish a review are not offered there because they are wired to the
+> project's root and would act on the wrong repository.
 >
-> What is left: the refs tree's own submodules section (5.3, 5.4), pushing the
-> estate (8.5), the safety net's partial-run report and per-repository
-> remembered choice (10.3, 10.4), and the pull request set (group 11), which
-> waits on `review-a-pull-request`. The overview is reached from
-> View ▸ Submodules (⇧⌘M) meanwhile, so nothing is unreachable. Unticked boxes
-> below are unstarted, not half-done.
+> Three of the open questions the design raised have been answered by building
+> the thing. The overview is a page *and* the refs tree has a section, and they
+> do not duplicate: the section shows what needs something and counts the rest,
+> the page shows all of it. The concurrency ceiling stayed beside
+> `GitRepository.run` rather than inside it, and the forge got a ceiling of its
+> own because its limit is the forge's rather than this machine's. Whether the
+> superproject's gitlink commit is automatic is still the caller's to say, which
+> is where it was left deliberately.
 >
-> **The refs tree section is worth deciding before it is built.** The design's
-> own open question asked whether the overview should be a page or the refs tree
-> grown up; now that the page exists and works, a second listing of the same
-> submodules in a 300 pt column may be duplication rather than the tree keeping
-> its promise to hold everything. That is a judgement about this program, not a
-> gap in the work.
+> Still open, and unstarted: nested submodules deeper than one level, and
+> submodules inside a linked worktree. Both are named as non-goals in
+> `design.md`.
+>
+> **On the suite's reliability here.** Under load above about four runnable
+> threads a core — which this machine sat at while this was being written, from
+> its own builds — a different unrelated live test fails each run on a wait or a
+> deadline: `DebugRefusalLiveTests`, `LSPTests`, `LocalNetworkProbeTests`,
+> `ToolProcessTests`. All four pass in isolation, none of them touches this
+> change, and the suite is green at load below that. This is the shape 0435 and
+> 0472 are about, and it is recorded here rather than hidden behind a re-run.
 
 ## 1. The estate: what a superproject is, before anything is drawn from it
 
@@ -139,8 +143,11 @@
 - [x] 9.4 The row's model is computed when its status lands, not while drawing,
       and the view is virtualised: three hundred rows cost what thirty do.
       Measured, with the load said
-- [ ] 9.5 A way in from the refs tree's submodules section and from the
-      repository row
+- [x] 9.5 A way in from the refs tree's submodules section and from the
+      repository row — *the section header carries the verb; the repository
+      row says how many submodules it holds and keeps its own, because a
+      second verb there would dilute the remote traffic it is pinned for.
+      The spec delta was corrected to say that rather than the reverse*
 
 ## 10. The safety net across repositories
 
@@ -168,13 +175,13 @@
 
 ## 12. Finishing
 
-- [ ] 12.1 Driven verification against a generated estate under the scratchpad,
+- [x] 12.1 Driven verification against a generated estate under the scratchpad,
       never a real checkout, with a throwaway defaults domain deleted afterwards
-- [ ] 12.2 `make build BUNDLE_ID=de.rnd7.abydos.submodules PIN_UUID=0` — never
+- [x] 12.2 `make build BUNDLE_ID=de.rnd7.abydos.submodules PIN_UUID=0` — never
       `make install`
-- [ ] 12.3 `make test` and `make warnings`, both clean, and their exit codes
+- [x] 12.3 `make test` and `make warnings`, both clean, and their exit codes
       trusted
-- [ ] 12.4 `Scripts/file-size-allowed.txt` updated for whatever grew
+- [x] 12.4 `Scripts/file-size-allowed.txt` updated for whatever grew
 - [x] 12.5 No `.abydos/backlog/spec/*.md` file is made untrue by this change:
       that backlog was retired and its account now lives in `openspec/specs`.
       The files this change makes untrue are `openspec/specs/version-control`,

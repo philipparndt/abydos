@@ -685,7 +685,14 @@ final class ChangesPane: NSView {
 		for staged in [false, true] {
 			let outline = staged ? stagedTable! : unstagedTable!
 			Task { @MainActor in
-				let counts = await GitLineCounts.workingCopy(staged: staged, in: root)
+				// Per repository that has changes, and none for the rest: the
+				// superproject's `--numstat` says nothing about a file inside a
+				// submodule, so every service's rows carried no counts at all.
+				let counts = await GitEstateLineCounts.workingCopy(
+					staged: staged,
+					in: self.submodules.estate,
+					status: self.submodules.status
+				)
 				// The tree may have been rebuilt while this was out; the roots
 				// read here are whichever ones are on screen now.
 				for root in self.side(for: outline).roots { root.applyLineCounts(counts) }
@@ -930,7 +937,17 @@ final class ChangesPane: NSView {
 	private func fill(_ node: GitChangeNode, in outline: ChangesOutlineView, staged: Bool) {
 		let path = node.path
 		Task { @MainActor in
-			let files = await GitWorkingCopy.untrackedFiles(inDirectory: path, in: root)
+			// The same question as the diff: an untracked directory inside a
+			// submodule is listed by that submodule, and asking the
+			// superproject for it lists nothing.
+			let estate = self.submodules.estate
+			let files = await GitWorkingCopy.untrackedFiles(
+				inDirectory: estate.relativePath(of: path),
+				in: estate.repositoryRoot(containing: path)
+			).map { inside -> String in
+				guard let submodule = estate.submodule(containing: path) else { return inside }
+				return "\(submodule.path)/\(inside)"
+			}
 			let rows = GitChangeTree.contents(
 				ofUntrackedDirectory: path, files: files, staged: staged
 			)
@@ -1697,6 +1714,14 @@ final class ChangesPane: NSView {
 	/// is the whole of what an estate adds to this pane and therefore the whole
 	/// of what a driven run has to be able to see. Indented by depth, because
 	/// the claim being checked is that a submodule sits *above* its folders.
+	/// The diff the page is showing, for the row named — which is the claim a
+	/// screenshot of an empty pane cannot be asked about.
+	func diffForTesting() -> String {
+		guard let diffView else { return "no diff view" }
+		let text = diffView.reportForTesting
+		return text.isEmpty ? "empty" : text
+	}
+
 	func rowsForTesting() -> String {
 		func lines(_ nodes: [GitChangeNode], depth: Int) -> [String] {
 			nodes.flatMap { node -> [String] in
@@ -1705,7 +1730,7 @@ final class ChangesPane: NSView {
 				if node.gitlink != nil { marks.append("[moved]") }
 				let tally = node.isFolder
 					? (node.isPartial ? " \(node.count) of \(node.total)" : " \(node.count)")
-					: ""
+					: (node.lines.map { " +\($0.added)/-\($0.removed)" } ?? "")
 				let line = String(repeating: "  ", count: depth)
 					+ node.name + tally
 					+ (marks.isEmpty ? "" : " " + marks.joined(separator: " "))
@@ -2025,8 +2050,17 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		}
 		Task { @MainActor [weak self] in
 			guard let self else { return }
+			// **In the repository that owns the path.** `git diff -- svc-2/…`
+			// run in the superproject answers nothing at all: the superproject
+			// does not track that file, so the pane went blank for every file
+			// inside a submodule and looked like a file with no changes. The
+			// path has to be relative to that repository too, for the reason
+			// `Project.gitRoot` records.
+			let estate = self.submodules.estate
 			let text = await GitWorkingCopy.diff(
-				for: change.path, staged: change.isStaged, in: self.root
+				for: estate.relativePath(of: change.path),
+				staged: change.isStaged,
+				in: estate.repositoryRoot(containing: change.path)
 			)
 			diffView.setDiff(
 				text, staged: change.isStaged,
