@@ -16,6 +16,17 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	/// debug button's chevron so the strip stays two buttons wide.
 	var onProfile: (() -> Void)?
 	var onCoverage: (() -> Void)?
+	/// The other ways of starting a debug session, which used to be on the
+	/// rail's ladybird — a button whose job is to show a pane, asking what to
+	/// run. They belong here, beside the Debug this menu already offers.
+	var onDebugExecutable: (() -> Void)?
+	var onAttachToProcess: (() -> Void)?
+	var onDebugGoPackage: (() -> Void)?
+	/// Whether debugging a Go package is worth offering. It is not, in a project
+	/// with no Go module: the rail used to start one outright and produced an
+	/// error about a missing `go.mod`, which is an answer to a question nobody
+	/// asked.
+	var isGoProject: (() -> Bool)?
 	/// Asked to show the list of configurations, at a point in this view.
 	/// Asked for the configuration list, with the rect the popover should point
 	/// at — the scheme well, not the whole control.
@@ -282,6 +293,19 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	private func showStartMenu() {
 		let menu = NSMenu()
 		menu.addItem(withTitle: "Debug", action: #selector(debugFromMenu), keyEquivalent: "")
+		// Go first where the project is Go, since that is then the likely one.
+		if isGoProject?() == true {
+			menu.addItem(
+				withTitle: "Debug Go Package", action: #selector(debugGoFromMenu), keyEquivalent: ""
+			)
+		}
+		menu.addItem(
+			withTitle: "Debug Executable\u{2026}", action: #selector(debugExecutableFromMenu),
+			keyEquivalent: ""
+		)
+		menu.addItem(
+			withTitle: "Attach to Process\u{2026}", action: #selector(attachFromMenu), keyEquivalent: ""
+		)
 		menu.addItem(.separator())
 		menu.addItem(withTitle: "Profile", action: #selector(profileFromMenu), keyEquivalent: "")
 		menu.addItem(
@@ -297,6 +321,9 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	}
 
 	@objc private func debugFromMenu() { onDebug?() }
+	@objc private func debugGoFromMenu() { onDebugGoPackage?() }
+	@objc private func debugExecutableFromMenu() { onDebugExecutable?() }
+	@objc private func attachFromMenu() { onAttachToProcess?() }
 	@objc private func profileFromMenu() { onProfile?() }
 	@objc private func coverageFromMenu() { onCoverage?() }
 

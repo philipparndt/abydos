@@ -13,14 +13,25 @@ final class DebugPane: NSView {
 	var onRunAgain: (() -> Void)?
 	var onDebugAgain: (() -> Void)?
 
-	private let session: DebugSession
+	private let session: DebugSession?
 	private let projectRoot: URL
 
 	/// The session this pane drives, so the window can reach it for breakpoints.
-	var debugSession: DebugSession { session }
+	///
+	/// Nil for a pane opened with nothing running, which is what makes the
+	/// breakpoints reachable at all: the pane used to be built only by a session
+	/// starting, so the rail's ladybird had nothing to open and asked how to
+	/// start one instead.
+	///
+	/// **Every caller that decides something from "is there a session" reads
+	/// this**, through `BottomPanel.activeDebugSession` — the rail's colour, the
+	/// stepping verbs' enabling, and which breakpoints the coordinator writes
+	/// down. That is why the pane holds an optional rather than an idle session
+	/// standing in: a stand-in would answer yes to all three.
+	var debugSession: DebugSession? { session }
 
 	/// Whether the program being debugged is still going, for the tab's colour.
-	var isSessionActive: Bool { session.isActive }
+	var isSessionActive: Bool { session?.isActive == true }
 
 	/// The project this was started for.
 	///
@@ -31,6 +42,15 @@ final class DebugPane: NSView {
 
 	private var toolbar: DebugToolbar!
 	private var stackTable: NSTableView!
+	/// Stack | Breakpoints, above the left-hand side.
+	///
+	/// A tab rather than a third column: the pane is a split of two at a panel
+	/// height of a few hundred points, and a third makes each too narrow to read
+	/// a path in — while two thirds of it sit empty whenever nothing is running,
+	/// which is exactly when the breakpoints are worth reading.
+	private var leftTabs: NSSegmentedControl!
+	private var stackScroll: NSScrollView!
+	private(set) var breakpointList: BreakpointList!
 	private var variablesOutline: NSOutlineView!
 
 	/// What a variable hangs off, which decides who is asked to open it.
@@ -81,7 +101,7 @@ final class DebugPane: NSView {
 	private var watchField: NSTextField!
 	private var threadPopUp: NSPopUpButton!
 
-	init(session: DebugSession, projectRoot: URL) {
+	init(session: DebugSession?, projectRoot: URL) {
 		self.session = session
 		self.projectRoot = projectRoot
 		super.init(frame: .zero)
@@ -152,7 +172,7 @@ final class DebugPane: NSView {
 		let view = console.terminalView
 		window?.makeFirstResponder(view)
 		let tookKeyboard = window?.firstResponder === view
-		let before = session.isActive
+		let before = session?.isActive == true
 		guard let event = NSEvent.keyEvent(
 			with: .keyDown, location: .zero, modifierFlags: [.control],
 			timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil,
@@ -160,12 +180,31 @@ final class DebugPane: NSView {
 			isARepeat: false, keyCode: 8
 		) else { return "no event" }
 		view.keyDown(with: event)
-		return "firstResponder=\(tookKeyboard) active before=\(before) after=\(session.isActive)"
+		return "firstResponder=\(tookKeyboard) active before=\(before) after=\(session?.isActive == true)"
 	}
 
 	func showConsole() {
 		sideTabs.selectedSegment = 1
 		sideTabChanged()
+	}
+
+	/// Shows the call stack, which is what a session stopping is about.
+	func showStack() {
+		leftTabs.selectedSegment = 0
+		leftTabChanged()
+	}
+
+	/// Shows the breakpoints, which is what a pane with nothing running is for.
+	func showBreakpoints() {
+		leftTabs.selectedSegment = 1
+		leftTabChanged()
+	}
+
+	@objc private func leftTabChanged() {
+		let showsStack = leftTabs.selectedSegment == 0
+		stackScroll.isHidden = !showsStack
+		threadPopUp.isHidden = !showsStack
+		breakpointList.isHidden = showsStack
 	}
 
 	/// Shows the variables, which is what stopping somewhere is *for*.
@@ -189,7 +228,7 @@ final class DebugPane: NSView {
 		let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
 		showVariables()
-		session.addWatch(trimmed)
+		session?.addWatch(trimmed)
 	}
 
 	var toolbarToolTipsForTesting: [String] { toolbar.toolTipsForTesting() }
@@ -210,7 +249,9 @@ final class DebugPane: NSView {
 
 	@discardableResult
 	func writeToolbarImageForTesting(to path: String) -> Bool {
-		toolbar.writeImageForTesting(to: path, state: session.state, exitCode: session.exitCode)
+		toolbar.writeImageForTesting(
+			to: path, state: session?.state ?? .idle, exitCode: session?.exitCode
+		)
 	}
 
 	var showsConsoleForTesting: Bool { !console.isHidden }
@@ -218,18 +259,18 @@ final class DebugPane: NSView {
 
 	private func build() {
 		toolbar = DebugToolbar()
-		toolbar.onContinue = { [weak self] in self?.session.resume() }
-		toolbar.onPause = { [weak self] in self?.session.pause() }
-		toolbar.onStepOver = { [weak self] in self?.session.stepOver() }
-		toolbar.onStepInto = { [weak self] in self?.session.stepInto() }
-		toolbar.onStepOut = { [weak self] in self?.session.stepOut() }
-		toolbar.onStop = { [weak self] in self?.session.stop() }
+		toolbar.onContinue = { [weak self] in self?.session?.resume() }
+		toolbar.onPause = { [weak self] in self?.session?.pause() }
+		toolbar.onStepOver = { [weak self] in self?.session?.stepOver() }
+		toolbar.onStepInto = { [weak self] in self?.session?.stepInto() }
+		toolbar.onStepOut = { [weak self] in self?.session?.stepOut() }
+		toolbar.onStop = { [weak self] in self?.session?.stop() }
 		// Not the session's to do: what to start is a launch configuration, and
 		// the window is what holds those.
 		toolbar.onRunAgain = { [weak self] in self?.onRunAgain?() }
 		toolbar.onDebugAgain = { [weak self] in self?.onDebugAgain?() }
 		// Where this session runs, when that is somewhere else.
-		toolbar.location = session.location
+		toolbar.location = session?.location
 
 		// Stack on the left, variables on the right — the arrangement every
 		// debugger uses, because you pick a frame and then read its values.
@@ -285,12 +326,33 @@ final class DebugPane: NSView {
 		watchField.action = #selector(watchEntered)
 
 		let stackScroll = makeScrollView(document: stack)
+		self.stackScroll = stackScroll
 		let variablesScroll = makeScrollView(document: variables)
 		self.variablesScroll = variablesScroll
 
+		leftTabs = NSSegmentedControl(
+			labels: ["Stack", "Breakpoints"], trackingMode: .selectOne, target: self,
+			action: #selector(leftTabChanged)
+		)
+		leftTabs.controlSize = .small
+		leftTabs.font = Theme.current.uiFont(10.5)
+		// Stated, because a segmented control asked for none spreads across
+		// whatever it is put in: a picture of it took half the pane for two
+		// words.
+		leftTabs.setWidth(Theme.current.scaled(64), forSegment: 0)
+		leftTabs.setWidth(Theme.current.scaled(88), forSegment: 1)
+		// A pane with nothing running opens on its breakpoints, because there is
+		// nothing else for it to show — and a session opens on the stack, which
+		// is the same follow-the-session rule the right-hand side keeps.
+		leftTabs.selectedSegment = session == nil ? 1 : 0
+
+		breakpointList = BreakpointList()
+
 		let leftSide = NSView()
+		leftSide.addSubview(leftTabs)
 		leftSide.addSubview(threadPopUp)
 		leftSide.addSubview(stackScroll)
+		leftSide.addSubview(breakpointList)
 
 		let split = ThinDividerSplitView()
 		split.isVertical = true
@@ -331,8 +393,8 @@ final class DebugPane: NSView {
 			// terminal at a dead prompt does not announce that there was nothing
 			// to interrupt. Without this, ⌃C over a finished session would send a
 			// second `disconnect` and print its ending a second time.
-			guard self.session.isActive else { return }
-			self.session.stop()
+			guard self.session?.isActive == true else { return }
+			self.session?.stop()
 		}
 		console.isHidden = true
 		rightSide.addSubview(console)
@@ -358,8 +420,10 @@ final class DebugPane: NSView {
 		addSubview(sideTabs)
 		addSubview(clearButton)
 
-		for view in [console, variablesScroll, sideTabs, clearButton, threadPopUp, watchField, stackScroll]
-			as [NSView] {
+		for view in [
+			console, variablesScroll, sideTabs, clearButton, threadPopUp, watchField, stackScroll,
+			leftTabs, breakpointList,
+		] as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
 		toolbar.translatesAutoresizingMaskIntoConstraints = false
@@ -391,16 +455,29 @@ final class DebugPane: NSView {
 			split.bottomAnchor.constraint(equalTo: bottomAnchor),
 		])
 
+		leftTabChanged()
+
 		let inset = Theme.current.scaled(6)
 		NSLayoutConstraint.activate([
-			threadPopUp.topAnchor.constraint(equalTo: leftSide.topAnchor, constant: inset / 2),
-			threadPopUp.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor, constant: inset),
+			leftTabs.topAnchor.constraint(equalTo: leftSide.topAnchor, constant: inset / 2),
+			leftTabs.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor, constant: inset),
+
+			// Beside the tabs and taking what is left: the goroutine picker is
+			// about the stack, and the two share a row rather than stacking two
+			// rows of chrome over a pane this short.
+			threadPopUp.centerYAnchor.constraint(equalTo: leftTabs.centerYAnchor),
+			threadPopUp.leadingAnchor.constraint(equalTo: leftTabs.trailingAnchor, constant: inset),
 			threadPopUp.trailingAnchor.constraint(equalTo: leftSide.trailingAnchor, constant: -inset),
 
-			stackScroll.topAnchor.constraint(equalTo: threadPopUp.bottomAnchor, constant: inset / 2),
+			stackScroll.topAnchor.constraint(equalTo: leftTabs.bottomAnchor, constant: inset / 2),
 			stackScroll.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor),
 			stackScroll.trailingAnchor.constraint(equalTo: leftSide.trailingAnchor),
 			stackScroll.bottomAnchor.constraint(equalTo: leftSide.bottomAnchor),
+
+			breakpointList.topAnchor.constraint(equalTo: stackScroll.topAnchor),
+			breakpointList.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor),
+			breakpointList.trailingAnchor.constraint(equalTo: leftSide.trailingAnchor),
+			breakpointList.bottomAnchor.constraint(equalTo: leftSide.bottomAnchor),
 
 			watchField.topAnchor.constraint(equalTo: rightSide.topAnchor, constant: inset / 2),
 			watchField.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor, constant: inset),
@@ -560,26 +637,26 @@ final class DebugPane: NSView {
 	var onRunningChanged: (() -> Void)?
 
 	private func wireSession() {
-		session.observeState { [weak self, weak session] state in
+		session?.observeState { [weak self, weak session] state in
 			self?.toolbar.update(state: state, exitCode: session?.exitCode)
 			self?.onRunningChanged?()
 		}
-		session.onStackChanged = { [weak self] in
+		session?.onStackChanged = { [weak self] in
 			self?.stackTable.reloadData()
-			if let self, !self.session.stackFrames.isEmpty {
+			if let self, self.session?.stackFrames.isEmpty == false {
 				self.stackTable.selectRowIndexes([0], byExtendingSelection: false)
 			}
 		}
-		session.observeVariables { [weak self] in
+		session?.observeVariables { [weak self] in
 			self?.rebuildVariableTree()
 		}
-		session.onWatchesChanged = { [weak self] in
+		session?.onWatchesChanged = { [weak self] in
 			self?.rebuildWatches()
 		}
-		session.onThreadsChanged = { [weak self] in
+		session?.onThreadsChanged = { [weak self] in
 			self?.rebuildThreads()
 		}
-		session.observeStopped { [weak self] file, line in
+		session?.observeStopped { [weak self] file, line in
 			// Stopping is what the variables are for, and the console has
 			// nothing new to say while nothing is running. Switched rather than
 			// shown beside: at any panel height somebody would actually use,
@@ -602,7 +679,7 @@ final class DebugPane: NSView {
 		// The window is going, so nothing will be left to read a reply or to
 		// show the console line — and an adapter left running holds open pipes
 		// that outlive it. See `DebugSession.stopImmediately`.
-		session.stopImmediately()
+		session?.stopImmediately()
 	}
 
 	// MARK: - Copying
@@ -656,19 +733,19 @@ final class DebugPane: NSView {
 	/// Watches whatever was clicked, so a local can be followed across frames.
 	@objc private func watchClicked() {
 		switch clickedRowItem {
-		case let node as VariableNode: session.addWatch(node.variable.name)
-		case let node as WatchNode: session.addWatch(node.watch.expression)
+		case let node as VariableNode: session?.addWatch(node.variable.name)
+		case let node as WatchNode: session?.addWatch(node.watch.expression)
 		default: break
 		}
 	}
 
 	@objc private func removeClickedWatch() {
 		guard let node = clickedRowItem as? WatchNode else { return }
-		session.removeWatch(id: node.watch.id)
+		session?.removeWatch(id: node.watch.id)
 	}
 
 	@objc private func removeAllWatches() {
-		session.removeAllWatches()
+		session?.removeAllWatches()
 	}
 
 	// MARK: - Watches and threads
@@ -676,20 +753,20 @@ final class DebugPane: NSView {
 	@objc private func watchEntered() {
 		let expression = watchField.stringValue
 		guard !expression.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-		session.addWatch(expression)
+		session?.addWatch(expression)
 		watchField.stringValue = ""
 	}
 
 	@objc private func threadChosen() {
 		let index = threadPopUp.indexOfSelectedItem
-		guard session.threads.indices.contains(index) else { return }
+		guard let session, session.threads.indices.contains(index) else { return }
 		let thread = session.threads[index]
 		Task { await session.selectThread(id: thread.id) }
 	}
 
 	private func rebuildThreads() {
 		threadPopUp.removeAllItems()
-		let threads = session.threads
+		let threads = session?.threads ?? []
 		threadPopUp.isEnabled = threads.count > 1
 
 		guard !threads.isEmpty else {
@@ -699,7 +776,7 @@ final class DebugPane: NSView {
 		for thread in threads {
 			threadPopUp.addItem(withTitle: thread.name.isEmpty ? "Thread \(thread.id)" : thread.name)
 		}
-		if let selected = session.selectedThreadID,
+		if let selected = session?.selectedThreadID,
 		   let index = threads.firstIndex(where: { $0.id == selected }) {
 			threadPopUp.selectItem(at: index)
 		}
@@ -707,7 +784,7 @@ final class DebugPane: NSView {
 
 	private func rebuildWatches() {
 		let selected = selectedVariableRow()
-		watchNodes = session.watches.map { watch in
+		watchNodes = (session?.watches ?? []).map { watch in
 			let node = WatchNode(watch: watch)
 			node.children = build(
 				variables: watch.children ?? [], owner: .watch(watch.id), prefix: []
@@ -720,8 +797,8 @@ final class DebugPane: NSView {
 
 		// Open, and nothing under it yet, because the refresh threw away values
 		// belonging to a handle that has since expired. Ask for this stop's.
-		if session.watches.contains(where: { $0.isExpanded && $0.children == nil && $0.isExpandable }) {
-			Task { await session.loadOpenWatchChildren() }
+		if session?.watches.contains(where: { $0.isExpanded && $0.children == nil && $0.isExpandable }) == true {
+			Task { await session?.loadOpenWatchChildren() }
 		}
 	}
 
@@ -746,7 +823,7 @@ final class DebugPane: NSView {
 
 	private func rebuildVariableTree() {
 		let selected = selectedVariableRow()
-		scopeNodes = session.scopes.enumerated().map { index, scope in
+		scopeNodes = (session?.scopes ?? []).enumerated().map { index, scope in
 			let node = ScopeNode(scope: scope, index: index)
 			node.children = build(variables: scope.variables, owner: .scope(index), prefix: [])
 			return node
@@ -818,7 +895,7 @@ final class DebugPane: NSView {
 
 	@objc private func frameClicked() {
 		let row = stackTable.clickedRow >= 0 ? stackTable.clickedRow : stackTable.selectedRow
-		guard session.stackFrames.indices.contains(row) else { return }
+		guard let session, session.stackFrames.indices.contains(row) else { return }
 		let frame = session.stackFrames[row]
 
 		Task { await session.selectFrame(id: frame.id) }
@@ -832,7 +909,7 @@ final class DebugPane: NSView {
 
 extension DebugPane: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int {
-		session.stackFrames.count
+		session?.stackFrames.count ?? 0
 	}
 
 	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
@@ -844,7 +921,7 @@ extension DebugPane: NSTableViewDataSource, NSTableViewDelegate {
 	}
 
 	func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-		guard session.stackFrames.indices.contains(row) else { return nil }
+		guard let session, session.stackFrames.indices.contains(row) else { return nil }
 		return StackFrameCell(stackFrame: session.stackFrames[row], projectRoot: projectRoot)
 	}
 }
@@ -863,7 +940,7 @@ extension DebugPane: NSMenuDelegate {
 
 		let clicked = clickedRowItem
 		guard clicked is VariableNode || clicked is WatchNode else {
-			if !session.watches.isEmpty {
+			if session?.watches.isEmpty == false {
 				menu.addItem(item("Remove All Watches", #selector(removeAllWatches)))
 			}
 			return
@@ -939,7 +1016,7 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// Children load asynchronously; the tree rebuilds when they arrive.
 		if let watch = item as? WatchNode {
 			if watch.children.isEmpty {
-				Task { await session.toggleWatchExpansion(id: watch.watch.id) }
+				Task { await session?.toggleWatchExpansion(id: watch.watch.id) }
 			}
 			return true
 		}
@@ -947,9 +1024,9 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		if node.children.isEmpty {
 			switch node.owner {
 			case let .scope(index):
-				Task { await session.toggleExpansion(scopeIndex: index, path: node.path) }
+				Task { await session?.toggleExpansion(scopeIndex: index, path: node.path) }
 			case let .watch(id):
-				Task { await session.toggleWatchExpansion(id: id, path: node.path) }
+				Task { await session?.toggleWatchExpansion(id: id, path: node.path) }
 			}
 		}
 		return true
@@ -960,7 +1037,7 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	/// it would re-open a row somebody had just closed.
 	func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool {
 		if let watch = item as? WatchNode, watch.watch.isExpanded {
-			Task { await session.toggleWatchExpansion(id: watch.watch.id) }
+			Task { await session?.toggleWatchExpansion(id: watch.watch.id) }
 		}
 		return true
 	}

@@ -25,6 +25,9 @@ final class DebugCoordinator {
 	var hostWindow: () -> NSWindow? = { nil }
 	/// Written where a project's breakpoints are remembered.
 	var onRememberBreakpoints: () -> Void = {}
+	/// The set changed, from anywhere: a gutter, an options sheet, a session
+	/// verifying one, a project arriving. What the list redraws from.
+	var onBreakpointsChanged: () -> Void = {}
 	/// The stepping verbs, which belong to whoever is driving the session.
 	var onDebugContinue: (Any?) -> Void = { _ in }
 	var onDebugStepOver: (Any?) -> Void = { _ in }
@@ -55,7 +58,7 @@ final class DebugCoordinator {
 		// front of them rather than behind the console tab.
 		onWatchFromEditor("answer * 3")
 		let pane = panel.activeDebugPane
-		let added = pane?.debugSession.watches.contains { $0.expression == "answer * 3" } ?? false
+		let added = pane?.debugSession?.watches.contains { $0.expression == "answer * 3" } ?? false
 		print("EDITORWATCH: added=\(added) showsConsole=\(pane?.showsConsoleForTesting ?? true)")
 	}
 
@@ -161,6 +164,11 @@ final class DebugCoordinator {
 	func adoptBreakpoints(_ breakpoints: [String: [Breakpoint]]) {
 		pendingBreakpoints = breakpoints
 		publishPendingBreakpoints()
+	}
+
+	/// The whole set, as a list reads it.
+	func breakpointRows(in root: URL?) -> [BreakpointRows.Row] {
+		BreakpointRows.rows(from: breakpointsToRemember(), in: root)
 	}
 
 	func toggleBreakpoint(file: URL, line: Int) {
@@ -333,6 +341,7 @@ final class DebugCoordinator {
 		}
 		editor.setBreakpoints(mapped)
 		editor.setConditionalBreakpoints(conditional)
+		onBreakpointsChanged()
 	}
 
 	func syncBreakpointsToEditor(from session: DebugSession) {
@@ -353,6 +362,7 @@ final class DebugCoordinator {
 		pendingBreakpoints = session.breakpoints
 		editor.setBreakpoints(mapped)
 		editor.setConditionalBreakpoints(conditional)
+		onBreakpointsChanged()
 	}
 
 	/// Applies breakpoint options, to the session if there is one and to the

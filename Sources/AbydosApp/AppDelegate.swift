@@ -847,6 +847,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.showBreakpointList {
+			// After the file has opened and the gutter has something to click.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.reportBreakpointListForTesting(
+					setting: options.breakpointLines,
+					thenDebug: options.breakpointsThenDebug,
+					thenExit: options.screenshotPath == nil
+				)
+			}
+		}
+
 		if let text = options.selectText {
 			// After `--find` has had its say, so that the run which asks whether
 			// find's matches win is the same shape as the one that does not.

@@ -128,18 +128,9 @@ extension MainWindowController {
 			self, selector: #selector(toastWithdrawn(_:)), name: .abydosToastWithdrawn, object: nil
 		)
 
+		bottomPanel.onDebugPaneOpened = { [weak self] pane in self?.wireBreakpoints(of: pane) }
 		toolStrip.onToggleDebug = { [weak self] in self?.showDebugPanel(nil) }
 		toolStrip.isDebugRunning = { [weak self] in self?.bottomPanel.activeDebugSession != nil }
-		toolStrip.isGoProject = { [weak self] in
-			guard let root = self?.project?.root else { return false }
-			return GoTooling.isGoModule(root) || !RunConfigurationDiscovery
-				.searchDirectories(from: root)
-				.filter(GoTooling.isGoModule)
-				.isEmpty
-		}
-		toolStrip.onDebugGoPackage = { [weak self] in self?.goDebug(nil) }
-		toolStrip.onDebugExecutable = { [weak self] in self?.debugExecutable(nil) }
-		toolStrip.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.colourSource = { Theme.current.sidebarBackground }

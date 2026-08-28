@@ -126,6 +126,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		coordinator.projectRoot = { [weak self] in self?.project?.root }
 		coordinator.hostWindow = { [weak self] in self?.window }
 		coordinator.onRememberBreakpoints = { [weak self] in self?.rememberBreakpoints() }
+		coordinator.onBreakpointsChanged = { [weak self] in self?.refreshBreakpointList() }
 		coordinator.onDebugContinue = { [weak self] in self?.debugContinue($0) }
 		coordinator.onDebugStepOver = { [weak self] in self?.debugStepOver($0) }
 		coordinator.onDebugStepInto = { [weak self] in self?.debugStepInto($0) }
@@ -216,6 +217,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		control.onStop = { [weak self] in self?.run.stopRunning() }
 		control.onProfile = { [weak self] in self?.run.profileSelectedConfiguration() }
 		control.onCoverage = { [weak self] in self?.run.runSelectedWithCoverage() }
+		// The ways of starting a debug session that used to live on the rail's
+		// ladybird. The bodies did not move — only which control asks.
+		control.onDebugExecutable = { [weak self] in self?.debugExecutable(nil) }
+		control.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
+		control.onDebugGoPackage = { [weak self] in self?.goDebug(nil) }
+		control.isGoProject = { [weak self] in
+			guard let root = self?.project?.root else { return false }
+			return GoTooling.isGoModule(root) || !RunConfigurationDiscovery
+				.searchDirectories(from: root)
+				.filter(GoTooling.isGoModule)
+				.isEmpty
+		}
 		control.onChooseConfiguration = { [weak self, weak control] rect in
 			guard let control else { return }
 			self?.showConfigurationMenu(from: rect, in: control)

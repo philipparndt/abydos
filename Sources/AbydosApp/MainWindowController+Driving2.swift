@@ -875,6 +875,42 @@ extension MainWindowController {
 		editor.simulateTyping(text)
 	}
 
+	/// Opens the debug pane with nothing running and says what its list holds.
+	///
+	/// The claim is that there is a pane to open at all: it used to be built only
+	/// by a session starting, so the rail's ladybird had nothing to show and
+	/// asked how to start one instead.
+	/// - Parameter thenExit: false when a shot has been asked for, since a run
+	///   that quit before the shutter would photograph nothing.
+	func reportBreakpointListForTesting(setting lines: [Int], thenDebug: Bool, thenExit: Bool = true) {
+		for line in lines { debug.toggleBreakpointForTesting(line: line) }
+		showDebugPanel(nil)
+		sayBreakpointList("empty")
+
+		guard thenDebug else {
+			if thenExit { exit(0) }
+			return
+		}
+
+		// A session starting while the empty pane is open must take it over
+		// rather than leave two: `makeDebugSession` closes an existing debug pane
+		// before installing its own, and an empty one is not special.
+		goDebug(nil)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
+			self?.sayBreakpointList("debugging")
+			exit(0)
+		}
+	}
+
+	private func sayBreakpointList(_ when: String) {
+		let pane = bottomPanel.activeDebugPane
+		print("BREAKPOINTS \(when): pane=\(pane == nil ? "none" : "open")"
+			+ " panes=\(bottomPanel.debugPaneCountForTesting)"
+			+ " session=\(bottomPanel.activeDebugSession == nil ? "none" : "running")")
+		print("BREAKPOINTS \(when) list: \(pane?.breakpointList.reportForTesting ?? "no pane")")
+		fflush(stdout)
+	}
+
 	/// Selects a string and says which other places lit up because of it.
 	///
 	/// Two prints, half a second apart: the scan is debounced like every other

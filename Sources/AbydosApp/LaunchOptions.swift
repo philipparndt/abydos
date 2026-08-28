@@ -28,6 +28,15 @@ struct LaunchOptions {
 	/// carries its newline, and a selection with a line break in it lights
 	/// nothing by rule.
 	var selectText: String?
+	/// Set breakpoints on these lines of the file in front and open the debug
+	/// pane to read the list: `--break-at <line>`, repeatable, and
+	/// `--breakpoints`. A driven run cannot use a project's own, since the
+	/// session file is not read while one is driving.
+	var breakpointLines: [Int] = []
+	var showBreakpointList = false
+	/// And then start a session, to show it takes the empty pane over rather
+	/// than opening a second one.
+	var breakpointsThenDebug = false
 	/// Turns the bar's `.*` switch on, so `--find` is a pattern and `--replace`
 	/// a template. Without it there is no way to drive the half of replace that
 	/// capture groups are.
@@ -876,6 +885,11 @@ struct LaunchOptions {
 			case "--replace":    options.replaceWith = next()
 			case "--replace-all": options.replaceAll = true
 			case "--select-text": options.selectText = next()
+			case "--break-at":    if let line = next().flatMap(Int.init) { options.breakpointLines.append(line) }
+			case "--breakpoints": options.showBreakpointList = true
+			case "--breakpoints-debug":
+				options.showBreakpointList = true
+				options.breakpointsThenDebug = true
 			case "--regex":      options.findRegex = true
 			case "--collapse":   options.collapseFolds = true
 			case "--preview":    options.previewPath = next()
