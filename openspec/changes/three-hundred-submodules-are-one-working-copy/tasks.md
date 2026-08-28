@@ -152,16 +152,19 @@
 
 ## 11. Pull requests as a set — after `review-a-pull-request` has landed
 
-- [ ] 11.1 Raise a set: one branch, one title, one body, a pull request per
+- [x] 11.1 Raise a set: one branch, one title, one body, a pull request per
       repository with commits on that branch, the superproject included
-- [ ] 11.2 Skipped and already-open are outcomes, not failures
-- [ ] 11.3 A bounded `gh` fan-out sized for network rather than disk; a rate
+- [x] 11.2 Skipped and already-open are outcomes, not failures
+- [x] 11.3 A bounded `gh` fan-out sized for network rather than disk; a rate
       limit reported as itself and never as an empty set
-- [ ] 11.4 State read from the forge every time and never stored. No local record
+- [x] 11.4 State read from the forge every time and never stored. No local record
       of numbers; `gh search prs` not used
-- [ ] 11.5 The set's sentence: how many open, awaiting review, approved, merged,
+- [x] 11.5 The set's sentence: how many open, awaiting review, approved, merged,
       red — with red first
-- [ ] 11.6 A row opens that pull request as the page `pull-requests` defines
+- [x] 11.6 A row opens that pull request as the page `pull-requests` defines —
+      *reading only: checking out and finishing a review are wired to the
+      project's root and would act on the wrong repository, so they are not
+      offered on a submodule's pull request*
 
 ## 12. Finishing
 

@@ -87,7 +87,64 @@ final class EstateOverviewPage: NSView {
 			reloadRows()
 
 			await readConflicts()
+			await readPullRequests()
 		}
+	}
+
+	/// The pull requests raised from the branch the superproject is on.
+	///
+	/// **Read from the forge every time and never stored.** A local record of
+	/// numbers goes stale the moment somebody merges from the web, knows nothing
+	/// on a second machine, and becomes a file to reconcile after every
+	/// refactoring. The branch is the key and the forge is the record.
+	///
+	/// Asked last, because it is the only part of this page that needs a
+	/// network: everything above it is already on screen by the time this
+	/// starts, and a page that waited for a forge to draw a changed file would
+	/// be a page nobody opened twice.
+	private func readPullRequests() async {
+		guard let branch = await GitRepository.head(in: root).name else { return }
+		self.branchName = branch
+		let entries = await GitEstatePullRequests.set(onBranch: branch, in: submodules.estate)
+		pullRequests = Dictionary(
+			entries.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first }
+		)
+		self.setSummary = GitEstatePullRequests.summary(of: entries)
+		reload()
+	}
+
+	private var pullRequests: [String: PullRequestSetEntry] = [:]
+	private var branchName: String?
+	private var setSummary: String?
+
+	/// What a row says about its pull request.
+	static func pullRequestColumn(_ entry: PullRequestSetEntry?) -> String {
+		guard let entry else { return "" }
+		if let absence = entry.absence {
+			// A phrase, not a sentence. `ForgeAbsence.summary` is written to be
+			// read once, on an empty list where it is the only thing on screen;
+			// two hundred rows each carrying "This repository has no GitHub
+			// remote." is the same fact two hundred times. The count is in the
+			// summary above, and the whole sentence is on the tooltip.
+			switch absence {
+			case .cliNotInstalled:  return "no gh"
+			case .cliNotLoggedIn:   return "gh not logged in"
+			case .noGitHubRemote:   return "no GitHub remote"
+			}
+		}
+		guard let request = entry.request else { return "none raised" }
+
+		let said: String
+		switch entry.state {
+		case .failing:          said = "checks failed"
+		case .changesRequested: said = "changes requested"
+		case .awaitingReview:   said = "awaiting review"
+		case .approved:         said = "approved"
+		case .merged:           said = "merged"
+		case .draft:            said = "draft"
+		case .none, .unavailable: said = ""
+		}
+		return "#\(request.number) · \(said)"
 	}
 
 	private var branches: [String: GitSubmoduleBranch] = [:]
@@ -144,9 +201,15 @@ final class EstateOverviewPage: NSView {
 
 		// The count of what a filter hid, said rather than left to be guessed.
 		let hidden = rows.count - shown.count
-		summaryLabel.stringValue = hidden > 0
-			? "\(GitEstateOverview.summary(of: rows)) — \(hidden) hidden by the filter"
-			: GitEstateOverview.summary(of: rows)
+		var said = GitEstateOverview.summary(of: rows)
+		// The set's own sentence beside the estate's, because they answer
+		// different halves of "what is left": one is about the code and the
+		// other about who has looked at it.
+		if let setSummary, let branchName {
+			said += "   ·   \(branchName): \(setSummary)"
+		}
+		if hidden > 0 { said += " — \(hidden) hidden by the filter" }
+		summaryLabel.stringValue = said
 		table.reloadData()
 	}
 
@@ -208,6 +271,15 @@ final class EstateOverviewPage: NSView {
 		return (state, branch, moved)
 	}
 
+	private func colour(forPullRequest entry: PullRequestSetEntry) -> NSColor {
+		switch entry.state {
+		case .failing, .changesRequested: return Theme.current.gitConflict
+		case .awaitingReview:             return Theme.current.gitModified
+		case .approved, .merged:          return Theme.current.gitAdded
+		default:                          return Theme.current.gitIgnored
+		}
+	}
+
 	private func colour(for row: GitEstateRow) -> NSColor {
 		switch row.state {
 		case .conflicted: return Theme.current.gitConflict
@@ -225,7 +297,10 @@ final class EstateOverviewPage: NSView {
 		let head = ["summary: \(summaryLabel.stringValue)"]
 		return (head + shown.map { row in
 			let said = Self.columns(for: row)
-			return [row.path, said.state, said.branch, said.moved]
+			return [
+				row.path, said.state, said.branch,
+				Self.pullRequestColumn(pullRequests[row.path]), said.moved,
+			]
 				.filter { !$0.isEmpty }
 				.joined(separator: " · ")
 		}).joined(separator: "\n")
@@ -242,8 +317,9 @@ final class EstateOverviewPage: NSView {
 	private static let columnLayout: [(id: String, title: String, width: CGFloat)] = [
 		("repository", "Repository", 260),
 		("state", "State", 130),
-		("branch", "Branch", 220),
-		("moved", "Against what the superproject records", 420),
+		("branch", "Branch", 200),
+		("pr", "Pull request", 200),
+		("moved", "Against what the superproject records", 380),
 	]
 
 	private func build() {
@@ -429,9 +505,20 @@ final class EstateOverviewPage: NSView {
 		return shown[index]
 	}
 
+	/// Opens one repository's pull request, when it has one.
+	var onOpenPullRequest: ((Int, URL) -> Void)?
+
 	@objc private func openClicked() {
 		guard table.clickedRow >= 0, table.clickedRow < shown.count else { return }
-		onOpenSubmodule?(shown[table.clickedRow].path)
+		let row = shown[table.clickedRow]
+		// A row with a pull request opens *that*, as the page `pull-requests`
+		// defines — a set is read to review it, and a second way of opening the
+		// same review would be two pages showing one thing.
+		if let request = pullRequests[row.path]?.request {
+			onOpenPullRequest?(request.number, root.appendingPathComponent(row.path))
+			return
+		}
+		onOpenSubmodule?(row.path)
 	}
 }
 
@@ -468,6 +555,10 @@ extension EstateOverviewPage: NSTableViewDataSource, NSTableViewDelegate {
 		case "repository": text = row.path
 		case "state":      text = said.state; tint = colour(for: row)
 		case "branch":     text = said.branch; tint = tint.withAlphaComponent(0.75)
+		case "pr":
+			let entry = pullRequests[row.path]
+			text = Self.pullRequestColumn(entry)
+			tint = entry.map(colour(forPullRequest:)) ?? tint.withAlphaComponent(0.75)
 		default:           text = said.moved; tint = tint.withAlphaComponent(0.75)
 		}
 
@@ -482,6 +573,10 @@ extension EstateOverviewPage: NSTableViewDataSource, NSTableViewDelegate {
 			}()
 		field.stringValue = text
 		field.textColor = tint
+		// The sentence the phrase above stands in for, where there is one.
+		field.toolTip = tableColumn.identifier.rawValue == "pr"
+			? pullRequests[row.path]?.absence.map { $0.summary + " " + $0.remedy }
+			: nil
 		return field
 	}
 }

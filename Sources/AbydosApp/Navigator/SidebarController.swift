@@ -928,6 +928,9 @@ final class SidebarController: NSObject {
 
 		let page = (group.page(identifier: "estate") as? EstateOverviewPage)
 			?? EstateOverviewPage(root: gitCommandRoot() ?? project.root)
+		page.onOpenPullRequest = { [weak self] number, root in
+			_ = self?.pullRequests.openFromEstate(number: number, in: root)
+		}
 		page.onOpenSubmodule = { [weak self] path in
 			// The submodule's own changes, in the page that already draws them —
 			// landing on that repository's row, not merely opening a page that
