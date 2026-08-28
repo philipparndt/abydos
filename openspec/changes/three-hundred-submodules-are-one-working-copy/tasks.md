@@ -91,12 +91,12 @@
       project with no submodules gains no row: a level with one child that is
       always the same child says nothing
 - [x] 5.2 The same path changed in two submodules is two rows, not one
-- [ ] 5.3 The refs tree's submodules section lists only what has something to
+- [x] 5.3 The refs tree's submodules section lists only what has something to
       report and counts the clean ones. A submodule row expands to its changed
       files, never to its branches
-- [ ] 5.4 The repository row says it is a superproject and how many it holds; its
+- [x] 5.4 The repository row says it is a superproject and how many it holds; its
       distance stays the superproject's own, not a sum
-- [ ] 5.5 Folded state and selection survive a rebuild across repositories, the
+- [x] 5.5 Folded state and selection survive a rebuild across repositories, the
       way they already do across folders
 
 ## 6. A gitlink is a changed row of its own kind
@@ -126,7 +126,7 @@
 - [x] 8.3 Resumable: running it again acts on what is still dirty
 - [x] 8.4 No rollback, and a test that says so: a failure at the fourth of six
       leaves five commits standing
-- [ ] 8.5 Push is the same shape, reported the same way
+- [x] 8.5 Push is the same shape, reported the same way
 
 ## 9. The overview
 
@@ -147,8 +147,8 @@
 - [x] 10.1 One question for the whole operation, naming how many repositories it
       covers
 - [x] 10.2 Every backup made before any repository is touched
-- [ ] 10.3 A partial run names what changed, what did not, and every backup ref
-- [ ] 10.4 A remembered choice stays with the repository it was given for
+- [x] 10.3 A partial run names what changed, what did not, and every backup ref
+- [x] 10.4 A remembered choice stays with the repository it was given for
 
 ## 11. Pull requests as a set — after `review-a-pull-request` has landed
 

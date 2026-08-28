@@ -1342,12 +1342,13 @@ final class ChangesPane: NSView {
 		// discarding repository by repository has no way back from a failure
 		// part way through — the ones before it have moved and only some were
 		// recorded. Two hundred questions is also no question at all: a dialogue
-		// repeated per repository is answered by holding Return.
-		runAcrossOwners(target.paths) { paths, estate in
-			for group in estate.grouped(paths) {
-				await DestructiveAsk.insureWorkingCopy(in: group.root)
-			}
-			return await GitEstateOperation.discard(paths: paths, in: estate)
+		// repeated per repository is answered by holding Return, and two hundred
+		// toasts afterwards are read by nobody.
+		runAcrossOwners(target.paths, reporting: false) { paths, estate in
+			let insured = await DestructiveAsk.insureEstate(estate.grouped(paths))
+			let outcomes = await GitEstateOperation.discard(paths: paths, in: estate)
+			DestructiveAsk.sayWhatHappened("discarded", outcomes, insured: insured)
+			return outcomes
 		}
 	}
 
@@ -1547,8 +1548,12 @@ final class ChangesPane: NSView {
 	/// against the repository they run in, so a submodule's file handed to the
 	/// superproject stages nothing and says `pathspec did not match`. See
 	/// `GitEstateOperation`.
+	/// - Parameter reporting: whether to say what failed. False where the
+	///   operation says more than that for itself — a discard reports every
+	///   repository and its backup ref, and two reports would be one too many.
 	private func runAcrossOwners(
 		_ paths: [String],
+		reporting: Bool = true,
 		_ operation: @escaping ([String], GitEstate) async -> [GitEstateOutcome]
 	) {
 		let estate = submodules.estate
@@ -1556,7 +1561,7 @@ final class ChangesPane: NSView {
 		Task { @MainActor in
 			let outcomes = await operation(paths, estate)
 			isBusy = false
-			report(outcomes)
+			if reporting { report(outcomes) }
 			refresh()
 			onWorkingCopyChanged?()
 		}

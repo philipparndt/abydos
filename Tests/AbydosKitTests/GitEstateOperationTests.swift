@@ -225,3 +225,64 @@ struct GitEstateOperationTests {
 			== .skipped("not checked out"))
 	}
 }
+
+/// Pushing the estate — the same shape as committing it, and reported the same
+/// way, because it has the same problem.
+struct GitEstatePushTests {
+	/// A submodule made by `submodule add` has an `origin` it was cloned from,
+	/// which is a real remote a test can push to.
+	@Test func everyRepositoryWithSomethingToSendSendsIt() async throws {
+		let estate = try SyntheticEstate.make(count: 3, named: "push")
+		defer { estate.remove() }
+
+		// Something to push in two of them. The pool repositories are the
+		// remotes, and pushing to a checked-out branch is refused, so they are
+		// put on a branch of their own first.
+		for name in ["svc-1", "svc-3"] {
+			SyntheticEstate.run(["checkout", "-q", "--detach"], in: estate.pool.appendingPathComponent(name))
+			estate.advance(name, by: 2, saying: name)
+		}
+
+		let read = await GitEstate.read(from: estate.root)
+		let outcomes = await GitEstateOperation.push(in: read)
+
+		#expect(outcomes.map(\.name) == ["svc-1", "svc-2", "svc-3", "."])
+		#expect(outcomes.first(where: { $0.name == "svc-1" })?.didHappen == true)
+		#expect(outcomes.first(where: { $0.name == "svc-3" })?.didHappen == true)
+	}
+
+	/// Nothing to send is a skip with a reason, not a push that succeeded
+	/// having done nothing. Over two hundred repositories that difference is
+	/// the whole readability of the report.
+	@Test func aRepositoryWithNothingToSendSaysSo() async throws {
+		let estate = try SyntheticEstate.make(count: 2, named: "pushnothing")
+		defer { estate.remove() }
+
+		let read = await GitEstate.read(from: estate.root)
+		let outcomes = await GitEstateOperation.push(in: read)
+
+		#expect(outcomes.first(where: { $0.name == "svc-1" })?.result == .skipped("nothing to send"))
+		// The superproject of a synthetic estate has no remote at all, which is
+		// a different sentence and has to read as one.
+		#expect(outcomes.last?.result == .skipped("no remote"))
+	}
+
+	@Test func everyRepositoryGetsAnOutcomeIncludingTheOnesLeftAlone() async throws {
+		let estate = try SyntheticEstate.make(count: 3, named: "pushall")
+		defer { estate.remove() }
+
+		let read = await GitEstate.read(from: estate.root)
+		let outcomes = await GitEstateOperation.push(in: read)
+		#expect(outcomes.count == 4, "three submodules and the superproject")
+	}
+
+	@Test func anAbsentSubmoduleIsSkippedAndSaidToBe() async throws {
+		let estate = try SyntheticEstate.make(count: 2, named: "pushabsent")
+		defer { estate.remove() }
+		try FileManager.default.removeItem(at: estate.root.appendingPathComponent("svc-2"))
+
+		let read = await GitEstate.read(from: estate.root)
+		let outcomes = await GitEstateOperation.push(in: read)
+		#expect(outcomes.first(where: { $0.name == "svc-2" })?.result == .skipped("not checked out"))
+	}
+}

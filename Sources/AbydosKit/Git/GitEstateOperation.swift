@@ -216,6 +216,75 @@ public enum GitEstateOperation {
 		)
 	}
 
+	// MARK: - Pushing
+
+	/// Pushes every repository in the estate that has something to send.
+	///
+	/// The same shape as `commit` and reported the same way, because it has the
+	/// same problem: it is not atomic, it can fail part way, and a run that
+	/// named only what it managed could not be told from one that managed
+	/// everything.
+	///
+	/// **Submodules first, then the superproject.** A superproject pushed
+	/// before its submodules records gitlinks that nobody else can fetch — the
+	/// commits are still only on this machine — so anybody who pulls gets a
+	/// superproject pointing at objects that do not exist for them. Pushing the
+	/// submodules first makes that window as small as this can make it, and it
+	/// is exactly what `git push --recurse-submodules=on-demand` does for the
+	/// same reason.
+	///
+	/// Serial rather than fanned out. These are network calls against, very
+	/// likely, one forge, and two hundred concurrent pushes is a way to be rate
+	/// limited rather than a way to be quick.
+	@discardableResult
+	public static func push(
+		in estate: GitEstate,
+		setUpstream: Bool = true
+	) async -> [GitEstateOutcome] {
+		var outcomes: [GitEstateOutcome] = []
+
+		for submodule in estate.submodules {
+			let root = estate.root.appendingPathComponent(submodule.path)
+			guard submodule.isCheckedOut else {
+				outcomes.append(GitEstateOutcome(
+					submodule: submodule, root: root, result: .skipped("not checked out")
+				))
+				continue
+			}
+			outcomes.append(await push(submodule: submodule, at: root, setUpstream: setUpstream))
+		}
+
+		outcomes.append(await push(submodule: nil, at: estate.root, setUpstream: setUpstream))
+		return outcomes
+	}
+
+	private static func push(
+		submodule: GitSubmodule?, at root: URL, setUpstream: Bool
+	) async -> GitEstateOutcome {
+		// Asked before pushing so that "nothing to send" is a skip with a reason
+		// rather than a push that succeeds having done nothing. Over two hundred
+		// repositories the difference is the whole readability of the report.
+		let state = await GitPush.state(in: root)
+		guard let state, state.hasRemote else {
+			return GitEstateOutcome(
+				submodule: submodule, root: root, result: .skipped("no remote")
+			)
+		}
+		guard state.ahead > 0 || state.upstream == nil else {
+			return GitEstateOutcome(
+				submodule: submodule, root: root, result: .skipped("nothing to send")
+			)
+		}
+
+		let result = await GitPush.push(in: root, setUpstream: state.upstream == nil)
+		return GitEstateOutcome(
+			submodule: submodule, root: root,
+			result: result.exitCode == 0
+				? .done(state.upstream == nil ? "published" : "\(state.ahead) sent")
+				: .failed(complaint(result))
+		)
+	}
+
 	static func headCommit(in root: URL) async -> String? {
 		let result = await GitRepository.run(["rev-parse", "--short", "HEAD"], in: root)
 		guard result.exitCode == 0 else { return nil }

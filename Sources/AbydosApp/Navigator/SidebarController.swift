@@ -769,6 +769,7 @@ final class SidebarController: NSObject {
 			// already had one. The backlog card, the project switcher and now
 			// the titlebar all go through the same door.
 			pane.onOpenCommitPage = { [weak self] in self?.showCommitPage(carrying: nil) }
+			pane.onOpenEstate = { [weak self] in self?.showEstatePage() }
 			pane.onOpenFiles = { [weak self] paths in
 				guard let self, let project = self.project() else { return }
 				for path in paths {
