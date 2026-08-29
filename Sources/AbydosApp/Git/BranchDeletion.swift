@@ -110,6 +110,33 @@ final class BranchDeletion {
 		}
 
 		var said: String { "\(branch.name) — \(place)" }
+
+		/// The same fact at row length.
+		///
+		/// `place` is a whole path, which is right in the one-branch sentence
+		/// where there is a line to spend on it and wrong in a row, where it
+		/// squeezed the branch name down to four points. The directory's own
+		/// name is what tells two worktrees apart; the path is on the tooltip.
+		var shortPlace: String {
+			if worktree.isMissing { return "worktree already gone" }
+			let name = worktree.path.lastPathComponent
+			guard let bytes else { return "in \(name)" }
+			return "in \(name), \(ByteSize.said(bytes))"
+		}
+	}
+
+	/// A branch with commits the target does not have, and how many.
+	///
+	/// **The count is the question.** `GitCommits.count(of:notIn:)` says why in
+	/// its own comment — "what a dialog leads with; '3 commits leave main' is
+	/// read where 'this cannot be undone' is not" — and this dialog was the one
+	/// place asking somebody to lose commits without saying how many. Six
+	/// branch names and the word "commits" is not something anybody can answer.
+	private struct CarryingBranch {
+		let branch: GitBranch
+		let commits: Int
+
+		var said: String { "\(commits) commit\(commits == 1 ? "" : "s")" }
 	}
 
 	/// What a delete would act on, in the three kinds somebody has to be asked
@@ -119,11 +146,13 @@ final class BranchDeletion {
 		/// the same question again — see where `-d` is refused.
 		var target = "HEAD"
 		var merged: [GitBranch] = []
-		var carrying: [GitBranch] = []
+		var carrying: [CarryingBranch] = []
 		var held: [HeldBranch] = []
 
-		var all: [GitBranch] { merged + carrying + held.map(\.branch) }
+		var all: [GitBranch] { merged + carrying.map(\.branch) + held.map(\.branch) }
 		var count: Int { merged.count + carrying.count + held.count }
+		/// Every commit the delete would take, across all of them.
+		var commitsLost: Int { carrying.reduce(0) { $0 + $1.commits } }
 		var freed: Int64 { held.compactMap(\.bytes).reduce(0, +) }
 		var anyWorktreeHasChanges: Bool { held.contains { $0.hasChanges } }
 	}
@@ -152,7 +181,14 @@ final class BranchDeletion {
 			} else if await GitBranches.isMerged(branch.name, into: target, in: root) {
 				plan.merged.append(branch)
 			} else {
-				plan.carrying.append(branch)
+				// One `rev-list --count` per branch that is not merged, and none
+				// for the ones that are: the merged answer already came from
+				// `merge-base --is-ancestor` above, and a branch that loses
+				// nothing has no number worth asking for.
+				plan.carrying.append(CarryingBranch(
+					branch: branch,
+					commits: await GitCommits.count(of: branch.name, notIn: target, in: root)
+				))
 			}
 		}
 		return plan
@@ -175,8 +211,17 @@ final class BranchDeletion {
 			? "Delete branch “\(first.name)”?"
 			: "Delete \(all.count) branches?"
 
-		func list(_ lines: [String]) -> String {
-			lines.map { "  • \($0)" }.joined(separator: "\n")
+		// **The names are rows, not a paragraph.** They used to be bulleted
+		// lines inside `informativeText`, which `NSAlert` wraps at its own
+		// narrow width — so `abandoned/2026-08-09-a2de21c-diagram-export` broke
+		// across two lines in the middle of itself, six of them filled twelve
+		// lines, and there was no room left to say what any of them would cost.
+		// A list view truncates at the tail, gives each branch one row, and has
+		// somewhere to put the number.
+		// "1 are already on main" is what counting without agreeing reads like.
+		func are(_ count: Int) -> String { count == 1 ? "1 is" : "\(count) are" }
+		func commits(_ count: Int) -> String {
+			"\(count) commit\(count == 1 ? "" : "s")"
 		}
 
 		var said: [String] = []
@@ -185,14 +230,16 @@ final class BranchDeletion {
 			// on the branch being stood on, so the ref is the only thing going.
 			said.append(all.count == 1
 				? "Every commit on it is already on \(target), so nothing would be lost."
-				: "Already on \(target) — nothing would be lost:"
-					+ "\n\(list(plan.merged.map(\.name)))")
+				: "\(are(plan.merged.count)) already on \(target) — "
+					+ "deleting \(plan.merged.count == 1 ? "it loses" : "those loses") nothing.")
 		}
 		if !plan.carrying.isEmpty {
+			let lost = plan.commitsLost
 			said.append(all.count == 1
-				? "It has commits that are not on \(target). They would be lost."
-				: "Not on \(target) — these would lose commits:"
-					+ "\n\(list(plan.carrying.map(\.name)))")
+				? "It has \(commits(lost)) that \(lost == 1 ? "is" : "are") not on \(target). "
+					+ "\(lost == 1 ? "It" : "They") would be lost."
+				: "\(are(plan.carrying.count)) not on \(target) and would lose "
+					+ "\(commits(lost))\(plan.carrying.count == 1 ? "" : " between them").")
 		}
 		if !plan.held.isEmpty {
 			// **Named as the reason, not as a failure.** Git will not delete a
@@ -204,8 +251,10 @@ final class BranchDeletion {
 					+ (one.worktree.isMissing
 						? "branch while it still has a note of that worktree."
 						: "branch while that worktree is there.")
-				: "Checked out in a worktree — git will not delete these while the "
-					+ "worktrees are there:\n\(list(plan.held.map(\.said)))")
+				: "\(are(plan.held.count)) checked out in "
+					+ "\(plan.held.count == 1 ? "a worktree" : "worktrees") — git will not "
+					+ "delete \(plan.held.count == 1 ? "it" : "those") while "
+					+ "\(plan.held.count == 1 ? "that worktree is" : "the worktrees are") there.")
 		}
 		alert.informativeText = said.joined(separator: "\n\n")
 
@@ -214,6 +263,18 @@ final class BranchDeletion {
 		// deleting refs and deleting directories — is one that has to be read
 		// twice, and the multiple-selection case is exactly where it would not
 		// be. Off by default when anything in one of them is uncommitted.
+		// One row a branch, in the order the sentences above introduce them.
+		var rows: [BranchDeleteList.Row] = []
+		rows += plan.merged.map {
+			.init(name: $0.name, detail: "already on \(target)", kind: .safe)
+		}
+		rows += plan.carrying.map {
+			.init(name: $0.branch.name, detail: $0.said, kind: .losing)
+		}
+		rows += plan.held.map {
+			.init(name: $0.branch.name, detail: $0.shortPlace, kind: .held)
+		}
+
 		var removeWorktrees: NSButton?
 		if !plan.held.isEmpty {
 			let freed = plan.freed
@@ -245,9 +306,13 @@ final class BranchDeletion {
 					? "It has modified or untracked files in it, which would go with it."
 					: "One of them has modified or untracked files in it, which would go with it."
 			}
-			alert.accessoryView = box
 			removeWorktrees = box
 		}
+
+		// A single branch is named in the title and described in the sentence,
+		// so a one-row list would be the same words a third time.
+		let listing = all.count > 1 ? BranchDeleteList(rows: rows) : nil
+		alert.accessoryView = Self.accessory(listing: listing, checkbox: removeWorktrees)
 
 		// The verb says which kind of delete this is, so it is not the same
 		// press for both.
@@ -296,6 +361,35 @@ final class BranchDeletion {
 		}
 	}
 
+	/// The list and the checkbox, stacked — `NSAlert` takes one accessory view.
+	///
+	/// **An explicit frame throughout.** `NSAlert` lays its accessory out from
+	/// the frame it is given rather than from any intrinsic size, which is what
+	/// the checkbox's own comment already records; a stack is no different.
+	private static func accessory(listing: NSView?, checkbox: NSView?) -> NSView? {
+		let parts = [listing, checkbox].compactMap { $0 }
+		guard !parts.isEmpty else { return nil }
+		guard parts.count > 1 else { return parts[0] }
+
+		let gap: CGFloat = 10
+		let width = parts.map(\.frame.width).max() ?? 0
+		let height = parts.map(\.frame.height).reduce(0, +) + gap
+		let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+
+		// Top down, because an `NSView` here is not flipped and the list is
+		// what should sit above the question about the worktrees.
+		var y = height
+		for part in parts {
+			y -= part.frame.height
+			part.frame = NSRect(
+				x: 0, y: y, width: width, height: part.frame.height
+			)
+			container.addSubview(part)
+			y -= gap
+		}
+		return container
+	}
+
 	/// Deletes them, and says what happened once rather than per branch.
 	///
 	/// `-d` for the merged ones and `-D` only for those that carry work, so a
@@ -307,7 +401,7 @@ final class BranchDeletion {
 	/// refuses the branch, which is the refusal this whole flow exists to
 	/// answer.
 	private func delete(_ plan: DeletePlan, removingWorktrees: Bool) {
-		let forced = Set(plan.carrying.map(\.name))
+		let forced = Set(plan.carrying.map(\.branch.name))
 		Task { @MainActor in
 			var failures: [String] = []
 			var deleted: [String] = []
@@ -317,7 +411,7 @@ final class BranchDeletion {
 			// A held branch only when its worktree is going with it: the others
 			// are being left alone on purpose, and a row spinning over work
 			// nobody is doing is a lie about what is happening.
-			var working = Set((plan.merged + plan.carrying).map(\.name))
+			var working = Set((plan.merged + plan.carrying.map(\.branch)).map(\.name))
 			if removingWorktrees { working.formUnion(plan.held.map(\.branch.name)) }
 			self.onDeleting?(working)
 			defer { self.onDeleting?([]) }
@@ -361,7 +455,7 @@ final class BranchDeletion {
 					}.map(\.branch.name)
 					: []
 			)
-			let branches = plan.merged + plan.carrying
+			let branches = plan.merged + plan.carrying.map(\.branch)
 				+ plan.held.map(\.branch).filter { removedTrees.contains($0.name) }
 
 			for branch in branches {
@@ -478,7 +572,7 @@ final class BranchDeletion {
 		// A note git is left holding is not a thing on disk to lose.
 		let onDisk = plan.held.contains { !$0.worktree.isMissing }
 		return "target=\(target) merged=[\(plan.merged.map(\.name).joined(separator: " "))] "
-			+ "carrying=[\(plan.carrying.map(\.name).joined(separator: " "))] "
+			+ "carrying=[\(plan.carrying.map { "\($0.branch.name):\($0.commits)" }.joined(separator: " "))] "
 			+ "held=[\(held.joined(separator: " "))] worktreebox=\(box) "
 			+ "button=\(plan.carrying.isEmpty ? "Delete" : "Delete Anyway") "
 			+ "destructive=\(!plan.carrying.isEmpty || (box == "on" && onDisk)) "
@@ -494,5 +588,151 @@ final class BranchDeletion {
 		about branches: [GitBranch], target: String, removingWorktrees: Bool
 	) async {
 		delete(await plan(for: branches, target: target), removingWorktrees: removingWorktrees)
+	}
+}
+
+/// The branches a delete would act on, as rows.
+///
+/// **Not a paragraph.** `NSAlert.informativeText` wraps at the alert's own
+/// narrow width, and a branch called `abandoned/2026-08-09-a2de21c-diagram-`
+/// `export` breaks across two lines in the middle of itself — six of them
+/// filled twelve lines and still did not say what any of them would cost. A row
+/// truncates instead, and has somewhere to put the number.
+///
+/// **One column, and it flexes.** Two fixed columns were the first attempt and
+/// they were clipped at both edges: the widths have to add up to whatever
+/// `NSAlert` decides to give the accessory, and that is not a number this can
+/// know in advance. One column that follows the table, holding a stack that
+/// lets the name absorb the slack, has no arithmetic in it to get wrong.
+final class BranchDeleteList: NSView {
+	struct Row {
+		/// What the row is chiefly saying, which is what colours and marks it.
+		enum Kind {
+			/// Deleting it loses nothing.
+			case safe
+			/// It carries commits nothing else has.
+			case losing
+			/// A worktree holds it, so git will refuse until that goes.
+			case held
+		}
+
+		let name: String
+		let detail: String
+		let kind: Kind
+
+		/// The glyph, in the app's own vocabulary: the same branch arrow the
+		/// refs tree draws, the tick it uses for a branch that is where it
+		/// should be, and the worktree's own folder.
+		var symbol: String {
+			switch kind {
+			case .safe:   return "checkmark"
+			case .losing: return "arrow.trianglehead.branch"
+			case .held:   return "folder.badge.gearshape"
+			}
+		}
+
+		var tint: NSColor {
+			switch kind {
+			case .safe:   return Theme.current.gitAdded
+			// The one thing somebody is being asked to agree to lose.
+			case .losing: return Theme.current.gitConflict
+			case .held:   return Theme.current.gitIgnored
+			}
+		}
+	}
+
+	private let rows: [Row]
+	private let table = NSTableView()
+
+	/// How many rows are shown before it scrolls.
+	///
+	/// Eight is a dialog somebody reads and two hundred is a wall they dismiss.
+	/// Past that it scrolls rather than growing, so any selection asks its
+	/// question at the same size.
+	private static let visibleRows = 8
+	private static let rowHeight: CGFloat = 20
+
+	init(rows: [Row]) {
+		self.rows = rows
+		super.init(frame: .zero)
+
+		let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("branch"))
+		column.resizingMask = .autoresizingMask
+		table.addTableColumn(column)
+		table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+		table.headerView = nil
+		table.rowHeight = Self.rowHeight
+		table.backgroundColor = .clear
+		table.selectionHighlightStyle = .none
+		table.gridStyleMask = []
+		table.intercellSpacing = NSSize(width: 0, height: 2)
+		table.dataSource = self
+		table.delegate = self
+
+		let scroll = NSScrollView()
+		scroll.documentView = table
+		scroll.hasVerticalScroller = rows.count > Self.visibleRows
+		scroll.drawsBackground = false
+		scroll.borderType = .noBorder
+
+		let shown = min(rows.count, Self.visibleRows)
+		let height = CGFloat(shown) * (Self.rowHeight + 2)
+		// Wide enough for a branch name and no wider: `NSAlert` grows to fit its
+		// accessory, so this is what decides how wide the dialog is.
+		frame = NSRect(x: 0, y: 0, width: 400, height: height)
+		scroll.frame = bounds
+		scroll.autoresizingMask = [.width, .height]
+		addSubview(scroll)
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+}
+
+extension BranchDeleteList: NSTableViewDataSource, NSTableViewDelegate {
+	func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+	func tableView(
+		_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row index: Int
+	) -> NSView? {
+		guard index < rows.count else { return nil }
+		let row = rows[index]
+
+		let icon = NSImageView()
+		icon.image = Theme.symbol(row.symbol, size: 12, color: row.tint)
+		icon.setContentHuggingPriority(.required, for: .horizontal)
+		icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+		let name = NSTextField(labelWithString: row.name)
+		name.font = .systemFont(ofSize: 11)
+		// **Truncating, never wrapping.** The wrapping is the fault being fixed,
+		// and the middle is what goes: these names share a long prefix and
+		// differ at the end, so both ends have to survive.
+		name.lineBreakMode = .byTruncatingMiddle
+		name.textColor = .labelColor
+		// The one view allowed to give up width, which is what makes the
+		// truncation land here rather than on the count.
+		name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+		let detail = NSTextField(labelWithString: row.detail)
+		detail.font = .systemFont(ofSize: 11)
+		detail.alignment = .right
+		detail.textColor = row.kind == .losing ? row.tint : .secondaryLabelColor
+		detail.lineBreakMode = .byTruncatingTail
+		detail.setContentHuggingPriority(.required, for: .horizontal)
+		// **High, not required.** Required is what let a worktree's path win
+		// the whole row and leave the branch name four points wide. The count
+		// is short and will not be squeezed in practice; the cap below is what
+		// makes that true rather than hoped for.
+		detail.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+		detail.translatesAutoresizingMaskIntoConstraints = false
+		detail.widthAnchor.constraint(lessThanOrEqualToConstant: 150).isActive = true
+
+		let stack = NSStackView(views: [icon, name, detail])
+		stack.orientation = .horizontal
+		stack.spacing = 6
+		stack.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
+		stack.distribution = .fill
+		stack.toolTip = "\(row.name) — \(row.detail)"
+		return stack
 	}
 }
