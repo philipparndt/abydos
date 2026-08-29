@@ -1500,7 +1500,13 @@ final class BranchesPane: NSView {
 					+ " \(Int(button.frame.width))×\(Int(button.frame.height))]")
 			}
 			if let text = view as? NSTextField, !text.stringValue.isEmpty, !(view is NSButton) {
-				lines.append("  “\(text.stringValue.replacingOccurrences(of: "\n", with: " / "))”")
+				// The width with the words, because the fault this dialog was
+				// changed for was a *rendering* one — names wrapped mid-name in
+				// a field too narrow for them — and a report of the strings
+				// alone cannot catch the accessory being clipped.
+				lines.append("  “\(text.stringValue.replacingOccurrences(of: "\n", with: " / "))”"
+					+ " [\(Int(text.frame.width))pt"
+					+ "\(text.lineBreakMode == .byWordWrapping ? " wraps" : "")]")
 			}
 			view.subviews.forEach(walk)
 		}
