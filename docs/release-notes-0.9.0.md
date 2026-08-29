@@ -135,6 +135,24 @@ behind a chevron until it is asked for.
 **It no longer takes the window.** It maximised the editor on the way in because
 it was unreadable small, and that reason is gone.
 
+## The project tree
+
+**Ignored files no longer flash as though they were part of the project.** The
+greying-out came from `git status --ignored`, which walks the whole work tree
+with git's untracked cache switched off — 0.41 s against 0.03 s for the same
+status without it, on a checkout whose build directory is 6.4 GB and 31,350
+files — and it runs *after* the tree has been coloured, so the first paint could
+not have known. The tree now asks `git check-ignore` about the rows it is about
+to draw, which costs the number of rows rather than the size of the project:
+0.01 s, whether it is asked about forty paths or three hundred. The full sweep
+still follows, because it is the one that notices a folder that has *stopped*
+being ignored.
+
+**And a selected file still says whether git is ignoring it.** Selecting a row
+sent it to one colour whatever its state, so an ignored file looked exactly like
+a tracked one for as long as it was selected — clicking a file to find out about
+it removed the answer.
+
 ## Two faults found while looking at something else
 
 **Doc comments were being drawn in two colours.** In a block of ten `///` lines,
@@ -150,3 +168,19 @@ it was easy to see.
 without saying how many, and listed the branches as a paragraph that wrapped each
 name in the middle of itself. The branches are rows now, with the refs tree's own
 glyphs and a count each, and the sentence leads with the total.
+
+
+## Under the suite
+
+Nothing here changes the app, and it is the reason the rest can be trusted.
+Seven tests asserted a duration, or waited, on a number somebody had chosen
+after watching that test fail — which is what this project's `MachineLoad`,
+`Stopwatch` and `Patience` were written to end. Three bounded a wall clock with
+no load guard, one read a process's `isRunning` on the line after asking it to
+terminate, one slept four seconds where it could have watched, and three waits
+were simply too short.
+
+`TimingBoundTests` now reads the test sources and fails on an absolute ceiling
+over a measured duration that has no load guard, the way `NamedSuiteTests`
+already guards the preferences rule. Flaky tests are worse than no tests, and a
+rule that only lives in a comment is one the next person writes past.
