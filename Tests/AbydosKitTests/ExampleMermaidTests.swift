@@ -21,6 +21,9 @@ import Testing
 /// running rather than about the code.
 @MainActor
 struct ExampleMermaidTests {
+	/// A suite is not somebody waiting at a screen — see `RenderPatience`.
+	init() { RenderPatience.raise() }
+
 	/// Every diagram in `mermaid/`, and the kind of drawing each one is there to
 	/// exercise. The list is the promise: a file added to that folder and not to
 	/// this list fails the last test below.

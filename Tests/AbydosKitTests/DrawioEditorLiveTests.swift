@@ -43,6 +43,22 @@ struct DrawioEditorLiveTests {
 		for _ in 0..<times { try? await Task.sleep(nanoseconds: 250_000_000) }
 	}
 
+	/// Waits for something to become true, for the waits that have something to
+	/// watch.
+	///
+	/// A hang detector rather than a bound, so the ceiling is `Patience`'s and
+	/// not a number chosen from what somebody watched fail — which is what the
+	/// four-second sleep this replaces was.
+	private func waitUntil(
+		_ seconds: TimeInterval = Patience.seconds, _ done: () -> Bool
+	) async {
+		let deadline = Date().addingTimeInterval(seconds)
+		while Date() < deadline {
+			if done() { return }
+			try? await Task.sleep(nanoseconds: 100_000_000)
+		}
+	}
+
 	// MARK: - The document, both ways
 
 	/// A file goes in and the same diagram comes back out. Not the same bytes —
@@ -194,7 +210,12 @@ struct DrawioEditorLiveTests {
 			} finally { graph.getModel().endUpdate(); }
 			return true;
 			""", arguments: [:], in: nil, contentWorld: .page)
-		await settle(4)
+		// **Watched, not slept through.** This file's `settle` is for waits with
+		// nothing to watch, and its own comment says so; this one has something
+		// — `reported` filling — so it waits for that instead of for four
+		// seconds. Four was enough on a quiet machine and not on a loaded one,
+		// which is the whole of why this test was intermittently red.
+		await waitUntil { !reported.isEmpty }
 
 		#expect(!reported.isEmpty, "drawing in the editor said nothing to the app")
 		let last = try #require(reported.last)
