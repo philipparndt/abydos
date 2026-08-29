@@ -82,6 +82,23 @@ struct IgnorePrimingTests {
 		#expect(await GitRepository(root: root).ignored(among: ["src/main.c"]).isEmpty)
 	}
 
+	/// **The root of the work tree is one of the rows, and it is the empty
+	/// string.** Git refuses the entire batch over it — `fatal: empty string is
+	/// not a valid pathspec` — so one unaskable path meant nothing at all was
+	/// answered and every ignored row stayed the colour of a tracked one. The
+	/// priming shipped doing nothing, because these tests asked about files and
+	/// never about the node the tree hangs off.
+	@Test func theRootIsInTheListAndMustNotPoisonIt() async throws {
+		let root = try repository("*.log\nbuild/\n")
+		defer { try? FileManager.default.removeItem(at: root) }
+		try write("x", "noise.log", in: root)
+		try write("x", "build/out.o", in: root)
+
+		let repository = GitRepository(root: root)
+		let ignored = await repository.ignored(among: ["", "noise.log", "build", "."])
+		#expect(ignored == ["noise.log", "build"], "the root must not take the rest with it")
+	}
+
 	@Test func askingAboutNothingRunsNothing() async throws {
 		let root = try repository("*.log\n")
 		defer { try? FileManager.default.removeItem(at: root) }
