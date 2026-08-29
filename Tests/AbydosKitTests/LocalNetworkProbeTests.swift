@@ -12,11 +12,21 @@ struct LocalNetworkProbeTests {
 	@Test func aClosedPortIsRefusedRatherThanUnreachable() async throws {
 		let port = try closedLoopbackPort()
 
-		let socket = LocalNetworkProbe.checkWithSocket(host: "127.0.0.1", port: port, timeout: 2)
+		// **The timeout is a hang detector here too.** A closed loopback port is
+		// refused immediately, so a *timeout* is never the right answer — and
+		// two seconds is short enough that a loaded machine can miss it, at
+		// which point the probe answers `unreachable` and the test reads a busy
+		// machine as a permissions fault. That is precisely the confusion this
+		// probe exists to prevent, so the number must not be able to cause it.
+		let timeout: TimeInterval = 30
+
+		let socket = LocalNetworkProbe.checkWithSocket(
+			host: "127.0.0.1", port: port, timeout: timeout
+		)
 		#expect(socket == .refused, "a closed port read as \(socket)")
 
 		let framework = await withCheckedContinuation { continuation in
-			LocalNetworkProbe.check(host: "127.0.0.1", port: port, timeout: 2) { result in
+			LocalNetworkProbe.check(host: "127.0.0.1", port: port, timeout: timeout) { result in
 				continuation.resume(returning: result)
 			}
 		}

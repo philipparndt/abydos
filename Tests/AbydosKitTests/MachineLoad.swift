@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+@testable import AbydosKit
 
 /// What the machine was doing while a test was being timed.
 ///
@@ -125,6 +126,33 @@ enum Stopwatch {
 		}
 		return true
 	}
+
+	/// Whether a duration may be used to tell two *mechanisms* apart.
+	///
+	/// **Not the same question as `maySay`, and it needs its own answer.** A
+	/// few tests use a clock without claiming anything is fast: a request with
+	/// a one-second deadline against a server told to `sleep 120`, and a
+	/// container inspect with a one-second deadline against the same. What is
+	/// asserted is *which of the two ended it*, and any number between them
+	/// says that — it is a classification, with a factor of a hundred of
+	/// headroom, not a performance bound.
+	///
+	/// So it does not need `make timing`: it is worth checking in an ordinary
+	/// run, where it costs nothing and catches a deadline that has stopped
+	/// working. What it does need is the same load guard, because a machine
+	/// with nothing left to give can miss any deadline — measured, both of
+	/// these went red at 27 runnable threads per core while both deadlines were
+	/// working perfectly.
+	///
+	/// The load is printed either way, as with `maySay`, so a run that declined
+	/// still leaves the evidence.
+	static func mayClassify(_ tag: String, _ what: String) -> Bool {
+		guard MachineLoad.canBeTimed else {
+			print("\(tag): not timing \(what) — \(MachineLoad.said)")
+			return false
+		}
+		return true
+	}
 }
 
 /// How long a test waits for something to happen, said once.
@@ -160,4 +188,29 @@ enum Patience {
 	/// answering its first request — stayed within a factor of four across the
 	/// whole range. Three minutes is roughly five times the worst measured here.
 	static let forAContainer: TimeInterval = 180
+}
+
+
+/// How long a rendered page gets to answer, in a test.
+///
+/// `WebRenderer.deadline` is thirty seconds for somebody at a screen: a hang
+/// detector against a warm render of about fourteen milliseconds, which is
+/// three orders of magnitude of headroom and the right shape for a number whose
+/// job is to notice "never".
+///
+/// A suite is not somebody at a screen. Measured: at fifteen runnable threads a
+/// core the Mermaid export really did take longer than thirty seconds with
+/// nothing wrong, and the diagram suites went red reporting the app's own
+/// "the page did not answer" — a true sentence about the machine dressed as one
+/// about the code, which is 0435's whole subject.
+///
+/// Raising it costs a passing run nothing, because the deadline is only ever
+/// reached when something has genuinely stopped answering. `Patience` makes the
+/// same argument about waits, and this is the same number for the same reason.
+enum RenderPatience {
+	/// Applied once, by whichever rendering suite runs first.
+	static func raise() {
+		guard WebRenderer.deadline < Patience.seconds else { return }
+		WebRenderer.deadline = Patience.seconds
+	}
 }
