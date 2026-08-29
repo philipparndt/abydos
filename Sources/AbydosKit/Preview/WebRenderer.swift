@@ -33,7 +33,26 @@ import WebKit
 @MainActor
 public final class WebRenderer {
 	/// How long the page gets to load, and a call to come back.
-	public static let deadline: TimeInterval = 30
+	///
+	/// **A hang detector, not a bound**, for the reason above: a WebContent
+	/// process killed under memory pressure never answers, and this is what
+	/// notices. Thirty seconds against a warm render of about fourteen
+	/// milliseconds is three orders of magnitude of headroom, which is the
+	/// right shape for a number whose job is to notice "never".
+	///
+	/// Settable so the test suite can be more generous still. A person waiting
+	/// at a screen should not be made to wait a minute to be told something
+	/// broke; a suite running beside four builds is not a person at a screen,
+	/// and at fifteen runnable threads a core the render really did take longer
+	/// than thirty seconds with nothing wrong. Raising it there costs a passing
+	/// run nothing — the deadline is only ever reached when something has
+	/// genuinely stopped answering.
+	/// `nonisolated` because it is a knob, not state: set once before anything
+	/// renders and read on the main actor thereafter. Isolating it to the main
+	/// actor would mean a test could only raise it from a main-actor context,
+	/// and reaching for `assumeIsolated` to get there traps outright in a suite
+	/// whose type is not itself `@MainActor` — which is exactly what it did.
+	nonisolated(unsafe) public static var deadline: TimeInterval = 30
 
 	/// How long the web view may sit unused before it is torn down.
 	///
