@@ -388,6 +388,78 @@ public actor GitRepository {
 		ignoreRulesFingerprint = fingerprint
 	}
 
+	/// Which of these paths git ignores, asked about the paths themselves.
+	///
+	/// **The whole point is that it does not walk the work tree.**
+	/// `refreshIgnored` above asks `git status --ignored`, which has to walk
+	/// everything — and `--ignored` is the flag that switches git's untracked
+	/// cache off, so it walks cold every time. Measured on this repository, whose
+	/// `.build` is 6.4 GB and 31,350 files:
+	///
+	///     status -unormal -z                 0.03 s
+	///     status -unormal --ignored -z       0.41 s
+	///     check-ignore over 40 paths         0.01 s
+	///
+	/// `check-ignore` matches paths against the rules and touches nothing else,
+	/// so its cost is the number of paths asked about rather than the size of
+	/// the repository. That is what makes it the right question for the rows on
+	/// screen: forty of them, answered before the first frame, instead of every
+	/// file in the project answered a moment later.
+	///
+	/// **It agrees with `status --ignored` where it matters.** A tracked file
+	/// that happens to match a rule is *not* ignored, and `check-ignore` leaves
+	/// it out too, because it reads the index — verified, with a tracked
+	/// `tracked.log` against a `*.log` rule.
+	///
+	/// Exit 1 is "none of them", not a failure. Only 128 and above is trouble,
+	/// and there is nothing to say about it here: the full sweep is still coming
+	/// and will answer properly.
+	public func ignored(among paths: [String]) async -> Set<String> {
+		guard !paths.isEmpty else { return [] }
+
+		// NUL in as well as out. `-z` changes *both* directions, and feeding
+		// newline-separated paths to it returns nothing at all — silently, which
+		// is how it looks like the rules simply do not match anything.
+		let input = Data((paths.joined(separator: "\0") + "\0").utf8)
+		let result = await Self.run(
+			["check-ignore", "-z", "--stdin"], in: root, input: input
+		)
+		guard result.exitCode == 0 || result.exitCode == 1 else { return [] }
+
+		return Set(
+			result.stdout
+				.split(separator: "\0", omittingEmptySubsequences: true)
+				.map { GitWorkingCopy.unquote(String($0)) }
+		)
+	}
+
+	/// Colours the rows about to be drawn, before the full sweep arrives.
+	///
+	/// **This is what stops ignored files flickering when a project opens.** The
+	/// tree paints as soon as it has a listing, the ignored set arrives from a
+	/// walk of the whole work tree some hundreds of milliseconds later, and in
+	/// between every ignored file is drawn as though it were part of the
+	/// project — then turns grey. What somebody sees is a flash of the wrong
+	/// answer on every project switch.
+	///
+	/// Merged rather than replacing, and it does **not** set the fingerprint:
+	/// this is a partial answer about the paths it was given, and it must not be
+	/// mistaken for the full one. `refreshIgnored` still runs and still replaces
+	/// the lot, which is what notices a folder that has *stopped* being ignored.
+	public func primeIgnored(for paths: [(path: String, isDirectory: Bool)]) async {
+		let asked = paths.map(\.path)
+		guard !asked.isEmpty else { return }
+
+		let ignored = await self.ignored(among: asked)
+		guard !ignored.isEmpty else { return }
+
+		let directories = Set(paths.filter(\.isDirectory).map(\.path))
+		for path in ignored {
+			ignoredCache[path] = .ignored
+			if directories.contains(path) { ignoredDirectories.insert(path) }
+		}
+	}
+
 	/// A cheap summary of every ignore rule that applies to this work tree.
 	///
 	/// The tracked `.gitignore` files, `.git/info/exclude` and the global

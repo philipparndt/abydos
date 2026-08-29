@@ -599,6 +599,21 @@ final class ProjectNavigatorViewController: NSViewController {
 				collectPaths(node: rootNode, gitRoot: repoRoot, into: &pending)
 			}
 
+			// **The rows about to be drawn, asked about before they are drawn.**
+			// Without this the tree paints them as part of the project and they
+			// turn grey when the full sweep lands hundreds of milliseconds
+			// later, which is a flash of the wrong answer on every project
+			// switch. `git status --ignored` cannot use git's untracked cache
+			// so it walks the whole work tree cold — 0.41 s against 0.03 s on
+			// this project, whose `.build` is 6.4 GB and 31,350 files — while
+			// `check-ignore` costs the number of paths asked about: 0.01 s for
+			// forty of them.
+			//
+			// Only what the tree has open, which is what `pending` already is.
+			// The full sweep still runs and still replaces the lot, because it
+			// is the one that notices a folder that has *stopped* being ignored.
+			await git.primeIgnored(for: pending)
+
 			let statuses = await git.statuses(for: pending)
 			var results: [String: GitFileStatus] = [:]
 			results.reserveCapacity(pending.count)
@@ -4188,6 +4203,28 @@ private final class NavigatorCellView: NSTableCellView {
 			? Theme.current.sidebarHeaderText
 			: .hex(0xE8EAED)
 
+		/// The selected ink, still saying whether git cares about the file.
+		///
+		/// **Selecting a row used to take its status away.** Every row went to
+		/// `selectedInk`, so an ignored file — the one state a reader is most
+		/// likely to be checking, because it decides whether the file is part of
+		/// the project at all — looked exactly like a tracked one for as long as
+		/// it was selected. Clicking a row to find out about it removed the
+		/// answer.
+		///
+		/// Dimmed rather than recoloured. The selection has to stay legible
+		/// against its blue, so `gitIgnored`'s own grey is not what to use here;
+		/// what carries over is the *quietness*, which is what the colour was
+		/// saying. The other states keep the plain ink: modified and added are
+		/// already marked in the trailing column, and this row is not where
+		/// those are read.
+		func ink(saying status: GitFileStatus) -> NSColor {
+			switch status {
+			case .ignored, .deleted: return selectedInk.withAlphaComponent(0.55)
+			default:                 return selectedInk
+			}
+		}
+
 		let icon: NSImage?
 		let text: String
 		let nameColor: NSColor
@@ -4253,7 +4290,9 @@ private final class NavigatorCellView: NSTableCellView {
 			// and bright — because that is what it is here: the project
 			// everything is pointed at. The blue folder says which of the two.
 			nameColor = isSelected
-				? selectedInk
+				? (isRoot || isSubproject
+					? selectedInk
+					: ink(saying: node.gitStatus))
 				: (isRoot || isSubproject
 					? Theme.current.sidebarHeaderText
 					: Theme.current.color(for: node.gitStatus))
