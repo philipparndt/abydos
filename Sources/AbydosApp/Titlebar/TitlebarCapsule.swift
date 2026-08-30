@@ -47,7 +47,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// **Unbounded, it was as wide as the project's name plus its branch's — and
 	/// a toolbar that cannot fit an item does not shrink it.** It moves the item
 	/// to the overflow menu and leaves a chevron, so the one item that says
-	/// which project this is was the item that disappeared: `vehub-user-service`
+	/// which project this is was the item that disappeared: `admin-user-service`
 	/// on `fix/dev-user-service-memory-limit` showed no capsule at all in a
 	/// 1400-point window, while `git-repo` on `main` showed it in the same
 	/// window. It was reported as "no title is shown at all", which is exactly
@@ -207,7 +207,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	///
 	/// Kept to a share of the capsule so that a long name cannot take the room
 	/// the branch needs. In practice no name reaches this — eighteen characters
-	/// of `vehub-user-service` is well under it — and the clamp is here for the
+	/// of `admin-user-service` is well under it — and the clamp is here for the
 	/// folder somebody names in a sentence.
 	private var shownName: String {
 		shortened(name, toFit: Self.maximumWidth * 0.55, font: Self.nameFont)

@@ -57,12 +57,60 @@ public enum TerminalDirectory {
 		return String(cString: buffer)
 	}
 
+	/// The directory to follow a terminal to, or nil while it is busy.
+	///
+	/// **A window follows where somebody walked, not where a script went.**
+	/// `current` answers with the working directory of whatever is in the
+	/// foreground, which during a command is the command — so `brew`, which
+	/// changes directory several times while it works, dragged the window
+	/// through every one of them and left it wherever the last one happened to
+	/// be. A build script does the same. Reported as the folder changing
+	/// several times during one run, from somebody who wanted it to change when
+	/// *they* changed directory and at no other time.
+	///
+	/// So: only while the shell itself is what the terminal is showing. A `cd`
+	/// is a builtin — the shell forks nothing and stays in the foreground — so
+	/// every directory change somebody types is still followed, at the moment
+	/// they type it. A directory a command wandered into is not: the shell's
+	/// own is unchanged, which is the truth about where the terminal *is*.
+	///
+	/// - Parameter shell: the process the pty was opened around. It is a
+	///   session leader, so its process group is its own pid, which is what
+	///   `tcgetpgrp` answers with while nothing else is running.
+	public static func settled(
+		masterDescriptor: Int32, slaveName: String?, shell: pid_t
+	) -> URL? {
+		guard masterDescriptor >= 0 else { return nil }
+		let foreground = tcgetpgrp(masterDescriptor)
+		guard foreground > 0 else { return nil }
+
+		let name = processName(of: foreground)
+		if let slaveName, name?.hasPrefix("tmux") == true {
+			return tmuxPaneDirectory(client: slaveName, onlyWhenIdle: true)
+		}
+
+		guard shell > 0, foreground == shell else { return nil }
+		return directory(of: foreground)
+	}
+
+	/// The shells a pane is *waiting* in rather than running something in.
+	///
+	/// tmux is asked what its pane is running, and the answer is a command
+	/// name; there is no process group to compare against, the shell being in
+	/// another process tree entirely. A name it does not know counts as busy —
+	/// the wrong way for an unusual shell, which then simply is not followed,
+	/// rather than the wrong way for every script, which is the fault being
+	/// fixed.
+	static let shellNames: Set<String> = [
+		"bash", "csh", "dash", "elvish", "fish", "ksh", "nu", "sh", "tcsh", "xonsh", "zsh",
+	]
+
 	/// Asks the tmux server where the pane in front of this client is.
 	///
 	/// Targeted at the client rather than the session, so switching windows or
 	/// panes gives a different answer straight away — which is the whole point
 	/// of following a terminal that has tmux in it.
-	static func tmuxPaneDirectory(client: String) -> URL? {
+	static func tmuxPaneDirectory(client: String, onlyWhenIdle: Bool = false) -> URL? {
 		// Found rather than run through `env`: an app started from the Finder
 		// has almost no PATH, and tmux is in Homebrew's — so this worked when
 		// the app was launched from a terminal and did nothing at all when it
@@ -78,17 +126,36 @@ public enum TerminalDirectory {
 		// The filter leaves one line, so the format needs no separator — which
 		// is just as well, since tmux replaces a tab in a format with an
 		// underscore and the field never came apart again.
+		//
+		// The command comes back beside the path when the answer has to be
+		// gated on it. A space between them, not a tab: tmux replaces a tab in
+		// a format with an underscore, which is the note above, and a command
+		// name has no spaces in it — so the *first* field is the command and
+		// everything after it is the path, which a path with spaces in it
+		// survives and a split on space would not.
+		let format = onlyWhenIdle
+			? "#{pane_current_command} #{pane_current_path}"
+			: "#{pane_current_path}"
 		let output = run(tmux, [
 			"list-clients",
-			"-F", "#{pane_current_path}",
+			"-F", format,
 			"-f", "#{==:#{client_tty},\(client)}",
 		])
 		guard let output else { return nil }
 
 		for line in output.split(separator: "\n") {
-			let path = line.trimmingCharacters(in: .whitespaces)
-			guard path.hasPrefix("/") else { continue }
-			return URL(fileURLWithPath: path, isDirectory: true)
+			var said = line.trimmingCharacters(in: .whitespaces)
+			if onlyWhenIdle {
+				guard let space = said.firstIndex(of: " ") else { continue }
+				let command = String(said[said.startIndex..<space])
+				// A login shell arrives as `-zsh`.
+				guard shellNames.contains(command.hasPrefix("-")
+					? String(command.dropFirst()) : command) else { return nil }
+				said = String(said[said.index(after: space)...])
+					.trimmingCharacters(in: .whitespaces)
+			}
+			guard said.hasPrefix("/") else { continue }
+			return URL(fileURLWithPath: said, isDirectory: true)
 		}
 		return nil
 	}

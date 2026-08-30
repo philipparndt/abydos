@@ -720,7 +720,11 @@ final class BottomPanel: NSView {
 		DispatchQueue.global(qos: .utility).async { [weak self] in
 			// The pty's descriptor and device name are fixed once it has
 			// started, which is what makes asking from here safe.
-			let directory = terminal.currentDirectoryForTesting
+			// **Settled, not current.** The window follows where somebody
+			// walked, not where a script went: `brew` changes directory several
+			// times while it works, and reading the foreground process's own
+			// answer dragged the window through every one of them.
+			let directory = terminal.settledDirectoryForTesting
 			DispatchQueue.main.async {
 				guard let self, let directory else { return }
 				let standardized = directory.standardizedFileURL

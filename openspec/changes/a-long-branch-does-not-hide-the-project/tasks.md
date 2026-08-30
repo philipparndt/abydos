@@ -2,7 +2,7 @@
 
 - [x] 1.1 Give `TitlebarCapsule` a `maximumWidth` and clamp
       `intrinsicContentSize` to it. Verify by photograph that
-      `vehub-user-service` on `fix/dev-user-service-memory-limit` shows a capsule
+      `admin-user-service` on `fix/dev-user-service-memory-limit` shows a capsule
       where it showed none.
 - [x] 1.2 Shorten the branch from the middle to whatever the project half leaves,
       and the name to a share of the capsule. Verify by photograph that the

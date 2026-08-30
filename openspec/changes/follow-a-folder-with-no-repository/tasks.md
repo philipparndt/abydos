@@ -231,3 +231,24 @@ becomes untrue; the delta there adds what it did not say.
 The `.abydos/backlog/spec` this rule was first written against is gone — the
 account it kept is `openspec/specs` now — so there is no backlog spec file to
 correct.
+
+## 5. Two things asked for after the first review
+
+- [x] 5.1 Put following into a folder that is in no working copy behind a
+      setting of its own, off by default: `Settings.followsLooseFolders`, and
+      `whereToFollow(from:showing:intoLooseFolders:)`. Following between
+      projects moves the window when somebody goes to another piece of work; a
+      folder has no edge to say the walk is over, so with it on every `cd`
+      anywhere is a move. Verify that the default answers `.stay` for a folder
+      in no working copy, from either a project or nothing.
+- [x] 5.2 Ask a terminal where it is only while its shell is waiting —
+      `TerminalDirectory.settled`, against `tcgetpgrp` for a plain shell and
+      `pane_current_command` for one inside tmux. `brew` changes directory
+      several times over one install and the window was dragged through all of
+      them. Verify in one pty: at the prompt it answers, during `sleep 30` it
+      answers nothing while `current` still does, and a `cd` typed at the prompt
+      is followed at once.
+- [x] 5.3 Take the internal project's name out of the change, the capsule's
+      comments and this file. The example needed a long name and not that one;
+      `admin-user-service` is the same eighteen characters, so the sentence
+      beside it stays true.

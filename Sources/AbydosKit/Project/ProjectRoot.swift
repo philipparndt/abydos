@@ -106,7 +106,15 @@ public enum ProjectRoot {
 	/// to, and walking one directory further is walking somewhere else. There is
 	/// nothing per-folder to put away, so following costs nothing and staying
 	/// put would only mean the tree lying about where the shell is.
-	public static func whereToFollow(from directory: URL, showing: Showing) -> Move {
+	/// - Parameter intoLooseFolders: whether a directory in no working copy at
+	///   all is somewhere to follow to. **Off by default**, and a separate
+	///   appetite from following at all: following between projects moves the
+	///   window when somebody goes to another piece of work, and following into
+	///   a loose folder moves it whenever they go anywhere — `~/Downloads`
+	///   included, there being no working copy to say the walk was over.
+	public static func whereToFollow(
+		from directory: URL, showing: Showing, intoLooseFolders: Bool = false
+	) -> Move {
 		let directory = directory.standardizedFileURL
 
 		// A directory that is not there is not followed. A shell can be sitting
@@ -143,6 +151,11 @@ public enum ProjectRoot {
 		}
 
 		if let found { return .project(found) }
+
+		// In no working copy, and not asked to go there. The window stays where
+		// it is rather than following a shell into a directory that is not
+		// anybody's work — which is every directory that is not a checkout.
+		guard intoLooseFolders else { return .stay }
 
 		if case let .looseFolder(folder) = showing,
 		   folder.standardizedFileURL.path == directory.path { return .stay }

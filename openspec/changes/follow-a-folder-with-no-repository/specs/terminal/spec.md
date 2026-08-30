@@ -52,6 +52,13 @@ nothing above it used to leave the window where it was, which meant that a
 shell in a Subversion working copy or in an ordinary directory of notes moved
 the window nowhere and said nothing about why.
 
+**And following into one is a setting of its own, off by default.** Following
+between projects moves the window when somebody goes to another piece of work,
+and a working copy is what says the walk is over. A folder has no such edge:
+with this on, `~/Downloads` and `/tmp` are somewhere to follow to, and every
+`cd` anywhere is a move. Two different appetites, so two switches — the second
+under the first and meaning nothing without it.
+
 Because such a folder is not a project, moving between two of them is not a
 project switch: the tree re-points and **every open file stays open**. There is
 nothing per-folder to put away and nothing to restore, so there is nothing to
@@ -62,6 +69,20 @@ A directory that is not there is not followed. A shell can be sitting in a
 working directory that has been deleted underneath it, and the path it reports
 then names nothing; a window that pointed at it would be showing a root it
 cannot read.
+
+**Only while the shell is waiting.** Where a terminal *is* is where its shell
+is, and while a command runs that is not where the command has got to. `brew`
+changes directory several times over one install; a build script does the same;
+reading the foreground process's own answer dragged the window through every one
+of them and left it wherever the last happened to be. So the question is asked
+only when the shell itself is what the terminal is showing — its process group
+in the foreground, which is what `tcgetpgrp` answers with while nothing else is
+running, and what tmux says through `pane_current_command`.
+
+Nothing somebody types is lost by this: `cd` is a builtin, so the shell forks
+nothing and never leaves the foreground to do one, and the move is followed at
+the moment it is made. What is lost is every directory a command wandered
+through, which was never a statement about where the terminal was.
 
 **A driven run is the one exception and keeps its own rule: a run given any
 launch verb never follows its terminal anywhere.** The window is showing a
@@ -140,17 +161,37 @@ project somebody named, and every driven run has one.
 
 #### Scenario: a shell in a directory that is in no repository
 
-- **Given** that window, on `checkout/models`
+- **Given** that window, on `checkout/models`, and following into folders turned
+  on
 - **When** the shell changes directory to a folder with no `.git`, `.svn`, `.hg`
   or `.abydos` above it
 - **Then** the window shows that folder, with its tree and its search
 - **And** the folder is not recorded as a recent project
 - **And** nothing is written into the folder
 
+#### Scenario: the same, with the setting off
+
+- **Given** that window, on `checkout/models`, and the default settings
+- **When** the shell changes directory to a folder that is in no working copy
+- **Then** the window is still on `checkout/models`
+
+#### Scenario: a script that changes directory while it runs
+
+- **Given** a window following its terminal
+- **When** a command is run that changes directory several times before it ends
+- **Then** the window does not move while it runs
+- **And** it does not move when it finishes, the shell being where it was
+
+#### Scenario: a `cd` typed at the prompt
+
+- **Given** the same window
+- **When** somebody types `cd` into another checkout
+- **Then** the window follows, at the moment they press Return
+
 #### Scenario: a shell moving between two such folders
 
-- **Given** a window showing a folder that is in no working copy, with three
-  files open
+- **Given** following into folders turned on, and a window showing a folder that
+  is in no working copy, with three files open
 - **When** the shell changes directory to another folder that is in none either
 - **Then** the window shows the second folder
 - **And** the three files are still open, in the same tabs

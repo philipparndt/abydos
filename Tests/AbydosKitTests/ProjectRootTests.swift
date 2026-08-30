@@ -356,6 +356,22 @@ struct WhereToFollowTests {
 
 	// MARK: - Folders that are in no working copy
 
+	/// **Off unless it is asked for.** Following between projects moves the
+	/// window when somebody goes to another piece of work; following into a
+	/// folder in no working copy moves it whenever they go anywhere, there
+	/// being no repository to say the walk was over. Two appetites, and the
+	/// second is the one somebody has to choose.
+	@Test func aFolderInNoWorkingCopyIsNotFollowedIntoByDefault() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (_, package) = makeCheckout(base)
+		let loose = base.appendingPathComponent("loose")
+		directory(loose)
+
+		#expect(ProjectRoot.whereToFollow(from: loose, showing: .project(package)) == .stay)
+		#expect(ProjectRoot.whereToFollow(from: loose, showing: .nothing) == .stay)
+	}
+
 	/// This used to leave the window where it was, which is what the change
 	/// replaces: a shell in a folder of notes moved the window nowhere and
 	/// nothing said why.
@@ -366,8 +382,9 @@ struct WhereToFollowTests {
 		let loose = base.appendingPathComponent("loose")
 		directory(loose)
 
-		#expect(ProjectRoot.whereToFollow(from: loose, showing: .project(package))
-			== .looseFolder(at(loose)))
+		#expect(ProjectRoot.whereToFollow(
+			from: loose, showing: .project(package), intoLooseFolders: true
+		) == .looseFolder(at(loose)))
 	}
 
 	/// The folder itself, and not the directory above it: there is no marker to
@@ -378,8 +395,9 @@ struct WhereToFollowTests {
 		let deep = base.appendingPathComponent("notes/2026")
 		directory(deep)
 
-		#expect(ProjectRoot.whereToFollow(from: deep, showing: .nothing)
-			== .looseFolder(at(deep)))
+		#expect(ProjectRoot.whereToFollow(
+			from: deep, showing: .nothing, intoLooseFolders: true
+		) == .looseFolder(at(deep)))
 	}
 
 	/// Moving between two of them is a move. The containment rule is about a
@@ -392,10 +410,16 @@ struct WhereToFollowTests {
 		let deeper = notes.appendingPathComponent("2026")
 		directory(deeper)
 
-		#expect(ProjectRoot.whereToFollow(from: deeper, showing: .looseFolder(notes))
-			== .looseFolder(at(deeper)))
-		#expect(ProjectRoot.whereToFollow(from: notes, showing: .looseFolder(deeper))
-			== .looseFolder(at(notes)))
+		#expect(ProjectRoot.whereToFollow(
+			from: deeper, showing: .looseFolder(notes), intoLooseFolders: true
+		) == .looseFolder(at(deeper)))
+		#expect(ProjectRoot.whereToFollow(
+			from: notes, showing: .looseFolder(deeper), intoLooseFolders: true
+		) == .looseFolder(at(notes)))
+
+		// And with the option off, a window already showing one stays on it
+		// rather than walking with the shell.
+		#expect(ProjectRoot.whereToFollow(from: deeper, showing: .looseFolder(notes)) == .stay)
 	}
 
 	@Test func aShellSittingStillInSuchAFolderIsNotAMove() {

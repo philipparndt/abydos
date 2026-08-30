@@ -14,7 +14,7 @@ A view in a toolbar offers one width and the toolbar treats it as a fixed demand
 an item that asks for more room than there is is moved to the overflow menu, not
 compressed. So an unbounded capsule is a capsule that vanishes, and what vanishes
 is the only thing in the window that says which project this is and which branch
-it is on. On `vehub-user-service` at `fix/dev-user-service-memory-limit` the
+it is on. On `admin-user-service` at `fix/dev-user-service-memory-limit` the
 titlebar showed the run controls and an overflow chevron and nothing else, which
 reads as an application that has failed to open anything.
 
@@ -23,7 +23,7 @@ branch shows its name because showing nothing was the bug.
 
 #### Scenario: a long project name and a long branch
 
-- **Given** a project named `vehub-user-service` on the branch
+- **Given** a project named `admin-user-service` on the branch
   `fix/dev-user-service-memory-limit`
 - **When** its window is opened
 - **Then** the capsule is shown, with the project's name and a shortened branch

@@ -1,6 +1,6 @@
 ## Why
 
-On `vehub-user-service`, checked out on `fix/dev-user-service-memory-limit`, the
+On `admin-user-service`, checked out on `fix/dev-user-service-memory-limit`, the
 titlebar showed no project name and no branch at all — just the run controls and
 an overflow chevron. It was reported as "for the following path which is a git
 repo no title is shown at all".
@@ -15,7 +15,7 @@ first thing to disappear, and on a long-named repository it disappeared every
 time.
 
 Photographed both ways in the same window: `git-repo` on `main` shows
-`git-repo │ main ⇧⌘P`, and `vehub-user-service` on
+`git-repo │ main ⇧⌘P`, and `admin-user-service` on
 `fix/dev-user-service-memory-limit` shows nothing. Reproduced on a clean tree
 with the reporter's change stashed, so it is not new.
 

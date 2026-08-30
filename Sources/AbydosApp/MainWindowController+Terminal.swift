@@ -231,7 +231,10 @@ extension MainWindowController {
 	/// stuck on my home folder", and the `.abydos` left behind would have kept
 	/// it that way across a restart.
 	func follow(reported directory: URL) {
-		switch ProjectRoot.whereToFollow(from: directory, showing: showing) {
+		switch ProjectRoot.whereToFollow(
+			from: directory, showing: showing,
+			intoLooseFolders: Settings.shared.followsLooseFolders
+		) {
 		case .stay:
 			return
 		case let .project(root):

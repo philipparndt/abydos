@@ -1863,6 +1863,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Where the process in the foreground of this terminal is.
 	func currentDirectory() -> URL? { pty.currentDirectory() }
+	func settledDirectory() -> URL? { pty.settledDirectory() }
 
 	/// The terminal device this pane's shell is on.
 	var ttyName: String? { pty.ttyName }
@@ -3384,6 +3385,10 @@ final class TerminalPane: NSView {
 
 	/// Where the shell in this terminal currently is.
 	var currentDirectoryForTesting: URL? { terminalView.currentDirectory() }
+	/// Where the shell is *while it is waiting* — nil while it is running
+	/// something. This is what following uses; the one above is what a driven
+	/// run asks when it wants the answer whatever the terminal is doing.
+	var settledDirectoryForTesting: URL? { terminalView.settledDirectory() }
 	var ttyName: String? { terminalView.ttyName }
 	var geometryForTesting: String { terminalView.geometryForTesting }
 	var gridSizeForTesting: (rows: Int, columns: Int) { terminalView.gridSizeForTesting }
