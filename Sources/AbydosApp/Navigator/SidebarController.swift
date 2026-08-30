@@ -920,6 +920,31 @@ final class SidebarController: NSObject {
 				self?.navigator.refreshGitStatus()
 				self?.changesPane?.refresh()
 			}
+			// The verbs over the page's own diff. Without these the menu is
+			// still offered — `DiffView` builds it for any diff that is not
+			// read-only — and pressing it does nothing at all.
+			page.onApplyDiffSelection = { [weak self] change, diff, lines, owner in
+				self?.applyDiffSelection(
+					change: change, diff: diff, lines: lines, in: owner, from: .page
+				)
+			}
+			page.onDiscardDiffSelection = { [weak self] change, diff, lines, owner in
+				self?.discardDiffSelection(
+					change: change, diff: diff, lines: lines, in: owner, from: .page
+				)
+			}
+			// **Offered only where git can do it**, as the editor's diff is:
+			// `stash push --staged` arrived in 2.35, and on an older one the
+			// item is absent rather than failing when pressed.
+			let asked = page
+			Task { @MainActor [weak self] in
+				guard await GitStash.canPushStaged(in: asked.repositoryRoot) else { return }
+				asked.onStashDiffSelection = { [weak self] change, diff, lines, owner in
+					self?.stashDiffSelection(
+						change: change, diff: diff, lines: lines, in: owner, from: .page
+					)
+				}
+			}
 		}
 		commitPage = page
 		// **No longer takes the window.** It did because the page was unreadable
@@ -1027,6 +1052,10 @@ final class SidebarController: NSObject {
 			case "report": print("COMMIT-PAGE:\n\(page.pageReportForTesting())")
 			case "rows":   print("COMMIT-PAGE rows:\n\(page.rowsForTesting())")
 			case "diff":   print("COMMIT-PAGE diff: \(page.diffForTesting())")
+			case "verbs":  print("COMMIT-PAGE verbs: \(page.diffVerbsForTesting())")
+			case "stage-lines":
+				let count = Int(argument) ?? 1
+				print("COMMIT-PAGE stage-lines: \(page.stageLinesForTesting(count))")
 			case "stage":  page.stageForTesting(paths: [argument], staged: false)
 			case "who":    print("COMMIT-PAGE \(page.keyboardReportForTesting())")
 			case "keys":   print("COMMIT-PAGE keys: " + page.keysForTesting(argument))
@@ -1085,6 +1114,7 @@ final class SidebarController: NSObject {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("LOG-PAGE:\n\(page.pageReportForTesting())")
+			case "verbs":  print("LOG-PAGE verbs: \(page.diffVerbsForTesting())")
 			case "menu":   print("LOG-PAGE-MENU:\n\(page.commitMenuForTesting(row: Int(argument) ?? 0))")
 			case "file":
 				page.selectCommitForTesting(0)
@@ -1108,15 +1138,30 @@ final class SidebarController: NSObject {
 		}
 	}
 
+	/// Where the lines were selected, so what happens next is shown back in the
+	/// same place. A tab wants the diff re-opened as a tab; the commit page
+	/// keeps its diff and only wants re-reading.
+	enum DiffOrigin {
+		case tab
+		case page
+	}
+
 	/// Moves the selected lines across the index, in whichever direction the
 	/// diff's side implies.
-	func applyDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+	///
+	/// - Parameter root: the repository the diff was read in, which is the
+	///   submodule for a file inside one. Defaults to the project's own.
+	func applyDiffSelection(
+		change: GitChange, diff: String, lines: Set<Int>,
+		in root: URL? = nil, from origin: DiffOrigin = .tab
+	) {
 		guard let project = project(), !lines.isEmpty else { return }
+		let root = root ?? project.root
 		Task { @MainActor in
 			let result = change.isStaged
-				? await GitWorkingCopy.unstage(lines: lines, ofDiff: diff, in: project.root)
-				: await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: project.root)
-			finishDiffOperation(result, change: change)
+				? await GitWorkingCopy.unstage(lines: lines, ofDiff: diff, in: root)
+				: await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: root)
+			finishDiffOperation(result, change: change, from: origin)
 		}
 	}
 
@@ -1130,9 +1175,12 @@ final class SidebarController: NSObject {
 	/// The index is put back the way it was found: somebody who had staged
 	/// something else and then stashed a hunk should not discover their staging
 	/// had been swept up with it.
-	func stashDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+	func stashDiffSelection(
+		change: GitChange, diff: String, lines: Set<Int>,
+		in owner: URL? = nil, from origin: DiffOrigin = .tab
+	) {
 		guard let project = project(), !lines.isEmpty else { return }
-		let root = project.root
+		let root = owner ?? project.root
 
 		Task { @MainActor in
 			let alreadyStaged = await GitWorkingCopy.status(in: root).staged.map(\.path)
@@ -1147,21 +1195,25 @@ final class SidebarController: NSObject {
 
 			let staged = await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: root)
 			guard staged.exitCode == 0 else {
-				finishDiffOperation(staged, change: change)
+				finishDiffOperation(staged, change: change, from: origin)
 				return
 			}
 
 			let name = "\(lines.count) line\(lines.count == 1 ? "" : "s") of \(change.name)"
 			let put = await GitStash.pushStaged(in: root, message: name)
-			finishDiffOperation(put, change: change)
+			finishDiffOperation(put, change: change, from: origin)
 			if put.exitCode == 0 {
 				Toast.post("Stashed \(name)", kind: .information)
 			}
 		}
 	}
 
-	func discardDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+	func discardDiffSelection(
+		change: GitChange, diff: String, lines: Set<Int>,
+		in owner: URL? = nil, from origin: DiffOrigin = .tab
+	) {
 		guard let project = project(), !lines.isEmpty else { return }
+		let root = owner ?? project.root
 
 		// Discarding is the one operation here that destroys work, so it asks.
 		let alert = NSAlert()
@@ -1179,10 +1231,10 @@ final class SidebarController: NSObject {
 				guard let patch = GitPatch.parse(diff).patch(selecting: lines, reverse: true) else { return }
 				let result = await GitRepository.run(
 					["apply", "--reverse", "--recount", "--whitespace=nowarn", "-"],
-					in: project.root,
+					in: root,
 					input: Data(patch.utf8)
 				)
-				self.finishDiffOperation(result, change: change)
+				self.finishDiffOperation(result, change: change, from: origin)
 			}
 		}
 
@@ -1193,7 +1245,9 @@ final class SidebarController: NSObject {
 		}
 	}
 
-	private func finishDiffOperation(_ result: GitRepository.ProcessResult, change: GitChange) {
+	private func finishDiffOperation(
+		_ result: GitRepository.ProcessResult, change: GitChange, from origin: DiffOrigin = .tab
+	) {
 		if result.exitCode != 0 {
 			notify(
 				"git reported a problem",
@@ -1207,7 +1261,16 @@ final class SidebarController: NSObject {
 		navigator.refreshGitStatus()
 		// The diff on screen described the state before this ran, so it is
 		// re-read rather than left showing lines that have already moved.
-		showDiff(for: change)
+		//
+		// **Back where it was selected.** From the page that is the page's own
+		// diff, and opening a tab as well would answer a gesture made to avoid
+		// tabs with one of them.
+		switch origin {
+		case .tab:  showDiff(for: change)
+		case .page:
+			commitPage?.refresh()
+			commitPage?.rereadDiff()
+		}
 	}
 
 	/// Opens the diff for a change as an editor tab.
