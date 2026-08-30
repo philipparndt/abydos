@@ -639,7 +639,15 @@ final class BranchesPane: NSView {
 			return
 		}
 		if state.canPush {
-			pushBranch()
+			// **HEAD, not whatever is selected in the tree.** This row's every
+			// word is about the branch the work tree is on — `GitPush.state`
+			// reads HEAD — so its verb has to act on that one. It used to call
+			// `pushBranch`, which acts on the *selection*, so pressing a row
+			// that said "not published" about the checked-out branch pushed
+			// whichever branch happened to be highlighted below it. Reported
+			// after it published `main` from a pane whose row was about
+			// something else entirely.
+			pushCurrentBranch()
 			return
 		}
 		run { await GitPull.fetch(in: self.root) }
@@ -1208,9 +1216,36 @@ final class BranchesPane: NSView {
 	/// not touch it.
 	@objc private func pushBranch() {
 		guard let branch = selectedBranch, case .local = branch.kind else { return }
-		let publishing = branch.upstream == nil
+		send(
+			branch.name,
+			setUpstream: branch.upstream == nil,
+			// HEAD for the current branch: pushing it by name would work
+			// too, but naming HEAD is what git does and what the log says.
+			naming: branch.isCurrent ? nil : branch.name
+		)
+	}
 
-		pushingBranch = branch.name
+	/// Sends the branch the work tree is on, whatever the tree has selected.
+	///
+	/// The repository row's own verb. It is a different question from
+	/// `pushBranch`, and telling them apart is the whole of the fix: that one
+	/// acts on a row somebody picked, this one on the branch this row is
+	/// describing.
+	private func pushCurrentBranch() {
+		guard let state = trafficState, state.canPush else { return }
+		send(
+			currentBranchName ?? state.branch,
+			setUpstream: state.upstream == nil,
+			// Nil is HEAD, which is the only spelling that cannot be out of
+			// step with what the work tree is actually on.
+			naming: nil
+		)
+	}
+
+	/// One push, one report, so the two callers cannot drift about what they
+	/// say when it works or when it does not.
+	private func send(_ name: String, setUpstream: Bool, naming branch: String?) {
+		pushingBranch = name
 		tableView.reloadData()
 
 		Task { @MainActor in
@@ -1219,11 +1254,7 @@ final class BranchesPane: NSView {
 				tableView.reloadData()
 			}
 			let result = await GitPush.push(
-				in: root,
-				setUpstream: publishing,
-				// HEAD for the current branch: pushing it by name would work
-				// too, but naming HEAD is what git does and what the log says.
-				branch: branch.isCurrent ? nil : branch.name
+				in: root, setUpstream: setUpstream, branch: branch
 			)
 			// git reports a push on stderr, which is where the branch and the
 			// range it sent are named.
@@ -1231,9 +1262,9 @@ final class BranchesPane: NSView {
 				.trimmingCharacters(in: .whitespacesAndNewlines)
 
 			if result.exitCode == 0 {
-				Toast.post("Pushed \(branch.name)", detail: output, kind: .information)
+				Toast.post("Pushed \(name)", detail: output, kind: .information)
 			} else {
-				Toast.post("Could not push \(branch.name)", detail: output, kind: .error)
+				Toast.post("Could not push \(name)", detail: output, kind: .error)
 			}
 			NotificationCenter.default.post(name: .abydosRepositoryChanged, object: root)
 			refresh()
