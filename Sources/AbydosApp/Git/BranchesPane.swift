@@ -84,6 +84,20 @@ final class BranchesPane: NSView {
 	/// — which is what the commit page is for. The count on the row answers the
 	/// other one without spending forty rows on it.
 	private var collapsedKeys: Set<String> = ["working"]
+	/// Sections that start shut and are only open because somebody opened them.
+	///
+	/// **The inverse of `collapsedKeys`, and it needs to be.** That set is the
+	/// positive way round — everything is open unless it was shut — which is
+	/// right for a tree of your own branches and wrong for the two sections
+	/// that are somebody else's account of things. `origin` is every branch
+	/// anybody has pushed and `Tags` is every release there has ever been;
+	/// unrolled, they are the bulk of the pane, and what somebody came to the
+	/// refs tree for is nearly always above them.
+	private var openedKeys: Set<String> = []
+	/// The keys of the sections that start shut, filled as the tree is built:
+	/// a remote's name is whatever somebody called it, so the set cannot be
+	/// written down in advance.
+	private var sectionsThatStartShut: Set<String> = []
 	/// Set while expansion is being put back after a rebuild, so the pane's own
 	/// work is not mistaken for somebody's — the rule `ChangesPane` keeps.
 	private var isRestoring = false
@@ -996,9 +1010,11 @@ final class BranchesPane: NSView {
 		}
 		for remote in byRemote.keys.sorted() {
 			appendSection(remote, byRemote[remote] ?? [])
+			sectionsThatStartShut.insert("section:\(remote)")
 		}
 
 		appendSection("Tags", matching.filter { $0.kind == .tag })
+		sectionsThatStartShut.insert("section:Tags")
 
 		// Worktrees last: they are places, not refs, and the list is short.
 		let matchingTrees = needle.isEmpty
@@ -1092,7 +1108,17 @@ final class BranchesPane: NSView {
 	/// on the row answers the usual question without spending forty rows on it.
 	private func restoreExpansion(_ nodes: [GitNode]) {
 		for node in nodes where !node.children.isEmpty {
-			if collapsedKeys.contains(node.key) {
+			let shutByDefault = sectionsThatStartShut.contains(node.key)
+				&& !openedKeys.contains(node.key)
+			if collapsedKeys.contains(node.key) || shutByDefault {
+				// **The children are restored first, then the section shut over
+				// them.** An outline keeps its own record per item, and a
+				// folder inside a section nobody has opened yet has never been
+				// walked — so opening `origin` showed every folder under it
+				// shut, which is not what a folder nobody has touched should
+				// look like. Expanding hidden rows costs nothing and they are
+				// already open when the section opens over them.
+				restoreExpansion(node.children)
 				tableView.collapseItem(node)
 			} else {
 				tableView.expandItem(node)
@@ -1251,11 +1277,24 @@ final class BranchesPane: NSView {
 		// this program makes and one the refs tree gives a verb of its own —
 		// sweeping the entries older than a given age — and folding it away
 		// takes the verb with it.
+		// **A slash is always a folder here.** Folding used to merge a folder
+		// holding exactly one branch into it, so `renovate/configure` was one
+		// row reading its whole path while `feature/a` and `feature/b` got a
+		// `feature` folder — the tree's shape changed character with the count,
+		// and a section with one prefixed branch in it looked like a section
+		// that did not group at all. Reported against `origin/renovate/…`.
+		//
+		// The argument the fold was written on is in `PathTree`: a `hotfix/`
+		// folder holding only `hotfix/0472` turns one row into two and says
+		// nothing, there being no such thing as checking out a folder of
+		// branches. That is true of the row and not of the tree, and it is the
+		// tree somebody reads. `keeping: ["backup"]` goes with it: it existed
+		// to stop this fold reaching the one folder that has a verb of its own,
+		// and there is no fold left to stop.
 		let main = defaultBranch
 		let tree = PathTree.build(
 			entries.map { (path: $0.name, payload: $0) },
-			folding: true,
-			keeping: ["backup"],
+			folding: false,
 			promoting: { branch in
 				if branch.isCurrent { return 0 }
 				if let main, branch.name == main { return 1 }
@@ -2132,10 +2171,16 @@ final class BranchesPane: NSView {
 
 			let alert = NSAlert()
 			alert.messageText = "Recreate “\(tag.name)”"
-			alert.informativeText = [
-				now.map { "It is at \($0)." },
-				"Give anything git can resolve: a tag, a branch, or a commit.",
-			].compactMap { $0 }.joined(separator: "\n")
+			// **The subject in quotes, not run on.** `describe` answers
+			// `fd19672 Say what it is now` — a hash and a commit subject — and
+			// dropped straight into a sentence it read as one clause: *It is at
+			// fd19672 Say what it is now, not what it started as.* A commit
+			// message is somebody else's words and has to look like it.
+			alert.informativeText = now.map { said in
+				let parts = said.split(separator: " ", maxSplits: 1).map(String.init)
+				guard parts.count == 2 else { return "It is at \(said)." }
+				return "It is at \(parts[0]) — “\(parts[1])”."
+			} ?? "Pick where it should point."
 			alert.addButton(withTitle: "Recreate")
 			alert.addButton(withTitle: "Cancel")
 
@@ -2148,12 +2193,35 @@ final class BranchesPane: NSView {
 			//
 			// Editable, because sometimes the answer is a hash and no list can
 			// hold every one of those.
-			let field = NSComboBox(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+			// **Wide enough for the names in it, and laid out by frame.** The
+			// accessory was a stack of 280-point views inside an alert whose
+			// content is 272 — so the combo box overhung the dialog and the
+			// one part of it that fell outside was the chevron on its trailing
+			// edge. Reported as "the reference selection is cut off, and is
+			// only a text box as far I see", which is exactly what a combo box
+			// with its chevron clipped away is.
+			//
+			// `NSAlert` lays an accessory out from the frame it is given rather
+			// than from any intrinsic or fitting size — which the delete
+			// dialog's own accessory records — and a stack view resizing its
+			// arranged subviews under that is a second opinion about the same
+			// width. Plain views, one width, set once.
+			let width: CGFloat = 380
+			let caption = NSTextField(
+				labelWithString: "Point it at a tag, a branch, or a commit"
+			)
+			caption.font = Theme.current.uiFont(11)
+			caption.textColor = .secondaryLabelColor
+			caption.lineBreakMode = .byTruncatingTail
+			caption.frame = NSRect(x: 0, y: 0, width: width, height: 15)
+
+			let field = NSComboBox(frame: NSRect(x: 0, y: 0, width: width, height: 25))
 			field.addItems(withObjectValues: self.tagSources(excluding: tag.name))
 			field.completes = true
 			field.numberOfVisibleItems = 12
 			field.stringValue = suggestion
 			field.placeholderString = "HEAD"
+			field.toolTip = "Anything git can resolve — a tag, a branch, or a commit hash"
 
 			// What the chosen source resolves to, under the field, before the
 			// button is pressed rather than after. `describe` takes any rev,
@@ -2162,7 +2230,8 @@ final class BranchesPane: NSView {
 			resolved.font = Theme.current.uiFont(11)
 			resolved.textColor = Theme.current.gitAdded
 			resolved.lineBreakMode = .byTruncatingTail
-			resolved.frame = NSRect(x: 0, y: 0, width: 280, height: 16)
+			resolved.cell?.usesSingleLineMode = true
+			resolved.frame = NSRect(x: 0, y: 0, width: width, height: 16)
 
 			let follow = TagSourceWatcher(field: field, label: resolved, root: root)
 			self.tagSourceWatcher = follow
@@ -2172,14 +2241,11 @@ final class BranchesPane: NSView {
 			// that something reads it from the remote.
 			let push = NSButton(checkboxWithTitle: "Force-push to origin", target: nil, action: nil)
 			push.state = .on
-			push.frame = NSRect(x: 0, y: 0, width: 280, height: 20)
+			push.frame = NSRect(x: 0, y: 0, width: width, height: 18)
 
-			let stack = NSStackView(views: [field, resolved, push])
-			stack.orientation = .vertical
-			stack.alignment = .leading
-			stack.spacing = 8
-			stack.frame = NSRect(x: 0, y: 0, width: 280, height: 76)
-			alert.accessoryView = stack
+			alert.accessoryView = Self.stacked(
+				[caption, field, resolved, push], gaps: [4, 6, 10], width: width
+			)
 
 			let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
 				guard response == .alertFirstButtonReturn, let self else { return }
@@ -2218,6 +2284,34 @@ final class BranchesPane: NSView {
 		}
 	}
 
+	/// Stacks views for an `NSAlert` accessory, top down, at one width.
+	///
+	/// **Frames, not a stack view.** `NSAlert` lays its accessory out from the
+	/// frame it is given rather than from any intrinsic or fitting size, so a
+	/// view that decides its own size under that is a second opinion about the
+	/// same number — and the one it wins with is the one the dialog then clips.
+	/// `BranchDeletion.accessory` does the same thing for the same reason.
+	///
+	/// - Parameter gaps: the space under each view but the last, so a caption
+	///   can sit close to the field it introduces while the checkbox under them
+	///   both stands apart.
+	private static func stacked(
+		_ views: [NSView], gaps: [CGFloat], width: CGFloat
+	) -> NSView {
+		let height = views.map(\.frame.height).reduce(0, +) + gaps.reduce(0, +)
+		let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+		// Top down: an `NSView` here is not flipped, so the first view named is
+		// the one that should end up highest.
+		var y = height
+		for (index, view) in views.enumerated() {
+			y -= view.frame.height
+			view.frame = NSRect(x: 0, y: y, width: width, height: view.frame.height)
+			container.addSubview(view)
+			if index < gaps.count { y -= gaps[index] }
+		}
+		return container
+	}
+
 	/// Everything a tag could be pointed at, in the order somebody would look.
 	///
 	/// `HEAD` first because it is the other usual answer; then the branches,
@@ -2231,6 +2325,9 @@ final class BranchesPane: NSView {
 	}
 
 	/// What the sheet would offer, for a driver to read.
+	/// Opens the recreate question for the selected tag, the way the menu does.
+	func recreateTagForTesting() { recreateTag() }
+
 	func tagSourcesForTesting(excluding name: String) -> String {
 		tagSources(excluding: name).joined(separator: "\n")
 	}
@@ -3114,6 +3211,11 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	func outlineViewItemDidExpand(_ notification: Notification) {
 		guard !isRestoring, let node = notification.userInfo?["NSObject"] as? GitNode else { return }
 		collapsedKeys.remove(node.key)
+		// A section that starts shut needs the opposite record kept, or it
+		// would close again on the next filesystem event — which is every
+		// keystroke in a file, and the shape of the tree is not a thing to
+		// have to keep re-establishing.
+		openedKeys.insert(node.key)
 
 		// A stash reads what is in it the first time it is opened: the check
 		// costs a three-way merge and the files cost a diff, which is nothing
@@ -3126,6 +3228,7 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	func outlineViewItemDidCollapse(_ notification: Notification) {
 		guard !isRestoring, let node = notification.userInfo?["NSObject"] as? GitNode else { return }
 		collapsedKeys.insert(node.key)
+		openedKeys.remove(node.key)
 	}
 
 	func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -3995,19 +4098,25 @@ private final class BranchFolderRowView: NSView {
 		// say it. The disclosure triangle says it now — and the same row draws
 		// `Staged` and `Unstaged`, which are not prefixes at all and read as
 		// nonsense with one.
-		let after = RowMetrics.draw(
+		RowMetrics.draw(
 			display,
 			font: Theme.current.uiFont(12),
 			colour: Theme.current.sidebarText,
 			at: x, in: bounds,
 			limit: bounds.maxX - RowMetrics.trailingInset - Theme.current.scaled(24)
 		)
-		RowMetrics.draw(
+		// **On the trailing edge, not after the name.** Drawn where the name
+		// happened to end, the counts landed at a different x on every row —
+		// `feature 1` and `renovate 2` two characters apart — so a column of
+		// numbers could not be read as a column. Everything else on this row's
+		// right-hand end is trailing-aligned already: the ahead and behind
+		// counts on a branch, the cloud on an unpublished one.
+		RowMetrics.drawTrailing(
 			"\(count)",
 			font: Theme.current.uiFont(10.5),
 			colour: Theme.current.gitIgnored,
-			at: after + Theme.current.scaled(6), in: bounds,
-			limit: bounds.maxX - RowMetrics.trailingInset
+			in: bounds,
+			rightAt: bounds.maxX - RowMetrics.trailingInset
 		)
 	}
 }

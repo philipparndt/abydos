@@ -310,6 +310,7 @@ final class SidebarController: NSObject {
 			case "report":  print("BRANCHES:\n\(pane.rowsForTesting())")
 			case "stash":
 				pane.openStashForTesting(Int(argument) ?? 0)
+			case "recreate": pane.recreateTagForTesting()
 			case "tag-sources":
 				print("TAG-SOURCES:\n\(pane.tagSourcesForTesting(excluding: argument))")
 			case "shut":    pane.setFolderForTesting(argument, collapsed: true)
