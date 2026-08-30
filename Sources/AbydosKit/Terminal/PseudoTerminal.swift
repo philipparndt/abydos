@@ -869,6 +869,18 @@ public final class PseudoTerminal {
 		} ?? nil
 	}
 
+	/// Where the shell is, asked only while it is the thing in front — see
+	/// `TerminalDirectory.settled`. Nil while a command is running, which is
+	/// what stops a window being dragged through every directory a script
+	/// visits.
+	public func settledDirectory() -> URL? {
+		descriptors.withMaster {
+			TerminalDirectory.settled(
+				masterDescriptor: $0, slaveName: slaveName, shell: childProcessID
+			)
+		} ?? nil
+	}
+
 	/// Stops or resumes taking bytes out of the pty.
 	///
 	/// While stopped the bytes stay in the pty's buffer and, once it is full,

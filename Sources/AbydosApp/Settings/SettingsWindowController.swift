@@ -564,6 +564,14 @@ final class SettingsPaneController: NSViewController {
 					get: { Settings.shared.followsTerminalProject },
 					set: { Settings.shared.followsTerminalProject = $0 }
 				),
+				.toggle(
+					title: "…and into folders that are in no repository",
+					help: "A folder in no working copy is shown without being a project. "
+						+ "Off, the window stays where it is: with no repository to say the "
+						+ "walk was over, every directory would be somewhere to follow to.",
+					get: { Settings.shared.followsLooseFolders },
+					set: { Settings.shared.followsLooseFolders = $0 }
+				),
 			]),
 		]
 

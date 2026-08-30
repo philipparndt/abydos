@@ -1134,13 +1134,13 @@ final class EditorViewController: NSViewController {
 	/// workspace. Anything not reopened is still in the Scratches pane — this
 	/// decides which tabs come back, never which notes exist.
 	func restoreScratches() {
-		guard let root = project?.root else { return }
+		guard let project else { return }
 
 		// No record yet — the first launch after this was added, or a project
 		// only ever opened before it. What it has is the best guess at what it
-		// had open.
-		let remembered = OpenScratches().existing(forProject: root)
-			?? ScratchFiles(projectRoot: root).all()
+		// had open. Asked under `sessionRoot`, which is what recorded them.
+		let remembered = OpenScratches().existing(forProject: project.sessionRoot)
+			?? ScratchFiles(projectRoot: project.root).all()
 
 		for url in remembered where !tabs.contains(where: { $0.url == url }) {
 			open(fileURL: url, focusEditor: false)
