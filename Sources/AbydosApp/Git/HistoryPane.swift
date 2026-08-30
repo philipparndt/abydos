@@ -278,6 +278,12 @@ final class HistoryPane: NSView {
 	/// entirely on the diff, and a log is read by moving between the two.
 	private func buildPage(commits: NSScrollView, files: NSView) {
 		diffView = DiffView()
+		// **A commit has already happened.** Left writable, the page offered
+		// "Stage Selected Lines" and "Discard Selected Lines" over a diff of
+		// something already in history — verbs with no meaning here, wired to
+		// nothing, doing nothing when pressed. The editor's commit-diff tab has
+		// said this since it was written; the page had not.
+		diffView?.isReadOnly = true
 		let diffScroll = NSScrollView()
 		diffScroll.documentView = diffView
 		diffScroll.hasVerticalScroller = true
@@ -985,6 +991,13 @@ final class HistoryPane: NSView {
 	}
 
 	/// Whether the log has anything in it yet.
+	/// What the menu over the log page's diff offers — see
+	/// `DiffView.verbsForTesting`. A commit has already happened, so the answer
+	/// is that it offers nothing to stage or throw away.
+	func diffVerbsForTesting() -> String {
+		diffView?.verbsForTesting() ?? "no diff view"
+	}
+
 	var hasRowsForTesting: Bool { !visible.isEmpty }
 
 	/// What the menu over a commit offers, one item per line.

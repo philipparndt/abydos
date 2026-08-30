@@ -37,6 +37,26 @@ final class ChangesPane: NSView {
 	/// Something was staged, unstaged or committed.
 	var onWorkingCopyChanged: (() -> Void)?
 
+	/// Lines were selected in the page's own diff and something is to be done
+	/// with them. Only in `.page`: the sidebar hands its diff to a tab, and the
+	/// tab carries these itself.
+	///
+	/// **The page's diff had none of these and said nothing about it.** The
+	/// menu over it is `DiffView`'s, which offers "Stage Selected Lines"
+	/// whenever the diff is not read-only — so on the page the item was there,
+	/// was enabled, and called a closure nobody had set. Fifteen lines selected,
+	/// the item pressed, and the working copy exactly as it was.
+	///
+	/// The root travels with the change because a file inside a submodule is
+	/// staged in that submodule: the diff was read there, so its patch names
+	/// paths relative to it, and `git apply --cached` in the superproject would
+	/// be applying a patch about files it does not track.
+	var onApplyDiffSelection: ((GitChange, String, Set<Int>, URL) -> Void)?
+	var onDiscardDiffSelection: ((GitChange, String, Set<Int>, URL) -> Void)?
+	/// Nil where git is too old for `stash push --staged`, so the item is
+	/// absent rather than failing when pressed.
+	var onStashDiffSelection: ((GitChange, String, Set<Int>, URL) -> Void)?
+
 	/// Not `layout`: that is `NSView`'s, and shadowing it means an override
 	/// silently is not one — which cost an afternoon in `HistoryPane`.
 	private let arrangement: Layout
@@ -1722,6 +1742,17 @@ final class ChangesPane: NSView {
 		return text.isEmpty ? "empty" : text
 	}
 
+	/// What the menu over the page's diff offers, and whether it is wired to
+	/// anything — see `DiffView.verbsForTesting`.
+	func diffVerbsForTesting() -> String {
+		diffView?.verbsForTesting() ?? "no diff view"
+	}
+
+	/// Stages the first `count` changed lines of the diff on screen.
+	func stageLinesForTesting(_ count: Int) -> String {
+		diffView?.applyFirstLinesForTesting(count) ?? "no diff view"
+	}
+
 	func rowsForTesting() -> String {
 		func lines(_ nodes: [GitChangeNode], depth: Int) -> [String] {
 			nodes.flatMap { node -> [String] in
@@ -2044,10 +2075,37 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// A column hands the diff to the editor area; a page keeps it, which is
 		// the whole difference between staging with a trip out to a tab per
 		// file and staging in one place.
-		guard arrangement == .page, let diffView else {
+		guard arrangement == .page, diffView != nil else {
 			onSelectChange?(change)
 			return
 		}
+		showDiff(of: change)
+	}
+}
+
+extension ChangesPane {
+	/// Reads the diff of the row that is selected, again.
+	///
+	/// After part of a file has been staged from the page's own diff: the text
+	/// on screen describes the state before that ran, and `refresh()` puts the
+	/// lists back without going near it — it restores the selection with
+	/// `isRestoring` set, precisely so that a filesystem event does not throw
+	/// away wherever somebody had scrolled to.
+	func rereadDiff() {
+		guard arrangement == .page, diffView != nil else { return }
+		for outline in [unstagedTable, stagedTable] {
+			guard let outline, outline.numberOfSelectedRows > 0 else { continue }
+			let changes = outline.selectedRowIndexes.sorted().compactMap {
+				(outline.item(atRow: $0) as? GitChangeNode)?.change
+			}
+			guard let change = changes.first else { continue }
+			showDiff(of: change)
+			return
+		}
+	}
+
+	private func showDiff(of change: GitChange) {
+		guard let diffView else { return }
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			// **In the repository that owns the path.** `git diff -- svc-2/…`
@@ -2057,15 +2115,29 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 			// path has to be relative to that repository too, for the reason
 			// `Project.gitRoot` records.
 			let estate = self.submodules.estate
+			let owner = estate.repositoryRoot(containing: change.path)
 			let text = await GitWorkingCopy.diff(
 				for: estate.relativePath(of: change.path),
 				staged: change.isStaged,
-				in: estate.repositoryRoot(containing: change.path)
+				in: owner
 			)
 			diffView.setDiff(
 				text, staged: change.isStaged,
 				url: self.root.appendingPathComponent(change.path)
 			)
+			// **Re-bound on every selection, not once when the view was built.**
+			// The verbs are about *this* change and *this* diff text, and the
+			// one view shows every file in turn; a closure captured at build
+			// time would stage the first file somebody ever looked at.
+			diffView.onApplySelection = { [weak self] lines in
+				self?.onApplyDiffSelection?(change, text, lines, owner)
+			}
+			diffView.onDiscardSelection = { [weak self] lines in
+				self?.onDiscardDiffSelection?(change, text, lines, owner)
+			}
+			diffView.onStashSelection = self.onStashDiffSelection == nil ? nil : { [weak self] lines in
+				self?.onStashDiffSelection?(change, text, lines, owner)
+			}
 		}
 	}
 }
