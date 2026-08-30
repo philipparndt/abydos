@@ -227,3 +227,99 @@ struct GitConflictSidesTests {
 		#expect(await GitConflicts.incoming(in: repository.root) == "side")
 	}
 }
+
+/// Paths git cannot write plainly, in the places that read its file lists.
+///
+/// **The quoting is not optional and neither is undoing it.** `git` writes
+/// `"farbe-st\303\244nder/x"` for any name outside ASCII, which is what makes a
+/// tab-separated line parseable — and a reader that keeps the spelling lists
+/// files under names nobody has and asks for diffs of paths that do not exist.
+@Suite(.serialized)
+struct GitQuotedPathTests {
+	private func repository() async throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("quoted-\(UUID().uuidString)")
+		let folder = root.appendingPathComponent("farbe-ständer/Sources")
+		try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+		for arguments in [
+			["init", "-q", "-b", "main"],
+			["config", "user.email", "t@example.com"],
+			["config", "user.name", "T"],
+		] {
+			_ = await GitRepository.run(arguments, in: root)
+		}
+		try "one\n".write(
+			to: folder.appendingPathComponent("Parameter.swift"),
+			atomically: true, encoding: .utf8
+		)
+		_ = await GitRepository.run(["add", "-A"], in: root)
+		_ = await GitRepository.run(["commit", "-qm", "first"], in: root)
+		return root
+	}
+
+	/// The spelling git uses, so the test is about a real behaviour and not
+	/// about one this repository imagines.
+	@Test func gitReallyDoesQuoteIt() async throws {
+		let root = try await repository()
+		try "two\n".write(
+			to: root.appendingPathComponent("farbe-ständer/Sources/Parameter.swift"),
+			atomically: true, encoding: .utf8
+		)
+		_ = await GitRepository.run(["add", "-A"], in: root)
+		_ = await GitRepository.run(["commit", "-qm", "second"], in: root)
+
+		let raw = await GitRepository.run(
+			["show", "--name-status", "--format=", "HEAD"], in: root
+		)
+		#expect(raw.stdout.contains("\\303\\244"), "git quoted it: \(raw.stdout)")
+	}
+
+	@Test func aCommitsFilesComeBackWithTheirRealNames() async throws {
+		let root = try await repository()
+		try "two\n".write(
+			to: root.appendingPathComponent("farbe-ständer/Sources/Parameter.swift"),
+			atomically: true, encoding: .utf8
+		)
+		_ = await GitRepository.run(["add", "-A"], in: root)
+		_ = await GitRepository.run(["commit", "-qm", "second"], in: root)
+
+		let files = await GitHistory.files(of: "HEAD", in: root)
+		#expect(files.map(\.path) == ["farbe-ständer/Sources/Parameter.swift"])
+
+		// And the name it came back with is one git will answer for.
+		let diff = await GitHistory.diff(
+			of: "HEAD", path: files[0].path, in: root
+		)
+		#expect(diff.contains("+two"), "the diff was asked for by a name git knows")
+	}
+
+	/// The report: a stash of a change under `farbe-ständer` listed the file
+	/// under an escaped name and showed "No textual changes." beside it.
+	@Test func aStashListsAndDiffsAPathGitHadToQuote() async throws {
+		let root = try await repository()
+		try "two\n".write(
+			to: root.appendingPathComponent("farbe-ständer/Sources/Parameter.swift"),
+			atomically: true, encoding: .utf8
+		)
+		// An untracked one too, which comes from the third parent.
+		try "new\n".write(
+			to: root.appendingPathComponent("farbe-ständer/Sources/Neu.swift"),
+			atomically: true, encoding: .utf8
+		)
+		_ = await GitRepository.run(["stash", "push", "-u", "-m", "holzSpiel"], in: root)
+
+		let stashes = await GitStash.list(in: root)
+		let entry = try #require(stashes.first)
+
+		let held = await GitStash.files(entry, in: root)
+		#expect(held.map(\.path) == [
+			"farbe-ständer/Sources/Neu.swift",
+			"farbe-ständer/Sources/Parameter.swift",
+		])
+
+		for file in held {
+			let diff = await GitStash.diff(entry, path: file.path, in: root)
+			#expect(!diff.isEmpty, "\(file.path) had no diff")
+		}
+	}
+}
