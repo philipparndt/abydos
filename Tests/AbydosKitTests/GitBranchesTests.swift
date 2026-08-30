@@ -184,3 +184,127 @@ struct GitBranchIntegrationTests {
 	}
 
 }
+
+/// The remote half of "is this branch finished", and the one push this app
+/// makes that is not somebody publishing their own work.
+@Suite(.serialized)
+struct GitRemoteBranchTests {
+	/// A bare repository with a clone beside it, holding one branch that has
+	/// been merged into the remote's default and one that has not.
+	private func fixture() async throws -> URL {
+		let base = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("remote-branches-\(UUID().uuidString)")
+		let origin = base.appendingPathComponent("origin.git")
+		let work = base.appendingPathComponent("work")
+		try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+		_ = await GitRepository.run(["init", "-q", "--bare", "-b", "main", origin.path], in: base)
+		_ = await GitRepository.run(["clone", "-q", origin.path, work.path], in: base)
+		for arguments in [
+			["config", "user.email", "t@example.com"],
+			["config", "user.name", "T"],
+		] {
+			_ = await GitRepository.run(arguments, in: work)
+		}
+		func write(_ text: String, _ name: String) throws {
+			try text.write(to: work.appendingPathComponent(name), atomically: true, encoding: .utf8)
+		}
+		func commit(_ message: String) async {
+			_ = await GitRepository.run(["add", "-A"], in: work)
+			_ = await GitRepository.run(["commit", "-qm", message], in: work)
+		}
+
+		try write("one\n", "a.txt")
+		await commit("first")
+		_ = await GitRepository.run(["push", "-q", "origin", "main"], in: work)
+
+		_ = await GitRepository.run(["checkout", "-q", "-b", "finished"], in: work)
+		try write("done\n", "b.txt")
+		await commit("finished work")
+		_ = await GitRepository.run(["push", "-q", "-u", "origin", "finished"], in: work)
+
+		_ = await GitRepository.run(["checkout", "-q", "main"], in: work)
+		_ = await GitRepository.run(["merge", "-q", "finished"], in: work)
+		_ = await GitRepository.run(["push", "-q", "origin", "main"], in: work)
+
+		_ = await GitRepository.run(["checkout", "-q", "-b", "unfinished"], in: work)
+		try write("wip\n", "c.txt")
+		await commit("still going")
+		_ = await GitRepository.run(["push", "-q", "-u", "origin", "unfinished"], in: work)
+		_ = await GitRepository.run(["checkout", "-q", "main"], in: work)
+		return work
+	}
+
+	/// **`git branch --merged` lists local branches only**, which is why the
+	/// pane could mark a finished local branch and say nothing about the remote
+	/// copy of the same work.
+	@Test func theRemoteBranchesSayWhichAreFinished() async throws {
+		let work = try await fixture()
+		let finished = await GitBranches.mergedRemotes(into: "origin/main", in: work)
+		#expect(finished == ["origin/finished"])
+
+		// The local answer is a different set, about different refs.
+		let locally = await GitBranches.merged(into: "main", in: work)
+		#expect(locally == ["finished"])
+	}
+
+	/// The target it is measured against is the remote's default, not this
+	/// machine's: a commit made locally and not pushed moves one and not the
+	/// other, and a branch inside the local `main` is not yet inside the one
+	/// deleting it would matter to.
+	@Test func aLocalMainThatHasMovedOnDoesNotCountAsTheRemotes() async throws {
+		let work = try await fixture()
+		_ = await GitRepository.run(["checkout", "-q", "-b", "later"], in: work)
+		try "later\n".write(
+			to: work.appendingPathComponent("d.txt"), atomically: true, encoding: .utf8
+		)
+		_ = await GitRepository.run(["add", "-A"], in: work)
+		_ = await GitRepository.run(["commit", "-qm", "later work"], in: work)
+		_ = await GitRepository.run(["push", "-q", "-u", "origin", "later"], in: work)
+		// Merged locally and never pushed, so origin/main has not moved.
+		_ = await GitRepository.run(["checkout", "-q", "main"], in: work)
+		_ = await GitRepository.run(["merge", "-q", "later"], in: work)
+
+		#expect(await GitBranches.merged(into: "main", in: work).contains("later"))
+		#expect(!(await GitBranches.mergedRemotes(into: "origin/main", in: work))
+			.contains("origin/later"))
+	}
+
+	/// `origin/HEAD` is a symbolic ref at the remote's default. It is trivially
+	/// inside it and it is not a branch anybody deletes.
+	@Test func theRemotesHeadIsNotOfferedAsAFinishedBranch() async throws {
+		let work = try await fixture()
+		_ = await GitRepository.run(
+			["remote", "set-head", "origin", "main"], in: work
+		)
+		let finished = await GitBranches.mergedRemotes(into: "origin/main", in: work)
+		#expect(!finished.contains { $0.hasSuffix("/HEAD") })
+	}
+
+	@Test func deletingOnTheRemoteTakesItOffTheRemote() async throws {
+		let work = try await fixture()
+		let result = await GitBranches.deleteOnRemote("finished", on: "origin", in: work)
+		#expect(result.exitCode == 0, "\(result.stderr)")
+
+		// Gone from the remote, and the local branch left alone: they are two
+		// refs and the dialog says so.
+		_ = await GitRepository.run(["fetch", "--prune", "-q"], in: work)
+		let remaining = await GitBranches.mergedRemotes(into: "origin/main", in: work)
+		#expect(!remaining.contains("origin/finished"))
+		let locally = await GitRepository.run(
+			["rev-parse", "--verify", "--quiet", "refs/heads/finished"], in: work
+		)
+		#expect(locally.exitCode == 0, "the local branch is untouched")
+	}
+
+	/// A branch already gone answers in git's words rather than silently.
+	@Test func deletingSomethingThatIsNotThereIsRefused() async throws {
+		let work = try await fixture()
+		let result = await GitBranches.deleteOnRemote("neverExisted", on: "origin", in: work)
+		#expect(result.exitCode != 0)
+	}
+
+	@Test func theRemotesAreAskedForRatherThanAssumed() async throws {
+		let work = try await fixture()
+		#expect(await GitBranches.remotes(in: work) == ["origin"])
+	}
+}

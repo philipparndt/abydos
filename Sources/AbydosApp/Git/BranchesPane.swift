@@ -48,6 +48,14 @@ final class BranchesPane: NSView {
 	/// becomes safe to delete. Dimming says *nothing here* without saying
 	/// *gone*.
 	private var mergedBranches: Set<String> = []
+	/// The same, for the remote-tracking branches — keyed `origin/x`, because a
+	/// remote row's own `name` has the remote stripped and `origin/x` and
+	/// `upstream/x` would otherwise be one entry.
+	///
+	/// **Measured against the *remote's* default**, not the local one. The
+	/// local `main` can be ahead of `origin/main`, and a branch merged into the
+	/// one you are standing on is not yet merged where deleting it matters.
+	private var mergedRemoteBranches: Set<String> = []
 	/// What origin points at, or nil when there is no origin at all.
 	private var remoteURL: String?
 	/// The branch currently being pushed, if one is.
@@ -60,6 +68,9 @@ final class BranchesPane: NSView {
 	/// `pushingBranch`, and more of it: a delete that takes a worktree with it
 	/// spends its seconds on `rm -rf`, not on git.
 	private var deletingBranches: Set<String> = []
+	/// Set only while a delete is running against a remote, so a local delete
+	/// of `x` cannot set `origin/x` spinning — the two rows share a name.
+	private var deletingRemote: String?
 	/// Kept alive while the recreate sheet is up: it is the combo's delegate,
 	/// and a delegate nobody holds is one nobody hears from.
 	private var tagSourceWatcher: TagSourceWatcher?
@@ -73,6 +84,20 @@ final class BranchesPane: NSView {
 	/// — which is what the commit page is for. The count on the row answers the
 	/// other one without spending forty rows on it.
 	private var collapsedKeys: Set<String> = ["working"]
+	/// Sections that start shut and are only open because somebody opened them.
+	///
+	/// **The inverse of `collapsedKeys`, and it needs to be.** That set is the
+	/// positive way round — everything is open unless it was shut — which is
+	/// right for a tree of your own branches and wrong for the two sections
+	/// that are somebody else's account of things. `origin` is every branch
+	/// anybody has pushed and `Tags` is every release there has ever been;
+	/// unrolled, they are the bulk of the pane, and what somebody came to the
+	/// refs tree for is nearly always above them.
+	private var openedKeys: Set<String> = []
+	/// The keys of the sections that start shut, filled as the tree is built:
+	/// a remote's name is whatever somebody called it, so the set cannot be
+	/// written down in advance.
+	private var sectionsThatStartShut: Set<String> = []
 	/// Set while expansion is being put back after a rebuild, so the pane's own
 	/// work is not mistaken for somebody's — the rule `ChangesPane` keeps.
 	private var isRestoring = false
@@ -129,6 +154,15 @@ final class BranchesPane: NSView {
 	private var conflictBanner: OperationBanner!
 	private var conflictHeight: NSLayoutConstraint!
 	private var conflictPaths: [String] = []
+	/// Everything the current stop was waiting on when it was first read.
+	///
+	/// **Git forgets, so the pane has to remember.** A path stops being
+	/// unmerged the moment it is staged, so a list built from `paths(in:)`
+	/// alone shrinks instead of ticking, and `2 of 3 resolved` cannot be said
+	/// at all. Cleared when the operation ends or moves to the next commit —
+	/// a rebase that carries on is a new stop with its own set.
+	private var conflictsThisStop: Set<String> = []
+	private var conflictStopAt: Int?
 	/// What git is in the middle of, as of the last refresh. The banner's
 	/// verbs are its verbs, so they are only offered while this is set.
 	private var currentOperation: GitConflicts.Operation?
@@ -140,6 +174,8 @@ final class BranchesPane: NSView {
 	private var tableView: BranchesOutlineView!
 	/// Where this branch stands against its remote, for what the counter says.
 	private var trafficState: GitPush.State?
+	/// When the remote was last asked, read with the traffic state it dates.
+	private var lastFetchedAt: Date?
 	/// The submodules, and what each of them has to report. Empty for a
 	/// repository that holds none, which is most of them.
 	private let submodules: EstateChanges
@@ -267,6 +303,7 @@ final class BranchesPane: NSView {
 			isAlwaysShown: true
 		)
 		repositoryRow.onSecondaryAction = { [weak self] in self?.refreshPressed() }
+		repositoryRow.buildMenu = { [weak self] in self?.remoteMenu() }
 		repositoryRow.onDownArrow = { [weak self] in self?.moveKeyboardIntoTree() }
 
 		tableView = BranchesOutlineView()
@@ -297,6 +334,21 @@ final class BranchesPane: NSView {
 		conflictBanner.onOpenFiles = { [weak self] in
 			guard let self else { return }
 			self.onOpenFiles?(self.conflictPaths)
+		}
+		// One file, which is how somebody actually works through a conflict:
+		// open it, read the two halves, write a third, come back and say so.
+		conflictBanner.onOpenFile = { [weak self] path in
+			self?.onOpenFiles?([path])
+		}
+		conflictBanner.onTake = { [weak self] side, path in
+			self?.resolveConflict(path, by: { root in
+				await GitConflicts.take(side, of: path, in: root)
+			})
+		}
+		conflictBanner.onMarkResolved = { [weak self] path in
+			self?.resolveConflict(path, by: { root in
+				await GitConflicts.markResolved(path, in: root)
+			})
 		}
 		conflictBanner.onOpenInFork = { [weak self] in
 			guard let self, let fork = ForkIntegration.applicationURL() else { return }
@@ -370,7 +422,123 @@ final class BranchesPane: NSView {
 	/// The spinner is the point. `refresh` is several git calls and on a large
 	/// repository it takes long enough that a button with no feedback reads as a
 	/// button that did nothing — so somebody presses it again.
+	/// The glyph beside the traffic verb.
+	///
+	/// **It goes to the remote when there is one.** Re-reading was local only,
+	/// and the pane already re-reads on every filesystem event — so a press was
+	/// only ever for something that happened *elsewhere*, and the largest
+	/// elsewhere is the remote. A repository with no remote has nothing to
+	/// fetch and gets the read it always had.
 	private func refreshPressed() {
+		guard trafficState?.hasRemote == true else {
+			activity = PaneActivityView.install(over: self, message: "Reading branches…")
+			refresh()
+			refreshConflicts()
+			refreshTraffic()
+			return
+		}
+		fetch(pruning: false)
+	}
+
+	/// Asks the remote, then re-reads everything the answer changes.
+	///
+	/// Failure is said and the read still happens: a fetch that could not reach
+	/// the remote leaves the repository exactly as it was, and a pane that
+	/// refused to redraw because the network was down would be showing stale
+	/// counts *and* refusing to admit it.
+	private func fetch(pruning: Bool) {
+		activity = PaneActivityView.install(
+			over: self, message: pruning ? "Fetching and pruning…" : "Fetching…"
+		)
+		let root = self.root
+		Task { @MainActor [weak self] in
+			let result = await GitPull.fetch(in: root, pruning: pruning)
+			guard let self else { return }
+			if result.exitCode != 0 {
+				self.presentFailure(result.stderr.isEmpty ? result.stdout : result.stderr)
+			}
+			self.refresh()
+			self.refreshConflicts()
+			self.refreshTraffic()
+			self.onRepositoryChanged?()
+		}
+	}
+
+	/// What the repository row offers on a right-click: every remote verb, and
+	/// when the remote was last asked.
+	///
+	/// The four are all here rather than only the one the row happens to be
+	/// drawing. `Push` while `1 ahead` is a claim about a tracking ref that is
+	/// as old as the last fetch, and until this menu the only way to check it
+	/// was a terminal.
+	private func remoteMenu() -> NSMenu {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		let state = trafficState
+
+		// **When, said first.** Every count on this row is a statement about a
+		// tracking ref, and a tracking ref is a copy of what the remote said
+		// the last time somebody asked.
+		let when = NSMenuItem(title: lastFetchWording, action: nil, keyEquivalent: "")
+		when.isEnabled = false
+		menu.addItem(when)
+		menu.addItem(.separator())
+
+		for (title, pruning) in [("Fetch", false), ("Fetch and Prune", true)] {
+			let item = NSMenuItem(
+				title: title,
+				action: pruning ? #selector(fetchPruning) : #selector(fetchPlainly),
+				keyEquivalent: ""
+			)
+			item.target = self
+			item.isEnabled = state?.hasRemote == true
+			menu.addItem(item)
+		}
+		// Prune is the answer to an upstream somebody deleted, so it says so
+		// where that is the state the row is in.
+		if state?.upstreamIsGone == true {
+			menu.items.last?.toolTip = "The upstream is gone — pruning clears the tracking ref"
+		}
+
+		menu.addItem(.separator())
+		let pull = NSMenuItem(title: "Pull…", action: #selector(pullWithDialog), keyEquivalent: "")
+		pull.target = self
+		pull.isEnabled = state?.hasRemote == true && state?.upstream != nil
+		menu.addItem(pull)
+
+		let push = NSMenuItem(
+			title: "Push", action: #selector(pushCurrentBranchFromMenu), keyEquivalent: ""
+		)
+		push.target = self
+		push.isEnabled = state?.canPush == true
+		menu.addItem(push)
+
+		menu.addItem(.separator())
+		// The local read the glyph used to be, kept: after a rebase in a
+		// terminal there is nothing to fetch and no reason to wait for one.
+		let reread = NSMenuItem(
+			title: "Read the Repository Again", action: #selector(rereadOnly), keyEquivalent: ""
+		)
+		reread.target = self
+		menu.addItem(reread)
+		return menu
+	}
+
+	/// How long ago the remote was last asked, in words.
+	private var lastFetchWording: String {
+		guard let when = lastFetchedAt else { return "Never fetched here" }
+		let seconds = Date().timeIntervalSince(when)
+		if seconds < 90 { return "Fetched just now" }
+		let formatter = RelativeDateTimeFormatter()
+		formatter.unitsStyle = .full
+		return "Fetched \(formatter.localizedString(for: when, relativeTo: Date()))"
+	}
+
+	@objc private func fetchPlainly() { fetch(pruning: false) }
+	@objc private func fetchPruning() { fetch(pruning: true) }
+	@objc private func pushCurrentBranchFromMenu() { pushCurrentBranch() }
+
+	@objc private func rereadOnly() {
 		activity = PaneActivityView.install(over: self, message: "Reading branches…")
 		refresh()
 		refreshConflicts()
@@ -410,8 +578,20 @@ final class BranchesPane: NSView {
 			remoteURL = await GitForge.remoteURL(in: root)
 			if let main = self.defaultBranch {
 				self.mergedBranches = await GitBranches.merged(into: main, in: root)
+				// The remote's own default, per remote. `origin/main` is the
+				// ref a branch has to be inside before deleting it from the
+				// remote loses nothing — and `origin` is a convention rather
+				// than a rule, so the list is asked for rather than assumed.
+				var finished: Set<String> = []
+				for remote in await GitBranches.remotes(in: root) {
+					finished.formUnion(await GitBranches.mergedRemotes(
+						into: "\(remote)/\(main)", in: root
+					))
+				}
+				self.mergedRemoteBranches = finished
 			} else {
 				self.mergedBranches = []
+				self.mergedRemoteBranches = []
 			}
 			self.refreshTraffic()
 			self.refreshConflicts()
@@ -451,6 +631,8 @@ final class BranchesPane: NSView {
 			guard let operation else {
 				self.conflictPaths = paths
 				self.currentOperation = nil
+				self.conflictsThisStop = []
+				self.conflictStopAt = nil
 				self.conflictHeight.constant = 0
 				self.conflictBanner.isHidden = true
 				return
@@ -461,15 +643,65 @@ final class BranchesPane: NSView {
 			let what = await GitConflicts.describe(in: root)
 			let staged = await GitWorkingCopy.status(in: root).staged.isEmpty == false
 			let progress = await GitConflicts.progress(in: root)
+			let sides = await GitConflicts.sides(of: operation, in: root)
+
+			// **A new stop starts a new set.** A rebase that carries on lands
+			// on the next commit with its own conflicts, and remembering the
+			// last one's would leave rows ticked for files this stop has never
+			// been waiting on.
+			if self.conflictStopAt != progress?.position {
+				self.conflictStopAt = progress?.position
+				self.conflictsThisStop = []
+			}
+			self.conflictsThisStop.formUnion(paths)
+			// **And what git wrote down before it stopped.** The pane's memory
+			// starts when the window opens; a merge reopened tomorrow would
+			// otherwise show only what is still unresolved and count that as
+			// the whole job. `.git/MERGE_MSG` holds the set under
+			// `# Conflicts:`, which is the same list a day later — and git
+			// removes the file when the stop is over, so it is never a
+			// previous commit's set. A rebase writes one too.
+			self.conflictsThisStop.formUnion(await GitConflicts.recorded(in: root))
+			let waiting = await GitConflicts.waiting(
+				in: root, alsoShowing: self.conflictsThisStop
+			)
+
 			self.conflictBanner.isHidden = false
 			self.conflictBanner.show(
-				operation: operation, conflicted: paths.count, staged: staged,
-				what: what, progress: progress
+				operation: operation, waiting: waiting, staged: staged,
+				what: what, sides: sides, progress: progress
 			)
 			// The strip asks for its own height: what it shows decides how
 			// much it needs, and a constant here was a second opinion about
 			// the same thing.
 			self.conflictHeight.constant = self.conflictBanner.wantedHeight
+		}
+	}
+
+	/// Clears one file, and says so when git will not.
+	///
+	/// **The refresh is the feedback.** Taking a side or staging a hand-edited
+	/// file has no toast on success: the row ticks, the count under the
+	/// headline moves, and `Continue` lights when the last one turns — which
+	/// says more than a message that has to be read and dismissed.
+	private func resolveConflict(
+		_ path: String, by work: @escaping @Sendable (URL) async -> String?
+	) {
+		let root = self.root
+		Task { @MainActor [weak self] in
+			let complaint = await work(root)
+			guard let self else { return }
+			if let complaint {
+				// Git's own words. `error: path 'x' does not have our version`
+				// is what a delete/modify conflict says, and it is better than
+				// anything this could write over the top of it.
+				Toast.post(
+					"\(URL(fileURLWithPath: path).lastPathComponent) was not resolved",
+					detail: complaint,
+					kind: .warning
+				)
+			}
+			self.refresh()
 		}
 	}
 
@@ -535,6 +767,9 @@ final class BranchesPane: NSView {
 			let head = await GitRepository.head(in: self.root)
 			let operation = await GitConflicts.operation(in: self.root)
 			self.trafficState = state
+			// Read beside the counts it dates: `1 ahead` is a claim about a
+			// tracking ref, and this is when that ref was last true.
+			self.lastFetchedAt = await GitPull.lastFetch(in: self.root)
 			// **The tree row says where, the banner says what.** Both of them
 			// saying both put `detached at c8bdfef0 · r…` in a row too narrow
 			// for either half. Off the banner — no operation in progress —
@@ -547,6 +782,19 @@ final class BranchesPane: NSView {
 			// verbs — the row saying it too, truncated, put the same sentence
 			// on screen twice in twenty-four points. Off the banner, the row
 			// is the only thing that says it.
+			// **The glyph says which of the two things it does.** It fetches
+			// where there is a remote and re-reads where there is not, and a
+			// control that goes to the network should not look identical to
+			// one that does not. The sync arrows are the glyph every other
+			// client uses for it.
+			self.repositoryRow.secondaryAction = RowAction(
+				symbol: state?.hasRemote == true ? "arrow.triangle.2.circlepath" : "arrow.clockwise",
+				help: state?.hasRemote == true
+					? "Fetch from the remote and read the repository again — "
+						+ "right-click the row for pull, push and prune"
+					: "Read the repository again",
+				isAlwaysShown: true
+			)
 			self.repositoryRow.show(
 				branch: self.currentBranchName,
 				state: state,
@@ -762,9 +1010,11 @@ final class BranchesPane: NSView {
 		}
 		for remote in byRemote.keys.sorted() {
 			appendSection(remote, byRemote[remote] ?? [])
+			sectionsThatStartShut.insert("section:\(remote)")
 		}
 
 		appendSection("Tags", matching.filter { $0.kind == .tag })
+		sectionsThatStartShut.insert("section:Tags")
 
 		// Worktrees last: they are places, not refs, and the list is short.
 		let matchingTrees = needle.isEmpty
@@ -858,7 +1108,17 @@ final class BranchesPane: NSView {
 	/// on the row answers the usual question without spending forty rows on it.
 	private func restoreExpansion(_ nodes: [GitNode]) {
 		for node in nodes where !node.children.isEmpty {
-			if collapsedKeys.contains(node.key) {
+			let shutByDefault = sectionsThatStartShut.contains(node.key)
+				&& !openedKeys.contains(node.key)
+			if collapsedKeys.contains(node.key) || shutByDefault {
+				// **The children are restored first, then the section shut over
+				// them.** An outline keeps its own record per item, and a
+				// folder inside a section nobody has opened yet has never been
+				// walked — so opening `origin` showed every folder under it
+				// shut, which is not what a folder nobody has touched should
+				// look like. Expanding hidden rows costs nothing and they are
+				// already open when the section opens over them.
+				restoreExpansion(node.children)
 				tableView.collapseItem(node)
 			} else {
 				tableView.expandItem(node)
@@ -1017,11 +1277,24 @@ final class BranchesPane: NSView {
 		// this program makes and one the refs tree gives a verb of its own —
 		// sweeping the entries older than a given age — and folding it away
 		// takes the verb with it.
+		// **A slash is always a folder here.** Folding used to merge a folder
+		// holding exactly one branch into it, so `renovate/configure` was one
+		// row reading its whole path while `feature/a` and `feature/b` got a
+		// `feature` folder — the tree's shape changed character with the count,
+		// and a section with one prefixed branch in it looked like a section
+		// that did not group at all. Reported against `origin/renovate/…`.
+		//
+		// The argument the fold was written on is in `PathTree`: a `hotfix/`
+		// folder holding only `hotfix/0472` turns one row into two and says
+		// nothing, there being no such thing as checking out a folder of
+		// branches. That is true of the row and not of the tree, and it is the
+		// tree somebody reads. `keeping: ["backup"]` goes with it: it existed
+		// to stop this fold reaching the one folder that has a verb of its own,
+		// and there is no fold left to stop.
 		let main = defaultBranch
 		let tree = PathTree.build(
 			entries.map { (path: $0.name, payload: $0) },
-			folding: true,
-			keeping: ["backup"],
+			folding: false,
 			promoting: { branch in
 				if branch.isCurrent { return 0 }
 				if let main, branch.name == main { return 1 }
@@ -1104,8 +1377,29 @@ final class BranchesPane: NSView {
 	///
 	/// What to offer when the check says the apply would conflict: applied on
 	/// the commit it came from, it cannot.
+	/// Opens the stash under the pointer as a page.
+	var onReviewStash: ((GitStash.Entry) -> Void)?
+
+	@objc private func reviewStash() {
+		guard let entry = selectedStashes.first ?? clickedStash else { return }
+		onReviewStash?(entry)
+	}
+
+	/// Opens the stash page from a driven run, the way the menu item does.
+	func reviewStashForTesting(_ reference: String) -> String {
+		guard let entry = stashes.first(where: { $0.reference == reference }) else {
+			return "no stash called \(reference)"
+		}
+		onReviewStash?(entry)
+		return "reviewing \(reference)"
+	}
+
 	@objc private func branchFromStash() {
 		guard let entry = selectedStashes.first ?? clickedStash else { return }
+		branch(fromStash: entry)
+	}
+
+	func branch(fromStash entry: GitStash.Entry) {
 		promptForName(
 			title: "Branch from “\(entry.message)”",
 			message: "A branch at the commit the stash was made on, with the work put back on it. "
@@ -1635,6 +1929,45 @@ final class BranchesPane: NSView {
 	/// What the operation banner says and offers.
 	func operationBannerForTesting() -> String { conflictBanner.reportForTesting }
 
+	/// Opens the remote-delete question for the branches selected, the way the
+	/// menu item does.
+	func deleteRemoteForTesting() { deleteRemoteBranch() }
+
+	/// Whether the pane thinks this branch is finished — asked by ref, so
+	/// `origin/x` and `x` are two questions and not one.
+	func mergedMarkForTesting() -> String {
+		branches.map { branch -> String in
+			let where_: String
+			switch branch.kind {
+			case .local:            where_ = branch.name
+			case .remote(let name): where_ = "\(name)/\(branch.name)"
+			case .tag:              where_ = "tag:\(branch.name)"
+			}
+			return where_ + (isMerged(branch) ? " merged" : "")
+		}.joined(separator: ", ")
+	}
+
+	/// What the repository row offers on a right-click, and when it last
+	/// fetched — neither of which a shot of a closed menu can be asked about.
+	func remoteMenuForTesting() -> String {
+		remoteMenu().items.map {
+			$0.isSeparatorItem ? "—" : ($0.isEnabled ? $0.title : "\($0.title)(off)")
+		}.joined(separator: " | ")
+	}
+
+	/// Presses the glyph beside the traffic verb, the way a click does.
+	func pressRefreshGlyphForTesting() { refreshPressed() }
+
+	/// What one of the banner's menus holds. Empty argument means the `⋯` one.
+	func bannerMenuForTesting(_ which: String) -> String {
+		conflictBanner.menuForTesting(which)
+	}
+
+	/// Resolves one conflicted file the way its row's menu does.
+	func resolveConflictForTesting(_ path: String, how: String) -> String {
+		conflictBanner.resolveForTesting(path, how)
+	}
+
 	/// Presses one of its buttons — `continue`, `skip`, `abort`. Abort goes
 	/// straight to the verb: the alert in front of it is AppKit's and a driven
 	/// run cannot answer it.
@@ -1665,9 +1998,7 @@ final class BranchesPane: NSView {
 				// report of what the row draws, and a row that says
 				// `not published` in a report and draws a cloud in the pane is
 				// a report that cannot catch the cloud being wrong.
-				let merged = branch.kind == .local
-					&& !branch.isCurrent
-					&& mergedBranches.contains(branch.name)
+				let merged = isMerged(branch)
 				var marks: [String] = []
 				if branch.isUnpublished {
 					// Against the default branch, and said so: the same arrow
@@ -1861,10 +2192,16 @@ final class BranchesPane: NSView {
 
 			let alert = NSAlert()
 			alert.messageText = "Recreate “\(tag.name)”"
-			alert.informativeText = [
-				now.map { "It is at \($0)." },
-				"Give anything git can resolve: a tag, a branch, or a commit.",
-			].compactMap { $0 }.joined(separator: "\n")
+			// **The subject in quotes, not run on.** `describe` answers
+			// `fd19672 Say what it is now` — a hash and a commit subject — and
+			// dropped straight into a sentence it read as one clause: *It is at
+			// fd19672 Say what it is now, not what it started as.* A commit
+			// message is somebody else's words and has to look like it.
+			alert.informativeText = now.map { said in
+				let parts = said.split(separator: " ", maxSplits: 1).map(String.init)
+				guard parts.count == 2 else { return "It is at \(said)." }
+				return "It is at \(parts[0]) — “\(parts[1])”."
+			} ?? "Pick where it should point."
 			alert.addButton(withTitle: "Recreate")
 			alert.addButton(withTitle: "Cancel")
 
@@ -1877,12 +2214,35 @@ final class BranchesPane: NSView {
 			//
 			// Editable, because sometimes the answer is a hash and no list can
 			// hold every one of those.
-			let field = NSComboBox(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+			// **Wide enough for the names in it, and laid out by frame.** The
+			// accessory was a stack of 280-point views inside an alert whose
+			// content is 272 — so the combo box overhung the dialog and the
+			// one part of it that fell outside was the chevron on its trailing
+			// edge. Reported as "the reference selection is cut off, and is
+			// only a text box as far I see", which is exactly what a combo box
+			// with its chevron clipped away is.
+			//
+			// `NSAlert` lays an accessory out from the frame it is given rather
+			// than from any intrinsic or fitting size — which the delete
+			// dialog's own accessory records — and a stack view resizing its
+			// arranged subviews under that is a second opinion about the same
+			// width. Plain views, one width, set once.
+			let width: CGFloat = 380
+			let caption = NSTextField(
+				labelWithString: "Point it at a tag, a branch, or a commit"
+			)
+			caption.font = Theme.current.uiFont(11)
+			caption.textColor = .secondaryLabelColor
+			caption.lineBreakMode = .byTruncatingTail
+			caption.frame = NSRect(x: 0, y: 0, width: width, height: 15)
+
+			let field = NSComboBox(frame: NSRect(x: 0, y: 0, width: width, height: 25))
 			field.addItems(withObjectValues: self.tagSources(excluding: tag.name))
 			field.completes = true
 			field.numberOfVisibleItems = 12
 			field.stringValue = suggestion
 			field.placeholderString = "HEAD"
+			field.toolTip = "Anything git can resolve — a tag, a branch, or a commit hash"
 
 			// What the chosen source resolves to, under the field, before the
 			// button is pressed rather than after. `describe` takes any rev,
@@ -1891,7 +2251,8 @@ final class BranchesPane: NSView {
 			resolved.font = Theme.current.uiFont(11)
 			resolved.textColor = Theme.current.gitAdded
 			resolved.lineBreakMode = .byTruncatingTail
-			resolved.frame = NSRect(x: 0, y: 0, width: 280, height: 16)
+			resolved.cell?.usesSingleLineMode = true
+			resolved.frame = NSRect(x: 0, y: 0, width: width, height: 16)
 
 			let follow = TagSourceWatcher(field: field, label: resolved, root: root)
 			self.tagSourceWatcher = follow
@@ -1901,14 +2262,11 @@ final class BranchesPane: NSView {
 			// that something reads it from the remote.
 			let push = NSButton(checkboxWithTitle: "Force-push to origin", target: nil, action: nil)
 			push.state = .on
-			push.frame = NSRect(x: 0, y: 0, width: 280, height: 20)
+			push.frame = NSRect(x: 0, y: 0, width: width, height: 18)
 
-			let stack = NSStackView(views: [field, resolved, push])
-			stack.orientation = .vertical
-			stack.alignment = .leading
-			stack.spacing = 8
-			stack.frame = NSRect(x: 0, y: 0, width: 280, height: 76)
-			alert.accessoryView = stack
+			alert.accessoryView = Self.stacked(
+				[caption, field, resolved, push], gaps: [4, 6, 10], width: width
+			)
 
 			let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
 				guard response == .alertFirstButtonReturn, let self else { return }
@@ -1947,6 +2305,34 @@ final class BranchesPane: NSView {
 		}
 	}
 
+	/// Stacks views for an `NSAlert` accessory, top down, at one width.
+	///
+	/// **Frames, not a stack view.** `NSAlert` lays its accessory out from the
+	/// frame it is given rather than from any intrinsic or fitting size, so a
+	/// view that decides its own size under that is a second opinion about the
+	/// same number — and the one it wins with is the one the dialog then clips.
+	/// `BranchDeletion.accessory` does the same thing for the same reason.
+	///
+	/// - Parameter gaps: the space under each view but the last, so a caption
+	///   can sit close to the field it introduces while the checkbox under them
+	///   both stands apart.
+	private static func stacked(
+		_ views: [NSView], gaps: [CGFloat], width: CGFloat
+	) -> NSView {
+		let height = views.map(\.frame.height).reduce(0, +) + gaps.reduce(0, +)
+		let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+		// Top down: an `NSView` here is not flipped, so the first view named is
+		// the one that should end up highest.
+		var y = height
+		for (index, view) in views.enumerated() {
+			y -= view.frame.height
+			view.frame = NSRect(x: 0, y: y, width: width, height: view.frame.height)
+			container.addSubview(view)
+			if index < gaps.count { y -= gaps[index] }
+		}
+		return container
+	}
+
 	/// Everything a tag could be pointed at, in the order somebody would look.
 	///
 	/// `HEAD` first because it is the other usual answer; then the branches,
@@ -1960,6 +2346,9 @@ final class BranchesPane: NSView {
 	}
 
 	/// What the sheet would offer, for a driver to read.
+	/// Opens the recreate question for the selected tag, the way the menu does.
+	func recreateTagForTesting() { recreateTag() }
+
 	func tagSourcesForTesting(excluding name: String) -> String {
 		tagSources(excluding: name).joined(separator: "\n")
 	}
@@ -2153,7 +2542,16 @@ final class BranchesPane: NSView {
 	/// resumed or merely borrowed, which nothing here can know.
 	@objc private func applyStash() {
 		guard let entry = selectedStashes.first else { return }
+		apply(stash: entry)
+	}
 
+	/// **Named, rather than taken from the selection.** The stash page is not
+	/// the tree, and its verbs are about the stash it is showing — routing them
+	/// through `selectedStashes` made them act on whatever row happened to be
+	/// highlighted in a pane the page is not in, which for a collapsed Stashes
+	/// section is nothing at all. Driven: the press reached the pane and no
+	/// dialog appeared.
+	func apply(stash entry: GitStash.Entry) {
 		let alert = NSAlert()
 		alert.messageText = "Apply “\(entry.message)”?"
 		alert.informativeText = "The changes go back into the working copy. "
@@ -2173,7 +2571,11 @@ final class BranchesPane: NSView {
 	@objc private func dropStash() {
 		let entries = selectedStashes
 		guard !entries.isEmpty else { return }
+		drop(stashes: entries)
+	}
 
+	func drop(stashes entries: [GitStash.Entry]) {
+		guard !entries.isEmpty else { return }
 		let alert = NSAlert()
 		alert.messageText = entries.count == 1
 			? "Drop “\(entries[0].message)”?"
@@ -2512,12 +2914,65 @@ final class BranchesPane: NSView {
 	/// Deleting a remote branch is a push, which `CLAUDE.md` forbids outright
 	/// except when somebody asks for it by name — so it is not something a
 	/// multiple selection should be able to do by accident.
+	/// Whether this branch is finished: everything on it is somewhere else.
+	///
+	/// **Both kinds, asked of the right target.** A local branch is measured
+	/// against the local default and a remote-tracking one against the remote's
+	/// — which is why there are two sets rather than one. Until this, the
+	/// pane marked a finished local branch and said nothing whatsoever about
+	/// the remote copy of the same work, which is the copy somebody has to go
+	/// and delete.
+	func isMerged(_ branch: GitBranch) -> Bool {
+		switch branch.kind {
+		case .local:
+			return !branch.isCurrent && mergedBranches.contains(branch.name)
+		case .remote(let remote):
+			return mergedRemoteBranches.contains("\(remote)/\(branch.name)")
+		case .tag:
+			return false
+		}
+	}
+
 	private var deletableBranches: [GitBranch] {
 		selectedBranches.filter { $0.kind == .local && !$0.isCurrent }
 	}
 
 	@objc private func deleteBranch() {
 		deletion().ask(about: deletableBranches, target: currentBranchName ?? "HEAD")
+	}
+
+	/// The remote branches in the selection, all on one remote.
+	///
+	/// **One remote at a time.** A selection spanning `origin` and a fork is
+	/// two pushes to two places, and one dialog headed by one of them would be
+	/// telling half the truth about what the press does. The remote taken is
+	/// the one the row under the pointer belongs to.
+	private var deletableRemoteBranches: [GitBranch] {
+		guard let remote = selectedRemote else { return [] }
+		return selectedBranches.filter {
+			if case .remote(let name) = $0.kind { return name == remote }
+			return false
+		}
+	}
+
+	/// Which remote the selection is on, when it is all on one.
+	private var selectedRemote: String? {
+		let remotes = Set(selectedBranches.compactMap { branch -> String? in
+			if case .remote(let name) = branch.kind { return name }
+			return nil
+		})
+		return remotes.count == 1 ? remotes.first : nil
+	}
+
+	@objc private func deleteRemoteBranch() {
+		guard let remote = selectedRemote else { return }
+		let branches = deletableRemoteBranches
+		guard !branches.isEmpty else { return }
+		deletingRemote = remote
+		// The remote's own default, which is what a branch has to be inside
+		// before deleting it from there loses nothing.
+		let target = "\(remote)/\(defaultBranch ?? "main")"
+		deletion().askAboutRemote(branches, on: remote, target: target)
 	}
 
 	/// What a row is waiting on, which is also what it says while it waits —
@@ -2527,10 +2982,24 @@ final class BranchesPane: NSView {
 	/// its remote, so `origin/x` and `x` answer the same here, and pushing one
 	/// used to set the other spinning.
 	private func busyNote(for branch: GitBranch) -> String? {
-		guard case .local = branch.kind else { return nil }
-		if branch.name == pushingBranch { return "Pushing \(branch.name)…" }
-		if deletingBranches.contains(branch.name) { return "Deleting \(branch.name)…" }
-		return nil
+		switch branch.kind {
+		case .local:
+			if branch.name == pushingBranch { return "Pushing \(branch.name)…" }
+			if deletingBranches.contains(branch.name) { return "Deleting \(branch.name)…" }
+			return nil
+		case .remote(let remote):
+			// Only while a *remote* delete is running, which is the only thing
+			// that touches these rows. `deletingRemote` is the remote whose
+			// branches are going, and it is nil for a local delete — otherwise
+			// deleting `x` locally would set `origin/x` spinning over work
+			// nobody had asked for.
+			guard deletingRemote == remote, deletingBranches.contains(branch.name) else {
+				return nil
+			}
+			return "Deleting from \(remote)…"
+		case .tag:
+			return nil
+		}
 	}
 
 	/// One `BranchDeletion` per press, told what this pane knows: where the
@@ -2543,6 +3012,7 @@ final class BranchesPane: NSView {
 			self.tableView.reloadData()
 		}
 		made.onFinished = { [weak self] in
+			self?.deletingRemote = nil
 			self?.refresh()
 			self?.onRepositoryChanged?()
 		}
@@ -2751,7 +3221,7 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 				branch: branch,
 				display: display,
 				busy: busyNote(for: branch),
-				isMerged: branch.kind == .local && mergedBranches.contains(branch.name),
+				isMerged: isMerged(branch),
 				base: defaultBranch
 			)
 		case .worktree(let worktree):
@@ -2775,6 +3245,11 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	func outlineViewItemDidExpand(_ notification: Notification) {
 		guard !isRestoring, let node = notification.userInfo?["NSObject"] as? GitNode else { return }
 		collapsedKeys.remove(node.key)
+		// A section that starts shut needs the opposite record kept, or it
+		// would close again on the next filesystem event — which is every
+		// keystroke in a file, and the shape of the tree is not a thing to
+		// have to keep re-establishing.
+		openedKeys.insert(node.key)
 
 		// A stash reads what is in it the first time it is opened: the check
 		// costs a three-way merge and the files cost a diff, which is nothing
@@ -2787,6 +3262,7 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	func outlineViewItemDidCollapse(_ notification: Notification) {
 		guard !isRestoring, let node = notification.userInfo?["NSObject"] as? GitNode else { return }
 		collapsedKeys.insert(node.key)
+		openedKeys.remove(node.key)
 	}
 
 	func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -2846,6 +3322,16 @@ extension BranchesPane: NSMenuDelegate {
 
 		let stashes = selectedStashes.isEmpty ? [clickedStash].compactMap { $0 } : selectedStashes
 		if !stashes.isEmpty {
+			// **First, because looking comes before deciding.** The tree opens
+			// a stash to a list of file names and stops there, so the only way
+			// to find out what a week-old one held was to apply it over a clean
+			// working copy — the one move somebody with work in progress cannot
+			// make. It is the same word the working copy's row uses, for the
+			// same page shape.
+			menu.addItem(item(
+				"Review\u{2026}", #selector(reviewStash), enabled: stashes.count == 1
+			))
+			menu.addItem(.separator())
 			menu.addItem(item(
 				"Apply…", #selector(applyStash), enabled: stashes.count == 1
 			))
@@ -2974,6 +3460,22 @@ extension BranchesPane: NSMenuDelegate {
 			menu.addItem(item(
 				deleting > 1 ? "Delete \(deleting) Branches…" : "Delete…",
 				#selector(deleteBranch),
+				enabled: deleting > 0
+			))
+		}
+		// **Named for where it deletes from.** A remote branch's row sits under
+		// a section headed by its remote and says only the branch's own name,
+		// so a plain `Delete…` there is the same word for two operations — one
+		// that removes a ref from this disk and one that removes it from
+		// everybody's. The remote is in the title so the press cannot be a
+		// surprise.
+		if case .remote(let remote) = branch.kind {
+			let deleting = deletableRemoteBranches.count
+			menu.addItem(item(
+				deleting > 1
+					? "Delete \(deleting) Branches from \(remote)…"
+					: "Delete from \(remote)…",
+				#selector(deleteRemoteBranch),
 				enabled: deleting > 0
 			))
 		}
@@ -3640,19 +4142,25 @@ private final class BranchFolderRowView: NSView {
 		// say it. The disclosure triangle says it now — and the same row draws
 		// `Staged` and `Unstaged`, which are not prefixes at all and read as
 		// nonsense with one.
-		let after = RowMetrics.draw(
+		RowMetrics.draw(
 			display,
 			font: Theme.current.uiFont(12),
 			colour: Theme.current.sidebarText,
 			at: x, in: bounds,
 			limit: bounds.maxX - RowMetrics.trailingInset - Theme.current.scaled(24)
 		)
-		RowMetrics.draw(
+		// **On the trailing edge, not after the name.** Drawn where the name
+		// happened to end, the counts landed at a different x on every row —
+		// `feature 1` and `renovate 2` two characters apart — so a column of
+		// numbers could not be read as a column. Everything else on this row's
+		// right-hand end is trailing-aligned already: the ahead and behind
+		// counts on a branch, the cloud on an unpublished one.
+		RowMetrics.drawTrailing(
 			"\(count)",
 			font: Theme.current.uiFont(10.5),
 			colour: Theme.current.gitIgnored,
-			at: after + Theme.current.scaled(6), in: bounds,
-			limit: bounds.maxX - RowMetrics.trailingInset
+			in: bounds,
+			rightAt: bounds.maxX - RowMetrics.trailingInset
 		)
 	}
 }

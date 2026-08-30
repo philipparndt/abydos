@@ -310,6 +310,18 @@ final class SidebarController: NSObject {
 			case "report":  print("BRANCHES:\n\(pane.rowsForTesting())")
 			case "stash":
 				pane.openStashForTesting(Int(argument) ?? 0)
+			case "recreate": pane.recreateTagForTesting()
+			// Opening a stash as a page, and what that page then says.
+			case "review-stash":
+				print("BRANCHES review-stash: " + pane.reviewStashForTesting(argument))
+			case "stash-page":
+				print(stashPage?.reportForTesting() ?? "STASH-PAGE none")
+			case "stash-page-select":
+				print("STASH-PAGE select: "
+					+ (stashPage?.selectForTesting(argument) ?? "no page"))
+			case "stash-page-press":
+				print("STASH-PAGE press: "
+					+ (stashPage?.pressForTesting(argument) ?? "no page"))
 			case "tag-sources":
 				print("TAG-SOURCES:\n\(pane.tagSourcesForTesting(excluding: argument))")
 			case "shut":    pane.setFolderForTesting(argument, collapsed: true)
@@ -401,6 +413,35 @@ final class SidebarController: NSObject {
 			// verbs: `banner`, `press:continue`, `press:skip`, `press:abort`.
 			case "banner":  print(pane.operationBannerForTesting())
 			case "press":   pane.pressBannerForTesting(argument)
+			// What the `⋯` menu holds, and what one conflicted file's row
+			// offers — neither of which a shot of a closed menu can show.
+			// Every remote verb the repository row offers, and when it last
+			// fetched — the row draws one verb and there are four.
+			// Which refs the pane calls finished, by ref rather than by name:
+			// `origin/x` and `x` are two questions.
+			case "merged":
+				print("BRANCHES merged: " + pane.mergedMarkForTesting())
+			case "delete-remote":
+				pane.deleteRemoteForTesting()
+			case "remote-menu":
+				print("REPOSITORY menu: " + pane.remoteMenuForTesting())
+			case "fetch":
+				pane.pressRefreshGlyphForTesting()
+			// What the editor is showing, so "a click on a row opens the file"
+			// is a claim a driven run can check rather than a screenshot.
+			case "tabs":
+				print("TABS: " + (editor.activeGroup?.tabTitlesForTesting.joined(separator: ", ")
+					?? "no group"))
+			case "banner-menu":
+				print("BANNER menu \(argument.isEmpty ? "more" : argument): "
+					+ pane.bannerMenuForTesting(argument))
+			// Resolving one file the way the row's menu does:
+			// `resolve:<path>:<ours|theirs|mark|open>`.
+			case "resolve":
+				let parts = argument.split(separator: "|", maxSplits: 1).map(String.init)
+				print("BANNER resolve: " + pane.resolveConflictForTesting(
+					parts.first ?? "", how: parts.count > 1 ? parts[1] : "mark"
+				))
 			case "scroll":  pane.scrollTreeForTesting(toBottom: argument != "top")
 			default:        print("BRANCHES: unknown step \(step)")
 			}
@@ -791,6 +832,7 @@ final class SidebarController: NSObject {
 				}
 			}
 			pane.onShowLog = { [weak self] ref in self?.showLogPage(scopedTo: ref) }
+			pane.onReviewStash = { [weak self] entry in self?.showStashPage(entry) }
 			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
 			pane.onOpenWorktree = { [weak self] path in self?.openProject(path) }
 			pane.onRepositoryChanged = { [weak self] in
@@ -798,6 +840,9 @@ final class SidebarController: NSObject {
 				// repository is read again — the same read everything else
 				// awaits.
 				self?.readGit()
+				// And the stash page, if one is open: a stash dropped from the
+				// tree leaves a page describing something that is not there.
+				self?.stashPage?.refresh()
 			}
 			branchesPane = pane
 			view = pane
@@ -960,6 +1005,36 @@ final class SidebarController: NSObject {
 		page.refresh()
 	}
 
+	/// One stash, as a page — see `StashPage`.
+	///
+	/// **One page, re-pointed.** Reviewing a second stash re-uses the first
+	/// page rather than opening a tab per stash: `openPage` already keys by
+	/// identifier, and a row of near-identical tabs called `Stash` would be a
+	/// tab strip nobody can read.
+	func showStashPage(_ entry: GitStash.Entry) {
+		leaveTerminalFullScreen()
+		guard let project = project(), project.git != nil, let group = editor.activeGroup else {
+			return
+		}
+		let root = gitCommandRoot() ?? project.root
+		let page: StashPage
+		if let existing = group.page(identifier: "stash") as? StashPage {
+			page = existing
+			page.show(entry)
+		} else {
+			page = StashPage(root: root, entry: entry)
+			// **Through the pane, because the questions live there.** Applying
+			// asks whether the entry should stay, branching asks for a name,
+			// and dropping says the work is on no branch — three dialogs this
+			// page would otherwise own a second copy of.
+			page.onApply = { [weak self] entry in self?.branchesPane?.apply(stash: entry) }
+			page.onBranch = { [weak self] entry in self?.branchesPane?.branch(fromStash: entry) }
+			page.onDrop = { [weak self] entry in self?.branchesPane?.drop(stashes: [entry]) }
+		}
+		stashPage = page
+		group.openPage(page, title: "Stash", identifier: "stash", symbol: "tray.full")
+	}
+
 	/// Every submodule in the estate, as a page — see `EstateOverviewPage`.
 	func showEstatePage() {
 		leaveTerminalFullScreen()
@@ -991,6 +1066,7 @@ final class SidebarController: NSObject {
 
 	/// The estate page, while one is open, for the driver to read.
 	private(set) weak var estatePage: EstateOverviewPage?
+	private(set) weak var stashPage: StashPage?
 
 	/// What the estate page says, row by row.
 	func estateForTesting(_ steps: String, waiting: Int = 8) {
