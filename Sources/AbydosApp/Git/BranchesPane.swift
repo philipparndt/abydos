@@ -1216,6 +1216,14 @@ final class BranchesPane: NSView {
 	/// not touch it.
 	@objc private func pushBranch() {
 		guard let branch = selectedBranch, case .local = branch.kind else { return }
+		// **Nowhere to push is a thing to fix, not a thing to fail at.** A
+		// repository made with `git init` has no remote, so publishing was
+		// `git push origin` answering `'origin' does not appear to be a git
+		// repository` — git's words, about a state the app could see coming and
+		// could do something about. It asks for the remote instead, and the
+		// push is what somebody does next rather than what this pretends to do
+		// for them: a URL typed into a box is not consent to send commits.
+		guard remoteURL != nil else { setRemote(); return }
 		send(
 			branch.name,
 			setUpstream: branch.upstream == nil,
@@ -1232,6 +1240,7 @@ final class BranchesPane: NSView {
 	/// acts on a row somebody picked, this one on the branch this row is
 	/// describing.
 	private func pushCurrentBranch() {
+		guard remoteURL != nil else { setRemote(); return }
 		guard let state = trafficState, state.canPush else { return }
 		send(
 			currentBranchName ?? state.branch,
@@ -1543,6 +1552,26 @@ final class BranchesPane: NSView {
 			+ "box=\(box.map { $0.state == .on ? "on" : "off" } ?? "missing") "
 			+ "press=\(pressed)"
 	}
+
+	/// Opens the remote dialog, the way the menu item does.
+	func setRemoteForTesting() { setRemote() }
+
+	/// Types into the remote field, so what the dialog makes of a paste can be
+	/// read rather than photographed.
+	func typeRemoteForTesting(_ text: String) {
+		guard let sheet = window?.attachedSheet else { return }
+		func walk(_ view: NSView) -> NSTextField? {
+			if let field = view as? NSTextField, field.isEditable { return field }
+			for child in view.subviews { if let found = walk(child) { return found } }
+			return nil
+		}
+		guard let field = sheet.contentView.flatMap(walk) else { return }
+		field.stringValue = text
+		remoteFieldChanged?()
+	}
+
+	/// Presses the selected branch's publish/push, the way the menu item does.
+	func pushSelectedForTesting() { pushBranch() }
 
 	func deleteSheetForTesting() -> String {
 		guard let sheet = window?.attachedSheet else { return "SHEET none" }
@@ -1946,22 +1975,99 @@ final class BranchesPane: NSView {
 	/// A clone has one and nobody thinks about it; a repository made with `git
 	/// init` has none, and everything that talks to a remote — pushing,
 	/// opening it on GitHub — has nothing to say until it does.
+	/// What to redraw as the remote is typed. Lives here because a text field
+	/// needs an Objective-C target and the dialog is a local.
+	private var remoteFieldChanged: (() -> Void)?
+
+	@objc private func remoteFieldEdited() { remoteFieldChanged?() }
+
 	@objc private func setRemote() {
 		let alert = NSAlert()
 		alert.messageText = remoteURL == nil ? "Add a remote" : "Change the remote"
-		alert.informativeText = remoteURL.map { "origin is \($0)." }
-			?? "This repository has no remote, so there is nowhere to push."
+		// **Not the URL again.** It is in the field below, editable, and saying
+		// it twice is what wrapped a long one across two lines in a sentence
+		// nobody needed to read. What is worth saying is what the box is for.
+		alert.informativeText = remoteURL == nil
+			? "This repository has no remote, so there is nowhere to push."
+			: "Where origin points. Everything that talks to a remote uses it."
+
 		alert.addButton(withTitle: remoteURL == nil ? "Add" : "Change")
 		alert.addButton(withTitle: "Cancel")
 
-		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+		// **One line, and it scrolls.** A remote URL is longer than any box that
+		// fits in a dialog, and this one wrapped: pasting
+		// `git@github.com:philipparndt/3d-models-general.git` left `general.git`
+		// on screen with the rest above the visible line, which reads as a paste
+		// that went wrong. A URL has no line breaks in it, so the field must not
+		// have any either.
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 44))
 		field.stringValue = remoteURL ?? ""
 		field.placeholderString = "git@github.com:you/thing.git"
-		alert.accessoryView = field
+		field.usesSingleLineMode = true
+		field.cell?.wraps = false
+		field.cell?.isScrollable = true
+		field.lineBreakMode = .byTruncatingHead
+		field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+
+		// What it made of what is typed, under the box.
+		//
+		// **A URL is not a thing to be told about afterwards.** `origin` set to
+		// something misread is a push that fails much later, in git's words,
+		// about a host nobody meant — so the same parser the rest of the app
+		// uses for a remote says here, before the press, which host and which
+		// repository it took. It is also the only way to see that a paste
+		// arrived whole.
+		let read = NSTextField(labelWithString: "")
+		read.font = .systemFont(ofSize: 11)
+		read.textColor = .secondaryLabelColor
+		read.lineBreakMode = .byTruncatingTail
+		read.frame = NSRect(x: 0, y: 0, width: 420, height: 16)
+
+		let stack = NSStackView(views: [field, read])
+		stack.orientation = .vertical
+		stack.alignment = .leading
+		stack.spacing = 6
+		stack.frame = NSRect(x: 0, y: 0, width: 420, height: 46)
+		// **Pinned, or the stack gives each row the width of its own text.** A
+		// field sized to what is already in it is a field with no room to type
+		// a longer one, which for a remote URL is most of them.
+		for view in [field, read] {
+			view.translatesAutoresizingMaskIntoConstraints = false
+			view.widthAnchor.constraint(equalToConstant: 420).isActive = true
+		}
+		alert.accessoryView = stack
+
+		let accept = alert.buttons.first
+		let describe = {
+			let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+			if text.isEmpty {
+				read.stringValue = ""
+				accept?.isEnabled = false
+			} else if let repository = GitForge.repository(fromRemote: text) {
+				read.stringValue = "\(repository.host) · \(repository.owner)/\(repository.name)"
+				read.textColor = .secondaryLabelColor
+				accept?.isEnabled = true
+			} else {
+				// Not refused: a path, or a host this does not know, is a
+				// perfectly good remote and git will say so if it is not. What
+				// is said is only that nothing was recognised in it.
+				read.stringValue = "not a GitHub-style URL — git will decide"
+				read.textColor = .secondaryLabelColor
+				accept?.isEnabled = true
+			}
+		}
+		remoteFieldChanged = describe
+		field.target = self
+		field.action = #selector(remoteFieldEdited)
+		field.delegate = self
+		describe()
 
 		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			defer { self?.remoteFieldChanged = nil }
 			guard response == .alertFirstButtonReturn, let self else { return }
-			let url = field.stringValue.trimmingCharacters(in: .whitespaces)
+			// Trimmed of newlines as well as spaces: a URL copied from a browser
+			// or a terminal brings one, and `git remote add` takes it literally.
+			let url = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
 			guard !url.isEmpty, url != self.remoteURL else { return }
 			self.run { await GitForge.setRemote(url, in: self.root) }
 		}
@@ -2687,6 +2793,17 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		guard !isRestoring, case let .change(change, _, _) = selectedNode?.row,
 		      let picked = change.change else { return }
 		onSelectChange?(picked)
+	}
+}
+
+extension BranchesPane: NSTextFieldDelegate {
+	/// Redraws what the remote dialog says it read, as it is typed.
+	///
+	/// The field's `action` fires on Return and on losing focus, which is after
+	/// the decision rather than during it — and a paste is exactly the case
+	/// where somebody wants to see what arrived before they press anything.
+	func controlTextDidChange(_ notification: Notification) {
+		remoteFieldChanged?()
 	}
 }
 

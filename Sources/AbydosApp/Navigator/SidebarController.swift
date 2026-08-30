@@ -370,6 +370,11 @@ final class SidebarController: NSObject {
 				print("BRANCHES stash-answer: " + pane.answerStashForTesting(
 					parts.first ?? "", untracked: (parts.count > 1 ? parts[1] : "yes") != "no"
 				))
+			// Publishing with no remote, which is the case that used to fail in
+			// git's words instead of asking for one.
+			case "publish":    pane.pushSelectedForTesting()
+			case "remote":     pane.setRemoteForTesting()
+			case "type-remote": pane.typeRemoteForTesting(argument)
 			// Answering it — the step the two above skip between them. Not
 			// `press`, which the banner below has: a second one is a dead case.
 			case "sheet-press": print("BRANCHES "
