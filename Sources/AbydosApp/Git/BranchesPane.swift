@@ -149,6 +149,8 @@ final class BranchesPane: NSView {
 	private var tableView: BranchesOutlineView!
 	/// Where this branch stands against its remote, for what the counter says.
 	private var trafficState: GitPush.State?
+	/// When the remote was last asked, read with the traffic state it dates.
+	private var lastFetchedAt: Date?
 	/// The submodules, and what each of them has to report. Empty for a
 	/// repository that holds none, which is most of them.
 	private let submodules: EstateChanges
@@ -276,6 +278,7 @@ final class BranchesPane: NSView {
 			isAlwaysShown: true
 		)
 		repositoryRow.onSecondaryAction = { [weak self] in self?.refreshPressed() }
+		repositoryRow.buildMenu = { [weak self] in self?.remoteMenu() }
 		repositoryRow.onDownArrow = { [weak self] in self?.moveKeyboardIntoTree() }
 
 		tableView = BranchesOutlineView()
@@ -394,7 +397,123 @@ final class BranchesPane: NSView {
 	/// The spinner is the point. `refresh` is several git calls and on a large
 	/// repository it takes long enough that a button with no feedback reads as a
 	/// button that did nothing — so somebody presses it again.
+	/// The glyph beside the traffic verb.
+	///
+	/// **It goes to the remote when there is one.** Re-reading was local only,
+	/// and the pane already re-reads on every filesystem event — so a press was
+	/// only ever for something that happened *elsewhere*, and the largest
+	/// elsewhere is the remote. A repository with no remote has nothing to
+	/// fetch and gets the read it always had.
 	private func refreshPressed() {
+		guard trafficState?.hasRemote == true else {
+			activity = PaneActivityView.install(over: self, message: "Reading branches…")
+			refresh()
+			refreshConflicts()
+			refreshTraffic()
+			return
+		}
+		fetch(pruning: false)
+	}
+
+	/// Asks the remote, then re-reads everything the answer changes.
+	///
+	/// Failure is said and the read still happens: a fetch that could not reach
+	/// the remote leaves the repository exactly as it was, and a pane that
+	/// refused to redraw because the network was down would be showing stale
+	/// counts *and* refusing to admit it.
+	private func fetch(pruning: Bool) {
+		activity = PaneActivityView.install(
+			over: self, message: pruning ? "Fetching and pruning…" : "Fetching…"
+		)
+		let root = self.root
+		Task { @MainActor [weak self] in
+			let result = await GitPull.fetch(in: root, pruning: pruning)
+			guard let self else { return }
+			if result.exitCode != 0 {
+				self.presentFailure(result.stderr.isEmpty ? result.stdout : result.stderr)
+			}
+			self.refresh()
+			self.refreshConflicts()
+			self.refreshTraffic()
+			self.onRepositoryChanged?()
+		}
+	}
+
+	/// What the repository row offers on a right-click: every remote verb, and
+	/// when the remote was last asked.
+	///
+	/// The four are all here rather than only the one the row happens to be
+	/// drawing. `Push` while `1 ahead` is a claim about a tracking ref that is
+	/// as old as the last fetch, and until this menu the only way to check it
+	/// was a terminal.
+	private func remoteMenu() -> NSMenu {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		let state = trafficState
+
+		// **When, said first.** Every count on this row is a statement about a
+		// tracking ref, and a tracking ref is a copy of what the remote said
+		// the last time somebody asked.
+		let when = NSMenuItem(title: lastFetchWording, action: nil, keyEquivalent: "")
+		when.isEnabled = false
+		menu.addItem(when)
+		menu.addItem(.separator())
+
+		for (title, pruning) in [("Fetch", false), ("Fetch and Prune", true)] {
+			let item = NSMenuItem(
+				title: title,
+				action: pruning ? #selector(fetchPruning) : #selector(fetchPlainly),
+				keyEquivalent: ""
+			)
+			item.target = self
+			item.isEnabled = state?.hasRemote == true
+			menu.addItem(item)
+		}
+		// Prune is the answer to an upstream somebody deleted, so it says so
+		// where that is the state the row is in.
+		if state?.upstreamIsGone == true {
+			menu.items.last?.toolTip = "The upstream is gone — pruning clears the tracking ref"
+		}
+
+		menu.addItem(.separator())
+		let pull = NSMenuItem(title: "Pull…", action: #selector(pullWithDialog), keyEquivalent: "")
+		pull.target = self
+		pull.isEnabled = state?.hasRemote == true && state?.upstream != nil
+		menu.addItem(pull)
+
+		let push = NSMenuItem(
+			title: "Push", action: #selector(pushCurrentBranchFromMenu), keyEquivalent: ""
+		)
+		push.target = self
+		push.isEnabled = state?.canPush == true
+		menu.addItem(push)
+
+		menu.addItem(.separator())
+		// The local read the glyph used to be, kept: after a rebase in a
+		// terminal there is nothing to fetch and no reason to wait for one.
+		let reread = NSMenuItem(
+			title: "Read the Repository Again", action: #selector(rereadOnly), keyEquivalent: ""
+		)
+		reread.target = self
+		menu.addItem(reread)
+		return menu
+	}
+
+	/// How long ago the remote was last asked, in words.
+	private var lastFetchWording: String {
+		guard let when = lastFetchedAt else { return "Never fetched here" }
+		let seconds = Date().timeIntervalSince(when)
+		if seconds < 90 { return "Fetched just now" }
+		let formatter = RelativeDateTimeFormatter()
+		formatter.unitsStyle = .full
+		return "Fetched \(formatter.localizedString(for: when, relativeTo: Date()))"
+	}
+
+	@objc private func fetchPlainly() { fetch(pruning: false) }
+	@objc private func fetchPruning() { fetch(pruning: true) }
+	@objc private func pushCurrentBranchFromMenu() { pushCurrentBranch() }
+
+	@objc private func rereadOnly() {
 		activity = PaneActivityView.install(over: self, message: "Reading branches…")
 		refresh()
 		refreshConflicts()
@@ -611,6 +730,9 @@ final class BranchesPane: NSView {
 			let head = await GitRepository.head(in: self.root)
 			let operation = await GitConflicts.operation(in: self.root)
 			self.trafficState = state
+			// Read beside the counts it dates: `1 ahead` is a claim about a
+			// tracking ref, and this is when that ref was last true.
+			self.lastFetchedAt = await GitPull.lastFetch(in: self.root)
 			// **The tree row says where, the banner says what.** Both of them
 			// saying both put `detached at c8bdfef0 · r…` in a row too narrow
 			// for either half. Off the banner — no operation in progress —
@@ -623,6 +745,19 @@ final class BranchesPane: NSView {
 			// verbs — the row saying it too, truncated, put the same sentence
 			// on screen twice in twenty-four points. Off the banner, the row
 			// is the only thing that says it.
+			// **The glyph says which of the two things it does.** It fetches
+			// where there is a remote and re-reads where there is not, and a
+			// control that goes to the network should not look identical to
+			// one that does not. The sync arrows are the glyph every other
+			// client uses for it.
+			self.repositoryRow.secondaryAction = RowAction(
+				symbol: state?.hasRemote == true ? "arrow.triangle.2.circlepath" : "arrow.clockwise",
+				help: state?.hasRemote == true
+					? "Fetch from the remote and read the repository again — "
+						+ "right-click the row for pull, push and prune"
+					: "Read the repository again",
+				isAlwaysShown: true
+			)
 			self.repositoryRow.show(
 				branch: self.currentBranchName,
 				state: state,
@@ -1710,6 +1845,17 @@ final class BranchesPane: NSView {
 
 	/// What the operation banner says and offers.
 	func operationBannerForTesting() -> String { conflictBanner.reportForTesting }
+
+	/// What the repository row offers on a right-click, and when it last
+	/// fetched — neither of which a shot of a closed menu can be asked about.
+	func remoteMenuForTesting() -> String {
+		remoteMenu().items.map {
+			$0.isSeparatorItem ? "—" : ($0.isEnabled ? $0.title : "\($0.title)(off)")
+		}.joined(separator: " | ")
+	}
+
+	/// Presses the glyph beside the traffic verb, the way a click does.
+	func pressRefreshGlyphForTesting() { refreshPressed() }
 
 	/// What one of the banner's menus holds. Empty argument means the `⋯` one.
 	func bannerMenuForTesting(_ which: String) -> String {

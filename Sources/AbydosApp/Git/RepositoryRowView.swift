@@ -62,6 +62,22 @@ final class RepositoryRowView: ActionableRowView {
 	/// `↓` out of this row and into the tree, so the two read as one list.
 	var onDownArrow: (() -> Void)?
 
+	/// Every verb the remote allows, for a right-click.
+	///
+	/// **Because the row draws one verb and there are four.** Which one it
+	/// draws is chosen from a state that is itself as old as the last fetch:
+	/// `Push` on a row that is `1 ahead` is a claim about a tracking ref
+	/// somebody last refreshed on Tuesday. The pane had no way to fetch while
+	/// ahead at all — the button says `Push`, and `Fetch` is only ever the
+	/// primary when there is nothing to push or pull — so the answer to "am I
+	/// actually still ahead" was a terminal.
+	///
+	/// Built on demand: what is enabled depends on the state, and how long ago
+	/// the last fetch was is read when the menu is opened rather than kept.
+	var buildMenu: (() -> NSMenu?)?
+
+	override func menu(for event: NSEvent) -> NSMenu? { buildMenu?() }
+
 	init() { super.init(frame: .zero) }
 
 	required init?(coder: NSCoder) { fatalError("not used") }

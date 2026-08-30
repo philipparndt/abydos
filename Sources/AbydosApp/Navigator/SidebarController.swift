@@ -403,6 +403,12 @@ final class SidebarController: NSObject {
 			case "press":   pane.pressBannerForTesting(argument)
 			// What the `⋯` menu holds, and what one conflicted file's row
 			// offers — neither of which a shot of a closed menu can show.
+			// Every remote verb the repository row offers, and when it last
+			// fetched — the row draws one verb and there are four.
+			case "remote-menu":
+				print("REPOSITORY menu: " + pane.remoteMenuForTesting())
+			case "fetch":
+				pane.pressRefreshGlyphForTesting()
 			// What the editor is showing, so "a click on a row opens the file"
 			// is a claim a driven run can check rather than a screenshot.
 			case "tabs":
