@@ -361,6 +361,11 @@ final class SidebarController: NSObject {
 			// The dialog itself, on screen, for a screenshot of it.
 			case "ask-delete": pane.askAboutDeletingForTesting()
 			case "sheet":      print(pane.deleteSheetForTesting())
+			// Publishing with no remote, which is the case that used to fail in
+			// git's words instead of asking for one.
+			case "publish":    pane.pushSelectedForTesting()
+			case "remote":     pane.setRemoteForTesting()
+			case "type-remote": pane.typeRemoteForTesting(argument)
 			// Answering it — the step the two above skip between them. Not
 			// `press`, which the banner below has: a second one is a dead case.
 			case "sheet-press": print("BRANCHES "
