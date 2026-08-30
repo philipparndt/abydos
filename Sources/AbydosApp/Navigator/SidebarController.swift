@@ -930,7 +930,17 @@ final class SidebarController: NSObject {
 			identifier: "log",
 			symbol: "clock.arrow.circlepath"
 		)
-		giveTheEditorTheWindow()
+		// **It does not take the window.** It used to, on the argument that a
+		// graph and a diff want the room — which is true and is not this page's
+		// call to make. The panel's height and the tree's width are somebody's
+		// own arrangement, chosen for what they were doing a minute ago, and
+		// rearranging it to show them a log is the mode `giveTheEditorTheWindow`
+		// already refuses to undo on the way out. The commit page stopped doing
+		// this for the same reason; the log had been left behind.
+		//
+		// The two gestures that give it the room are the ones that always did:
+		// double-click the tab, or the View menu.
+		//
 		// Opened to be read, and read with the arrows: a page whose keyboard is
 		// still in whatever opened it needs a click before it can be walked.
 		DispatchQueue.main.async { [weak page] in page?.focusList() }

@@ -3791,8 +3791,13 @@ private final class BranchRowView: NSView {
 		RowMetrics.glyph(mark.name, colour: fade(mark.colour), in: bounds)
 
 		let colour = fade(branch.isCurrent ? Theme.current.gitAdded : Theme.current.sidebarText)
+		// **Bold, and green.** Semibold beside regular is a difference somebody
+		// has to look for, and the branch you are standing on is the one row in
+		// the list you should never have to look for. Through `uiFont` like
+		// every other weight in this pane, rather than `NSFont.systemFont`,
+		// which was this one row disagreeing about where a font comes from.
 		let font = branch.isCurrent
-			? NSFont.systemFont(ofSize: Theme.current.scaled(12), weight: .semibold)
+			? Theme.current.uiFont(12, weight: .bold)
 			: Theme.current.uiFont(12)
 
 		// **The trailing end of the row is a column**, right-aligned, so a list
@@ -3916,18 +3921,25 @@ private final class WorkingCopyRowView: ActionableRowView {
 		// Measured first: the row's own text has to be laid out inside what the
 		// action leaves, or the two are drawn over each other.
 		let taken = actionWidth
-		let after = RowMetrics.draw(
+		// **One line, so the two share a baseline.** Drawn separately they were
+		// each centred in the row, and a ten-and-a-half-point label beside a
+		// twelve-point name floats a fraction above where it belongs.
+		//
+		// **And `no changes` rather than `clean`.** One word in the place a
+		// verb would go reads as one: the row's own action sits at the other
+		// end of it and says `Review 3 changes…`, so a lone `clean` beside the
+		// name looked like the button that would make it so. Reported as
+		// exactly that. Two words that can only be a state cost four
+		// characters and cannot be misread.
+		RowMetrics.draw(
 			"Working copy",
 			font: Theme.current.uiFont(12, weight: .semibold),
 			colour: colour,
+			label: changed == 0 ? "no changes" : "\(changed)",
+			labelFont: Theme.current.uiFont(10.5),
+			labelColour: Theme.current.gitIgnored,
+			gap: Theme.current.scaled(8),
 			at: RowMetrics.textInset, in: bounds,
-			limit: bounds.maxX - RowMetrics.trailingInset - taken
-		)
-		RowMetrics.draw(
-			changed == 0 ? "clean" : "\(changed)",
-			font: Theme.current.uiFont(10.5),
-			colour: Theme.current.gitIgnored,
-			at: after + Theme.current.scaled(8), in: bounds,
 			limit: bounds.maxX - RowMetrics.trailingInset - taken
 		)
 		drawAction()

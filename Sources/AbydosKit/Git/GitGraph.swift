@@ -41,6 +41,14 @@ public enum GitGraph {
 		/// A merge whose second parent's own commits can be folded away, and
 		/// how many rows that would hide.
 		public let collapsible: Int
+		/// Which line of descent those folded commits belong to.
+		///
+		/// **Not the merge's own.** The fold marker took the colour of the row
+		/// it sits on, which is the branch being merged *into* — so a blue
+		/// mainline offered a blue button that folds away a red branch. The
+		/// button is about the thing it hides, so it is drawn in that thing's
+		/// colour. Nil where there is nothing to fold.
+		public let collapsedBranch: Int?
 		/// Whether this commit is the newest of its line of descent.
 		///
 		/// Nothing above it continues into its lane, so the line has to *start*
@@ -56,6 +64,7 @@ public enum GitGraph {
 			edges: [Edge],
 			width: Int,
 			collapsible: Int = 0,
+			collapsedBranch: Int? = nil,
 			isTip: Bool = false
 		) {
 			self.hash = hash
@@ -64,6 +73,7 @@ public enum GitGraph {
 			self.edges = edges
 			self.width = width
 			self.collapsible = collapsible
+			self.collapsedBranch = collapsedBranch
 			self.isTip = isTip
 		}
 	}
@@ -142,14 +152,21 @@ public enum GitGraph {
 				edges.append(Edge(from: join.lane, to: lane, branch: join.branch))
 			}
 
-			for parent in node.parents.dropFirst() {
+			// The line of descent the *second* parent goes down, which is the
+			// one a fold hides — worked out here because this is where it is
+			// decided, whether the lane already existed or is being opened.
+			var mergedBranch: Int?
+			for (offset, parent) in node.parents.dropFirst().enumerated() {
 				if let existing = lanes.firstIndex(where: { $0?.expects == parent }) {
-					edges.append(Edge(from: lane, to: existing, branch: lanes[existing]?.branch ?? 0))
+					let taken = lanes[existing]?.branch ?? 0
+					if offset == 0 { mergedBranch = taken }
+					edges.append(Edge(from: lane, to: existing, branch: taken))
 					continue
 				}
 				var slot = lanes.firstIndex { $0 == nil } ?? lanes.count
 				if slot == lanes.count { lanes.append(nil) }
 				lanes[slot] = (expects: parent, branch: nextBranch)
+				if offset == 0 { mergedBranch = nextBranch }
 				edges.append(Edge(from: lane, to: slot, branch: nextBranch))
 				nextBranch += 1
 				slot += 0
@@ -162,6 +179,7 @@ public enum GitGraph {
 				edges: edges,
 				width: lanes.count,
 				collapsible: mergedRowCount(of: node, nodes: nodes, positions: positions),
+				collapsedBranch: mergedBranch,
 				isTip: isTip
 			))
 		}

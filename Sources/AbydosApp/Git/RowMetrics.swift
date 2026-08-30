@@ -91,6 +91,58 @@ enum RowMetrics {
 		return size.width
 	}
 
+	/// Draws a name and a quieter label beside it, on one baseline.
+	///
+	/// **One string, not two draws.** Each `draw` centres what it is given in
+	/// the row, so two different point sizes come out on two different
+	/// baselines — a twelve-point name and a ten-and-a-half-point label beside
+	/// it, each centred, leaves the smaller one floating a fraction above where
+	/// it belongs. It is a small thing that reads as sloppiness rather than as
+	/// a mistake, which is why it took a screenshot to name.
+	///
+	/// Runs in one attributed string share a baseline because that is what text
+	/// layout does, so this is the fix and the arithmetic is nobody's.
+	///
+	/// The name is what gives way when there is not room for both: a label is a
+	/// word about the row and the name is the row.
+	@discardableResult
+	static func draw(
+		_ name: String,
+		font: NSFont,
+		colour: NSColor,
+		label: String,
+		labelFont: NSFont,
+		labelColour: NSColor,
+		gap: CGFloat,
+		at x: CGFloat,
+		in bounds: NSRect,
+		limit: CGFloat
+	) -> CGFloat {
+		guard limit > x else { return x }
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
+
+		let line = NSMutableAttributedString(string: name, attributes: [
+			.font: font, .foregroundColor: colour, .paragraphStyle: paragraph,
+		])
+		if !label.isEmpty {
+			// The gap as a space of its own width, so it belongs to the line
+			// and moves with the truncation rather than being a number added
+			// to a position that may not be there.
+			line.append(NSAttributedString(string: " ", attributes: [
+				.font: NSFont.systemFont(ofSize: gap), .paragraphStyle: paragraph,
+			]))
+			line.append(NSAttributedString(string: label, attributes: [
+				.font: labelFont, .foregroundColor: labelColour, .paragraphStyle: paragraph,
+			]))
+		}
+
+		let height = line.size().height
+		let width = min(line.size().width, limit - x)
+		line.draw(in: NSRect(x: x, y: bounds.midY - height / 2, width: width, height: height))
+		return x + width
+	}
+
 	/// Draws one line, cut short with an ellipsis rather than run past, and
 	/// says where it ended.
 	@discardableResult

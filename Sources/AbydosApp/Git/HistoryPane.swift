@@ -1542,12 +1542,18 @@ private final class CommitRowView: NSView {
 		// are: a plus for a branch that is folded, a minus for one that is not,
 		// which is how a tree says the same thing everywhere else.
 		guard graph.collapsible > 0 else { return }
+		// **In the colour of what it folds, not of the row it sits on.** The
+		// row is the branch being merged *into*, so a blue mainline offered a
+		// blue button that hides a red branch — and the one thing a fold marker
+		// has to say is which line it is about. Reported against exactly that
+		// pair of colours.
+		let folding = Self.colour(forBranch: graph.collapsedBranch ?? graph.branch)
 		// Through the same measurements the click is tested against, so the two
 		// cannot drift apart again.
 		let box = GraphMetrics.foldBox(
 			lane: graph.lane, isMerge: commit.isMerge, centreY: centreY
 		)
-		colour.withAlphaComponent(0.18).setFill()
+		folding.withAlphaComponent(0.18).setFill()
 		NSBezierPath(roundedRect: box, xRadius: 2, yRadius: 2).fill()
 
 		let marker = NSBezierPath()
@@ -1560,7 +1566,7 @@ private final class CommitRowView: NSView {
 		}
 		marker.lineWidth = Theme.current.scaled(1.3)
 		marker.lineCapStyle = .round
-		colour.setStroke()
+		folding.setStroke()
 		marker.stroke()
 	}
 

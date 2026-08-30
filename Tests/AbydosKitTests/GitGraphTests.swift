@@ -163,3 +163,39 @@ struct GitGraphTests {
 		#expect(GitGraph.lay(out: []).isEmpty)
 	}
 }
+
+/// Which line of descent a fold marker is about.
+///
+/// **Not the row it sits on.** The marker took the merge's own colour, which is
+/// the branch being merged *into* — so a blue mainline offered a blue button
+/// that hides a red branch, and the one thing the marker has to say is which
+/// line it is about.
+struct GraphFoldColourTests {
+	/// `merge` has two parents: `main2` carries the mainline on, `side` is the
+	/// branch it brought in. They are different lines of descent, and it is the
+	/// second that a fold hides.
+	@Test func aFoldIsAboutTheBranchThatWasMergedIn() {
+		let rows = GitGraph.lay(out: [
+			GitGraph.Node(hash: "merge", parents: ["main2", "side"]),
+			GitGraph.Node(hash: "side", parents: ["main1"]),
+			GitGraph.Node(hash: "main2", parents: ["main1"]),
+			GitGraph.Node(hash: "main1", parents: []),
+		])
+		let merge = rows.first { $0.hash == "merge" }
+		let side = rows.first { $0.hash == "side" }
+		#expect(merge?.collapsible == 1, "one commit came in on the second parent")
+		#expect(merge?.collapsedBranch != nil)
+		#expect(merge?.collapsedBranch == side?.branch, "the folded branch's own line")
+		#expect(merge?.collapsedBranch != merge?.branch, "and not the merge's")
+	}
+
+	/// Nothing to fold, nothing to colour.
+	@Test func anOrdinaryCommitHasNoFoldedBranch() {
+		let rows = GitGraph.lay(out: [
+			GitGraph.Node(hash: "b", parents: ["a"]),
+			GitGraph.Node(hash: "a", parents: []),
+		])
+		#expect(rows.allSatisfy { $0.collapsible == 0 })
+		#expect(rows.first?.collapsedBranch == nil)
+	}
+}

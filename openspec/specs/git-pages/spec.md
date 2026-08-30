@@ -138,9 +138,9 @@ page opened afresh starts collapsed.
 - **WHEN** the next message is written on the same page
 - **THEN** the description is still open
 
-### Requirement: The commit page does not take the window
+### Requirement: Neither page takes the window
 
-Opening the commit page SHALL NOT maximise the editor.
+Opening the commit page or the log page SHALL NOT maximise the editor.
 
 It did, along with the log, because it was unreadable small — and it was
 unreadable small for a reason this change removes rather than for what it holds:
@@ -149,8 +149,12 @@ diff on a short page. With the message two rows tall and under the diff, the pag
 reads at the size it is given, and taking somebody's tree and terminal away to
 show them a commit is a thing to do only when the page cannot be read otherwise.
 
-The log page and the review page are unchanged: a graph, a list of commits and a
-diff still want the room.
+**The log page stopped taking it too**, later and for the same reason. That a
+graph, a list of commits and a diff want the room is true, and it is not the
+page's call to make: the panel's height and the tree's width are somebody's own
+arrangement, chosen for what they were doing a minute ago. The review page is
+unchanged — it is opened to be worked through rather than glanced at, and it
+arrives from outside the window rather than from a row in it.
 
 **The page therefore opens at whatever share the editor has**, and where the
 terminal panel is holding most of the window that is a small page — measured on a
@@ -168,10 +172,11 @@ menu.
 - **THEN** the tree is still showing, and the page has the editor's share of the
   window
 
-#### Scenario: the log still takes it
+#### Scenario: the log does not take it either
 
+- **GIVEN** a window with the project tree showing and the terminal panel up
 - **WHEN** the log page is opened
-- **THEN** the editor takes the window, as it does today
+- **THEN** both are still showing, and the page has the editor's share
 
 ### Requirement: Return at the end of the summary opens the description
 
