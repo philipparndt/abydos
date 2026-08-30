@@ -210,10 +210,20 @@ public enum GitHistory {
 		return parseNameStatus(result.stdout)
 	}
 
+	/// - Note: **Git quotes a path it cannot write plainly**, and that is what
+	///   makes this line parseable at all: a name holding a tab arrives as
+	///   `"a\tb"` rather than as two fields, so splitting on tab is only safe
+	///   because the quoting happened. What was missing was the other half —
+	///   putting the name back. A repository with `farbe-ständer` in it listed
+	///   `"farbe-st\303\244nder/…"` in every file list drawn from this, and
+	///   every diff asked for by that name came back empty, because no such
+	///   path exists. Reported against a stash and true of a commit's files and
+	///   a pull request's just as much.
 	static func parseNameStatus(_ text: String) -> [GitCommitFile] {
 		var files: [GitCommitFile] = []
 		for line in text.split(separator: "\n") {
-			let fields = line.split(separator: "\t").map(String.init)
+			let fields = line.split(separator: "\t")
+				.map { GitWorkingCopy.unquote(String($0)) }
 			guard fields.count >= 2, let status = fields.first?.first else { continue }
 
 			switch status {

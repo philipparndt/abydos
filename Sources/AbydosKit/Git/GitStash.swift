@@ -213,7 +213,15 @@ public enum GitStash {
 			["ls-tree", "-r", "--name-only", "\(entry.commit)^3"], in: root
 		)
 		guard listed.exitCode == 0 else { return [] }
-		return listed.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+		// Unquoted, for the reason `parseNameStatus` records: git writes
+		// `"farbe-st\303\244nder/x"` for a name it cannot put down plainly, and
+		// a path in that spelling matches nothing — so the file would be listed
+		// under a name nobody has and its diff asked for by one git has never
+		// heard of.
+		return listed.stdout
+			.split(separator: "\n")
+			.map { GitWorkingCopy.unquote(String($0)) }
+			.filter { !$0.isEmpty }
 	}
 
 	// MARK: - Whether it would still go back
