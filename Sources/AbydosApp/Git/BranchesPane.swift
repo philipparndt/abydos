@@ -1377,8 +1377,29 @@ final class BranchesPane: NSView {
 	///
 	/// What to offer when the check says the apply would conflict: applied on
 	/// the commit it came from, it cannot.
+	/// Opens the stash under the pointer as a page.
+	var onReviewStash: ((GitStash.Entry) -> Void)?
+
+	@objc private func reviewStash() {
+		guard let entry = selectedStashes.first ?? clickedStash else { return }
+		onReviewStash?(entry)
+	}
+
+	/// Opens the stash page from a driven run, the way the menu item does.
+	func reviewStashForTesting(_ reference: String) -> String {
+		guard let entry = stashes.first(where: { $0.reference == reference }) else {
+			return "no stash called \(reference)"
+		}
+		onReviewStash?(entry)
+		return "reviewing \(reference)"
+	}
+
 	@objc private func branchFromStash() {
 		guard let entry = selectedStashes.first ?? clickedStash else { return }
+		branch(fromStash: entry)
+	}
+
+	func branch(fromStash entry: GitStash.Entry) {
 		promptForName(
 			title: "Branch from “\(entry.message)”",
 			message: "A branch at the commit the stash was made on, with the work put back on it. "
@@ -2521,7 +2542,16 @@ final class BranchesPane: NSView {
 	/// resumed or merely borrowed, which nothing here can know.
 	@objc private func applyStash() {
 		guard let entry = selectedStashes.first else { return }
+		apply(stash: entry)
+	}
 
+	/// **Named, rather than taken from the selection.** The stash page is not
+	/// the tree, and its verbs are about the stash it is showing — routing them
+	/// through `selectedStashes` made them act on whatever row happened to be
+	/// highlighted in a pane the page is not in, which for a collapsed Stashes
+	/// section is nothing at all. Driven: the press reached the pane and no
+	/// dialog appeared.
+	func apply(stash entry: GitStash.Entry) {
 		let alert = NSAlert()
 		alert.messageText = "Apply “\(entry.message)”?"
 		alert.informativeText = "The changes go back into the working copy. "
@@ -2541,7 +2571,11 @@ final class BranchesPane: NSView {
 	@objc private func dropStash() {
 		let entries = selectedStashes
 		guard !entries.isEmpty else { return }
+		drop(stashes: entries)
+	}
 
+	func drop(stashes entries: [GitStash.Entry]) {
+		guard !entries.isEmpty else { return }
 		let alert = NSAlert()
 		alert.messageText = entries.count == 1
 			? "Drop “\(entries[0].message)”?"
@@ -3288,6 +3322,16 @@ extension BranchesPane: NSMenuDelegate {
 
 		let stashes = selectedStashes.isEmpty ? [clickedStash].compactMap { $0 } : selectedStashes
 		if !stashes.isEmpty {
+			// **First, because looking comes before deciding.** The tree opens
+			// a stash to a list of file names and stops there, so the only way
+			// to find out what a week-old one held was to apply it over a clean
+			// working copy — the one move somebody with work in progress cannot
+			// make. It is the same word the working copy's row uses, for the
+			// same page shape.
+			menu.addItem(item(
+				"Review\u{2026}", #selector(reviewStash), enabled: stashes.count == 1
+			))
+			menu.addItem(.separator())
 			menu.addItem(item(
 				"Apply…", #selector(applyStash), enabled: stashes.count == 1
 			))
