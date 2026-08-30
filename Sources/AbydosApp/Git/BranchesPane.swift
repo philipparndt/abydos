@@ -1518,6 +1518,32 @@ final class BranchesPane: NSView {
 	/// checking: `NSAlert` lays its accessory out from the frame it is given
 	/// rather than the view's intrinsic size, so a checkbox at zero by zero is
 	/// a control that is there and cannot be seen.
+	/// Opens the stash dialog, the way the working copy's menu item does.
+	func stashWorkingCopyForTesting() { stashWorkingCopy() }
+
+	/// Fills the stash dialog in and presses Stash. `untracked: false` unticks
+	/// the box first, which is the half a screenshot cannot show.
+	@discardableResult
+	func answerStashForTesting(_ name: String, untracked: Bool) -> String {
+		guard let sheet = window?.attachedSheet else { return "no sheet" }
+		var field: NSTextField?
+		var box: NSButton?
+		func walk(_ view: NSView) {
+			if let button = view as? NSButton, button.allowsMixedState || button.title.hasPrefix("Include") {
+				box = button
+			}
+			if let text = view as? NSTextField, text.isEditable, field == nil { field = text }
+			view.subviews.forEach(walk)
+		}
+		sheet.contentView.map(walk)
+		field?.stringValue = name
+		if !untracked { box?.state = .off }
+		let pressed = BranchDeletion.pressSheetButtonForTesting("Stash", in: window)
+		return "field=\(field == nil ? "missing" : "found") "
+			+ "box=\(box.map { $0.state == .on ? "on" : "off" } ?? "missing") "
+			+ "press=\(pressed)"
+	}
+
 	func deleteSheetForTesting() -> String {
 		guard let sheet = window?.attachedSheet else { return "SHEET none" }
 		var lines: [String] = []
@@ -1944,6 +1970,70 @@ final class BranchesPane: NSView {
 			window.makeFirstResponder(field)
 		} else {
 			act(alert.runModal())
+		}
+	}
+
+	/// Puts the whole working copy aside, under a name.
+	///
+	/// **Untracked files are included by default**, which is not git's default
+	/// and is deliberate. `git stash` without `--include-untracked` leaves new
+	/// files where they are, so a work tree that was meant to be clean still has
+	/// them in it — and the file somebody has just written, which is the one they
+	/// are most likely to be putting aside, is exactly the kind that is still
+	/// untracked. The box is there because the other answer is legitimate:
+	/// build output is untracked too, and sweeping it into a stash is a slow
+	/// surprise.
+	@objc private func stashWorkingCopy() {
+		let count = working.staged.count + working.unstaged.count
+		guard count > 0 else { return }
+
+		let alert = NSAlert()
+		alert.messageText = "Stash \(count) change\(count == 1 ? "" : "s")"
+		alert.informativeText = "They come out of the working copy and wait under Stashes, "
+			+ "under whatever this says."
+		alert.addButton(withTitle: "Stash")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+		field.placeholderString = "What this is"
+		field.usesSingleLineMode = true
+		field.cell?.wraps = false
+		field.cell?.isScrollable = true
+
+		let untracked = NSButton(
+			checkboxWithTitle: "Include untracked files", target: nil, action: nil
+		)
+		untracked.state = .on
+		untracked.toolTip = "New files git has never seen. Without this they stay "
+			+ "in the working copy."
+
+		let stack = NSStackView(views: [field, untracked])
+		stack.orientation = .vertical
+		stack.alignment = .leading
+		stack.spacing = 8
+		stack.frame = NSRect(x: 0, y: 0, width: 320, height: 56)
+		// An explicit width, or the stack gives each row the width of its own
+		// text and the field has no room to type in — the fault the remote
+		// dialog had.
+		field.translatesAutoresizingMaskIntoConstraints = false
+		field.widthAnchor.constraint(equalToConstant: 320).isActive = true
+		alert.accessoryView = stack
+
+		let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			let message = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+			let including = untracked.state == .on
+			self.run {
+				await GitStash.push(
+					in: self.root, message: message, includeUntracked: including
+				)
+			}
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: handle)
+			window.makeFirstResponder(field)
+		} else {
+			handle(alert.runModal())
 		}
 	}
 
@@ -2625,6 +2715,15 @@ extension BranchesPane: NSMenuDelegate {
 
 		if case .workingCopy = clickedRow {
 			menu.addItem(item(commitEntryTitle, #selector(openCommitPage)))
+			// **Put aside rather than committed.** The other thing anybody does
+			// with a working copy they are not ready to commit, and until now it
+			// was reachable only from the commit page — a trip to a tab to press
+			// something that does not commit anything.
+			menu.addItem(item(
+				"Stash Changes\u{2026}",
+				#selector(stashWorkingCopy),
+				enabled: !working.isEmpty
+			))
 			return
 		}
 
