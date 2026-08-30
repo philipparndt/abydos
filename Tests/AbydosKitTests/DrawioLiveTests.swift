@@ -15,6 +15,9 @@ import Testing
 /// it is a fact about the runner rather than about the code.
 @MainActor
 struct DrawioLiveTests {
+	/// A suite is not somebody waiting at a screen — see `RenderPatience`.
+	init() { RenderPatience.raise() }
+
 	private func canDraw() async -> Bool {
 		let file = try? DrawioTests.fixture("plain")
 		guard let file, let document = Drawio.read(file) else { return false }

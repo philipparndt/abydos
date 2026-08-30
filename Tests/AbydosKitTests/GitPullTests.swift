@@ -201,3 +201,57 @@ struct GitPullTests {
 		#expect(GitPull.refusal(from: result) == nil)
 	}
 }
+
+/// When the remote was last asked — the date every count on the repository row
+/// is really a statement about.
+@Suite(.serialized)
+struct GitLastFetchTests {
+	private func clone() async throws -> (origin: URL, work: URL) {
+		let base = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("last-fetch-\(UUID().uuidString)")
+		let origin = base.appendingPathComponent("origin.git")
+		let work = base.appendingPathComponent("work")
+		try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+		_ = await GitRepository.run(["init", "-q", "--bare", "-b", "main", origin.path], in: base)
+		_ = await GitRepository.run(["clone", "-q", origin.path, work.path], in: base)
+		for arguments in [
+			["config", "user.email", "t@example.com"],
+			["config", "user.name", "T"],
+		] {
+			_ = await GitRepository.run(arguments, in: work)
+		}
+		try "one\n".write(to: work.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+		_ = await GitRepository.run(["add", "-A"], in: work)
+		_ = await GitRepository.run(["commit", "-qm", "first"], in: work)
+		_ = await GitRepository.run(["push", "-q", "origin", "main"], in: work)
+		return (origin, work)
+	}
+
+	/// A clone has never fetched — the ref it has came down with it — so the
+	/// row has nothing to date its counts by, and says so rather than guessing.
+	@Test func aFreshCloneHasNeverFetched() async throws {
+		let (_, work) = try await clone()
+		#expect(await GitPull.lastFetch(in: work) == nil)
+	}
+
+	/// **The claim is that it moved, not when to.** An earlier version of this
+	/// asserted the stamp was within a minute of the fetch, which is a wall
+	/// clock bound on a loaded machine dressed up as a correctness check —
+	/// `TimingBoundTests` said so, and it was right. Nil before and a date
+	/// after is the whole of what the row needs to be true.
+	@Test func fetchingStampsIt() async throws {
+		let (_, work) = try await clone()
+		#expect(await GitPull.lastFetch(in: work) == nil)
+
+		_ = await GitPull.fetch(in: work)
+		#expect(await GitPull.lastFetch(in: work) != nil)
+	}
+
+	/// A directory that is not a work tree answers nothing rather than throwing.
+	@Test func somewhereThatIsNotARepositoryAnswersNothing() async throws {
+		let nowhere = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("not-a-repository-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: nowhere, withIntermediateDirectories: true)
+		#expect(await GitPull.lastFetch(in: nowhere) == nil)
+	}
+}

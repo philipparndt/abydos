@@ -123,8 +123,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func makeDebug() -> DebugCoordinator {
 		let coordinator = DebugCoordinator(editor: editor, panel: bottomPanel)
 		coordinator.debugSession = { [weak self] in self?.bottomPanel.activeDebugSession }
+		coordinator.projectRoot = { [weak self] in self?.project?.root }
 		coordinator.hostWindow = { [weak self] in self?.window }
 		coordinator.onRememberBreakpoints = { [weak self] in self?.rememberBreakpoints() }
+		coordinator.onBreakpointsChanged = { [weak self] in self?.refreshBreakpointList() }
 		coordinator.onDebugContinue = { [weak self] in self?.debugContinue($0) }
 		coordinator.onDebugStepOver = { [weak self] in self?.debugStepOver($0) }
 		coordinator.onDebugStepInto = { [weak self] in self?.debugStepInto($0) }
@@ -215,6 +217,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		control.onStop = { [weak self] in self?.run.stopRunning() }
 		control.onProfile = { [weak self] in self?.run.profileSelectedConfiguration() }
 		control.onCoverage = { [weak self] in self?.run.runSelectedWithCoverage() }
+		// The ways of starting a debug session that used to live on the rail's
+		// ladybird. The bodies did not move — only which control asks.
+		control.onDebugExecutable = { [weak self] in self?.debugExecutable(nil) }
+		control.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
+		control.onDebugGoPackage = { [weak self] in self?.goDebug(nil) }
+		control.isGoProject = { [weak self] in
+			guard let root = self?.project?.root else { return false }
+			return GoTooling.isGoModule(root) || !RunConfigurationDiscovery
+				.searchDirectories(from: root)
+				.filter(GoTooling.isGoModule)
+				.isEmpty
+		}
 		control.onChooseConfiguration = { [weak self, weak control] rect in
 			guard let control else { return }
 			self?.showConfigurationMenu(from: rect, in: control)
@@ -286,6 +300,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	// here, one line each, and the work is the sidebar's.
 	@objc func showLogPage(_ sender: Any?) { sidebar.showLogPage(scopedTo: nil) }
 	@objc func showCommitPage(_ sender: Any?) { sidebar.showCommitPage(carrying: nil) }
+	@objc func showEstatePage(_ sender: Any?) { sidebar.showEstatePage() }
 
 	/// Flips how the git page arranges a commit's files, and ticks itself.
 	@objc func toggleCommitFilesByFolder(_ sender: Any?) {
@@ -391,7 +406,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// it happens to come into existence.
 	/// The whole of HEAD and not just its name: a branch with nothing committed
 	/// on it is drawn differently, and the capsule cannot tell from a string.
-	var branchRead: Task<GitRepository.Head?, Never>?
+	var branchRead: Task<GitRepository.HeadState?, Never>?
 	var toolStripWidthConstraint: NSLayoutConstraint!
 
 	var navigatorWidth: CGFloat = 260
@@ -600,8 +615,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// terminal is exactly the case this watcher exists for.
 				Task { @MainActor in
 					await current.loadGit()
-					let head = await current.git?.currentHead()
-					self.titlebar.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
+					let head = await current.git?.currentHeadState()
+					self.titlebar.setHead(head)
 					self.titlebar.relayout()
 				}
 			}

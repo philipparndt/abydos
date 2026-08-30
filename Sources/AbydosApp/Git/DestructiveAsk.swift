@@ -40,10 +40,20 @@ enum DestructiveAsk {
 		in root: URL,
 		over window: NSWindow?,
 		at moment: Date = Date(),
-		remembered: Bool = false,
+		remembered: Bool? = nil,
 		then work: @escaping Work
 	) {
 		let ask = GitDestructive.ask(before: operation, at: moment)
+
+		// **Read for this repository, not for the app.** The checkbox below has
+		// been drawn since this was written and its state was never read back,
+		// so nothing was ever remembered and ticking it did nothing. Making it
+		// work and keying it per repository are the same change: in an estate,
+		// an answer given while looking at `svc-3` would otherwise become a
+		// decision about two hundred repositories, which is a scope nobody
+		// consented to. See `RememberedChoice`.
+		let remembered = remembered
+			?? RememberedChoice.isRemembered(operation: operation.kind, in: root)
 
 		// A remembered answer skips the question — and may only ever be the
 		// choice that loses nothing, which `Choice.mayBeRemembered` is the one
@@ -71,6 +81,14 @@ enum DestructiveAsk {
 		let answer: (NSApplication.ModalResponse) -> Void = { response in
 			let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
 			guard ask.choices.indices.contains(index) else { return }
+			// Recorded only when the safe answer was the one taken. Ticking the
+			// box and then pressing the destructive button must not file the
+			// destructive answer away — which is what reading the box without
+			// looking at the answer would do.
+			if index == 0, alert.suppressionButton?.state == .on,
+				ask.choices.first?.mayBeRemembered == true {
+				RememberedChoice.remember(operation: operation.kind, in: root)
+			}
 			perform(ask, index: index, in: root, work: work)
 		}
 
@@ -132,12 +150,89 @@ enum DestructiveAsk {
 	/// counts the untracked files inside it, which is better than anything a
 	/// general dialog could say, so what it borrows is the *insurance* and not
 	/// the wording.
+	/// - Parameter announcing: whether to say where it went. An estate
+	///   operation says it once for the whole run instead — see `insureEstate`.
 	@discardableResult
-	static func insureWorkingCopy(in root: URL, at moment: Date = Date()) async -> String? {
+	static func insureWorkingCopy(
+		in root: URL, at moment: Date = Date(), announcing: Bool = true
+	) async -> String? {
 		let name = GitBackup.name(for: "wip", at: moment)
 		guard let kept = await make(name, in: root) else { return nil }
-		said(kept, in: root)
+		if announcing { said(kept, in: root) }
 		return kept
+	}
+
+	/// What one repository's backup was called, and where it was made.
+	struct EstateBackup: Sendable, Equatable {
+		let name: String
+		let root: URL
+		/// The backup branch, or nil where there was nothing to keep.
+		let backup: String?
+	}
+
+	/// Insures every repository an estate operation will touch, before any of
+	/// it is touched.
+	///
+	/// **All of them first, and not one before each.** A run that backs up and
+	/// acts, repository by repository, has no way back from a failure at the
+	/// hundred and fortieth: the first hundred and thirty-nine have moved and
+	/// only some of them were recorded. Backing everything up first means the
+	/// way back exists for the whole operation before any of it happens.
+	///
+	/// Silently, because six repositories would otherwise be six toasts — the
+	/// same failure as asking six questions, in another form. The run says it
+	/// once, afterwards, naming every ref.
+	static func insureEstate(
+		_ groups: [GitEstate.PathGroup], at moment: Date = Date()
+	) async -> [EstateBackup] {
+		var made: [EstateBackup] = []
+		for group in groups {
+			let name = group.submodule?.path ?? "."
+			made.append(EstateBackup(
+				name: name,
+				root: group.root,
+				backup: await insureWorkingCopy(in: group.root, at: moment, announcing: false)
+			))
+		}
+		return made
+	}
+
+	/// Says what an estate operation did, per repository, once.
+	///
+	/// **A partial run is reported as partial.** Which repositories changed,
+	/// which did not, and every backup ref that leads back — including for the
+	/// ones left alone, because "nothing happened here" is only reassuring if
+	/// you can tell it from "nothing was recorded here".
+	static func sayWhatHappened(
+		_ verb: String, _ outcomes: [GitEstateOutcome], insured: [EstateBackup]
+	) {
+		guard !outcomes.isEmpty else { return }
+		let backups = Dictionary(
+			insured.compactMap { made in made.backup.map { (made.name, $0) } },
+			uniquingKeysWith: { first, _ in first }
+		)
+
+		var lines: [String] = []
+		for outcome in outcomes {
+			let ref = backups[outcome.name].map { " · kept on \($0)" } ?? ""
+			switch outcome.result {
+			case .done:               lines.append("\(outcome.name): \(verb)\(ref)")
+			case .skipped(let why):   lines.append("\(outcome.name): nothing to do — \(why)\(ref)")
+			case .failed(let why):    lines.append("\(outcome.name): did not \(verb) — \(why)\(ref)")
+			}
+		}
+
+		let failed = outcomes.filter(\.didFail).count
+		let changed = outcomes.filter(\.didHappen).count
+		let title = failed > 0
+			? "\(changed) of \(outcomes.count) repositories \(verb), \(failed) did not"
+			: "\(changed) repositories \(verb)"
+
+		Toast.post(Toast(
+			kind: failed > 0 ? .warning : .information,
+			title: title,
+			detail: lines.joined(separator: "\n")
+		))
 	}
 
 	/// Points a branch under `backup/` at what is about to be lost.

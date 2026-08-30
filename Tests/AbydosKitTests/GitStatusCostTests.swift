@@ -124,7 +124,7 @@ struct GitStatusCostTests {
 		let repo = GitRepository(root: root)
 		// Before any refresh there is nothing to know, and saying "detached" is
 		// how every caller already reads "no branch name to show".
-		#expect(repo.lastKnownHead == .detached)
+		#expect(repo.lastKnownHead == .detached(nil), "and no commit either")
 
 		await repo.refresh()
 		let onTheActor = await repo.currentHead().name

@@ -117,6 +117,20 @@ A killed agent destroyed the shared server twice and stopped other agents dead.
 The sessions named `abydos`, `platform`, `backlog-spec` and `check` are
 somebody's.
 
+## Never `pkill` on the app's own path
+
+A driven run is started from `build/Abydos.app/Contents/MacOS/Abydos`, and the
+one somebody is *using* is `/Applications/Abydos.app/Contents/MacOS/Abydos`. A
+`pkill -f "Abydos.app/Contents/MacOS/Abydos"` matches both, and the second one
+is a window with somebody's work in it — it went away mid-afternoon with no
+crash report, because there was no crash.
+
+Kill by what only a driven run has: the pid the launch returned, or a pattern
+carrying the flags it was launched with — `pkill -f "MacOS/Abydos --open"`.
+Check what a pattern catches before it kills:
+
+    pgrep -fl "<pattern>"
+
 ## Guard every app launch
 
 Before driving the app, assert it opened the project you asked for. `--open` is a

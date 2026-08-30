@@ -753,7 +753,13 @@ final class BottomPanel: NSView {
 		showDebug()?.showConsole()
 	}
 
-	/// Brings an existing debug session forward, or says there is none.
+	/// Brings the debug pane forward, opening an empty one if there is none.
+	///
+	/// **It used to answer nil**, because a pane was built only by a session
+	/// starting — so the rail's ladybird with nothing running had nothing to
+	/// open, and asked how to start a session instead. A pane with no session
+	/// shows the breakpoints the project has, which outlive every session and
+	/// until now could only be read one gutter at a time.
 	@discardableResult
 	func showDebug() -> DebugPane? {
 		for (index, session) in sessions.enumerated() {
@@ -762,7 +768,8 @@ final class BottomPanel: NSView {
 				return pane
 			}
 		}
-		return nil
+		guard let root = workingDirectory else { return nil }
+		return installDebugPane(session: nil, root: root, focus: true)
 	}
 
 	/// Draws the debug toolbar to a PNG, if there is one.
@@ -2296,17 +2303,7 @@ final class BottomPanel: NSView {
 		}
 
 		let session = DebugSession(projectRoot: root)
-		let pane = DebugPane(session: session, projectRoot: root)
-		pane.onNavigate = { [weak self] url, line in
-			self?.onOpenFinding?(url, line)
-		}
-		// Its tab wears "running" for as long as the program does, the way a
-		// run's does — the debugger is the pane you want to find again.
-		pane.onRunningChanged = { [weak self] in
-			self?.refreshTabs()
-		}
-		pane.onRunAgain = { [weak self] in self?.onRunAgain?() }
-		pane.onDebugAgain = { [weak self] in self?.onDebugAgain?() }
+		let pane = installDebugPane(session: session, root: root, focus: false)
 		// Straight to the pane's console: `debugOutput` was a hook nobody ever
 		// assigned, so every build error and every line the program printed was
 		// dropped on the floor.
@@ -2331,14 +2328,52 @@ final class BottomPanel: NSView {
 		session.adopt(breakpoints)
 
 
+		return session
+	}
+
+	/// Puts a debug pane in the panel, with a session behind it or without one.
+	///
+	/// Both callers want the same pane: the same tab, the same navigation out of
+	/// a stack frame, the same run-again buttons, bound to the same sources. What
+	/// differs is whether a program is being debugged, and that is the pane's
+	/// `session` — nil for one opened to read its breakpoints.
+	@discardableResult
+	private func installDebugPane(session: DebugSession?, root: URL, focus: Bool) -> DebugPane {
+		let pane = DebugPane(session: session, projectRoot: root)
+		pane.onNavigate = { [weak self] url, line in
+			self?.onOpenFinding?(url, line)
+		}
+		// Its tab wears "running" for as long as the program does, the way a
+		// run's does — the debugger is the pane you want to find again.
+		pane.onRunningChanged = { [weak self] in
+			self?.refreshTabs()
+		}
+		pane.onRunAgain = { [weak self] in self?.onRunAgain?() }
+		pane.onDebugAgain = { [weak self] in self?.onDebugAgain?() }
+
 		let panelSession = Session(title: "Debug", kind: .debug(pane))
-		// Bound to the sources it is stopped in.
+		// Bound to the sources it is stopped in — or, with nothing running, to
+		// the sources whose breakpoints it is showing.
 		panelSession.projectRoot = root
 		panelSession.column = focusedColumn
 		sessions.append(panelSession)
-		activate(panelSession, focus: false)
-		return session
+		activate(panelSession, focus: focus)
+		onDebugPaneOpened?(pane)
+		return pane
 	}
+
+	/// How many debug panes the panel holds, for the claim that a session
+	/// starting takes over an empty pane rather than opening a second one.
+	var debugPaneCountForTesting: Int {
+		sessions.filter { if case .debug = $0.kind { return true }; return false }.count
+	}
+
+	/// A debug pane has been put in the panel.
+	///
+	/// The window wires its breakpoint list from here: the list's verbs belong to
+	/// `DebugCoordinator`, which the panel has no business knowing about, and a
+	/// pane can now appear without a session having started it.
+	var onDebugPaneOpened: ((DebugPane) -> Void)?
 
 	/// Forwarded debuggee output.
 	var debugOutput: ((String) -> Void)?

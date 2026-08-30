@@ -178,6 +178,45 @@ final class PullRequestReview {
 		return page
 	}
 
+	/// Opens a pull request belonging to one repository of an estate.
+	///
+	/// **Not `open(_:)` with a different root.** Everything that page offers
+	/// beyond reading — checking the branch out beside the project, finishing
+	/// the review, remembering which files were ticked — is wired to
+	/// `repositoryRoot()`, which is the project. For a submodule's pull request
+	/// those would act on the superproject: a checkout would make a worktree of
+	/// the wrong repository for a branch it does not have, which is worse than
+	/// not offering it.
+	///
+	/// So this opens the page that reads the change, and offers nothing that
+	/// would act on the wrong repository. Reviewing a submodule's pull request
+	/// with the full flow means opening that submodule as a project, which is
+	/// what the estate overview's other verb does.
+	@discardableResult
+	func openFromEstate(number: Int, in root: URL) -> Bool {
+		let identifier = "pull-request-\(number)"
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let reply = await GitHubPullRequests.view(number: number, in: root)
+			guard let request = reply.value else {
+				Toast.post(
+					"Could not open #\(number)",
+					detail: reply.trouble ?? "no such pull request",
+					kind: .warning
+				)
+				return
+			}
+			let page = (self.existingPage(identifier) as? PullRequestPage)
+				?? PullRequestPage(root: root, request: request)
+			page.onSubmitted = { [weak self] title, detail in self?.notify(title, detail) }
+			self.openPage(
+				page, "PR #\(number)", identifier, "arrow.trianglehead.pull"
+			)
+			DispatchQueue.main.async { [weak page] in page?.focusList() }
+		}
+		return true
+	}
+
 	/// The page for a pull request, while one is open.
 	func page(of number: Int) -> PullRequestPage? { pages[number]?.page }
 

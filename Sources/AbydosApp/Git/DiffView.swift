@@ -620,16 +620,24 @@ final class DiffView: NSView {
 
 		let count = selection.count
 		let suffix = count == 1 ? "" : " (\(count))"
-		let apply = NSMenuItem(
-			title: (isStaged ? "Unstage Selected Lines" : "Stage Selected Lines") + suffix,
-			action: #selector(applySelection),
-			keyEquivalent: ""
-		)
-		apply.target = self
-		menu.addItem(apply)
+		// **Only what this view has somewhere to send.** These items used to be
+		// added whatever the view had been told, and a diff whose owner had not
+		// wired them up offered "Stage Selected Lines", enabled, over a closure
+		// nobody had set — which is what the commit page did: fifteen lines
+		// selected, the item pressed, and the working copy exactly as it was.
+		// A missing item is a thing somebody can see; a dead one is not.
+		if onApplySelection != nil {
+			let apply = NSMenuItem(
+				title: (isStaged ? "Unstage Selected Lines" : "Stage Selected Lines") + suffix,
+				action: #selector(applySelection),
+				keyEquivalent: ""
+			)
+			apply.target = self
+			menu.addItem(apply)
+		}
 
 		if !isStaged, onStashSelection != nil {
-			menu.addItem(.separator())
+			if !menu.items.isEmpty { menu.addItem(.separator()) }
 			let stash = NSMenuItem(
 				title: "Stash Selected Lines" + suffix,
 				action: #selector(stashSelection),
@@ -639,8 +647,8 @@ final class DiffView: NSView {
 			menu.addItem(stash)
 		}
 
-		if !isStaged {
-			menu.addItem(.separator())
+		if !isStaged, onDiscardSelection != nil {
+			if !menu.items.isEmpty { menu.addItem(.separator()) }
 			let discard = NSMenuItem(
 				title: "Discard Selected Lines" + suffix,
 				action: #selector(discardSelection),
@@ -649,7 +657,7 @@ final class DiffView: NSView {
 			discard.target = self
 			menu.addItem(discard)
 		}
-		return menu
+		return menu.items.isEmpty ? nil : menu
 	}
 
 	/// What a read-only diff offers: a remark on the lines under the pointer,
@@ -748,6 +756,33 @@ final class DiffView: NSView {
 		}
 		selectedComment = nil
 		needsDisplay = true
+	}
+
+	/// What the menu over a selection would offer, and whether pressing it
+	/// would reach anything.
+	///
+	/// **The second half is the claim.** The menu is built here for any diff
+	/// that is not read-only, so its items appear whether or not the view has
+	/// been told what to do with them — which is how the commit page came to
+	/// offer "Stage Selected Lines" over its own diff and do nothing at all
+	/// when it was pressed.
+	func verbsForTesting() -> String {
+		"readOnly=\(isReadOnly)"
+			+ " apply=\(onApplySelection == nil ? "none" : "wired")"
+			+ " discard=\(onDiscardSelection == nil ? "none" : "wired")"
+			+ " stash=\(onStashSelection == nil ? "none" : "wired")"
+	}
+
+	/// Selects the first `count` lines that can be staged and applies them, the
+	/// way the menu item does.
+	func applyFirstLinesForTesting(_ count: Int) -> String {
+		let selectable = patch.selectableIndices().prefix(count)
+		guard !selectable.isEmpty else { return "nothing selectable" }
+		selection = Set(selectable)
+		needsDisplay = true
+		guard onApplySelection != nil else { return "\(selectable.count) selected, nothing wired" }
+		onApplySelection?(selection)
+		return "\(selectable.count) selected, applied"
 	}
 
 	/// The remark the selection is on, if it is on one.

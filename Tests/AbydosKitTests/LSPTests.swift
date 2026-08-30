@@ -562,7 +562,16 @@ struct LSPShutdownTests {
 		await #expect(throws: LSPClient.ClientError.self) {
 			_ = try await client.request("textDocument/hover", nil, timeout: 1)
 		}
-		#expect(Date().timeIntervalSince(began) < 30, "the deadline, not the server, ended the wait")
+		// The throw above is the claim; this says which mechanism threw. Guarded
+		// for load, because a machine with nothing left to give can miss any
+		// deadline — this went red at 27 runnable threads a core with the
+		// client working exactly as it should.
+		if Stopwatch.mayClassify("LSP", "what ended the wait") {
+			#expect(
+				Date().timeIntervalSince(began) < 30,
+				"the deadline, not the server, ended the wait"
+			)
+		}
 	}
 }
 
@@ -1234,7 +1243,10 @@ struct LanguageServerEnvironmentTests {
 			workingDirectory: nil
 		)
 
-		#expect(await said.wait(seconds: 3)?.contains("cannot find the toolchain") == true)
+		// `Patience`, not three: a wait is a hang detector, so waiting longer
+		// costs a quiet machine nothing and stops a loaded one being red.
+		#expect(await said.wait(seconds: Patience.seconds)?
+			.contains("cannot find the toolchain") == true)
 	}
 }
 

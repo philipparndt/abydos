@@ -43,12 +43,6 @@ final class ToolWindowBar: NSView {
 	/// Whether anything is being debugged, which decides whether the button
 	/// shows the panel or offers ways to start.
 	var isDebugRunning: (() -> Bool)?
-	var onDebugGoPackage: (() -> Void)?
-	var onDebugExecutable: (() -> Void)?
-	var onAttachToProcess: (() -> Void)?
-	/// Whether this project looks like a Go module, so the Go entry is offered
-	/// first rather than at all times.
-	var isGoProject: (() -> Bool)?
 
 	private var projectButton: StripButton!
 	/// One button for the whole repository.
@@ -165,39 +159,18 @@ final class ToolWindowBar: NSView {
 		menu.popUp(positioning: nil, at: origin, in: reviewButton)
 	}
 
-	/// A running session is brought forward; otherwise the button offers the
-	/// ways to start one.
+	/// The debug pane, opened. Nothing else.
 	///
-	/// It used to start a Go session outright, which in a project that is not
-	/// Go produced an error about a missing go.mod — an answer to a question
-	/// nobody asked.
+	/// **It used to ask how to start a session** — Debug Go Package, Debug
+	/// Executable…, Attach to Process… — because with nothing running there was
+	/// no debug pane to open: the pane was built only by a session starting. One
+	/// button in a group of four behaved unlike the other three, and the question
+	/// it asked belongs to the run control, which is the thing in the window
+	/// whose subject is starting programs. A pane with no session opens on its
+	/// breakpoints now, so there is always something to show.
 	private func debugButtonPressed() {
-		if isDebugRunning?() == true {
-			onToggleDebug?()
-			return
-		}
-
-		let menu = NSMenu()
-		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
-			let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
-			entry.target = self
-			return entry
-		}
-
-		// Go first where the project is Go, since that is then the likely one.
-		if isGoProject?() == true {
-			menu.addItem(item("Debug Go Package", #selector(debugGoClicked)))
-		}
-		menu.addItem(item("Debug Executable\u{2026}", #selector(debugExecutableClicked)))
-		menu.addItem(item("Attach to Process\u{2026}", #selector(attachClicked)))
-
-		let origin = NSPoint(x: debugButton.bounds.maxX + Theme.current.scaled(4), y: 0)
-		menu.popUp(positioning: nil, at: origin, in: debugButton)
+		onToggleDebug?()
 	}
-
-	@objc private func debugGoClicked() { onDebugGoPackage?() }
-	@objc private func debugExecutableClicked() { onDebugExecutable?() }
-	@objc private func attachClicked() { onAttachToProcess?() }
 
 	@objc private func reviewBranchClicked() { onReviewBranch?() }
 	@objc private func reviewUncommittedClicked() { onReviewUncommitted?() }

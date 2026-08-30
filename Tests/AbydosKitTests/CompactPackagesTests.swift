@@ -96,12 +96,19 @@ struct CompactPackagesTests {
 		let excluded = try #require(tree.children.first)
 		try #require(excluded.isExcluded)
 
-		FileNode.directoryReadsForTesting = 0
+		// **Counted on this tree, not on the process.**
+		// `FileNode.directoryReadsForTesting` is one global counter, so any
+		// other test listing a directory at the same moment made this red — the
+		// suite runs in parallel, and the claim has nothing to do with what any
+		// other test is doing. `loadedNodeCount` is this tree's own state and
+		// says the same thing more precisely: folding an excluded directory must
+		// not load a single node anywhere, not merely none inside it.
+		let loadedBefore = tree.loadedNodeCount
 		_ = tree.compactedChildren
 		#expect(!excluded.hasLoadedChildren, "nothing inside it should have been listed")
 		#expect(
-			FileNode.directoryReadsForTesting == 0,
-			"\(FileNode.directoryReadsForTesting) directories were listed to fold an excluded one"
+			tree.loadedNodeCount == loadedBefore,
+			"\(tree.loadedNodeCount - loadedBefore) nodes were loaded to fold an excluded one"
 		)
 	}
 
@@ -366,10 +373,13 @@ struct CompactPackagesTests {
 		}
 		walk(tree)
 
-		FileNode.directoryReadsForTesting = 0
+		// This tree's own state rather than the process-wide counter, for the
+		// reason the other one in this file gives: the suite is parallel, and a
+		// global that any test may bump cannot carry a claim about this one.
+		let loadedBefore = tree.loadedNodeCount
 		tree.reloadPreservingIdentity()
 		walk(tree)
-		let listed = FileNode.directoryReadsForTesting
-		#expect(listed == 0, "nothing moved, so nothing should have been listed again — \(listed) were")
+		let grew = tree.loadedNodeCount - loadedBefore
+		#expect(grew == 0, "nothing moved, so nothing should have been listed again — \(grew) were")
 	}
 }

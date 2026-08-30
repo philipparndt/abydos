@@ -10,12 +10,24 @@ final class FindBar: NSView {
 	var onNext: (() -> Void)?
 	var onPrevious: (() -> Void)?
 	var onClose: (() -> Void)?
+	/// Replace the match the bar calls current, then step by this much — forward
+	/// for Return and the button, backward for ⇧Return, the way the query field's
+	/// Return and ⇧Return already differ.
+	var onReplace: ((Int) -> Void)?
+	/// Replace every match, as one edit.
+	var onReplaceAll: (() -> Void)?
+	/// What is typed in the replacement, so the tab can keep it.
+	var onReplacementChanged: ((String) -> Void)?
 
 	private var field: NSSearchField!
 	private var statusLabel: NSTextField!
 	private var caseButton: NSButton!
 	private var wordButton: NSButton!
 	private var regexButton: NSButton!
+	private var replaceField: NSTextField!
+	private var replaceButton: NSButton!
+	private var replaceAllButton: NSButton!
+	private var replaceRow: NSStackView!
 
 	private(set) var options = SearchOptions()
 
@@ -61,26 +73,70 @@ final class FindBar: NSView {
 			self?.onClose?()
 		}
 
-		let stack = NSStackView(views: [
+		let findRow = NSStackView(views: [
 			field, statusLabel, caseButton, wordButton, regexButton, previous, next, close,
 		])
-		stack.orientation = .horizontal
-		stack.spacing = 6
-		stack.alignment = .centerY
-		stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+		findRow.orientation = .horizontal
+		findRow.spacing = 6
+		findRow.alignment = .centerY
+
+		// The replacement, under the query rather than beside it: the two fields
+		// line up at the same edge, which is what makes the second one read as
+		// the answer to the first.
+		replaceField = NSTextField()
+		replaceField.placeholderString = "Replace with"
+		replaceField.font = Theme.current.uiFont(12)
+		replaceField.focusRingType = .none
+		replaceField.delegate = self
+
+		replaceButton = NSButton(title: "Replace", target: self, action: #selector(replacePressed))
+		replaceButton.bezelStyle = .rounded
+		replaceButton.controlSize = .small
+		replaceButton.font = Theme.current.uiFont(11)
+		replaceButton.toolTip = "Replace the current match (⏎)"
+
+		replaceAllButton = NSButton(title: "Replace All", target: self, action: #selector(replaceAllPressed))
+		replaceAllButton.bezelStyle = .rounded
+		replaceAllButton.controlSize = .small
+		replaceAllButton.font = Theme.current.uiFont(11)
+		replaceAllButton.toolTip = "Replace every match, as one edit"
+
+		replaceRow = NSStackView(views: [replaceField, replaceButton, replaceAllButton])
+		replaceRow.orientation = .horizontal
+		replaceRow.spacing = 6
+		replaceRow.alignment = .centerY
+		replaceRow.isHidden = true
+
+		let stack = NSStackView(views: [findRow, replaceRow])
+		stack.orientation = .vertical
+		stack.spacing = 4
+		stack.alignment = .leading
+		stack.distribution = .fill
+		stack.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 
 		field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+		replaceField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 		statusLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
 		NSLayoutConstraint.activate([
 			stack.leadingAnchor.constraint(equalTo: leadingAnchor),
 			stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-			stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+			stack.topAnchor.constraint(equalTo: topAnchor),
+			findRow.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: Theme.current.scaled(10)),
+			findRow.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -Theme.current.scaled(10)),
+			replaceRow.leadingAnchor.constraint(equalTo: findRow.leadingAnchor),
+			replaceRow.trailingAnchor.constraint(equalTo: findRow.trailingAnchor),
 			field.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(220)),
+			// The two fields the same width, so the replacement sits under the
+			// query rather than under whichever switch happens to be that wide.
+			replaceField.widthAnchor.constraint(equalTo: field.widthAnchor),
 		])
 	}
+
+	@objc private func replacePressed() { onReplace?(1) }
+	@objc private func replaceAllPressed() { onReplaceAll?() }
 
 	private func makeToggle(title: String, tooltip: String) -> NSButton {
 		let button = NSButton(title: title, target: self, action: #selector(optionToggled))
@@ -138,6 +194,11 @@ final class FindBar: NSView {
 	private func markValidity(of query: String) {
 		let valid = TextSearch.isValid(query: query, options: options)
 		isPatternValid = valid
+		// The replacement's usability is a question about the pattern as much as
+		// about itself — `$1` is fine against one capture group and names nothing
+		// against none — so it is asked again whenever either changes.
+		isTemplateValid = !isReplacing
+			|| TextSearch.isValid(template: replaceField.stringValue, query: query, options: options)
 		colourQuery(valid ? .labelColor : Theme.current.gitConflict)
 	}
 
@@ -173,6 +234,53 @@ final class FindBar: NSView {
 	/// never ran.
 	private(set) var isPatternValid = true
 
+	/// Whether the replacement can be used with the pattern beside it.
+	///
+	/// **Foundation does not refuse a template naming a group that does not
+	/// exist** — measured: `$7` against two capture groups returns the empty
+	/// string — so a Replace All with a mistyped number would delete every match
+	/// instead of saying no. Read by `setStatus` and by the editor, which does
+	/// not replace while it is false.
+	private(set) var isTemplateValid = true
+
+	// MARK: - Replacing
+
+	/// Whether the replace half is showing.
+	private(set) var isReplacing = false
+
+	/// What the bar wants to be tall, which is one row or two.
+	///
+	/// Read by the editor, which owns the height constraint: the bar knows how
+	/// many rows it is showing and nothing else does.
+	var wantedHeight: CGFloat { Theme.current.scaled(isReplacing ? 64 : 34) }
+
+	var replacement: String { replaceField.stringValue }
+
+	/// Shows or hides the replace half.
+	///
+	/// ⌘F never calls this with `false`: somebody who pressed it to re-read their
+	/// query has not asked for the replacement they typed to be taken away.
+	func setReplacing(_ replacing: Bool) {
+		guard replacing != isReplacing else { return }
+		isReplacing = replacing
+		replaceRow.isHidden = !replacing
+		markValidity(of: field.stringValue)
+		sayStatusAgain()
+	}
+
+	/// Puts a replacement in the field without saying it changed: this is a tab
+	/// coming back with what it was left holding, not somebody typing.
+	func setReplacement(_ text: String) {
+		replaceField.stringValue = text
+		markValidity(of: field.stringValue)
+		sayStatusAgain()
+	}
+
+	func focusReplaceField(selectingAll: Bool = true) {
+		window?.makeFirstResponder(replaceField)
+		if selectingAll { replaceField.currentEditor()?.selectAll(nil) }
+	}
+
 	// MARK: - State
 
 	var query: String { field.stringValue }
@@ -193,6 +301,9 @@ final class FindBar: NSView {
 	/// reached the search, the search found nothing in a regex that never
 	/// compiled, and the bar reported an answer to a question it never asked.
 	func setStatus(matchCount: Int, currentIndex: Int?) {
+		shownMatchCount = matchCount
+		shownIndex = currentIndex
+
 		// An empty query has not found nothing; it has not been asked.
 		guard !field.stringValue.isEmpty else {
 			statusLabel.stringValue = ""
@@ -204,6 +315,16 @@ final class FindBar: NSView {
 			// Nothing was searched, so "no results" would be a wrong answer
 			// rather than an empty one.
 			statusLabel.stringValue = "Incomplete pattern"
+			statusLabel.textColor = Theme.current.gitConflict
+			return
+		}
+
+		// After the pattern and before the count: a replacement that cannot be
+		// used is a reason nothing will be replaced, and the matches behind it
+		// are real and worth still being told about — but this is the thing to
+		// fix, so it is the thing said.
+		guard isTemplateValid else {
+			statusLabel.stringValue = "Replacement cannot be used"
 			statusLabel.textColor = Theme.current.gitConflict
 			return
 		}
@@ -226,6 +347,16 @@ final class FindBar: NSView {
 		} else {
 			statusLabel.stringValue = "\(matchCount)"
 		}
+	}
+
+	/// What was last reported, so the label can be worked out again when what it
+	/// depends on changes without the document being searched again — typing in
+	/// the replacement field, or the replace half appearing.
+	private var shownMatchCount = 0
+	private var shownIndex: Int?
+
+	private func sayStatusAgain() {
+		setStatus(matchCount: shownMatchCount, currentIndex: shownIndex)
 	}
 
 	/// What the bar is saying and how, for a test that cannot open a window.
@@ -271,6 +402,9 @@ final class FindBar: NSView {
 
 	func applyThemeChange() {
 		field.font = Theme.current.uiFont(12)
+		replaceField.font = Theme.current.uiFont(12)
+		replaceButton.font = Theme.current.uiFont(11)
+		replaceAllButton.font = Theme.current.uiFont(11)
 		statusLabel.font = Theme.current.uiFont(11)
 		needsDisplay = true
 	}
@@ -285,15 +419,32 @@ final class FindBar: NSView {
 
 extension FindBar: NSSearchFieldDelegate {
 	func controlTextDidChange(_ obj: Notification) {
+		// The replacement changes what the bar can say and asks nothing of the
+		// document: searching again on every character typed into it would be a
+		// scan of the file for an answer that has not changed.
+		guard (obj.object as AnyObject?) !== replaceField else {
+			markValidity(of: field.stringValue)
+			sayStatusAgain()
+			onReplacementChanged?(replaceField.stringValue)
+			return
+		}
 		notifyQueryChanged()
 	}
 
 	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
 		switch selector {
 		case #selector(NSResponder.insertNewline(_:)):
+			let backwards = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
+			// In the replacement, Return replaces rather than steps: it is the
+			// button under the caret's own field, and reaching for the mouse to
+			// press what Return is over is not a replace loop anybody would use.
+			if control === replaceField {
+				onReplace?(backwards ? -1 : 1)
+				return true
+			}
 			// Return steps forward, shift-Return backward — the convention every
 			// find bar uses.
-			if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+			if backwards {
 				onPrevious?()
 			} else {
 				onNext?()

@@ -49,6 +49,63 @@ extension MainWindowController {
 		if let window { panel.beginSheetModal(for: window, completionHandler: start) } else { start(panel.runModal()) }
 	}
 
+	/// Wires a debug pane's breakpoint list to the coordinator that owns the set.
+	///
+	/// Every verb goes back through `DebugCoordinator`, which is the one thing
+	/// that holds the breakpoints — so a running session is told, the change is
+	/// written down, and the gutter and the list cannot disagree. A list with
+	/// verbs of its own would be a second owner of a set that has one.
+	func wireBreakpoints(of pane: DebugPane) {
+		let list = pane.breakpointList
+		list?.onOpen = { [weak self] path, line in
+			self?.editor.open(fileURL: URL(fileURLWithPath: path), atLine: line)
+		}
+		list?.onSetEnabled = { [weak self] path, line, enabled in
+			self?.debug.setBreakpoint(file: URL(fileURLWithPath: path), line: line, enabled: enabled)
+		}
+		list?.onDelete = { [weak self] path, line in
+			self?.debug.deleteBreakpoint(file: URL(fileURLWithPath: path), line: line)
+		}
+		list?.onEditOptions = { [weak self] path, line in
+			self?.debug.editBreakpoint(file: URL(fileURLWithPath: path), line: line)
+		}
+		list?.onSilenceOthers = { [weak self] path, line, enabled in
+			self?.debug.setOtherBreakpoints(
+				file: URL(fileURLWithPath: path), line: line, enabled: enabled
+			)
+		}
+		list?.lineText = { [weak self] path, line in self?.lineText(at: path, line: line) }
+		refreshBreakpointList()
+	}
+
+	/// Puts the whole set into whichever debug pane is open.
+	func refreshBreakpointList() {
+		bottomPanel.activeDebugPane?.breakpointList.show(debug.breakpointRows(in: project?.root))
+	}
+
+	/// The code on a line, for a row of the list.
+	///
+	/// The editor's own document first, so an unsaved edit shows the line as it
+	/// now reads — the same text `anchorBreakpoints` follows a breakpoint
+	/// through. The file otherwise, and nothing at all when it has gone: a row
+	/// with its place and no code is honest, where an error about a file nobody
+	/// asked to open is noise.
+	private func lineText(at path: String, line: Int) -> String? {
+		let index = line - 1
+		guard index >= 0 else { return nil }
+
+		if let document = editor.document(for: URL(fileURLWithPath: path)) {
+			let rope = document.rope
+			guard index < rope.lineCount else { return nil }
+			return rope.string(in: rope.lineByteRange(index)).trimmingCharacters(in: .newlines)
+		}
+
+		guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+		let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+		guard index < lines.count else { return nil }
+		return String(lines[index])
+	}
+
 	/// Attaches to something already running.
 	///
 	/// The case launching cannot cover: a server that is already up, or a
@@ -473,6 +530,14 @@ extension MainWindowController {
 
 	@objc func findInFile(_ sender: Any?) {
 		editor.showFind()
+	}
+
+	/// Edit ▸ Replace…, which is ⌘R.
+	///
+	/// Free to take: Run is ⌃R, Go Run ⌃⌘R and Review Branch ⇧⌘R, so the one
+	/// chord every editor uses for replace was bound to nothing here.
+	@objc func replaceInFile(_ sender: Any?) {
+		editor.showReplace()
 	}
 
 	/// Edit ▸ Toggle Comment, which is ⌘/.

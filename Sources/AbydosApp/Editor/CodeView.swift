@@ -33,6 +33,23 @@ final class CodeView: NSView, NSTextInputClient {
 	/// Search matches to highlight, and which one is current.
 	private var searchMatches: [SearchMatch] = []
 	private var currentMatchIndex: Int?
+	/// Where the selected text also appears, in file order.
+	///
+	/// Never both these and `searchMatches`: find's matches win while find is
+	/// showing, so one of the two lists is always empty. Kept as ranges rather
+	/// than `SearchMatch` because a band needs an offset and nothing here reads
+	/// a line's text.
+	private var selectionOccurrences: [Range<Int>] = []
+	/// Which selection the bands above were found for.
+	///
+	/// Checked before anything is painted, because not every path that changes a
+	/// selection reports the caret — `selectAllText` sets both ends and redraws —
+	/// and a band left under text nobody selected is precisely the fault this
+	/// feature must not introduce. Comparing two integers per draw is the price
+	/// of not having to trust every present and future path to say so.
+	private var occurrencesSelection: Range<Int>?
+	/// Scanning for the selection's other places, once it has settled.
+	private var occurrenceScan: DispatchWorkItem?
 
 	/// Debugger state for this file: breakpoint lines and where execution stopped.
 	private var breakpointLines: [Int: BreakpointMark] = [:]
@@ -186,6 +203,15 @@ final class CodeView: NSView, NSTextInputClient {
 	/// The text moved under the breakpoints: an edit starting at this 0-based
 	/// line took out `removed` lines and put in `inserted`.
 	var onLinesChanged: ((Int, Int, Int) -> Void)?
+
+	/// The same edit in the unit a find match is in: which UTF-16 range went and
+	/// how much came in its place.
+	///
+	/// Fanned out here rather than taken from the document, whose own
+	/// `onTextReplaced` is one closure and is already the snippet session's. A
+	/// second assignment there would take a snippet's tab stops away silently,
+	/// which is the fault this whole hook exists to avoid the other way round.
+	var onTextReplaced: ((Range<Int>, Int) -> Void)?
 
 	/// What the gutter needs to know about a breakpoint to draw it.
 	struct BreakpointMark: Equatable {
@@ -416,6 +442,11 @@ final class CodeView: NSView, NSTextInputClient {
 		// a time rather than a line at a time.
 		document.onTextReplaced = { [weak self] range, inserted in
 			self?.snippetSessionSaw(edit: range, insertedLength: inserted)
+			self?.onTextReplaced?(range, inserted)
+			// The text moved under the bands. Dropped and asked again, the same
+			// as when the selection itself changes: an offset into text that no
+			// longer exists is the fault `find-and-replace` was written to fix.
+			self?.selectionChanged()
 		}
 		snippetSession = nil
 		caret = 0
@@ -652,6 +683,13 @@ final class CodeView: NSView, NSTextInputClient {
 	override func draw(_ dirtyRect: NSRect) {
 		guard let context = NSGraphicsContext.current?.cgContext else { return }
 
+		// Bands the selection has moved out from under, dropped before anything
+		// is painted. See `occurrencesSelection`.
+		if !selectionOccurrences.isEmpty, selectedUTF16Range() != occurrencesSelection {
+			selectionOccurrences = []
+			occurrencesSelection = nil
+		}
+
 		Theme.current.editorBackground.setFill()
 		dirtyRect.fill()
 
@@ -702,6 +740,13 @@ final class CodeView: NSView, NSTextInputClient {
 			// others go on here, under the selection; the current one goes to
 			// `drawLine`, which puts it on *over* the selection — see there.
 			let matches = searchHighlights(docLine: docLine, segment: segment, rect: rowRect)
+			// Where the selected text also appears, at the same depth and never
+			// on the same row as a find match: one of the two lists is always
+			// empty, because find wins while it is showing.
+			if !matches.occurrences.isEmpty {
+				Theme.current.selectionOccurrenceBackground.setFill()
+				for band in matches.occurrences { band.fill() }
+			}
 			if !matches.others.isEmpty {
 				Theme.current.searchMatchBackground.setFill()
 				for band in matches.others { band.fill() }
@@ -1321,8 +1366,10 @@ final class CodeView: NSView, NSTextInputClient {
 	/// every caret blink.
 	private func searchHighlights(
 		docLine: Int, segment: Int, rect: NSRect
-	) -> (others: [NSRect], current: NSRect?) {
-		guard !searchMatches.isEmpty, let document else { return ([], nil) }
+	) -> (others: [NSRect], current: NSRect?, occurrences: [NSRect]) {
+		guard let document, !searchMatches.isEmpty || !selectionOccurrences.isEmpty else {
+			return ([], nil, [])
+		}
 
 		let lineRange = document.rope.lineByteRange(docLine)
 		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
@@ -1353,6 +1400,34 @@ final class CodeView: NSView, NSTextInputClient {
 			tokenIndex: TokenIndex(tokens: [])
 		))
 
+		/// One range placed on this row, or nil when none of it falls here.
+		///
+		/// The two lists are asked the same question and the CTLine is built
+		/// once for both: it is not free, and a row is redrawn on every caret
+		/// blink.
+		func band(for range: Range<Int>) -> NSRect? {
+			guard let band = WrapLayout.bandRange(
+				for: range, lineStart: lineStart, segment: rowRangeInLine
+			) else { return nil }
+
+			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.lowerBound, nil)
+			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.upperBound, nil)
+			return NSRect(
+				x: startX,
+				y: rect.minY,
+				width: max(2, endX - startX),
+				height: rect.height
+			)
+		}
+
+		var occurrences: [NSRect] = []
+		for range in selectionOccurrences {
+			// Ordered, so the row can be left as soon as one starts past it.
+			guard range.lowerBound <= lineEnd else { break }
+			guard range.upperBound >= lineStart else { continue }
+			if let rect = band(for: range) { occurrences.append(rect) }
+		}
+
 		var others: [NSRect] = []
 		var current: NSRect?
 
@@ -1365,18 +1440,7 @@ final class CodeView: NSView, NSTextInputClient {
 			// crossing a wrap boundary is asked once per row and answers a piece
 			// each time, which is the shape the old code could not express: it
 			// returned one rectangle per match and had nowhere to put the rest.
-			guard let band = WrapLayout.bandRange(
-				for: match.utf16Range, lineStart: lineStart, segment: rowRangeInLine
-			) else { continue }
-
-			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.lowerBound, nil)
-			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.upperBound, nil)
-			let rect = NSRect(
-				x: startX,
-				y: rect.minY,
-				width: max(2, endX - startX),
-				height: rect.height
-			)
+			guard let rect = band(for: match.utf16Range) else { continue }
 
 			if index == currentMatchIndex {
 				current = rect
@@ -1384,7 +1448,7 @@ final class CodeView: NSView, NSTextInputClient {
 				others.append(rect)
 			}
 		}
-		return (others, current)
+		return (others, current, occurrences)
 	}
 
 	private func attributedLine(
@@ -1932,6 +1996,7 @@ final class CodeView: NSView, NSTextInputClient {
 	func setSearchMatches(_ matches: [SearchMatch], current: Int?) {
 		searchMatches = matches
 		currentMatchIndex = current
+		if !matches.isEmpty { dropOccurrences() }
 		if let current, matches.indices.contains(current) {
 			// Select the match so Escape leaves the caret somewhere sensible.
 			let range = matches[current].utf16Range
@@ -1942,10 +2007,38 @@ final class CodeView: NSView, NSTextInputClient {
 		needsDisplay = true
 	}
 
+	/// The same highlights, moved, without moving the caret.
+	///
+	/// `setSearchMatches` selects the current match and scrolls to it, which is
+	/// right when somebody asked to be taken there — a query typed, ⌘G — and
+	/// wrong on every keystroke of an edit: the caret is where they are typing,
+	/// and dragging it to the nearest match on each character would make the file
+	/// impossible to type in with find open.
+	func updateSearchMatches(_ matches: [SearchMatch], current: Int?) {
+		searchMatches = matches
+		currentMatchIndex = current
+		if !matches.isEmpty { dropOccurrences() }
+		needsDisplay = true
+	}
+
 	func clearSearchMatches() {
 		searchMatches = []
 		currentMatchIndex = nil
 		needsDisplay = true
+		// Find has stopped answering, so a selection standing behind it may say
+		// something again.
+		selectionChanged()
+	}
+
+	/// Takes the occurrence bands away without asking for new ones.
+	///
+	/// For find arriving: its matches win while it is showing, and the bands
+	/// would otherwise sit under them meaning something else.
+	private func dropOccurrences() {
+		occurrenceScan?.cancel()
+		occurrenceScan = nil
+		selectionOccurrences = []
+		occurrencesSelection = nil
 	}
 
 	private func revealCurrentMatch() {
@@ -2148,6 +2241,103 @@ final class CodeView: NSView, NSTextInputClient {
 		let lineStart = document.rope.byteOffset(ofLine: line)
 		let column = document.rope.utf16Offset(fromByte: byteOffset) - document.rope.utf16Offset(fromByte: lineStart)
 		onCaretMoved?(line + 1, column + 1)
+		selectionChanged()
+	}
+
+	/// The selection may have changed, so what was drawn about the old one goes.
+	///
+	/// Called from `reportCaretPosition`, which every path that moves the caret
+	/// or extends a selection already goes through — drag included. That
+	/// function's name is about the caret and this makes it also mean "the
+	/// selection may have changed", which is worth saying out loud rather than
+	/// leaving to be found.
+	///
+	/// The bands are dropped now rather than replaced later. Unlike the find
+	/// matches after an edit, there is nothing here to carry across: the
+	/// selection *is* the query, so the moment it changes every band is about a
+	/// question nobody is asking, and the honest state until the scan answers is
+	/// no bands at all.
+	func selectionChanged() {
+		occurrenceScan?.cancel()
+		if !selectionOccurrences.isEmpty {
+			selectionOccurrences = []
+			occurrencesSelection = nil
+			needsDisplay = true
+		}
+
+		// Find's matches win while find is showing: two kinds of band on one page
+		// meaning two different things is worse than one kind meaning one, and
+		// the one somebody asked for is find's.
+		guard searchMatches.isEmpty, let document else { return }
+
+		let selected = selectedUTF16Range()
+		guard !selected.isEmpty else { return }
+		let rope = document.rope
+		let text = rope.string(in: rope.byteOffset(fromUTF16: selected.lowerBound)
+			..< rope.byteOffset(fromUTF16: selected.upperBound))
+		// Asked before anything is scheduled: a one-character selection, an
+		// indent or a block spanning lines schedules nothing at all, which is
+		// most of what a person selects while moving text about.
+		guard SelectionOccurrences.isWorthHighlighting(text) else { return }
+
+		// Debounced, so dragging a selection across a paragraph is one scan at
+		// the end rather than one for every position the pointer passed through.
+		let work = DispatchWorkItem { [weak self] in
+			self?.findOccurrences(of: text, selected: selected)
+		}
+		occurrenceScan = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+	}
+
+	private func findOccurrences(of text: String, selected: Range<Int>) {
+		occurrenceScan = nil
+		// The selection may have moved on while the debounce was waiting.
+		guard let document, searchMatches.isEmpty, selectedUTF16Range() == selected else { return }
+
+		let found = SelectionOccurrences.ranges(
+			of: text, in: document.rope.string, excluding: selected
+		)
+		guard !found.isEmpty || !selectionOccurrences.isEmpty else { return }
+		selectionOccurrences = found
+		occurrencesSelection = selected
+		needsDisplay = true
+	}
+
+	/// Selects the first place `text` appears, the way a person would drag over
+	/// it, and leaves it selected.
+	@discardableResult
+	func selectTextForTesting(_ text: String) -> Bool {
+		guard let document else { return false }
+		let haystack = document.rope.string as NSString
+		let hit = haystack.range(of: text, options: [.literal])
+		guard hit.location != NSNotFound else { return false }
+		selectionAnchor = hit.location
+		caret = hit.location + hit.length
+		needsDisplay = true
+		// With the keyboard, because a person selecting text has it. The
+		// selection is drawn in two colours and the unfocused one is the dimmer
+		// of them — a shot taken without this compares the bands against a
+		// selection nobody would be looking at.
+		window?.makeFirstResponder(self)
+		// Through the funnel a mouse or a key would go through, so what this
+		// proves is the path and not a private shortcut into it.
+		reportCaretPosition()
+		return true
+	}
+
+	/// What is selected and what lit up because of it, offsets included.
+	///
+	/// The offsets are the claim: a count would be the same whether the bands
+	/// were over the right characters or over the wrong ones.
+	var occurrenceReportForTesting: String {
+		let selected = selectedUTF16Range()
+		let places = selectionOccurrences
+			.prefix(8)
+			.map { "\($0.lowerBound)..<\($0.upperBound)" }
+			.joined(separator: ",")
+		return "selected=\(selected.lowerBound)..<\(selected.upperBound)"
+			+ " occurrences=\(selectionOccurrences.count) at=[\(places)]"
+			+ " findMatches=\(searchMatches.count)"
 	}
 
 	private func scrollCaretToVisible() {
@@ -3310,6 +3500,17 @@ final class CodeView: NSView, NSTextInputClient {
 		// back afterwards rather than before, the way `shiftLines` does it.
 		if !selection.isEmpty { selectionAnchor = movedAnchor }
 		return outcome
+	}
+
+	/// Replaces a range with text, as an edit made in this view.
+	///
+	/// For find's Replace and Replace All. It goes through the document like
+	/// every other edit — one undo entry, the tab marked dirty, the matches told
+	/// through `onTextReplaced` — and then through `afterEdit`, which is the part
+	/// a caller outside this class cannot do for itself.
+	func replace(utf16Range range: Range<Int>, with text: String) {
+		guard let document else { return }
+		afterEdit(caret: document.replace(utf16Range: range, with: text, caretBefore: range.lowerBound))
 	}
 
 	private func insertTextAtCaret(_ text: String) {

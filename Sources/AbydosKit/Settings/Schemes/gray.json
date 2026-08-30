@@ -1,0 +1,302 @@
+{
+  "id": "gray",
+  "title": "Gray",
+  "order": 5,
+  "about": "Grey that has been let go of the blue. The palette next to this one carries a blue cast in every surface, which is what nearly every dark theme does and what makes a window of them look like the same window; this one takes the hue out of the chrome and leaves the greys a hair on the warm side of neutral, because a truly equal grey reads as slightly green on a display and a warm one reads as grey. So the surfaces say nothing at all and the syntax does the talking: one warm colour for keywords, green for the text you wrote, a cool blue for what is called, and a muted violet for what a thing has. Every value here is ours, arrived at on this screen \u2014 the shape is the one most editors settled on because it works, and none of the numbers are anybody else's. The selection is graphite rather than blue, which is the whole point of the theme: nothing in the chrome competes with the code.",
+  "app": {
+    "windowBackground": {
+      "light": "#F7F7F5",
+      "dark": "#202020"
+    },
+    "sidebarBackground": {
+      "light": "#EFEFEC",
+      "dark": "#292928"
+    },
+    "editorBackground": {
+      "light": "#FDFDFB",
+      "dark": "#202020"
+    },
+    "toolbarBackground": {
+      "light": "#EFEFEC",
+      "dark": "#292928"
+    },
+    "separator": {
+      "light": "#DEDEDA",
+      "dark": "#383836"
+    },
+    "sidebarText": {
+      "light": "#3A3A36",
+      "dark": "#C2C1BD"
+    },
+    "sidebarHeaderText": {
+      "light": "#1E1E1B",
+      "dark": "#E6E5E1"
+    },
+    "selectionActive": {
+      "light": "#DCDCD6",
+      "dark": "#3B3B39"
+    },
+    "selectionInactive": {
+      "light": "#E6E6E1",
+      "dark": "#302F2E"
+    },
+    "excludedDirectoryTint": {
+      "light": "#EDE7DB",
+      "dark": "#302B24"
+    },
+    "gitAdded": {
+      "light": "#4E7A38",
+      "dark": "#83AE7C"
+    },
+    "gitModified": {
+      "light": "#A87608",
+      "dark": "#D6A659"
+    },
+    "gitUnversioned": {
+      "light": "#A15C18",
+      "dark": "#C98C4E"
+    },
+    "gitIgnored": {
+      "light": "#96958D",
+      "dark": "#78776F"
+    },
+    "gitConflict": {
+      "light": "#B23F38",
+      "dark": "#D17C74"
+    },
+    "editorText": {
+      "light": "#2A2A26",
+      "dark": "#CBCAC6"
+    },
+    "gutterText": {
+      "light": "#ABAAA3",
+      "dark": "#6E6D69"
+    },
+    "gutterCurrentLineText": {
+      "light": "#66655E",
+      "dark": "#ABAAA5"
+    },
+    "currentLineBackground": {
+      "light": "#F2F2EE",
+      "dark": "#272726"
+    },
+    "caret": {
+      "light": "#3A3A36",
+      "dark": "#D2D1CD"
+    },
+    "selectionBackground": {
+      "light": "#DEDED8",
+      "dark": "#3E3E3C"
+    },
+    "selectionBackgroundInactive": {
+      "light": "#E7E7E2",
+      "dark": "#343433"
+    },
+    "searchMatchBackground": {
+      "light": "#F6E3AE",
+      "dark": "#55503A"
+    },
+    "searchMatchCurrentBackground": {
+      "light": "#F0A82A",
+      "dark": "#9E7C36"
+    },
+    "selectionOccurrenceBackground": {
+      "light": "#EFEFEB",
+      "dark": "#2E2E2D"
+    },
+    "foldPlaceholderBackground": {
+      "light": "#E6E6E1",
+      "dark": "#343433"
+    },
+    "foldPlaceholderText": {
+      "light": "#5C5B55",
+      "dark": "#A2A19C"
+    },
+    "indentGuide": {
+      "light": "#E8E8E3",
+      "dark": "#2F2F2D"
+    },
+    "syntax": {
+      "plain": {
+        "light": "#2A2A26",
+        "dark": "#CBCAC6"
+      },
+      "keyword": {
+        "light": "#8A4A14",
+        "dark": "#D6905F"
+      },
+      "type": {
+        "light": "#55558E",
+        "dark": "#B4B7D6"
+      },
+      "function": {
+        "light": "#1F6C9E",
+        "dark": "#64A8DC"
+      },
+      "method": {
+        "light": "#1F6C9E",
+        "dark": "#64A8DC"
+      },
+      "property": {
+        "light": "#8A2E80",
+        "dark": "#C78BBE"
+      },
+      "variable": {
+        "light": "#2A2A26",
+        "dark": "#CBCAC6"
+      },
+      "parameter": {
+        "light": "#4E4D47",
+        "dark": "#B5B4AE"
+      },
+      "constant": {
+        "light": "#8A2E80",
+        "dark": "#C78BBE"
+      },
+      "string": {
+        "light": "#3D7A38",
+        "dark": "#82AF7B"
+      },
+      "escape": {
+        "light": "#8A4A14",
+        "dark": "#DFA878"
+      },
+      "number": {
+        "light": "#16787C",
+        "dark": "#48AEAC"
+      },
+      "boolean": {
+        "light": "#8A4A14",
+        "dark": "#D6905F"
+      },
+      "comment": {
+        "light": "#8A8981",
+        "dark": "#7C7B75"
+      },
+      "documentation": {
+        "light": "#3F7259",
+        "dark": "#6F8F82"
+      },
+      "operatorToken": {
+        "light": "#4E4D47",
+        "dark": "#B5B4AE"
+      },
+      "punctuation": {
+        "light": "#6B6A64",
+        "dark": "#9B9A94"
+      },
+      "tag": {
+        "light": "#8A6A12",
+        "dark": "#DCBC6E"
+      },
+      "attribute": {
+        "light": "#4E4D47",
+        "dark": "#B5B4AE"
+      },
+      "label": {
+        "light": "#8A2E80",
+        "dark": "#C78BBE"
+      },
+      "namespace": {
+        "light": "#3A3A34",
+        "dark": "#AEADA7"
+      },
+      "heading": {
+        "light": "#8A6A12",
+        "dark": "#DCBC6E"
+      },
+      "link": {
+        "light": "#1F5FA8",
+        "dark": "#7CA7DC"
+      },
+      "emphasis": {
+        "light": "#2A2A26",
+        "dark": "#CBCAC6"
+      },
+      "error": {
+        "light": "#B23F38",
+        "dark": "#D17C74"
+      }
+    }
+  },
+  "terminal": {
+    "background": {
+      "light": "#FBFBF9",
+      "dark": "#232322"
+    },
+    "foreground": {
+      "light": "#2A2A26",
+      "dark": "#E8E7E3"
+    },
+    "cursor": {
+      "light": "#3A3A36",
+      "dark": "#CBCAC6"
+    },
+    "ansi": {
+      "black": {
+        "light": "#3A3A36",
+        "dark": "#1F1F1E"
+      },
+      "red": {
+        "light": "#B8544B",
+        "dark": "#CC6F68"
+      },
+      "green": {
+        "light": "#5C8A44",
+        "dark": "#93B37E"
+      },
+      "yellow": {
+        "light": "#A8830C",
+        "dark": "#DCB86A"
+      },
+      "blue": {
+        "light": "#3A7BA8",
+        "dark": "#7FA6C8"
+      },
+      "magenta": {
+        "light": "#9C5494",
+        "dark": "#C58CC0"
+      },
+      "cyan": {
+        "light": "#2F8C84",
+        "dark": "#7FBDB4"
+      },
+      "white": {
+        "light": "#8E8D86",
+        "dark": "#A3A29B"
+      },
+      "brightBlack": {
+        "light": "#6B6A64",
+        "dark": "#6A6963"
+      },
+      "brightRed": {
+        "light": "#C9665C",
+        "dark": "#DC8078"
+      },
+      "brightGreen": {
+        "light": "#6E9C52",
+        "dark": "#A5C48C"
+      },
+      "brightYellow": {
+        "light": "#C09A22",
+        "dark": "#E8C878"
+      },
+      "brightBlue": {
+        "light": "#4E8DBA",
+        "dark": "#92B6D6"
+      },
+      "brightMagenta": {
+        "light": "#AE68A6",
+        "dark": "#D3A2CE"
+      },
+      "brightCyan": {
+        "light": "#3F9E96",
+        "dark": "#92CCC2"
+      },
+      "brightWhite": {
+        "light": "#2A2A26",
+        "dark": "#EFEEEA"
+      }
+    }
+  }
+}

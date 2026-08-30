@@ -947,6 +947,14 @@ final class EditorAreaController: NSViewController {
 	}
 
 	func showFind() { activeGroup.showFind() }
+	func showReplace() { activeGroup.showReplace() }
+	@discardableResult
+	func selectTextForTesting(_ text: String) -> Bool { activeGroup.selectTextForTesting(text) }
+	var occurrenceReportForTesting: String { activeGroup.occurrenceReportForTesting }
+	func replaceForTesting(query: String, replacement: String, all: Bool, regex: Bool) -> String {
+		activeGroup.replaceForTesting(query: query, replacement: replacement, all: all, regex: regex)
+	}
+
 	var findBarIsShowingForTesting: Bool { activeGroup.findBarIsShowingForTesting }
 	func setFindQuery(_ query: String) { activeGroup.setFindQuery(query) }
 	func findNext() { activeGroup.findNext() }

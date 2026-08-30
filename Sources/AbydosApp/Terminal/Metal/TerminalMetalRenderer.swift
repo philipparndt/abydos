@@ -483,9 +483,14 @@ final class TerminalMetalRenderer {
 				if cell.isWideTrailer { continue }
 
 				let resolved = cell.attributes.resolved
+				// `isForeground` follows the swap: for an inverse cell `resolved`
+				// has moved the background into the foreground slot, so a
+				// `.default` there means the default background. Resolving it as
+				// a foreground is what made an inverse cell with no colours set
+				// draw exactly like a plain one.
 				var foreground = TerminalPalette.components(
 					for: resolved.foreground,
-					isForeground: true,
+					isForeground: !cell.attributes.inverse,
 					bold: cell.attributes.bold,
 					defaultForeground: frame.foreground,
 					defaultBackground: frame.background
@@ -495,7 +500,7 @@ final class TerminalMetalRenderer {
 				if cell.attributes.dim { foreground.w *= Float(TerminalPalette.dimAmount) }
 				var background = TerminalPalette.components(
 					for: resolved.background,
-					isForeground: false,
+					isForeground: cell.attributes.inverse,
 					bold: false,
 					defaultForeground: frame.foreground,
 					defaultBackground: frame.background
@@ -503,7 +508,10 @@ final class TerminalMetalRenderer {
 				// A cell that asked for no particular colour, over a picture, is
 				// asking for the picture. One that named a colour meant it, and
 				// paints over the picture as it would over anything else.
-				if resolved.background == .default, isCutOut(row: index, column: column) {
+				// An inverse cell named a colour by asking for the other one, so
+				// it paints over a picture like any other coloured cell.
+				if resolved.background == .default, !cell.attributes.inverse,
+				   isCutOut(row: index, column: column) {
 					background.w = 0
 				}
 

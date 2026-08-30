@@ -20,6 +20,33 @@ final class RepositoryRowView: ActionableRowView {
 	private var branch: String?
 	private var state: GitPush.State?
 
+	/// Where the head is when it is not on a branch, and what git has stopped
+	/// in the middle of — `detached at 83ae05a`, `rebasing`, or both.
+	///
+	/// **Nothing in this pane said either of them.** `for-each-ref` marks no
+	/// branch current while the head is detached, so the tree simply lost its
+	/// checkmark and the row lost its name, and a repository stopped mid-rebase
+	/// looked like one sitting quietly on no branch in particular. The banner
+	/// under this row only appears for conflicted *paths*, which a rebase
+	/// stopped on `edit` or a failed `exec` does not have.
+	private var headNotice: String?
+
+	/// How many submodules this repository holds, when it holds any.
+	///
+	/// **Said here because it changes what everything below means.** `level` on
+	/// a superproject is a true sentence about the superproject and says nothing
+	/// about the forty services under it, and a reader who does not know this is
+	/// a superproject has no reason to look further.
+	///
+	/// **Only said, and not given a verb.** This row's action is the remote
+	/// traffic — fetch when level, pull when behind, push when ahead — and that
+	/// is the whole reason this specification draws the repository as a row at
+	/// all: a verb hangs off the row that draws its object. A second verb here
+	/// would dilute the one thing the row was pinned for. The way to the
+	/// overview is the Submodules section's own header, which is the row that
+	/// draws *that* object, and ⇧⌘M.
+	private var submoduleCount = 0
+
 	/// Focus is its own, because it is outside the outline: the tree cannot
 	/// select a row it does not contain.
 	private var hasKeyboard = false
@@ -35,13 +62,33 @@ final class RepositoryRowView: ActionableRowView {
 	/// `↓` out of this row and into the tree, so the two read as one list.
 	var onDownArrow: (() -> Void)?
 
+	/// Every verb the remote allows, for a right-click.
+	///
+	/// **Because the row draws one verb and there are four.** Which one it
+	/// draws is chosen from a state that is itself as old as the last fetch:
+	/// `Push` on a row that is `1 ahead` is a claim about a tracking ref
+	/// somebody last refreshed on Tuesday. The pane had no way to fetch while
+	/// ahead at all — the button says `Push`, and `Fetch` is only ever the
+	/// primary when there is nothing to push or pull — so the answer to "am I
+	/// actually still ahead" was a terminal.
+	///
+	/// Built on demand: what is enabled depends on the state, and how long ago
+	/// the last fetch was is read when the menu is opened rather than kept.
+	var buildMenu: (() -> NSMenu?)?
+
+	override func menu(for event: NSEvent) -> NSMenu? { buildMenu?() }
+
 	init() { super.init(frame: .zero) }
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
-	func show(branch: String?, state: GitPush.State?) {
+	func show(
+		branch: String?, state: GitPush.State?, notice: String? = nil, submodules: Int = 0
+	) {
 		self.branch = branch
 		self.state = state
+		self.headNotice = notice
+		self.submoduleCount = submodules
 		updateAction()
 		needsDisplay = true
 	}
@@ -145,22 +192,52 @@ final class RepositoryRowView: ActionableRowView {
 		// The width fallback went with the name. There is nothing left to give
 		// way — `2 behind · 1 ahead` fits at 250 points on its own, which is
 		// what dropping the name was buying room for in the first place.
+		// The head notice goes first and in the conflict colour, because it is
+		// the one thing here that is not routine: how far a branch is from its
+		// upstream is worth knowing, and being on no branch at all is worth
+		// noticing before anything else on the row is read.
+		var x = RowMetrics.textInset
+		let limit = bounds.maxX - RowMetrics.trailingInset - actionWidth
+		let font = Theme.current.uiFont(11, weight: .medium)
+		if let headNotice {
+			// `draw` answers where it ended, which is where the next one starts.
+			x = RowMetrics.draw(
+				headNotice + " · ",
+				font: font,
+				colour: Theme.current.gitConflict,
+				at: x,
+				in: bounds,
+				limit: limit
+			)
+		}
 		drawnDistance = distance
-		RowMetrics.draw(
+		x = RowMetrics.draw(
 			drawnDistance,
-			font: Theme.current.uiFont(11, weight: .medium),
+			font: font,
 			colour: Theme.current.sidebarHeaderText,
-			at: RowMetrics.textInset,
+			at: x,
 			in: bounds,
-			limit: bounds.maxX - RowMetrics.trailingInset - actionWidth
+			limit: limit
 		)
+		if submoduleCount > 0 {
+			RowMetrics.draw(
+				" · \(submoduleCount) submodules",
+				font: font,
+				colour: Theme.current.gitIgnored,
+				at: x,
+				in: bounds,
+				limit: limit
+			)
+		}
 
 		drawAction()
 	}
 
 	/// What a driven run reads off the row.
 	var reportForTesting: String {
-		"\(drawnDistance.isEmpty ? distance : drawnDistance)"
+		(headNotice.map { $0 + " · " } ?? "")
+			+ "\(drawnDistance.isEmpty ? distance : drawnDistance)"
+			+ (submoduleCount > 0 ? " · \(submoduleCount) submodules" : "")
 			+ " · \(action?.title ?? "nothing to press")"
 	}
 }

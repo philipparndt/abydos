@@ -75,13 +75,40 @@ public enum GitWorkingCopy {
 		// it gains is that the row exists at all: fifteen thousand folders of
 		// them was a tree nobody could read and an outline view nobody could
 		// scroll.
-		let result = await GitRepository.run(
-			["status", "--porcelain=v1", "-unormal", "--no-renames", "-z"],
-			in: root
-		)
+		let result = await GitRepository.run(statusArguments, in: root)
 		guard result.exitCode == 0 else { return GitWorkingCopyStatus() }
 		return parse(porcelainZ: result.stdout)
 	}
+
+	/// The one status command this program runs, so there is one place that
+	/// carries `--ignore-submodules=dirty` and one place to check it.
+	///
+	/// **The flag is what stops a superproject costing seconds per event.**
+	/// Without it git walks every submodule serially inside this one process:
+	/// measured at 1.61 s over 200 submodules of eight files each, against
+	/// 0.09 s with it — ten cores, load averages 4.9 to 21.2, git 2.54.0. The
+	/// comment above about `-uall` is the same argument at a smaller scale, and
+	/// this call runs on the same schedule: every filesystem event.
+	///
+	/// **`dirty` and not `all`, and the difference is the whole design.** `all`
+	/// says nothing about submodules whatever; `dirty` still reports a gitlink
+	/// whose recorded commit has moved, which is the one fact about a submodule
+	/// that only the superproject knows. Verified against 200 submodules, four
+	/// with modified work trees and one moved: this printed the moved one and
+	/// nothing about the other four.
+	///
+	/// What is given up is the working-tree detail of each submodule, and that
+	/// is not given up — it is asked for per submodule instead, in parallel, at
+	/// 0.45 s for 200 against the 1.61 s this call used to cost on its own. See
+	/// `GitEstateStatus`.
+	///
+	/// A repository with no submodules has nothing to ignore, so this is the
+	/// same command it always was and there is no branch on "is this a
+	/// superproject" to keep true.
+	public static let statusArguments = [
+		"status", "--porcelain=v1", "-unormal", "--no-renames", "-z",
+		"--ignore-submodules=dirty",
+	]
 
 	/// Splits NUL-separated porcelain output into the two sides of the index.
 	static func parse(porcelainZ output: String) -> GitWorkingCopyStatus {

@@ -128,18 +128,9 @@ extension MainWindowController {
 			self, selector: #selector(toastWithdrawn(_:)), name: .abydosToastWithdrawn, object: nil
 		)
 
+		bottomPanel.onDebugPaneOpened = { [weak self] pane in self?.wireBreakpoints(of: pane) }
 		toolStrip.onToggleDebug = { [weak self] in self?.showDebugPanel(nil) }
 		toolStrip.isDebugRunning = { [weak self] in self?.bottomPanel.activeDebugSession != nil }
-		toolStrip.isGoProject = { [weak self] in
-			guard let root = self?.project?.root else { return false }
-			return GoTooling.isGoModule(root) || !RunConfigurationDiscovery
-				.searchDirectories(from: root)
-				.filter(GoTooling.isGoModule)
-				.isEmpty
-		}
-		toolStrip.onDebugGoPackage = { [weak self] in self?.goDebug(nil) }
-		toolStrip.onDebugExecutable = { [weak self] in self?.debugExecutable(nil) }
-		toolStrip.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.colourSource = { Theme.current.sidebarBackground }
@@ -380,7 +371,9 @@ extension MainWindowController {
 		navigator.onFilesChanged = { [weak self] change in
 			// Something wrote inside the project — possibly a file that is open.
 			self?.editor.reloadExternallyChangedFiles()
-			self?.sidebar.changesPane?.refresh()
+			// With the change, so a superproject re-reads the one submodule the
+			// write landed in — 0.01 s — rather than sweeping all of them.
+			self?.sidebar.changesPane?.refresh(after: change)
 			// A new main.go or Makefile target should get its play button
 			// without reopening the project — but only when what was written
 			// could be one. See `run.refreshRunConfigurations(because:)`.
@@ -528,9 +521,15 @@ extension MainWindowController {
 	/// Gives the editor the window if it has not got it, and does nothing if it
 	/// has.
 	///
-	/// For the two pages that are unreadable small: a log is a graph, a list of
-	/// commits and a diff, and a commit page is two lists and a diff. Both are
-	/// opened *to be read*, which is not what a third of a window is for.
+	/// For the pages that are unreadable small: a log is a graph, a list of
+	/// commits and a diff, and a review is a list of files and their diffs. Both
+	/// are opened *to be read*, which is not what a third of a window is for.
+	///
+	/// **The commit page used to be one of them and no longer is.** It was
+	/// unreadable small for a reason that has been fixed rather than for what it
+	/// holds: a fixed 224 points of message area across the whole width, which
+	/// left four lines of diff on a short page. With the message two rows tall
+	/// and under the diff, it reads at the size it is given.
 	///
 	/// **It does not give the window back when the page closes.** The panel
 	/// staying down after `makeRoomForTheEditor` is the same decision and its

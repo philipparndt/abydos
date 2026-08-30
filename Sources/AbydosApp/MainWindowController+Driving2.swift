@@ -131,6 +131,12 @@ extension MainWindowController {
 	func treeStepsForTesting(_ steps: String) {
 		let script = steps.split(separator: ",").map(String.init)
 		for (index, step) in script.enumerated() {
+			// **Flushed however the step leaves.** A driven run is killed rather
+			// than ended: stdout is a pipe, nothing drains its buffer at exit,
+			// and a report written after the last flushing step is simply lost.
+			// `defer` rather than a line at the bottom because half these cases
+			// `continue` past it — which is exactly how the losses happened.
+			defer { fflush(stdout) }
 			// `settle`, and `settle:3` for longer. Everything after it goes back
 			// to the run loop rather than being waited for here, because the trash
 			// answers on the main queue and a nested `RunLoop.run(until:)` does not
@@ -167,6 +173,14 @@ extension MainWindowController {
 			case "cmd-delete": navigator.pressKeyForTesting(51, modifiers: .command)
 			case "cmd-down": navigator.pressKeyForTesting(125, modifiers: .command)
 			case "escape": navigator.pressKeyForTesting(53)
+			// Space, and what the panel it opens is showing. Two steps because
+			// the panel is a window of its own and a screenshot of ours cannot
+			// see it — the same reason the delete dialog is reported rather
+			// than shot.
+			case "space": navigator.pressKeyForTesting(49)
+			case "quicklook":
+				print("TREE \(navigator.quickLookReportForTesting)")
+				continue
 			// ⇧↓ and ⇧↑: a run of rows, selected the way somebody selects one.
 			case "shift-down": navigator.pressKeyForTesting(125, modifiers: .shift)
 			case "shift-up": navigator.pressKeyForTesting(126, modifiers: .shift)
@@ -860,6 +874,70 @@ extension MainWindowController {
 	func simulateTyping(_ text: String) {
 		editor.simulateTyping(text)
 	}
+
+	/// Opens the debug pane with nothing running and says what its list holds.
+	///
+	/// The claim is that there is a pane to open at all: it used to be built only
+	/// by a session starting, so the rail's ladybird had nothing to show and
+	/// asked how to start one instead.
+	/// - Parameter thenExit: false when a shot has been asked for, since a run
+	///   that quit before the shutter would photograph nothing.
+	func reportBreakpointListForTesting(setting lines: [Int], thenDebug: Bool, thenExit: Bool = true) {
+		for line in lines { debug.toggleBreakpointForTesting(line: line) }
+		showDebugPanel(nil)
+		sayBreakpointList("empty")
+
+		guard thenDebug else {
+			if thenExit { exit(0) }
+			return
+		}
+
+		// A session starting while the empty pane is open must take it over
+		// rather than leave two: `makeDebugSession` closes an existing debug pane
+		// before installing its own, and an empty one is not special.
+		goDebug(nil)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
+			self?.sayBreakpointList("debugging")
+			exit(0)
+		}
+	}
+
+	private func sayBreakpointList(_ when: String) {
+		let pane = bottomPanel.activeDebugPane
+		print("BREAKPOINTS \(when): pane=\(pane == nil ? "none" : "open")"
+			+ " panes=\(bottomPanel.debugPaneCountForTesting)"
+			+ " session=\(bottomPanel.activeDebugSession == nil ? "none" : "running")")
+		print("BREAKPOINTS \(when) list: \(pane?.breakpointList.reportForTesting ?? "no pane")")
+		fflush(stdout)
+	}
+
+	/// Selects a string and says which other places lit up because of it.
+	///
+	/// Two prints, half a second apart: the scan is debounced like every other
+	/// one here, and a report taken the instant the selection is made would show
+	/// an empty list and prove nothing.
+	/// - Parameter thenExit: false when a shot has been asked for, since the
+	///   claim this makes is about what something looks like and a run that quit
+	///   before the shutter would photograph nothing.
+	func reportOccurrencesForTesting(selecting text: String, thenExit: Bool = true) {
+		let found = editor.selectTextForTesting(text)
+		print("OCCURRENCES selected=\(found ? "yes" : "not found") \(editor.occurrenceReportForTesting)")
+		fflush(stdout)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+			guard let self else { return }
+			print("OCCURRENCES settled: \(self.editor.occurrenceReportForTesting)")
+			fflush(stdout)
+			if thenExit { exit(0) }
+		}
+	}
+
+	/// Replaces from the find bar and says what happened, for a driven run.
+	func replaceForTesting(query: String, replacement: String, all: Bool, regex: Bool) -> String {
+		editor.replaceForTesting(query: query, replacement: replacement, all: all, regex: regex)
+	}
+
+	/// The file as it now reads, for saying what a replace made of it.
+	var textForTesting: String? { editor.textForTesting }
 
 	/// Walks a sequence of theme settings and says what each one resolved to.
 	///

@@ -310,6 +310,18 @@ final class SidebarController: NSObject {
 			case "report":  print("BRANCHES:\n\(pane.rowsForTesting())")
 			case "stash":
 				pane.openStashForTesting(Int(argument) ?? 0)
+			case "recreate": pane.recreateTagForTesting()
+			// Opening a stash as a page, and what that page then says.
+			case "review-stash":
+				print("BRANCHES review-stash: " + pane.reviewStashForTesting(argument))
+			case "stash-page":
+				print(stashPage?.reportForTesting() ?? "STASH-PAGE none")
+			case "stash-page-select":
+				print("STASH-PAGE select: "
+					+ (stashPage?.selectForTesting(argument) ?? "no page"))
+			case "stash-page-press":
+				print("STASH-PAGE press: "
+					+ (stashPage?.pressForTesting(argument) ?? "no page"))
 			case "tag-sources":
 				print("TAG-SOURCES:\n\(pane.tagSourcesForTesting(excluding: argument))")
 			case "shut":    pane.setFolderForTesting(argument, collapsed: true)
@@ -327,19 +339,63 @@ final class SidebarController: NSObject {
 			case "focus-tree": pane.window?.makeFirstResponder(pane.tableViewForTesting)
 			// Several branches at once, and what the menu would then offer and
 			// copy. `+` between the names, as the other multi-row steps use.
+			// A row index selects that row; names select those branches. One
+			// verb rather than two because they are the same step asked in two
+			// ways — and because two `case "select"` in one switch is a warning
+			// saying the second is dead, which it was.
 			case "select":
-				print("BRANCHES select: "
-					+ pane.selectBranchesForTesting(argument.split(separator: "+").map(String.init)))
+				if let row = Int(argument) {
+					pane.selectRowForTesting(row)
+				} else {
+					print("BRANCHES select: " + pane.selectBranchesForTesting(
+						argument.split(separator: "+").map(String.init)
+					))
+				}
 			case "menu":
-				print("BRANCHES menu: \(pane.branchMenuTitlesForTesting().joined(separator: " | "))")
+				if let row = Int(argument) {
+					print("BRANCHES menu \(argument): " + pane.menuTitlesForTesting(row: row))
+				} else {
+					print("BRANCHES menu: "
+						+ pane.branchMenuTitlesForTesting().joined(separator: " | "))
+				}
+			case "delete-wording":
+				Task { @MainActor in
+					print("BRANCHES delete-wording: \(await pane.deleteWordingForTesting())")
+					fflush(stdout)
+				}
+			// The delete itself, with the dialog's checkbox as the argument —
+			// `delete:worktrees` ticks it, `delete` leaves it. This skips the
+			// dialog; `sheet-press` below is the step that answers one.
+			case "delete":
+				Task { @MainActor in
+					await pane.deleteForTesting(removingWorktrees: argument == "worktrees")
+				}
+			// The dialog itself, on screen, for a screenshot of it.
+			case "ask-delete": pane.askAboutDeletingForTesting()
+			case "sheet":      print(pane.deleteSheetForTesting())
+			// The working copy's own verb, and answering the dialog it opens.
+			// Not `stash`, which is taken above for opening a stash row — a
+			// second one is dead code the compiler does not always mention.
+			case "stash-changes": pane.stashWorkingCopyForTesting()
+			case "stash-answer":
+				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+				print("BRANCHES stash-answer: " + pane.answerStashForTesting(
+					parts.first ?? "", untracked: (parts.count > 1 ? parts[1] : "yes") != "no"
+				))
+			// Publishing with no remote, which is the case that used to fail in
+			// git's words instead of asking for one.
+			case "publish":    pane.pushSelectedForTesting()
+			case "remote":     pane.setRemoteForTesting()
+			case "type-remote": pane.typeRemoteForTesting(argument)
+			// Answering it — the step the two above skip between them. Not
+			// `press`, which the banner below has: a second one is a dead case.
+			case "sheet-press": print("BRANCHES "
+				+ BranchDeletion.pressSheetButtonForTesting(argument, in: pane.window))
 			case "copy-name":
 				print("BRANCHES copy-name would copy:\n"
 					+ pane.copyNameTextForTesting().split(separator: "\n")
 						.map { "  " + $0 }.joined(separator: "\n"))
 			case "unfind":  pane.hideFilter()
-			case "menu":
-				print("BRANCHES menu \(argument): "
-					+ pane.menuTitlesForTesting(row: Int(argument) ?? 0))
 			case "fstate":  print("BRANCHES filter: \(pane.filterStateForTesting())"
 				+ " · editor find \(editorFindBarIsShowing ? "open" : "shut")"
 				+ " · responder \(type(of: pane.window?.firstResponder ?? NSNull()))")
@@ -348,15 +404,53 @@ final class SidebarController: NSObject {
 			// two halves of "a row's action can be reached from the keyboard".
 			case "actions": print("BRANCHES actions:\n  "
 				+ pane.rowActionsForTesting().joined(separator: "\n  "))
-			case "select":  pane.selectRowForTesting(Int(argument) ?? 0)
 			case "fire":    pane.fireSelectedRowActionForTesting()
 			case "repo":    print("BRANCHES repo: \(pane.repositoryRowForTesting())")
 			case "repo-fire": pane.fireRepositoryRowForTesting()
 			// The pinned row's whole claim is that scrolling does not take it
 			// away, and only a scrolled tree can say whether that is true.
+			// The strip above the tree while git is mid-operation, and its
+			// verbs: `banner`, `press:continue`, `press:skip`, `press:abort`.
+			case "banner":  print(pane.operationBannerForTesting())
+			case "press":   pane.pressBannerForTesting(argument)
+			// What the `⋯` menu holds, and what one conflicted file's row
+			// offers — neither of which a shot of a closed menu can show.
+			// Every remote verb the repository row offers, and when it last
+			// fetched — the row draws one verb and there are four.
+			// Which refs the pane calls finished, by ref rather than by name:
+			// `origin/x` and `x` are two questions.
+			case "merged":
+				print("BRANCHES merged: " + pane.mergedMarkForTesting())
+			case "delete-remote":
+				pane.deleteRemoteForTesting()
+			case "remote-menu":
+				print("REPOSITORY menu: " + pane.remoteMenuForTesting())
+			case "fetch":
+				pane.pressRefreshGlyphForTesting()
+			// What the editor is showing, so "a click on a row opens the file"
+			// is a claim a driven run can check rather than a screenshot.
+			case "tabs":
+				print("TABS: " + (editor.activeGroup?.tabTitlesForTesting.joined(separator: ", ")
+					?? "no group"))
+			case "banner-menu":
+				print("BANNER menu \(argument.isEmpty ? "more" : argument): "
+					+ pane.bannerMenuForTesting(argument))
+			// Resolving one file the way the row's menu does:
+			// `resolve:<path>:<ours|theirs|mark|open>`.
+			case "resolve":
+				let parts = argument.split(separator: "|", maxSplits: 1).map(String.init)
+				print("BANNER resolve: " + pane.resolveConflictForTesting(
+					parts.first ?? "", how: parts.count > 1 ? parts[1] : "mark"
+				))
 			case "scroll":  pane.scrollTreeForTesting(toBottom: argument != "top")
 			default:        print("BRANCHES: unknown step \(step)")
 			}
+			// Every step, because a driven run is killed rather than ended:
+			// stdout is a pipe, the buffer is never drained by the exit, and a
+			// report written after the last flushing step is simply lost. It
+			// cost half an hour of "the tree prints nothing" that was a report
+			// sitting in a buffer.
+			fflush(stdout)
 		}
 	}
 
@@ -730,6 +824,7 @@ final class SidebarController: NSObject {
 			// already had one. The backlog card, the project switcher and now
 			// the titlebar all go through the same door.
 			pane.onOpenCommitPage = { [weak self] in self?.showCommitPage(carrying: nil) }
+			pane.onOpenEstate = { [weak self] in self?.showEstatePage() }
 			pane.onOpenFiles = { [weak self] paths in
 				guard let self, let project = self.project() else { return }
 				for path in paths {
@@ -737,6 +832,7 @@ final class SidebarController: NSObject {
 				}
 			}
 			pane.onShowLog = { [weak self] ref in self?.showLogPage(scopedTo: ref) }
+			pane.onReviewStash = { [weak self] entry in self?.showStashPage(entry) }
 			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
 			pane.onOpenWorktree = { [weak self] path in self?.openProject(path) }
 			pane.onRepositoryChanged = { [weak self] in
@@ -744,6 +840,9 @@ final class SidebarController: NSObject {
 				// repository is read again — the same read everything else
 				// awaits.
 				self?.readGit()
+				// And the stash page, if one is open: a stash dropped from the
+				// tree leaves a page describing something that is not there.
+				self?.stashPage?.refresh()
 			}
 			branchesPane = pane
 			view = pane
@@ -866,14 +965,140 @@ final class SidebarController: NSObject {
 				self?.navigator.refreshGitStatus()
 				self?.changesPane?.refresh()
 			}
+			// The verbs over the page's own diff. Without these the menu is
+			// still offered — `DiffView` builds it for any diff that is not
+			// read-only — and pressing it does nothing at all.
+			page.onApplyDiffSelection = { [weak self] change, diff, lines, owner in
+				self?.applyDiffSelection(
+					change: change, diff: diff, lines: lines, in: owner, from: .page
+				)
+			}
+			page.onDiscardDiffSelection = { [weak self] change, diff, lines, owner in
+				self?.discardDiffSelection(
+					change: change, diff: diff, lines: lines, in: owner, from: .page
+				)
+			}
+			// **Offered only where git can do it**, as the editor's diff is:
+			// `stash push --staged` arrived in 2.35, and on an older one the
+			// item is absent rather than failing when pressed.
+			let asked = page
+			Task { @MainActor [weak self] in
+				guard await GitStash.canPushStaged(in: asked.repositoryRoot) else { return }
+				asked.onStashDiffSelection = { [weak self] change, diff, lines, owner in
+					self?.stashDiffSelection(
+						change: change, diff: diff, lines: lines, in: owner, from: .page
+					)
+				}
+			}
 		}
 		commitPage = page
+		// **No longer takes the window.** It did because the page was unreadable
+		// small: a fixed 224 points of message area left four lines of diff on a
+		// short page. The message is two rows now and under the diff rather than
+		// across the width, so the page is worth opening at whatever size it is
+		// given — and taking somebody's tree and terminal away to show them a
+		// commit is a thing to do only when the page cannot be read otherwise.
 		group.openPage(page, title: "Commit", identifier: "commit", symbol: "checkmark.circle")
-		giveTheEditorTheWindow()
 		DispatchQueue.main.async { [weak page] in page?.focusList() }
 
 		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
 		page.refresh()
+	}
+
+	/// One stash, as a page — see `StashPage`.
+	///
+	/// **One page, re-pointed.** Reviewing a second stash re-uses the first
+	/// page rather than opening a tab per stash: `openPage` already keys by
+	/// identifier, and a row of near-identical tabs called `Stash` would be a
+	/// tab strip nobody can read.
+	func showStashPage(_ entry: GitStash.Entry) {
+		leaveTerminalFullScreen()
+		guard let project = project(), project.git != nil, let group = editor.activeGroup else {
+			return
+		}
+		let root = gitCommandRoot() ?? project.root
+		let page: StashPage
+		if let existing = group.page(identifier: "stash") as? StashPage {
+			page = existing
+			page.show(entry)
+		} else {
+			page = StashPage(root: root, entry: entry)
+			// **Through the pane, because the questions live there.** Applying
+			// asks whether the entry should stay, branching asks for a name,
+			// and dropping says the work is on no branch — three dialogs this
+			// page would otherwise own a second copy of.
+			page.onApply = { [weak self] entry in self?.branchesPane?.apply(stash: entry) }
+			page.onBranch = { [weak self] entry in self?.branchesPane?.branch(fromStash: entry) }
+			page.onDrop = { [weak self] entry in self?.branchesPane?.drop(stashes: [entry]) }
+		}
+		stashPage = page
+		group.openPage(page, title: "Stash", identifier: "stash", symbol: "tray.full")
+	}
+
+	/// Every submodule in the estate, as a page — see `EstateOverviewPage`.
+	func showEstatePage() {
+		leaveTerminalFullScreen()
+		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return }
+
+		let page = (group.page(identifier: "estate") as? EstateOverviewPage)
+			?? EstateOverviewPage(root: gitCommandRoot() ?? project.root)
+		page.onOpenPullRequest = { [weak self] number, root in
+			_ = self?.pullRequests.openFromEstate(number: number, in: root)
+		}
+		page.onOpenSubmodule = { [weak self] path in
+			// The submodule's own changes, in the page that already draws them —
+			// landing on that repository's row, not merely opening a page that
+			// looks the same as it did before the row was pressed.
+			guard let self else { return }
+			showCommitPage(carrying: nil)
+			// After the page has read the working copy, or the row it is being
+			// asked to select does not exist yet.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+				self?.commitPage?.select(path: path)
+			}
+		}
+		estatePage = page
+		group.openPage(
+			page, title: "Submodules", identifier: "estate", symbol: "square.stack.3d.up"
+		)
+		giveTheEditorTheWindow()
+	}
+
+	/// The estate page, while one is open, for the driver to read.
+	private(set) weak var estatePage: EstateOverviewPage?
+	private(set) weak var stashPage: StashPage?
+
+	/// What the estate page says, row by row.
+	func estateForTesting(_ steps: String, waiting: Int = 8) {
+		if estatePage == nil { showEstatePage() }
+		guard let page = estatePage else {
+			print("ESTATE: no page")
+			return
+		}
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			if step.hasPrefix("settle") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.estateForTesting(rest, waiting: waiting)
+				}
+				return
+			}
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "rows":   print("ESTATE rows:\n\(page.rowsForTesting())")
+			case "filter": page.filterForTesting(argument)
+			case "take":
+				// `svc-1:theirs`, or `svc-1:<commit>` for a third one.
+				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+				if parts.count == 2 { page.resolveForTesting(path: parts[0], to: parts[1]) }
+			default:       print("ESTATE: unknown step \(step)")
+			}
+		}
 	}
 
 	/// What the commit page holds.
@@ -901,12 +1126,26 @@ final class SidebarController: NSObject {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("COMMIT-PAGE:\n\(page.pageReportForTesting())")
+			case "rows":   print("COMMIT-PAGE rows:\n\(page.rowsForTesting())")
+			case "diff":   print("COMMIT-PAGE diff: \(page.diffForTesting())")
+			case "verbs":  print("COMMIT-PAGE verbs: \(page.diffVerbsForTesting())")
+			case "stage-lines":
+				let count = Int(argument) ?? 1
+				print("COMMIT-PAGE stage-lines: \(page.stageLinesForTesting(count))")
+			case "stage":  page.stageForTesting(paths: [argument], staged: false)
 			case "who":    print("COMMIT-PAGE \(page.keyboardReportForTesting())")
 			case "keys":   print("COMMIT-PAGE keys: " + page.keysForTesting(argument))
 			case "select": page.selectChangeForTesting(argument)
 			case "type":   page.carrySummaryForTesting(argument)
+			case "chevron": page.toggleDescriptionForTesting()
+			case "return":  page.pressReturnInSummaryForTesting()
+			// A script that says so ends the run. Without it the process is
+			// killed by whatever is waiting on it, and a killed process never
+			// flushes: the report was written and never reached the terminal.
+			case "exit":   fflush(stdout); exit(0)
 			default:       print("COMMIT-PAGE: unknown step \(step)")
 			}
+			fflush(stdout)
 		}
 	}
 
@@ -951,6 +1190,7 @@ final class SidebarController: NSObject {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("LOG-PAGE:\n\(page.pageReportForTesting())")
+			case "verbs":  print("LOG-PAGE verbs: \(page.diffVerbsForTesting())")
 			case "menu":   print("LOG-PAGE-MENU:\n\(page.commitMenuForTesting(row: Int(argument) ?? 0))")
 			case "file":
 				page.selectCommitForTesting(0)
@@ -974,15 +1214,30 @@ final class SidebarController: NSObject {
 		}
 	}
 
+	/// Where the lines were selected, so what happens next is shown back in the
+	/// same place. A tab wants the diff re-opened as a tab; the commit page
+	/// keeps its diff and only wants re-reading.
+	enum DiffOrigin {
+		case tab
+		case page
+	}
+
 	/// Moves the selected lines across the index, in whichever direction the
 	/// diff's side implies.
-	func applyDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+	///
+	/// - Parameter root: the repository the diff was read in, which is the
+	///   submodule for a file inside one. Defaults to the project's own.
+	func applyDiffSelection(
+		change: GitChange, diff: String, lines: Set<Int>,
+		in root: URL? = nil, from origin: DiffOrigin = .tab
+	) {
 		guard let project = project(), !lines.isEmpty else { return }
+		let root = root ?? project.root
 		Task { @MainActor in
 			let result = change.isStaged
-				? await GitWorkingCopy.unstage(lines: lines, ofDiff: diff, in: project.root)
-				: await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: project.root)
-			finishDiffOperation(result, change: change)
+				? await GitWorkingCopy.unstage(lines: lines, ofDiff: diff, in: root)
+				: await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: root)
+			finishDiffOperation(result, change: change, from: origin)
 		}
 	}
 
@@ -996,9 +1251,12 @@ final class SidebarController: NSObject {
 	/// The index is put back the way it was found: somebody who had staged
 	/// something else and then stashed a hunk should not discover their staging
 	/// had been swept up with it.
-	func stashDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+	func stashDiffSelection(
+		change: GitChange, diff: String, lines: Set<Int>,
+		in owner: URL? = nil, from origin: DiffOrigin = .tab
+	) {
 		guard let project = project(), !lines.isEmpty else { return }
-		let root = project.root
+		let root = owner ?? project.root
 
 		Task { @MainActor in
 			let alreadyStaged = await GitWorkingCopy.status(in: root).staged.map(\.path)
@@ -1013,21 +1271,25 @@ final class SidebarController: NSObject {
 
 			let staged = await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: root)
 			guard staged.exitCode == 0 else {
-				finishDiffOperation(staged, change: change)
+				finishDiffOperation(staged, change: change, from: origin)
 				return
 			}
 
 			let name = "\(lines.count) line\(lines.count == 1 ? "" : "s") of \(change.name)"
 			let put = await GitStash.pushStaged(in: root, message: name)
-			finishDiffOperation(put, change: change)
+			finishDiffOperation(put, change: change, from: origin)
 			if put.exitCode == 0 {
 				Toast.post("Stashed \(name)", kind: .information)
 			}
 		}
 	}
 
-	func discardDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+	func discardDiffSelection(
+		change: GitChange, diff: String, lines: Set<Int>,
+		in owner: URL? = nil, from origin: DiffOrigin = .tab
+	) {
 		guard let project = project(), !lines.isEmpty else { return }
+		let root = owner ?? project.root
 
 		// Discarding is the one operation here that destroys work, so it asks.
 		let alert = NSAlert()
@@ -1045,10 +1307,10 @@ final class SidebarController: NSObject {
 				guard let patch = GitPatch.parse(diff).patch(selecting: lines, reverse: true) else { return }
 				let result = await GitRepository.run(
 					["apply", "--reverse", "--recount", "--whitespace=nowarn", "-"],
-					in: project.root,
+					in: root,
 					input: Data(patch.utf8)
 				)
-				self.finishDiffOperation(result, change: change)
+				self.finishDiffOperation(result, change: change, from: origin)
 			}
 		}
 
@@ -1059,7 +1321,9 @@ final class SidebarController: NSObject {
 		}
 	}
 
-	private func finishDiffOperation(_ result: GitRepository.ProcessResult, change: GitChange) {
+	private func finishDiffOperation(
+		_ result: GitRepository.ProcessResult, change: GitChange, from origin: DiffOrigin = .tab
+	) {
 		if result.exitCode != 0 {
 			notify(
 				"git reported a problem",
@@ -1073,7 +1337,16 @@ final class SidebarController: NSObject {
 		navigator.refreshGitStatus()
 		// The diff on screen described the state before this ran, so it is
 		// re-read rather than left showing lines that have already moved.
-		showDiff(for: change)
+		//
+		// **Back where it was selected.** From the page that is the page's own
+		// diff, and opening a tab as well would answer a gesture made to avoid
+		// tabs with one of them.
+		switch origin {
+		case .tab:  showDiff(for: change)
+		case .page:
+			commitPage?.refresh()
+			commitPage?.rereadDiff()
+		}
 	}
 
 	/// Opens the diff for a change as an editor tab.

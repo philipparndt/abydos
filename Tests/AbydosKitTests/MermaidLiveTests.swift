@@ -15,6 +15,9 @@ import Testing
 /// about the runner rather than about the code.
 @MainActor
 struct MermaidLiveTests {
+	/// A suite is not somebody waiting at a screen — see `RenderPatience`.
+	init() { RenderPatience.raise() }
+
 	static let flowchart = """
 	flowchart TD
 	    A[Start] --> B{Is it a diagram?}

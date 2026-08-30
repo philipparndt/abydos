@@ -126,6 +126,68 @@ public enum GitBranches {
 		)
 	}
 
+	/// The remotes this repository has, in the order git lists them.
+	///
+	/// One process, and usually one answer. Asked rather than assumed: `origin`
+	/// is a convention, not a rule, and a repository with a fork remote beside
+	/// it has two defaults to measure against.
+	public static func remotes(in root: URL) async -> [String] {
+		let result = await GitRepository.run(["remote"], in: root)
+		guard result.exitCode == 0 else { return [] }
+		return result.stdout
+			.split(separator: "\n")
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }
+	}
+
+	/// The same question, asked of the remote-tracking branches.
+	///
+	/// **`git branch --merged` lists local branches only**, which is why the
+	/// pane could mark a finished local branch and had nothing to say about the
+	/// remote copy of the same work. `-r` is the whole difference.
+	///
+	/// - Parameter target: a *remote* branch — `origin/main`. Measuring
+	///   `origin/x` against the local `main` answers a question nobody asked:
+	///   the local default can be ahead of the remote's, and a branch that is
+	///   merged there is not yet merged where deleting it would matter.
+	///
+	/// Names come back with their remote on them, as `%(refname:short)` gives
+	/// them: `origin/x`. The caller keys by that, because a remote row's own
+	/// `name` has the remote stripped and `origin/x` and `upstream/x` would
+	/// otherwise be the same branch.
+	public static func mergedRemotes(into target: String, in root: URL) async -> Set<String> {
+		let result = await GitRepository.run(
+			["branch", "-r", "--merged", target, "--format=%(refname:short)"], in: root
+		)
+		guard result.exitCode == 0 else { return [] }
+		return Set(
+			result.stdout
+				.split(separator: "\n")
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+				// `origin/HEAD` is a symbolic ref at the remote's default and is
+				// trivially merged into it; it is not a branch anybody deletes.
+				.filter { !$0.isEmpty && $0 != target && !$0.hasSuffix("/HEAD") }
+		)
+	}
+
+	/// Deletes a branch on the remote.
+	///
+	/// **This is a push**, and the only one in this file. `git push origin
+	/// --delete x` removes the ref from somebody else's machine, which is why
+	/// the pane asks first and says out loud where the branch is going from.
+	///
+	/// `--delete` rather than the `:x` refspec: they do the same thing and only
+	/// one of them can be read by somebody who has not memorised it.
+	public static func deleteOnRemote(
+		_ name: String, on remote: String, in root: URL
+	) async -> GitRepository.ProcessResult {
+		await GitRepository.run(
+			["push", remote, "--delete", name],
+			in: root,
+			environment: ["GIT_TERMINAL_PROMPT": "0"]
+		)
+	}
+
 	/// Every ref worth a row, and how far each is from `comparedTo`.
 	///
 	/// - Parameter comparedTo: a branch to measure every ref against, usually
@@ -296,6 +358,19 @@ public enum GitBranches {
 		in root: URL
 	) async -> GitRepository.ProcessResult {
 		await GitRepository.run(["branch", force ? "-D" : "-d", name], in: root)
+	}
+
+	/// Whether every commit on `branch` is already on `target`.
+	///
+	/// **`merge-base --is-ancestor`, and not `git branch -d`'s opinion.** The
+	/// house rules record why: `-d` refuses a branch that is merged into `main`
+	/// while sitting ahead of its own *stale* upstream ref — it says "not fully
+	/// merged" and means "your `origin/<branch>` is behind". Asking about
+	/// ancestry is the question that decides whether deleting loses anything.
+	public static func isMerged(_ branch: String, into target: String, in root: URL) async -> Bool {
+		await GitRepository.run(
+			["merge-base", "--is-ancestor", branch, target], in: root
+		).exitCode == 0
 	}
 
 	@discardableResult

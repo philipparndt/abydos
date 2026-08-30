@@ -1,4 +1,5 @@
 import AppKit
+import AbydosKit
 
 /// The field in the middle of the titlebar: which project on the left, which
 /// branch on the right, and the shortcut that turns the whole thing into a
@@ -31,6 +32,8 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private var name = ""
 	private var branch: String?
 	private var branchIsUnborn = false
+	private var branchIsDetached = false
+	private var operation: GitConflicts.Operation?
 
 	private var trackingArea: NSTrackingArea?
 	private var heightConstraint: NSLayoutConstraint?
@@ -139,9 +142,27 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 		}
 	}
 
-	func setBranch(_ branch: String?, isUnborn: Bool = false) {
+	/// - Parameter isDetached: there is no branch — the name given is where the
+	///   head is instead, and it is drawn quietly for the same reason an unborn
+	///   branch is: it is not a place to commit onto.
+	/// - Parameter operation: a merge, rebase, cherry-pick or revert that has
+	///   stopped part-way through, in one word.
+	///
+	/// **Both of these used to be nothing at all.** A detached head answered
+	/// `Head.name == nil` and the pill drew an empty half — so the two moments
+	/// somebody most needs the titlebar, a stopped rebase and a checked-out
+	/// commit, were the two it said least in. The pill now always says where the
+	/// head is, and says what git is in the middle of beside it.
+	func setBranch(
+		_ branch: String?,
+		isUnborn: Bool = false,
+		isDetached: Bool = false,
+		operation: GitConflicts.Operation? = nil
+	) {
 		self.branch = branch
 		self.branchIsUnborn = isUnborn
+		self.branchIsDetached = isDetached
+		self.operation = operation
 		// Whatever the answer, it has arrived.
 		if branch != nil { isReadingBranch = false }
 		// The only thing that qualifies what is on the capsule now. It shared
@@ -149,18 +170,58 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 		// its own, and the two of them writing straight onto `toolTip` — which
 		// is what they did at first — meant whichever arrived second was the
 		// only one anybody ever saw. On two views it cannot happen again.
-		toolTip = isUnborn ? branch.map { "On \($0) — no commits yet" } : nil
+		toolTip = Self.explanation(
+			branch: branch, isUnborn: isUnborn, isDetached: isDetached, operation: operation
+		)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
 	}
 
 	/// Whether the right half has anything to say. A directory that is not a
 	/// work tree has no branch, and the divider goes with it.
-	var hasBranch: Bool { branch != nil || isReadingBranch }
+	var hasBranch: Bool { branchText != nil }
 
 	/// What the branch half says: the branch, or that it is still being looked
-	/// for.
-	private var branchText: String? { branch ?? (isReadingBranch ? "reading…" : nil) }
+	/// for, with the stopped operation after it when there is one.
+	private var branchText: String? {
+		guard let said = branch ?? (isReadingBranch ? "reading…" : nil) else {
+			// No branch and not reading, but git is in the middle of something:
+			// the operation is the whole of what there is to say, and saying it
+			// beats the empty half this fixes.
+			return operation?.said
+		}
+		guard let operation else { return said }
+		return said + " · " + operation.said
+	}
+
+	/// The sentence under the pointer. Says the same three things the pill is
+	/// drawn from, at the length a tooltip has room for.
+	private static func explanation(
+		branch: String?, isUnborn: Bool, isDetached: Bool, operation: GitConflicts.Operation?
+	) -> String? {
+		var parts: [String] = []
+		if isUnborn, let branch { parts.append("On \(branch) — no commits yet") }
+		if isDetached {
+			parts.append(
+				"Not on a branch — \(branch ?? "detached"). "
+					+ "A commit here belongs to no branch until one is put on it."
+			)
+		}
+		if let operation { parts.append("A \(operation.noun) is in progress.") }
+		return parts.isEmpty ? nil : parts.joined(separator: "\n")
+	}
+
+	/// What the branch half says and how, for a driven run.
+	///
+	/// The text and the two qualifiers, because the qualifiers are what make it
+	/// readable: a detached head and an unborn branch are both drawn quietly,
+	/// and only this says which one is being looked at.
+	func branchPillForTesting() -> String {
+		"BRANCHPILL text=\(branchText ?? "none")"
+			+ " unborn=\(branchIsUnborn) detached=\(branchIsDetached)"
+			+ " operation=\(operation?.said ?? "none")"
+			+ " tooltip=\((toolTip ?? "none").replacingOccurrences(of: "\n", with: " / "))"
+	}
 
 	var isMenuOpen: Bool {
 		get { openHalf != nil }
@@ -441,7 +502,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 			// anything has happened.
 			// The dimmer colour also carries "still reading": it is not yet a
 			// branch anybody is on.
-			.foregroundColor: branchIsUnborn || isReadingBranch
+			.foregroundColor: branchIsUnborn || branchIsDetached || isReadingBranch
 				? Theme.current.gutterText
 				: Theme.current.sidebarText,
 		])

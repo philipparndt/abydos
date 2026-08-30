@@ -88,6 +88,25 @@ public enum GitPull {
 
 	// MARK: - Doing it
 
+	/// When the remote was last asked, or nil if it never has been here.
+	///
+	/// **Because every count this pane draws is only as true as the last
+	/// fetch.** `1 ahead` is a statement about a tracking ref, and a tracking
+	/// ref is a copy of what the remote said the last time somebody asked —
+	/// which can be days ago, and nothing on screen said so. Git stamps
+	/// `.git/FETCH_HEAD` on every fetch, so the answer is one `stat` and no
+	/// subprocess.
+	public static func lastFetch(in root: URL) async -> Date? {
+		let said = await GitRepository.run(["rev-parse", "--git-path", "FETCH_HEAD"], in: root)
+		let path = said.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard said.exitCode == 0, !path.isEmpty else { return nil }
+		let file = path.hasPrefix("/")
+			? URL(fileURLWithPath: path)
+			: root.appendingPathComponent(path)
+		return try? FileManager.default
+			.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
+	}
+
 	/// Brings the remote's refs down without touching the working copy.
 	public static func fetch(
 		in root: URL,

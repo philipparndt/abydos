@@ -56,7 +56,13 @@ struct PseudoTerminalChildTests {
 		try #require(child > 0)
 
 		#expect(kill(child, SIGTERM) == 0)
-		#expect(await exit.wait(seconds: 10), "the child outlived a signal sent to it")
+		// Ten seconds was a number, not a claim. What is being asserted is that
+		// the child died of the signal at all, and `Patience` is what this suite
+		// says that kind of wait should be.
+		#expect(
+			await exit.wait(seconds: Patience.seconds),
+			"the child outlived a signal sent to it"
+		)
 		#expect(exit.code == 143, "128 + SIGTERM, so the signal is what ended it")
 	}
 

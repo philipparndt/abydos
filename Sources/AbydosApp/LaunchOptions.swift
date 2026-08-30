@@ -18,6 +18,29 @@ struct LaunchOptions {
 	var expandNavigator = false
 	/// Text typed into the editor before capture, for verifying the edit path.
 	var typeText: String?
+	/// What to make of what `--find` found: `--replace` types a replacement into
+	/// the bar, and `--replace-all` presses the second button rather than the
+	/// first.
+	var replaceWith: String?
+	var replaceAll = false
+	/// Select the first place this string appears and say which other places lit
+	/// up: `--select-text`. `--select-lines` cannot ask this — a whole line
+	/// carries its newline, and a selection with a line break in it lights
+	/// nothing by rule.
+	var selectText: String?
+	/// Set breakpoints on these lines of the file in front and open the debug
+	/// pane to read the list: `--break-at <line>`, repeatable, and
+	/// `--breakpoints`. A driven run cannot use a project's own, since the
+	/// session file is not read while one is driving.
+	var breakpointLines: [Int] = []
+	var showBreakpointList = false
+	/// And then start a session, to show it takes the empty pane over rather
+	/// than opening a second one.
+	var breakpointsThenDebug = false
+	/// Turns the bar's `.*` switch on, so `--find` is a pattern and `--replace`
+	/// a template. Without it there is no way to drive the half of replace that
+	/// capture groups are.
+	var findRegex = false
 	/// Collapse every fold before capture, for verifying folding.
 	var collapseFolds = false
 	/// Opened as a provisional tab, as a single click in the tree would.
@@ -328,6 +351,12 @@ struct LaunchOptions {
 	/// A comma-separated script for the changes tree: `report`, `stage:<path>`,
 	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`.
 	var changesSteps: String?
+	/// Print what the branch half of the titlebar pill says. See
+	/// `branchPillForTesting`.
+	///
+	/// Not `--branch-pill`, which is taken: that one opens the menu under the
+	/// pill and takes a number of seconds. This reads the pill itself.
+	var pillState = false
 	/// Drive the refs tree and print what it holds. See `branchRowsForTesting`.
 	var branchRowSteps: String?
 	/// Print what the menu over a commit in the log offers.
@@ -338,6 +367,8 @@ struct LaunchOptions {
 	var commitPageSteps: String?
 	/// Drive the pull request list and print what each row says.
 	var pullRequestSteps: String?
+	/// Drive the estate overview and print what each row says.
+	var estateSteps: String?
 	/// How many keystrokes to time in the terminal.
 	var typingPresses: Int?
 	/// Print what opening this project cost, at each of these many seconds in.
@@ -853,6 +884,15 @@ struct LaunchOptions {
 			case "--delay":      options.screenshotDelay = next().flatMap(Double.init) ?? 1.5
 			case "--expand":     options.expandNavigator = true
 			case "--type":       options.typeText = next()
+			case "--replace":    options.replaceWith = next()
+			case "--replace-all": options.replaceAll = true
+			case "--select-text": options.selectText = next()
+			case "--break-at":    if let line = next().flatMap(Int.init) { options.breakpointLines.append(line) }
+			case "--breakpoints": options.showBreakpointList = true
+			case "--breakpoints-debug":
+				options.showBreakpointList = true
+				options.breakpointsThenDebug = true
+			case "--regex":      options.findRegex = true
 			case "--collapse":   options.collapseFolds = true
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true
@@ -893,11 +933,13 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
 			case "--changes-tree": options.changesSteps = next()
+			case "--pill-state": options.pillState = true
 			case "--branch-rows": options.branchRowSteps = next()
 			case "--commit-menu": options.commitMenuRow = next().flatMap(Int.init)
 			case "--log-page": options.logPageSteps = next()
 			case "--commit-page": options.commitPageSteps = next()
 			case "--pull-requests": options.pullRequestSteps = next()
+			case "--estate": options.estateSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--report-open":
 				options.openReportsAt = (next() ?? "10")

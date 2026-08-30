@@ -160,6 +160,13 @@ struct Theme {
 	/// `CodeView.drawLine`, which paints it *after* the selection for that
 	/// reason.
 	let searchMatchCurrentBackground: NSColor
+	/// Where the selected text also appears.
+	///
+	/// Told apart from the selection rather than from a find match: find's
+	/// matches win while find is showing, so a band of this colour and a find
+	/// band never share a page, and the thing it sits beside is the selection
+	/// that produced it.
+	let selectionOccurrenceBackground: NSColor
 	let foldPlaceholderBackground: NSColor
 	let foldPlaceholderText: NSColor
 	let indentGuide: NSColor
@@ -203,6 +210,7 @@ struct Theme {
 		selectionBackgroundInactive = colour(.selectionBackgroundInactive)
 		searchMatchBackground = colour(.searchMatchBackground)
 		searchMatchCurrentBackground = colour(.searchMatchCurrentBackground)
+		selectionOccurrenceBackground = colour(.selectionOccurrenceBackground)
 		foldPlaceholderBackground = colour(.foldPlaceholderBackground)
 		foldPlaceholderText = colour(.foldPlaceholderText)
 		indentGuide = colour(.indentGuide)

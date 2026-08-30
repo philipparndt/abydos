@@ -14,6 +14,9 @@ import Testing
 ///
 ///     docker pull plantuml/plantuml
 struct DiagramExportLiveTests {
+	/// A suite is not somebody waiting at a screen — see `RenderPatience`.
+	init() { RenderPatience.raise() }
+
 	static let image = "plantuml/plantuml"
 
 	/// Docker only: the kept-warm server is docker only, and this is meant to go

@@ -184,6 +184,10 @@ public extension Scheme {
 				roles[role] = SchemePair(light: 0xE8901F, dark: 0xB0722A)
 			case .searchMatchBackground:
 				roles[role] = grey(0xE0E0E0, 0x4E4E4E)
+			// Where the selected text also appears: a pale selection, quieter
+			// than a find band, because nobody asked to be told.
+			case .selectionOccurrenceBackground:
+				roles[role] = grey(0xEBEBEB, 0x323232)
 			default:
 				roles[role] = grey(0x202020, 0xD0D0D0)
 			}

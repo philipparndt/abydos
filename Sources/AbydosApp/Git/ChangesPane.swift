@@ -37,6 +37,26 @@ final class ChangesPane: NSView {
 	/// Something was staged, unstaged or committed.
 	var onWorkingCopyChanged: (() -> Void)?
 
+	/// Lines were selected in the page's own diff and something is to be done
+	/// with them. Only in `.page`: the sidebar hands its diff to a tab, and the
+	/// tab carries these itself.
+	///
+	/// **The page's diff had none of these and said nothing about it.** The
+	/// menu over it is `DiffView`'s, which offers "Stage Selected Lines"
+	/// whenever the diff is not read-only — so on the page the item was there,
+	/// was enabled, and called a closure nobody had set. Fifteen lines selected,
+	/// the item pressed, and the working copy exactly as it was.
+	///
+	/// The root travels with the change because a file inside a submodule is
+	/// staged in that submodule: the diff was read there, so its patch names
+	/// paths relative to it, and `git apply --cached` in the superproject would
+	/// be applying a patch about files it does not track.
+	var onApplyDiffSelection: ((GitChange, String, Set<Int>, URL) -> Void)?
+	var onDiscardDiffSelection: ((GitChange, String, Set<Int>, URL) -> Void)?
+	/// Nil where git is too old for `stash push --staged`, so the item is
+	/// absent rather than failing when pressed.
+	var onStashDiffSelection: ((GitChange, String, Set<Int>, URL) -> Void)?
+
 	/// Not `layout`: that is `NSView`'s, and shadowing it means an override
 	/// silently is not one — which cost an afternoon in `HistoryPane`.
 	private let arrangement: Layout
@@ -47,6 +67,11 @@ final class ChangesPane: NSView {
 	var repositoryRoot: URL { root }
 
 	private var status = GitWorkingCopyStatus()
+
+	/// The submodules this repository holds, and what each of them has changed.
+	/// See `EstateChanges` — empty for a repository that has none, down the
+	/// same code path.
+	private let submodules: EstateChanges
 	private var unstagedTable: ChangesOutlineView!
 	private var stagedTable: ChangesOutlineView!
 
@@ -194,6 +219,20 @@ final class ChangesPane: NSView {
 	private var hasPlacedDivider = false
 	private var draftButton: NSButton?
 	private var bodyView: NSTextView!
+	/// Opens the description, which the page starts with put away.
+	private var descriptionChevron: NSButton!
+	/// The description's own height, turned off while it is collapsed.
+	private var descriptionHeight: NSLayoutConstraint!
+	/// The scroll view around the description, which is what is hidden: an
+	/// `NSStackView` collapses a hidden arranged subview, and hiding rather than
+	/// removing is what keeps the text through being put away.
+	private var descriptionBox: NSScrollView!
+	/// Kept for as long as the page is open, so somebody who writes a
+	/// description opens it once rather than once per commit.
+	private var isDescriptionShowing = false
+	/// The summary, description and commit row together, for saying where they
+	/// ended up.
+	private var messageStack: NSStackView!
 	private var amendCheckbox: NSButton!
 	private var commitButton: NSButton!
 	private var pushButton: NSButton!
@@ -206,6 +245,7 @@ final class ChangesPane: NSView {
 
 	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
+		self.submodules = EstateChanges(root: root)
 		self.arrangement = layout
 		super.init(frame: .zero)
 		wantsLayer = true
@@ -227,7 +267,24 @@ final class ChangesPane: NSView {
 	deinit { NotificationCenter.default.removeObserver(self) }
 
 	@objc private func workingCopyMayHaveChanged() {
+		// No paths with it, so nothing here knows what moved. That is the right
+		// answer for what posts this: a commit, a checkout, a pull, a branch
+		// switch — every one of which can move every gitlink in the estate, and
+		// none of which happens per keystroke. The event that *does* arrive
+		// dozens a minute is a file being written, and that one comes through
+		// `refresh(after:)` with its paths.
 		refresh()
+	}
+
+	/// Re-reads only the repositories the filesystem event named.
+	///
+	/// **This is what makes a superproject affordable to hold open.** Sweeping
+	/// an estate is 0.45 s over two hundred submodules and this is called on
+	/// every write inside the project; re-reading the one repository the write
+	/// landed in is 0.01 s. `GitEstateRefresh` does the attribution, from the
+	/// paths the navigator's watcher already has.
+	func refresh(after change: FileSystemChange) {
+		refresh(submodules.read(after: change))
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -312,6 +369,13 @@ final class ChangesPane: NSView {
 		commitButton.bezelStyle = .rounded
 		commitButton.controlSize = .small
 		commitButton.keyEquivalent = "\r"
+		// **⌘Return, not Return.** The button carried plain Return, which is the
+		// key the summary field now uses to open the description — and a page
+		// where the summary cannot be committed from the keyboard at all would be
+		// worse than either. ⌘Return is what a page with a text area on it means
+		// by "commit" everywhere else, and it works from the description too,
+		// where Return has always been a newline.
+		commitButton.keyEquivalentModifierMask = [.command]
 
 		// Beside commit rather than inside it: "commit and push" is one gesture
 		// people want, but pushing what somebody else committed is a different
@@ -321,6 +385,9 @@ final class ChangesPane: NSView {
 		pushButton.bezelStyle = .rounded
 		pushButton.controlSize = .small
 		pushButton.isEnabled = false
+		// The two swap `\r` between them in `updateCommitButton`, so the modifier
+		// belongs to both or the swap would give Return back.
+		pushButton.keyEquivalentModifierMask = [.command]
 
 		// Commit then push: that is the order the two happen in, and reading the
 		// row left to right should not be backwards from doing it.
@@ -425,22 +492,25 @@ final class ChangesPane: NSView {
 		lists.spacing = 0
 		unstaged.heightAnchor.constraint(equalTo: staged.heightAnchor).isActive = true
 
-		let split = NSSplitView()
-		split.isVertical = true
-		split.dividerStyle = .thin
-		split.addArrangedSubview(lists)
-		split.addArrangedSubview(diffScroll)
-		// The list gives way first: a diff with its right-hand columns cut off
-		// is unreadable, where a path that has lost a folder or two is not.
-		split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-		split.translatesAutoresizingMaskIntoConstraints = false
-		pageSplit = split
+		// **The description starts put away.** The message area cost a fixed 224
+		// points at every height — a 26-point summary, a description pinned at
+		// 150, the commit row, two gaps and the insets — so a short page showed
+		// four lines of diff under a box nobody had typed in. The sidebar keeps
+		// the one-line case; this page is reached because somebody wants the
+		// diff or a longer message, and the diff is the half that is already
+		// there.
+		descriptionChevron = NSButton(
+			title: "", target: self, action: #selector(toggleDescription)
+		)
+		descriptionChevron.bezelStyle = .accessoryBarAction
+		descriptionChevron.controlSize = .small
+		descriptionChevron.imagePosition = .imageOnly
 
 		// **The draft sits beside the summary**, because that is the field it
 		// fills and the one that is hardest to start. Absent rather than
 		// disabled when there is no `claude` to run: a control that fails when
 		// pressed is worse than one that is not there.
-		var summaryRow: [NSView] = [subjectField]
+		var summaryRow: [NSView] = [descriptionChevron, subjectField]
 		if ClaudeDraft.isAvailable {
 			draftButton = NSButton(title: "Draft", target: self, action: #selector(draftMessage))
 			draftButton?.bezelStyle = .rounded
@@ -452,32 +522,79 @@ final class ChangesPane: NSView {
 		summary.orientation = .horizontal
 		summary.spacing = Theme.current.scaled(6)
 
+		descriptionBox = body
 		let message = NSStackView(views: [summary, body, commitRow])
+		messageStack = message
 		message.orientation = .vertical
 		message.spacing = Theme.current.scaled(6)
+		message.edgeInsets = NSEdgeInsets(
+			top: Theme.current.scaled(8), left: Theme.current.scaled(8),
+			bottom: Theme.current.scaled(8), right: Theme.current.scaled(8)
+		)
 
-		for view in [split, message] as [NSView] {
-			addSubview(view)
-			view.translatesAutoresizingMaskIntoConstraints = false
-		}
+		// **The message belongs to the diff, not to the page.** It used to span
+		// the whole width, under the file lists as well — which cost the tree
+		// height for a message that has nothing to do with it. In the split's
+		// right-hand side it is the diff's width, and the divider moves the two
+		// together.
+		let commitSide = NSStackView(views: [diffScroll, message])
+		commitSide.orientation = .vertical
+		commitSide.spacing = 0
 
-		let inset = Theme.current.scaled(8)
+		let split = NSSplitView()
+		split.isVertical = true
+		split.dividerStyle = .thin
+		split.addArrangedSubview(lists)
+		split.addArrangedSubview(commitSide)
+		// The list gives way first: a diff with its right-hand columns cut off
+		// is unreadable, where a path that has lost a folder or two is not.
+		split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+		split.translatesAutoresizingMaskIntoConstraints = false
+		pageSplit = split
+
+		addSubview(split)
+
+		descriptionHeight = body.heightAnchor.constraint(
+			equalToConstant: Theme.current.scaled(150)
+		)
 		NSLayoutConstraint.activate([
 			split.topAnchor.constraint(equalTo: topAnchor),
 			split.leadingAnchor.constraint(equalTo: leadingAnchor),
 			split.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-			message.topAnchor.constraint(equalTo: split.bottomAnchor, constant: inset),
-			message.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-			message.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-			message.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+			split.bottomAnchor.constraint(equalTo: bottomAnchor),
 
 			subjectField.heightAnchor.constraint(equalToConstant: Theme.current.scaled(26)),
-			// Room for a paragraph, which is the whole reason this page exists.
-			body.heightAnchor.constraint(equalToConstant: Theme.current.scaled(150)),
 			lists.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(280)),
 			diffScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(320)),
 		])
+
+		// Collapsed at build, and the same at every height: a description that
+		// appeared and disappeared as the page was resized would be a layout
+		// nobody can predict, and the height at which it changed a number nobody
+		// knows.
+		setDescription(showing: false)
+	}
+
+	/// Shows or hides the description, keeping whatever is in it.
+	private func setDescription(showing: Bool) {
+		// The sidebar arrangement has no chevron and no description of its own:
+		// it is the one-line case, and the `…` beside it is how a message gets
+		// somewhere with room. Called from the draft, which both arrangements
+		// offer.
+		guard descriptionChevron != nil else { return }
+		isDescriptionShowing = showing
+		descriptionBox.isHidden = !showing
+		descriptionHeight.isActive = showing
+		descriptionChevron.image = NSImage(
+			systemSymbolName: showing ? "chevron.down" : "chevron.right",
+			accessibilityDescription: showing ? "Hide the description" : "Write a description"
+		)
+		descriptionChevron.toolTip = showing ? "Hide the description" : "Write a description"
+	}
+
+	@objc private func toggleDescription() {
+		setDescription(showing: !isDescriptionShowing)
+		if isDescriptionShowing { window?.makeFirstResponder(bodyView) }
 	}
 
 	/// Puts the divider somewhere sensible the first time there is a width for
@@ -522,14 +639,16 @@ final class ChangesPane: NSView {
 
 	// MARK: - Data
 
-	func refresh() {
-		guard !isBusy else { return }
+	func refresh() { refresh(.everything) }
+
+	private func refresh(_ read: EstateChanges.Read) {
+		guard !isBusy, read != .nothing else { return }
 		// Outside the comparison below: a clean working copy produces the same
 		// status every time, and the branch can still have moved ahead of its
 		// remote since the last look.
 		refreshPushState()
 		Task { @MainActor in
-			let fresh = await GitWorkingCopy.status(in: root)
+			let fresh = await submodules.refresh(read)
 			// Taken down before the comparison below, not after it. An
 			// unchanged status is still an answer, and a spinner that only
 			// stopped when something had changed span for ever over a clean
@@ -586,7 +705,14 @@ final class ChangesPane: NSView {
 		for staged in [false, true] {
 			let outline = staged ? stagedTable! : unstagedTable!
 			Task { @MainActor in
-				let counts = await GitLineCounts.workingCopy(staged: staged, in: root)
+				// Per repository that has changes, and none for the rest: the
+				// superproject's `--numstat` says nothing about a file inside a
+				// submodule, so every service's rows carried no counts at all.
+				let counts = await GitEstateLineCounts.workingCopy(
+					staged: staged,
+					in: self.submodules.estate,
+					status: self.submodules.status
+				)
 				// The tree may have been rebuilt while this was out; the roots
 				// read here are whichever ones are on screen now.
 				for root in self.side(for: outline).roots { root.applyLineCounts(counts) }
@@ -642,7 +768,7 @@ final class ChangesPane: NSView {
 	) {
 		let selected = selectedPaths(in: outline)
 		let collapsed = collapsedPaths(in: outline)
-		let roots = GitChangeTree.build(changes, against: other)
+		let roots = GitChangeTree.build(changes, against: other, in: submodules.estate)
 		let byPath = GitChangeTree.index(roots)
 		if staged {
 			stagedSide.roots = roots
@@ -831,7 +957,17 @@ final class ChangesPane: NSView {
 	private func fill(_ node: GitChangeNode, in outline: ChangesOutlineView, staged: Bool) {
 		let path = node.path
 		Task { @MainActor in
-			let files = await GitWorkingCopy.untrackedFiles(inDirectory: path, in: root)
+			// The same question as the diff: an untracked directory inside a
+			// submodule is listed by that submodule, and asking the
+			// superproject for it lists nothing.
+			let estate = self.submodules.estate
+			let files = await GitWorkingCopy.untrackedFiles(
+				inDirectory: estate.relativePath(of: path),
+				in: estate.repositoryRoot(containing: path)
+			).map { inside -> String in
+				guard let submodule = estate.submodule(containing: path) else { return inside }
+				return "\(submodule.path)/\(inside)"
+			}
 			let rows = GitChangeTree.contents(
 				ofUntrackedDirectory: path, files: files, staged: staged
 			)
@@ -1238,9 +1374,18 @@ final class ChangesPane: NSView {
 		// folder and counts what git has never seen, which no general dialog
 		// could — so what is borrowed from the safety net is the ref, made
 		// before anything is restored, and the toast that says where it went.
-		run {
-			await DestructiveAsk.insureWorkingCopy(in: self.root)
-			return await GitWorkingCopy.discard(paths: target.paths, in: self.root)
+		// **The safety net is asked once for the whole operation and every
+		// repository is insured before any file is discarded.** Insuring and
+		// discarding repository by repository has no way back from a failure
+		// part way through — the ones before it have moved and only some were
+		// recorded. Two hundred questions is also no question at all: a dialogue
+		// repeated per repository is answered by holding Return, and two hundred
+		// toasts afterwards are read by nobody.
+		runAcrossOwners(target.paths, reporting: false) { paths, estate in
+			let insured = await DestructiveAsk.insureEstate(estate.grouped(paths))
+			let outcomes = await GitEstateOperation.discard(paths: paths, in: estate)
+			DestructiveAsk.sayWhatHappened("discarded", outcomes, insured: insured)
+			return outcomes
 		}
 	}
 
@@ -1260,12 +1405,12 @@ final class ChangesPane: NSView {
 
 	@objc private func stageClicked() {
 		guard let clicked = clickedNode else { return }
-		run { await GitWorkingCopy.stage(paths: [clicked.node.path], in: self.root) }
+		runAcrossOwners([clicked.node.path]) { await GitEstateOperation.stage(paths: $0, in: $1) }
 	}
 
 	@objc private func unstageClicked() {
 		guard let clicked = clickedNode else { return }
-		run { await GitWorkingCopy.unstage(paths: [clicked.node.path], in: self.root) }
+		runAcrossOwners([clicked.node.path]) { await GitEstateOperation.unstage(paths: $0, in: $1) }
 	}
 
 	/// Stages what is selected — a folder as one path, which is the whole of
@@ -1278,14 +1423,14 @@ final class ChangesPane: NSView {
 		let paths = GitChangeTree.reduce(selectedPaths(in: unstagedTable))
 		guard !paths.isEmpty else { return }
 		rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
-		run { await GitWorkingCopy.stage(paths: paths, in: self.root) }
+		runAcrossOwners(paths) { await GitEstateOperation.stage(paths: $0, in: $1) }
 	}
 
 	private func unstageSelected() {
 		let paths = GitChangeTree.reduce(selectedPaths(in: stagedTable))
 		guard !paths.isEmpty else { return }
 		rememberWhereTheSelectionGoes(in: stagedTable, staged: true)
-		run { await GitWorkingCopy.unstage(paths: paths, in: self.root) }
+		runAcrossOwners(paths) { await GitEstateOperation.unstage(paths: $0, in: $1) }
 	}
 
 	/// Clicks into the details field and types, and says what happened.
@@ -1353,6 +1498,13 @@ final class ChangesPane: NSView {
 				}
 				if self.bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
 					self.bodyView.string = draft.description
+				}
+				// The one moment the description fills without anybody typing in
+				// it, and so the one moment the collapsed default would hide work
+				// that has just been done. A draft that wrote three paragraphs
+				// behind a chevron would read as a draft that failed.
+				if !self.bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
+					self.setDescription(showing: true)
 				}
 				self.updateCommitButton()
 			case .failure(.nothingStaged):
@@ -1426,6 +1578,47 @@ final class ChangesPane: NSView {
 	}
 
 	/// Runs a git command, then refreshes both this view and the navigator.
+	/// Stages, unstages or discards, in whichever repositories own the paths.
+	///
+	/// One command per owning repository, which is correctness before it is
+	/// thrift: `git add`, `restore`, `reset` and `clean` resolve a pathspec
+	/// against the repository they run in, so a submodule's file handed to the
+	/// superproject stages nothing and says `pathspec did not match`. See
+	/// `GitEstateOperation`.
+	/// - Parameter reporting: whether to say what failed. False where the
+	///   operation says more than that for itself — a discard reports every
+	///   repository and its backup ref, and two reports would be one too many.
+	private func runAcrossOwners(
+		_ paths: [String],
+		reporting: Bool = true,
+		_ operation: @escaping ([String], GitEstate) async -> [GitEstateOutcome]
+	) {
+		let estate = submodules.estate
+		isBusy = true
+		Task { @MainActor in
+			let outcomes = await operation(paths, estate)
+			isBusy = false
+			if reporting { report(outcomes) }
+			refresh()
+			onWorkingCopyChanged?()
+		}
+	}
+
+	/// Says what failed, per repository, and says nothing when nothing did.
+	///
+	/// Named repositories rather than one summary: an estate operation that
+	/// half-worked is a state somebody has to act on, and "git reported a
+	/// problem" over two hundred repositories is not something anybody can.
+	private func report(_ outcomes: [GitEstateOutcome]) {
+		let failed = outcomes.filter(\.didFail)
+		guard !failed.isEmpty else { return }
+		let detail = failed.map { outcome -> String in
+			guard case .failed(let why) = outcome.result else { return outcome.name }
+			return "\(outcome.name): \(why)"
+		}.joined(separator: "\n")
+		presentFailure(detail)
+	}
+
 	private func run(_ operation: @escaping () async -> GitRepository.ProcessResult) {
 		isBusy = true
 		Task { @MainActor in
@@ -1471,6 +1664,13 @@ final class ChangesPane: NSView {
 	}
 
 	/// Selects a change by path, in whichever list holds it.
+	/// Puts the selection on the row for this path, in whichever list has it.
+	///
+	/// Named for the driver because that is what asked for it first, and used by
+	/// the estate overview too: opening a submodule from there means landing on
+	/// its row here rather than in a page that looks the same as before.
+	func select(path: String) { selectChangeForTesting(path) }
+
 	func selectChangeForTesting(_ path: String) {
 		for table in [unstagedTable, stagedTable].compactMap({ $0 }) {
 			for row in 0..<table.numberOfRows {
@@ -1490,7 +1690,86 @@ final class ChangesPane: NSView {
 		said.append("body=\(bodyView.string.isEmpty ? "empty" : "\(bodyView.string.count) characters")")
 		said.append("draft=\(draftButton == nil ? "absent" : "offered")")
 		said.append("diff=\(diffView?.reportForTesting ?? "none")")
+		said.append(layoutReportForTesting())
 		return said.joined(separator: "\n")
+	}
+
+	/// Where the message ended up and how much height the diff kept.
+	///
+	/// The numbers are the claim. "The diff has the height the box would have
+	/// taken" is not something a photograph can be compared against, and "the
+	/// message is under the diff only" is a question about two x positions.
+	private func layoutReportForTesting() -> String {
+		guard arrangement == .page, let messageStack, let diffScroll = diffView?.enclosingScrollView else {
+			return "geometry=none"
+		}
+		let message = convert(messageStack.bounds, from: messageStack)
+		let diff = convert(diffScroll.bounds, from: diffScroll)
+		func round(_ value: CGFloat) -> Int { Int(value.rounded()) }
+		return "description=\(isDescriptionShowing ? "showing" : "collapsed")"
+			+ " message=(x \(round(message.minX)) w \(round(message.width)) h \(round(message.height)))"
+			+ " diff=(x \(round(diff.minX)) w \(round(diff.width)) h \(round(diff.height)))"
+			+ " pane=(w \(round(bounds.width)) h \(round(bounds.height)))"
+	}
+
+	/// Presses the chevron, the way somebody would.
+	func toggleDescriptionForTesting() {
+		toggleDescription()
+	}
+
+	/// Return at the end of the summary, through the delegate a key would reach.
+	func pressReturnInSummaryForTesting() {
+		guard let textView = subjectField.currentEditor() as? NSTextView else {
+			window?.makeFirstResponder(subjectField)
+			guard let editor = subjectField.currentEditor() as? NSTextView else { return }
+			_ = control(subjectField, textView: editor, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+			return
+		}
+		_ = control(subjectField, textView: textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+	}
+
+	/// Every row of both trees, with what each one is.
+	///
+	/// A repository row is marked `[repo]` and a moved gitlink `[moved]`, which
+	/// is the whole of what an estate adds to this pane and therefore the whole
+	/// of what a driven run has to be able to see. Indented by depth, because
+	/// the claim being checked is that a submodule sits *above* its folders.
+	/// The diff the page is showing, for the row named — which is the claim a
+	/// screenshot of an empty pane cannot be asked about.
+	func diffForTesting() -> String {
+		guard let diffView else { return "no diff view" }
+		let text = diffView.reportForTesting
+		return text.isEmpty ? "empty" : text
+	}
+
+	/// What the menu over the page's diff offers, and whether it is wired to
+	/// anything — see `DiffView.verbsForTesting`.
+	func diffVerbsForTesting() -> String {
+		diffView?.verbsForTesting() ?? "no diff view"
+	}
+
+	/// Stages the first `count` changed lines of the diff on screen.
+	func stageLinesForTesting(_ count: Int) -> String {
+		diffView?.applyFirstLinesForTesting(count) ?? "no diff view"
+	}
+
+	func rowsForTesting() -> String {
+		func lines(_ nodes: [GitChangeNode], depth: Int) -> [String] {
+			nodes.flatMap { node -> [String] in
+				var marks: [String] = []
+				if node.isRepository { marks.append("[repo]") }
+				if node.gitlink != nil { marks.append("[moved]") }
+				let tally = node.isFolder
+					? (node.isPartial ? " \(node.count) of \(node.total)" : " \(node.count)")
+					: (node.lines.map { " +\($0.added)/-\($0.removed)" } ?? "")
+				let line = String(repeating: "  ", count: depth)
+					+ node.name + tally
+					+ (marks.isEmpty ? "" : " " + marks.joined(separator: " "))
+				return [line] + lines(node.children, depth: depth + 1)
+			}
+		}
+		return (["unstaged:"] + lines(unstagedSide.roots, depth: 1)
+			+ ["staged:"] + lines(stagedSide.roots, depth: 1)).joined(separator: "\n")
 	}
 
 	/// How much changed, for a driven report — and nothing at all when git gave
@@ -1796,19 +2075,69 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// A column hands the diff to the editor area; a page keeps it, which is
 		// the whole difference between staging with a trip out to a tab per
 		// file and staging in one place.
-		guard arrangement == .page, let diffView else {
+		guard arrangement == .page, diffView != nil else {
 			onSelectChange?(change)
 			return
 		}
+		showDiff(of: change)
+	}
+}
+
+extension ChangesPane {
+	/// Reads the diff of the row that is selected, again.
+	///
+	/// After part of a file has been staged from the page's own diff: the text
+	/// on screen describes the state before that ran, and `refresh()` puts the
+	/// lists back without going near it — it restores the selection with
+	/// `isRestoring` set, precisely so that a filesystem event does not throw
+	/// away wherever somebody had scrolled to.
+	func rereadDiff() {
+		guard arrangement == .page, diffView != nil else { return }
+		for outline in [unstagedTable, stagedTable] {
+			guard let outline, outline.numberOfSelectedRows > 0 else { continue }
+			let changes = outline.selectedRowIndexes.sorted().compactMap {
+				(outline.item(atRow: $0) as? GitChangeNode)?.change
+			}
+			guard let change = changes.first else { continue }
+			showDiff(of: change)
+			return
+		}
+	}
+
+	private func showDiff(of change: GitChange) {
+		guard let diffView else { return }
 		Task { @MainActor [weak self] in
 			guard let self else { return }
+			// **In the repository that owns the path.** `git diff -- svc-2/…`
+			// run in the superproject answers nothing at all: the superproject
+			// does not track that file, so the pane went blank for every file
+			// inside a submodule and looked like a file with no changes. The
+			// path has to be relative to that repository too, for the reason
+			// `Project.gitRoot` records.
+			let estate = self.submodules.estate
+			let owner = estate.repositoryRoot(containing: change.path)
 			let text = await GitWorkingCopy.diff(
-				for: change.path, staged: change.isStaged, in: self.root
+				for: estate.relativePath(of: change.path),
+				staged: change.isStaged,
+				in: owner
 			)
 			diffView.setDiff(
 				text, staged: change.isStaged,
 				url: self.root.appendingPathComponent(change.path)
 			)
+			// **Re-bound on every selection, not once when the view was built.**
+			// The verbs are about *this* change and *this* diff text, and the
+			// one view shows every file in turn; a closure captured at build
+			// time would stage the first file somebody ever looked at.
+			diffView.onApplySelection = { [weak self] lines in
+				self?.onApplyDiffSelection?(change, text, lines, owner)
+			}
+			diffView.onDiscardSelection = { [weak self] lines in
+				self?.onDiscardDiffSelection?(change, text, lines, owner)
+			}
+			diffView.onStashSelection = self.onStashDiffSelection == nil ? nil : { [weak self] lines in
+				self?.onStashDiffSelection?(change, text, lines, owner)
+			}
 		}
 	}
 }
@@ -1816,6 +2145,24 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 extension ChangesPane: NSTextFieldDelegate {
 	func controlTextDidChange(_ notification: Notification) {
 		updateCommitButton()
+	}
+
+	/// Return in the summary opens the description rather than committing.
+	///
+	/// It is the reflex from every mail client — the subject is finished and
+	/// there is more to say — and in a single-line field it did nothing at all.
+	/// **⌘Return still commits**: that is the commit button's own key equivalent
+	/// and is untouched, so the key that makes a commit is the key it was.
+	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+		guard control === subjectField, selector == #selector(NSResponder.insertNewline(_:)) else {
+			return false
+		}
+		// Only the page has one. The sidebar's field is the one-line case and has
+		// no description to open.
+		guard descriptionChevron != nil else { return false }
+		if !isDescriptionShowing { setDescription(showing: true) }
+		window?.makeFirstResponder(bodyView)
+		return true
 	}
 }
 

@@ -9,9 +9,7 @@ tags. The refs tree itself, the safety net around destructive operations, and
 remote traffic are their own capabilities — `git-refs-tree`, `git-safety`,
 `git-remote-traffic` — because each is a fact about the whole repository rather
 than about the working copy alone.
-
 ## Requirements
-
 ### Requirement: The working copy is shown as the folders it changed
 
 The working copy SHALL be shown as the folders it changed.
@@ -35,6 +33,22 @@ the row that stages the outer folder on its own.
 The trees arrive unfolded. A pane that shows five folder names where the flat
 list showed twenty files has said less than it did before.
 
+**A change carries the repository it is in.** In an estate the paths in these
+trees come from several repositories, and the same folder name occurs in two
+hundred of them: `src/main/java` under `svc-3` and under `svc-47` are different
+folders and must not become one row. So a submodule with changes under it is a
+row above its folders, named by its path, and the folders beneath it are relative
+to that repository's own work tree.
+
+**The repository row exists only where there is a repository to name.** A project
+with no submodules has the trees it has always had, with no row added above them:
+the estate is one repository, and a level of tree with one child that is always
+the same child says nothing.
+
+The trees arrive with the repository rows unfolded, for the reason the folders do
+— though an estate large enough that two hundred repositories have changes is one
+where the overview, not this tree, is the place to look.
+
 #### Scenario: one file changed, several folders deep
 
 - **Given** only `Sources/AbydosKit/Git/GitBlame.swift` has changed
@@ -47,13 +61,40 @@ list showed twenty files has said less than it did before.
 - **Given** the same one changed file
 - **When** the working-copy row in the refs tree is expanded
 - **Then** the same folders are its children
+
+#### Scenario: the same path changed in two submodules
+
+- **Given** `src/main/java/Log.java` changed under both `svc-3` and `svc-47`
+- **When** the commit page is opened
+- **Then** `svc-3` and `svc-47` are separate rows, each with its own folders
+- **And** neither file appears under the other's row
+
+#### Scenario: a project with no submodules
+
+- **Given** a project whose index holds no gitlink
+- **When** the commit page is opened
+- **Then** the trees begin at the folders, with no repository row above them
+
 ### Requirement: Staging a folder stages everything under it
 
-Staging a folder SHALL stage everything under it.
+Staging a folder SHALL stage everything under it, in the repository that owns it.
 
 Staging or unstaging a folder acts on every change beneath it, including a
 deletion, because the folder is handed to git as one path. A selection holding
 both a folder and files under it hands over the folder alone.
+
+**A folder is handed to the repository that owns it, with a path relative to
+that repository.** `git add` resolves a pathspec against the repository it runs
+in, so a folder inside a submodule staged in the superproject is the `warning:
+could not open directory 'sub/sub/'` failure `Project.gitRoot` records. A
+selection spanning several repositories is grouped by owner and staged with one
+command per repository — six processes for a hundred paths across six
+repositories, not a hundred.
+
+**A submodule's own row stages that submodule's changes, not its gitlink.**
+Selecting the `svc-47` row stages what changed inside `svc-47`. Moving the
+superproject's gitlink is a consequence of committing there, not of staging here,
+and the two are not the same act.
 
 #### Scenario: a folder with two changed files under it
 
@@ -61,6 +102,19 @@ both a folder and files under it hands over the folder alone.
 - **When** the folder is selected and staged
 - **Then** both are in the index, the deletion as a deletion
 - **And** the folder is no longer a row in the unstaged tree
+
+#### Scenario: a folder inside a submodule
+
+- **Given** `svc-47/src/main` has two changed files under it
+- **When** the folder is selected and staged
+- **Then** `git add src/main` runs in `svc-47`
+- **And** nothing is staged in the superproject
+
+#### Scenario: a selection spanning three repositories
+
+- **Given** folders selected under `svc-3`, `svc-47` and the superproject
+- **When** they are staged
+- **Then** three commands run, one per repository, each with its own paths
 
 ### Requirement: A folder says how much of it is on this side of the index
 
@@ -379,6 +433,7 @@ half-resolved merge is a question with more than one answer.
 - **Given** a file git reports as unmerged
 - **When** the menu is opened on it
 - **Then** there is no discard entry
+
 ### Requirement: Discard says how much it takes, and which of it is deleted
 
 Discard SHALL say how much it takes, and which of it is deleted.
@@ -607,3 +662,36 @@ Moving a tag SHALL say what it is leaving and where that has been kept.
 - **WHEN** the tag's move sheet is opened and `main` chosen
 - **THEN** the commit and subject `main` resolves to are shown before agreeing
 - **AND** agreeing points `v1` there and says what it left, and where
+
+### Requirement: The numbers on a changes row are drawn in columns
+
+The added count, the removed count and a folder's file tally SHALL each be drawn
+right-aligned on one x for the whole of that side, not on the trailing edge of
+their own row.
+
+Every row put its text hard against the trailing inset, so a folder — which has
+a tally after its counts — pushed its `+69 −16` left by the width of that tally
+and the file under it did not. Reading down a nested tree, the plus signs
+stepped in and out by a digit at every level, which is the one thing a column of
+numbers exists not to do.
+
+The columns SHALL be as wide as the widest value on that side, so a `+1234`
+somewhere in the tree does not overlap the row above it, and SHALL be measured
+once per reload rather than once per row.
+
+**The name gives way, as it already did.** A long path and `+1234 −567` do not
+both fit in a sidebar, and of the two the name can be cut and still be
+recognised. A file row now reserves the tally column it never draws in, which is
+what alignment costs.
+
+#### Scenario: a folder and the file under it
+
+- **GIVEN** a folder whose only changed file is `BranchesPane.swift`
+- **THEN** the folder's `+98` and the file's `+95` are drawn on the same x
+- **AND** so are their removed counts
+
+#### Scenario: a pane too narrow for both
+
+- **GIVEN** the pane at 250 points and a deeply nested path
+- **THEN** the columns hold and the name is what is cut
+

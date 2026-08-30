@@ -847,6 +847,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.showBreakpointList {
+			// After the file has opened and the gutter has something to click.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.reportBreakpointListForTesting(
+					setting: options.breakpointLines,
+					thenDebug: options.breakpointsThenDebug,
+					thenExit: options.screenshotPath == nil
+				)
+			}
+		}
+
+		if let text = options.selectText {
+			// After `--find` has had its say, so that the run which asks whether
+			// find's matches win is the same shape as the one that does not.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.reportOccurrencesForTesting(
+					selecting: text, thenExit: options.screenshotPath == nil
+				)
+			}
+		}
+
+		if let replacement = options.replaceWith {
+			// After `--find` has typed its query and the debounced search has
+			// run: replacing before there are matches proves nothing.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.editorForTesting.exerciseReplaceForTesting(
+					query: options.findQuery ?? "",
+					replacement: replacement,
+					all: options.replaceAll,
+					regex: options.findRegex
+				)
+			}
+		}
+
 		if options.findAcrossTabs {
 			// After `--find` has typed its query and the debounced search has
 			// run; stepping before there are matches proves nothing.
@@ -1491,6 +1525,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.pillState {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				print(controller?.titlebarForTesting.branchPillForTesting() ?? "BRANCHPILL none")
+				fflush(stdout)
+			}
+		}
+
 		if let steps = options.branchRowSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.sidebarForTesting.branchRowsForTesting(steps)
@@ -1518,6 +1559,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// Later than the pages, because this one is a network call rather than a
 		// `git` invocation: the list is not there to report on until `gh` has
 		// answered, and the report waits for it besides.
+		// The estate reads three answers a repository, each bounded, so it is
+		// given the same head start the pages get.
+		if let steps = options.estateSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.sidebarForTesting.estateForTesting(steps)
+			}
+		}
+
 		if let steps = options.pullRequestSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.sidebarForTesting.pullRequestsForTesting(steps)
@@ -2979,6 +3028,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		findInProject.keyEquivalentModifierMask = [.command, .shift]
 		editMenu.addItem(findInProject)
+		editMenu.addItem(
+			withTitle: "Replace\u{2026}",
+			action: #selector(MainWindowController.replaceInFile(_:)),
+			keyEquivalent: "r"
+		)
 		editMenu.addItem(withTitle: "Find Next", action: #selector(MainWindowController.findNext(_:)), keyEquivalent: "g")
 		let findPrevious = NSMenuItem(
 			title: "Find Previous",
@@ -3170,6 +3224,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			keyEquivalent: "k"
 		)
 		commitItem.keyEquivalentModifierMask = [.command, .shift]
+		// The estate, for a checkout that holds submodules. Beside the log and
+		// the commit page because it is the third question about the same
+		// repository — where the work is, rather than where it has been or what
+		// is about to go in. It is offered whatever the project is: a repository
+		// with no submodules opens a page that says so in words, which is a
+		// better answer than a menu item that is there some days and not others.
+		let estateItem = viewMenu.addItem(
+			withTitle: "Submodules", action: #selector(MainWindowController.showEstatePage(_:)),
+			keyEquivalent: "m"
+		)
+		estateItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(.separator())
 		// **Two questions about every diff in the app**, so they are here rather
 		// than on the pull request page: the commit view and the log page draw

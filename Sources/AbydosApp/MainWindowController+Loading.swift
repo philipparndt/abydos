@@ -69,27 +69,27 @@ extension MainWindowController {
 	/// One task, kept: it is what the branch pill awaits when the toolbar gets
 	/// around to building it.
 	@discardableResult
-	func readGit() -> Task<GitRepository.Head?, Never> {
+	func readGit() -> Task<GitRepository.HeadState?, Never> {
 		branchRead?.cancel()
 		let askedAt = Date()
 		// Said before the asking, because the asking is the part that takes the
 		// time. This is the 784 ms the pill used to spend absent.
 		titlebar.isReadingBranch = true
 		titlebar.relayout()
-		let read = Task { @MainActor [weak self] () -> GitRepository.Head? in
+		let read = Task { @MainActor [weak self] () -> GitRepository.HeadState? in
 			guard let self, let project = self.project else { return nil }
 			await project.loadGit()
-			return await project.git?.currentHead()
+			return await project.git?.currentHeadState()
 		}
 		branchRead = read
 
 		Task { @MainActor [weak self] in
 			let head = await read.value
 			guard let self, !Task.isCancelled else { return }
-			self.titlebar.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
+			self.titlebar.setHead(head)
 			if ProjectSwitcherPopover.reportsForTesting {
 				print(String(format: "BRANCHPILL appeared after %8.2f ms  (%@)",
-					Date().timeIntervalSince(askedAt) * 1000, head?.name ?? "no branch"))
+					Date().timeIntervalSince(askedAt) * 1000, head?.display ?? "no branch"))
 				fflush(stdout)
 			}
 			// The capsule only gets its width once it has a name to show.
@@ -164,6 +164,15 @@ extension MainWindowController {
 		let remembered = SessionStore.read(in: project.sessionRoot)
 
 		self.project = project
+		// And its breakpoints, in place of the ones the window was holding.
+		// They are the project's — kept in its session file, per project — but
+		// they lived in the window and nothing took them away, so the first
+		// project worked in donated its gutter to every project opened after
+		// it, each of which then wrote them down as its own. Adopted here,
+		// right after the window becomes this project's and before anything
+		// that saves runs: `selectedConfigurationName` alone writes the session
+		// file twice on the way through this function.
+		debug.adoptBreakpoints(remembered?.breakpoints ?? [:])
 		subprojectRoot = nil
 		// And on the project itself, which is what everything scoped reads: a
 		// Project handed back by the switcher may be one that was open before,
@@ -230,15 +239,6 @@ extension MainWindowController {
 				run.refreshRunControl()
 			}
 			run.xcodeDestinations = remembered.xcodeDestinations
-
-			// The gutter, from what was there last time. Only when nothing has
-			// set any yet: a window that already has debug.breakpoints is one where
-			// somebody has been working, and a file restored over that would
-			// take them away.
-			if debug.pendingBreakpoints.isEmpty, !remembered.breakpoints.isEmpty {
-				debug.pendingBreakpoints = remembered.breakpoints
-				debug.showPendingBreakpoints()
-			}
 		}
 
 		// The terminal is where half the work happens, so a window arrives with

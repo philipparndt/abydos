@@ -68,7 +68,7 @@ public actor GitRepository {
 	/// when it never has been.
 	private var ignoreRulesFingerprint: String?
 
-	private var headState: Head = .detached {
+	private var headState: Head = .detached(nil) {
 		didSet { headSnapshot.value = headState }
 	}
 
@@ -102,7 +102,14 @@ public actor GitRepository {
 		/// No branch — a commit, tag or remote ref checked out directly. Also
 		/// what a directory that is not a work tree answers, which every caller
 		/// wants to read the same way: there is no branch name to show.
-		case detached
+		///
+		/// **It carries the commit it is on**, when there is one. There is no
+		/// branch name, but there is somewhere to be, and the titlebar drew
+		/// nothing at all — a pill that goes blank the moment a rebase stops on
+		/// a conflict says the app has lost its place rather than that git has
+		/// moved. The hash costs nothing: `rev-parse --verify HEAD` is already
+		/// run to tell a branch from an unborn one, and this is its answer.
+		case detached(String?)
 
 		/// The branch's name, or nil when there is not one.
 		public var name: String? {
@@ -112,11 +119,51 @@ public actor GitRepository {
 			}
 		}
 
-		/// A branch with nothing on it yet.
+		/// What to *show* for this head: the branch, or where a detached one is.
+		///
+		/// Separate from `name` on purpose. Callers that ask for a name are
+		/// asking what to hand to git — `checkout`, `push`, the log's scope —
+		/// and a detached head has no answer to that. Callers that draw are
+		/// asking what somebody is looking at, which is never nothing.
+		public var display: String? {
+			switch self {
+			case .branch(let name), .unborn(let name): return name
+			case .detached(let commit): return commit.map { "detached at \($0)" } ?? "detached"
+			}
+		}
+
+		public var isDetached: Bool {
+			if case .detached = self { return true }
+			return false
+		}
+
 		public var isUnborn: Bool {
 			if case .unborn = self { return true }
 			return false
 		}
+	}
+
+	/// The head, plus whatever git has stopped in the middle of.
+	///
+	/// One value because the titlebar shows one thing. Before this it showed
+	/// `Head.name`, which is nil for a detached head — so a stopped rebase, the
+	/// one moment somebody most needs the titlebar to say where they are, drew
+	/// an empty pill.
+	public struct HeadState: Equatable, Sendable {
+		public let head: Head
+		public let operation: GitConflicts.Operation?
+
+		public init(head: Head, operation: GitConflicts.Operation?) {
+			self.head = head
+			self.operation = operation
+		}
+
+		public var name: String? { head.name }
+		public var display: String? { head.display }
+		public var isUnborn: Bool { head.isUnborn }
+		public var isDetached: Bool { head.isDetached }
+
+		/// A branch with nothing on it yet.
 	}
 
 	/// Which branch the work tree is on, and whether anything is on it.
@@ -154,8 +201,10 @@ public actor GitRepository {
 			// Still awaited: an `async let` dropped without being read is a
 			// cancelled child task, and cancelling a subprocess we started is
 			// not what "we do not need the answer" should mean.
-			_ = await resolved
-			return .detached
+			// The commit it is sitting on, so the titlebar has something true to
+			// say. Short, because a pill has no room for forty characters.
+			let commit = await resolved.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+			return .detached(commit.isEmpty ? nil : String(commit.prefix(8)))
 		}
 		return await resolved.exitCode == 0 ? .branch(name) : .unborn(name)
 	}
@@ -182,6 +231,18 @@ public actor GitRepository {
 
 	/// The branch and whether it has anything on it, as of the last refresh.
 	public func currentHead() -> Head { headState }
+
+	/// Where the work tree stands, in the words a titlebar needs: the head, and
+	/// the operation that has stopped part-way through if one has.
+	///
+	/// Together rather than separately because the pill draws them together and
+	/// the two arriving in different turns is how it comes to say `main` while a
+	/// rebase is halfway through. The operation costs four `stat` calls
+	/// (`GitConflicts.operation`), which is why it can be asked for as often as
+	/// the head is.
+	public func currentHeadState() async -> HeadState {
+		HeadState(head: headState, operation: await GitConflicts.operation(in: root))
+	}
 
 	/// The same answer, without waiting for the actor.
 	///
@@ -239,7 +300,14 @@ public actor GitRepository {
 			// `-z` so paths arrive literally: without it anything non-ASCII comes
 			// back octal-escaped inside quotes, and the tree would then key its
 			// status by a name no row actually has.
-			["status", "--porcelain=v1", "-unormal", "--no-renames", "-z"],
+			//
+			// `--ignore-submodules=dirty` comes with it, from the one place that
+			// spells this command: in a superproject the default recursion is
+			// 1.61 s over 200 submodules against 0.09 s without it, on a call
+			// that runs per filesystem event. `GitWorkingCopy.statusArguments`
+			// has the measurements and the reason it is `dirty` rather than
+			// `all`.
+			GitWorkingCopy.statusArguments,
 			in: root
 		)
 
@@ -318,6 +386,90 @@ public actor GitRepository {
 		ignoredCache = ignored
 		ignoredDirectories = directories
 		ignoreRulesFingerprint = fingerprint
+	}
+
+	/// Which of these paths git ignores, asked about the paths themselves.
+	///
+	/// **The whole point is that it does not walk the work tree.**
+	/// `refreshIgnored` above asks `git status --ignored`, which has to walk
+	/// everything — and `--ignored` is the flag that switches git's untracked
+	/// cache off, so it walks cold every time. Measured on this repository, whose
+	/// `.build` is 6.4 GB and 31,350 files:
+	///
+	///     status -unormal -z                 0.03 s
+	///     status -unormal --ignored -z       0.41 s
+	///     check-ignore over 40 paths         0.01 s
+	///
+	/// `check-ignore` matches paths against the rules and touches nothing else,
+	/// so its cost is the number of paths asked about rather than the size of
+	/// the repository. That is what makes it the right question for the rows on
+	/// screen: forty of them, answered before the first frame, instead of every
+	/// file in the project answered a moment later.
+	///
+	/// **It agrees with `status --ignored` where it matters.** A tracked file
+	/// that happens to match a rule is *not* ignored, and `check-ignore` leaves
+	/// it out too, because it reads the index — verified, with a tracked
+	/// `tracked.log` against a `*.log` rule.
+	///
+	/// Exit 1 is "none of them", not a failure. Only 128 and above is trouble,
+	/// and there is nothing to say about it here: the full sweep is still coming
+	/// and will answer properly.
+	public func ignored(among paths: [String]) async -> Set<String> {
+		// **The work tree's own root is in that list, and it is the empty
+		// string.** Git refuses the whole batch over it —
+		//
+		//     fatal: empty string is not a valid pathspec.
+		//     please use . instead if you meant to match all paths
+		//
+		// — with exit 128, so one unaskable path meant *nothing* was answered
+		// and every ignored row stayed the colour of a tracked one. That is what
+		// this whole call was added to fix, and it fixed nothing until the root
+		// was dropped: the tests asked about files and never about the node the
+		// tree hangs off.
+		let paths = paths.filter { !$0.isEmpty && $0 != "." }
+		guard !paths.isEmpty else { return [] }
+
+		// NUL in as well as out. `-z` changes *both* directions, and feeding
+		// newline-separated paths to it returns nothing at all — silently, which
+		// is how it looks like the rules simply do not match anything.
+		let input = Data((paths.joined(separator: "\0") + "\0").utf8)
+		let result = await Self.run(
+			["check-ignore", "-z", "--stdin"], in: root, input: input
+		)
+		guard result.exitCode == 0 || result.exitCode == 1 else { return [] }
+
+		return Set(
+			result.stdout
+				.split(separator: "\0", omittingEmptySubsequences: true)
+				.map { GitWorkingCopy.unquote(String($0)) }
+		)
+	}
+
+	/// Colours the rows about to be drawn, before the full sweep arrives.
+	///
+	/// **This is what stops ignored files flickering when a project opens.** The
+	/// tree paints as soon as it has a listing, the ignored set arrives from a
+	/// walk of the whole work tree some hundreds of milliseconds later, and in
+	/// between every ignored file is drawn as though it were part of the
+	/// project — then turns grey. What somebody sees is a flash of the wrong
+	/// answer on every project switch.
+	///
+	/// Merged rather than replacing, and it does **not** set the fingerprint:
+	/// this is a partial answer about the paths it was given, and it must not be
+	/// mistaken for the full one. `refreshIgnored` still runs and still replaces
+	/// the lot, which is what notices a folder that has *stopped* being ignored.
+	public func primeIgnored(for paths: [(path: String, isDirectory: Bool)]) async {
+		let asked = paths.map(\.path)
+		guard !asked.isEmpty else { return }
+
+		let ignored = await self.ignored(among: asked)
+		guard !ignored.isEmpty else { return }
+
+		let directories = Set(paths.filter(\.isDirectory).map(\.path))
+		for path in ignored {
+			ignoredCache[path] = .ignored
+			if directories.contains(path) { ignoredDirectories.insert(path) }
+		}
 	}
 
 	/// A cheap summary of every ignore rule that applies to this work tree.
@@ -669,7 +821,7 @@ public actor GitRepository {
 /// cost, against a hop and a continuation for the alternative.
 final class HeadSnapshot: @unchecked Sendable {
 	private let lock = NSLock()
-	private var stored: GitRepository.Head = .detached
+	private var stored: GitRepository.Head = .detached(nil)
 
 	var value: GitRepository.Head {
 		get { lock.withLock { stored } }
