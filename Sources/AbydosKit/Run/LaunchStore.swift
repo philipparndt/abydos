@@ -130,6 +130,35 @@ public enum LaunchStore {
 
 /// This machine's view of a project: what was open in it.
 public enum SessionStore {
+	/// The session file for a project, or the one every folder shares.
+	private static func file(for root: URL?, sharedFile: URL?) -> URL? {
+		guard let root else { return sharedFile ?? defaultSharedFile() }
+		return AbydosFolder.sessionFile(in: root)
+	}
+
+	/// Where the session for a folder that is in no working copy lives.
+	///
+	/// One file for all of them, kept where the application keeps its own
+	/// things. A folder somebody walked into does not own a session: writing one
+	/// beside it would leave a `.abydos` in every directory a shell has ever
+	/// passed through — a session file per `cd`, scattered across a disk, for
+	/// folders nobody chose to open.
+	///
+	/// nil rather than a second pair of functions, because it is the shape this
+	/// already has next door: `OpenScratches.key(for:)` is
+	/// `projectRoot.map(ScratchFiles.directoryName(for:))
+	/// ?? ScratchFiles.globalDirectoryName`, and a scratch belongs either to a
+	/// project or to nobody in particular. Beside `recents.json`, which is the
+	/// other thing here that is about no project in particular.
+	static func defaultSharedFile() -> URL? {
+		guard let support = FileManager.default
+			.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+		else { return nil }
+		let folder = support.appendingPathComponent("Abydos", isDirectory: true)
+		try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+		return folder.appendingPathComponent("folder-session.json")
+	}
+
 	/// What the project had open, or nothing at all when the app is being
 	/// driven.
 	///
@@ -149,9 +178,21 @@ public enum SessionStore {
 	///   be put a question without a test having to make the whole process
 	///   pretend to be a driven run — which the rest of the suite, running
 	///   beside it, would then also be.
-	public static func read(in root: URL, driven: Bool = DrivenRun.isActive) -> ProjectSession? {
+	/// - Parameter root: the project, or nil for a folder that is not one. See
+	///   `defaultSharedFile` for what nil means and why it is spelled this way.
+	/// - Parameter sharedFile: where the session every folder shares lives, or
+	///   nil for the real one. A parameter for the reason `driven` is one: a test
+	///   has to be able to put this question without writing into somebody's
+	///   Application Support folder, which is a real place with real sessions in
+	///   it.
+	public static func read(
+		in root: URL?,
+		driven: Bool = DrivenRun.isActive,
+		sharedFile: URL? = nil
+	) -> ProjectSession? {
 		guard !driven else { return nil }
-		guard let data = try? Data(contentsOf: AbydosFolder.sessionFile(in: root)),
+		guard let file = file(for: root, sharedFile: sharedFile),
+		      let data = try? Data(contentsOf: file),
 		      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
 		else { return nil }
 
@@ -264,19 +305,31 @@ public enum SessionStore {
 	/// tabs into the project it was pointed at and, for a project that has no
 	/// `.abydos` yet, create the folder to do it in — which for somebody's own
 	/// checkout is a file appearing in `git status` after a capture.
+	/// - Parameter root: the project, or nil for a folder that is not one.
+	/// - Parameter sharedFile: as on `read`.
 	public static func write(
 		_ session: ProjectSession,
-		in root: URL,
-		driven: Bool = DrivenRun.isActive
+		in root: URL?,
+		driven: Bool = DrivenRun.isActive,
+		sharedFile: URL? = nil
 	) throws {
 		guard !driven else { return }
-		let file = AbydosFolder.sessionFile(in: root)
+		guard let file = file(for: root, sharedFile: sharedFile) else { return }
+
+		// What a folder shares is the files and nothing else. Terminals, the
+		// tmux window and the chosen configuration are all answers to "what was
+		// this project set up to do", and a folder is not set up to do anything:
+		// a shell in one is a shell somebody is using, not a shell the folder
+		// came with. Refused here rather than at the callers, for the reason the
+		// driven rule above is refused here.
+		let session = root == nil ? session.filesOnly : session
+
 		guard !session.isEmpty else {
 			try? FileManager.default.removeItem(at: file)
 			return
 		}
 
-		try AbydosFolder.create(in: root)
+		if let root { try AbydosFolder.create(in: root) }
 		var object: [String: Any] = [
 			"files": session.files.map { open -> [String: Any] in
 				var entry: [String: Any] = ["path": open.path, "line": open.line]

@@ -271,9 +271,46 @@ extension MainWindowController {
 		// the comment was widened then and the test was not.
 		guard !LaunchOptions.parse().isDrivenRun else { return }
 		guard followsTerminal else { return }
-		guard let root = ProjectRoot.projectToFollow(from: directory, current: project?.root)
-		else { return }
-		switchProject(to: root, followingTerminal: true)
+		follow(reported: directory)
+	}
+
+	/// Acts on a pane's report of where it is.
+	///
+	/// Both reports come through here — a shell that changed directory, and a
+	/// pane brought forward carrying the root it was made under — so a directory
+	/// is classified in one place. **When they did not, the second one made a
+	/// project of whatever it was given.** A pane created while the window was
+	/// showing a folder in no working copy carries that folder as its root, and
+	/// bringing it forward switched to it as a *project*: `.abydos` written
+	/// beside it, a recents entry, and — the folder being the home directory —
+	/// every directory underneath it then counted as inside the project, so no
+	/// later `cd` moved the window again. Reported as "the folder navigator is
+	/// stuck on my home folder", and the `.abydos` left behind would have kept
+	/// it that way across a restart.
+	func follow(reported directory: URL) {
+		switch ProjectRoot.whereToFollow(
+			from: directory, showing: showing,
+			intoLooseFolders: Settings.shared.followsLooseFolders
+		) {
+		case .stay:
+			return
+		case let .project(root):
+			switchProject(to: root, followingTerminal: true)
+		case let .looseFolder(folder):
+			switchProject(to: folder, followingTerminal: true, asLooseFolder: true)
+		}
+	}
+
+	/// What this window is showing, in the terms the follow rule is written in.
+	///
+	/// Asked of the project rather than of the file system, because the answer
+	/// is not always what the file system would say: a folder somebody opened
+	/// deliberately is a project even with no marker above it, and the rule that
+	/// keeps its tabs safe from a `cd` into a subdirectory depends on knowing
+	/// that.
+	private var showing: ProjectRoot.Showing {
+		guard let project else { return .nothing }
+		return project.isLooseFolder ? .looseFolder(project.root) : .project(project.root)
 	}
 
 	/// Swaps one project for another in place, keeping what each had open.
@@ -282,7 +319,14 @@ extension MainWindowController {
 	///   the window it is showing is the one somebody just chose, and neither
 	///   half of remembering a tmux window applies: see the two notes below,
 	///   which between them are why this parameter exists.
-	func switchProject(to root: URL, followingTerminal: Bool = false) {
+	/// - Parameter asLooseFolder: whether the root is a folder in no working copy
+	///   rather than a project. Only a terminal reaches this: every explicit way
+	///   of opening a folder makes a project of it. See `Project.isLooseFolder`.
+	func switchProject(
+		to root: URL,
+		followingTerminal: Bool = false,
+		asLooseFolder: Bool = false
+	) {
 		let root = root.standardizedFileURL
 		guard root.path != project?.root.standardizedFileURL.path else { return }
 
@@ -291,12 +335,29 @@ extension MainWindowController {
 		// nothing to say for itself — which is the one thing the stall log
 		// exists not to do.
 		StallWatch.mark("project switch") {
-			switchProjectBody(to: root, followingTerminal: followingTerminal)
+			switchProjectBody(
+				to: root, followingTerminal: followingTerminal, asLooseFolder: asLooseFolder
+			)
 		}
 	}
 
-	private func switchProjectBody(to root: URL, followingTerminal: Bool) {
+	private func switchProjectBody(to root: URL, followingTerminal: Bool, asLooseFolder: Bool) {
 		leftScope()
+
+		let wasLooseFolder = project?.isLooseFolder ?? false
+
+		// Moving between two folders is not a project switch. Every folder
+		// shares one session, so putting it away and restoring it would be a tab
+		// set torn down and rebuilt to what it already was — except that what
+		// comes back is read per *root*, and a folder has nothing stored under
+		// its own name, so the files somebody was reading would close because
+		// they had walked into the next directory. The tree, the search and the
+		// file index re-point, because where the shell is is worth showing.
+		// Nothing else moves.
+		if wasLooseFolder, asLooseFolder {
+			load(project: Project(root: root, isLooseFolder: true), focusTree: false)
+			return
+		}
 
 		if let current = project?.root {
 			var session = editor.captureSession()
@@ -308,7 +369,7 @@ extension MainWindowController {
 			session.tmuxWindow = ProjectSession.rememberedWindow(
 				showing: bottomPanel.currentTmuxWindowID,
 				stored: sessions.session(for: current)?.tmuxWindow
-					?? SessionStore.read(in: current)?.tmuxWindow,
+					?? SessionStore.read(in: wasLooseFolder ? nil : current)?.tmuxWindow,
 				followingTerminal: followingTerminal
 			)
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
@@ -317,11 +378,15 @@ extension MainWindowController {
 			session.breakpoints = debug.breakpointsToRemember()
 			session.reviewTicks = sidebar.pullRequests.ticksToRemember()
 			session.reviewCheckouts = sidebar.pullRequests.checkoutsToRemember()
-			sessions.store(session, for: current)
+			// The in-memory store is keyed by root, which is the wrong key for a
+			// folder: they share one session, so a folder's goes straight to the
+			// file every folder reads.
+			if !wasLooseFolder { sessions.store(session, for: current) }
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
-			// application that happened to be running.
-			try? SessionStore.write(session, in: current)
+			// application that happened to be running. Nothing is written beside
+			// a folder — nil is the one file they share.
+			try? SessionStore.write(session, in: wasLooseFolder ? nil : current)
 			// Its language servers stay running. Switching back has to be
 			// instant, and stopping one costs a re-index — see 0427, where that
 			// is decided and what it costs is written down.
@@ -330,10 +395,15 @@ extension MainWindowController {
 		// Read before anything is loaded: opening a project touches the editor
 		// and the panel, and anything that writes the session on the way past
 		// would overwrite the very thing being restored.
-		let previous = sessions.take(for: root) ?? SessionStore.read(in: root)
+		let previous = asLooseFolder
+			? SessionStore.read(in: nil)
+			: (sessions.take(for: root) ?? SessionStore.read(in: root))
 
-		load(project: Project(root: root), focusTree: false)
-		RecentProjects.shared.record(url: root)
+		load(project: Project(root: root, isLooseFolder: asLooseFolder), focusTree: false)
+		// A folder somebody walked through is not something they opened, and a
+		// recents list that fills up with every directory a shell passed through
+		// is a list nobody can find a project in.
+		if !asLooseFolder { RecentProjects.shared.record(url: root) }
 
 		if let previous {
 			editor.restore(previous)
@@ -372,7 +442,8 @@ extension MainWindowController {
 	/// Writes what is open beside the project, so the next window on it opens
 	/// where this one left off.
 	func rememberOpenEditors() {
-		guard let root = project?.root, !isTornOff else { return }
+		guard let project, !isTornOff else { return }
+		let root = project.root
 		var session = editor.captureSession()
 		session.terminals = bottomPanel.captureTerminals()
 		session.isPanelVisible = isPanelVisible
@@ -383,7 +454,7 @@ extension MainWindowController {
 		session.breakpoints = debug.breakpointsToRemember()
 		session.reviewTicks = sidebar.pullRequests.ticksToRemember()
 		session.reviewCheckouts = sidebar.pullRequests.checkoutsToRemember()
-		try? SessionStore.write(session, in: root)
+		try? SessionStore.write(session, in: project.sessionRoot)
 	}
 
 	func setPanelVisible(_ visible: Bool) {

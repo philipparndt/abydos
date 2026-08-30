@@ -108,6 +108,11 @@ public final class Settings {
 			// chose rather than by changing what a fresh installation gets.
 			Key.appearance: Appearance.name(family: "abydos", mode: .system),
 			Key.followsTerminalProject: false,
+			// **Off.** Following into a folder in no working copy is a
+			// different thing from following between projects: every directory
+			// is then somewhere the window could go, so a `cd` into a
+			// scratch directory is a move. Somebody who wants that can say so.
+			Key.followsLooseFolders: false,
 			Key.terminalAtStartup: "open",
 			Key.tmuxTabsAtBottom: true,
 			Key.startsTmux: false,
@@ -160,6 +165,7 @@ public final class Settings {
 		static let devContainerChoice = "devContainerChoice"
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
+		static let followsLooseFolders = "followsLooseFolders"
 		static let terminalAtStartup = "terminalAtStartup"
 		static let tmuxTabsAtBottom = "tmuxTabsAtBottom"
 		static let hidesTmuxStatus = "hidesTmuxStatus"
@@ -675,6 +681,18 @@ public final class Settings {
 	public var followsTerminalProject: Bool {
 		get { defaults.bool(forKey: Key.followsTerminalProject) }
 		set { set(newValue, Key.followsTerminalProject) }
+	}
+
+	/// Whether following reaches a folder that is in no working copy at all.
+	///
+	/// Separate from `followsTerminalProject`, and off, because the two are
+	/// different appetites. Following between projects moves the window when
+	/// somebody goes to another piece of work; following into a loose folder
+	/// moves it whenever they go anywhere, `~/Downloads` included — there being
+	/// no working copy to say the walk was over.
+	public var followsLooseFolders: Bool {
+		get { defaults.bool(forKey: Key.followsLooseFolders) }
+		set { set(newValue, Key.followsLooseFolders) }
 	}
 
 	// MARK: - Navigator

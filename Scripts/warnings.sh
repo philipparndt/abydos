@@ -81,7 +81,31 @@ LOG="$(mktemp -t abydos-warnings)"
 trap 'rm -f "$LOG"' EXIT
 
 # Everything this repository compiles, and nothing anybody else's.
-rm -rf "$SCRATCH/out/Intermediates.noindex/Abydos.build"
+#
+# **By making the sources newer than their objects, not by deleting the objects.**
+# This used to remove `$SCRATCH/out/Intermediates.noindex/Abydos.build`, which is
+# where swiftbuild puts a package's objects; under the classic build system they
+# go to `$SCRATCH/<triple>/<config>/<target>.build`, one directory per target,
+# and there is no single one holding the package. So the `rm -rf` matched
+# nothing, nothing was recompiled, and the sweep reported only what something
+# else had happened to rebuild — a warm run said "No warnings" and exited 0 on a
+# tree a wiped scratch path showed had two. That is the failure 0465 wrote this
+# script to prevent, arriving inside the script itself.
+#
+# Deleting the target directories instead does force the recompile, and it also
+# breaks: llbuild keeps a database of what it built, and outputs removed behind
+# its back leave it in a state where the next run fails with no errors to print.
+# Measured on the second consecutive run, twice. A touch leaves that database
+# consistent and says the same thing to it — these files are newer than what was
+# made from them — so the compile happens and the log has the warnings in it.
+#
+# Nothing anybody else's: `Sources/Grammars` holds vendored upstream C, which has
+# no `.swift` in it and is therefore untouched by the pattern rather than by an
+# exclusion anybody has to maintain.
+# What it costs, said out loud: the next `make build` or `make test` recompiles
+# this repository too, because their scratch path sees the same new mtimes. About
+# a minute, once, and the alternative is a sweep that lies.
+find Sources Tests -name '*.swift' -exec touch {} +
 
 # Both halves. The app and its libraries first, then the tests: `--build-tests`
 # on its own does not build what only the executable reaches, and one of 0465's

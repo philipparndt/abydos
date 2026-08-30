@@ -171,6 +171,18 @@ public struct ProjectSession: Equatable, Sendable {
 			&& reviewCheckouts.isEmpty
 	}
 
+	/// The same session with everything that belongs to a project taken out.
+	///
+	/// What a folder in no working copy remembers: the files, and where the
+	/// caret was in each. A folder is not set up to do anything, so there is no
+	/// terminal it came with, no tmux window it was left in, no configuration
+	/// the play button was pointing at, and no subproject — a folder has no
+	/// parts. The breakpoints go too: they are lines in files a debugger was
+	/// going to stop at, and there is nothing here to run.
+	public var filesOnly: ProjectSession {
+		ProjectSession(files: files, activePath: activePath, isPanelVisible: isPanelVisible)
+	}
+
 	/// Which window a project being left should be remembered in.
 	///
 	/// The window on screen, except when the project is being left *because* the
