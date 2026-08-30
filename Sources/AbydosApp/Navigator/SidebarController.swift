@@ -401,6 +401,23 @@ final class SidebarController: NSObject {
 			// verbs: `banner`, `press:continue`, `press:skip`, `press:abort`.
 			case "banner":  print(pane.operationBannerForTesting())
 			case "press":   pane.pressBannerForTesting(argument)
+			// What the `⋯` menu holds, and what one conflicted file's row
+			// offers — neither of which a shot of a closed menu can show.
+			// What the editor is showing, so "a click on a row opens the file"
+			// is a claim a driven run can check rather than a screenshot.
+			case "tabs":
+				print("TABS: " + (editor.activeGroup?.tabTitlesForTesting.joined(separator: ", ")
+					?? "no group"))
+			case "banner-menu":
+				print("BANNER menu \(argument.isEmpty ? "more" : argument): "
+					+ pane.bannerMenuForTesting(argument))
+			// Resolving one file the way the row's menu does:
+			// `resolve:<path>:<ours|theirs|mark|open>`.
+			case "resolve":
+				let parts = argument.split(separator: "|", maxSplits: 1).map(String.init)
+				print("BANNER resolve: " + pane.resolveConflictForTesting(
+					parts.first ?? "", how: parts.count > 1 ? parts[1] : "mark"
+				))
 			case "scroll":  pane.scrollTreeForTesting(toBottom: argument != "top")
 			default:        print("BRANCHES: unknown step \(step)")
 			}

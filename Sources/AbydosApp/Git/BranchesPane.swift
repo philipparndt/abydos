@@ -129,6 +129,15 @@ final class BranchesPane: NSView {
 	private var conflictBanner: OperationBanner!
 	private var conflictHeight: NSLayoutConstraint!
 	private var conflictPaths: [String] = []
+	/// Everything the current stop was waiting on when it was first read.
+	///
+	/// **Git forgets, so the pane has to remember.** A path stops being
+	/// unmerged the moment it is staged, so a list built from `paths(in:)`
+	/// alone shrinks instead of ticking, and `2 of 3 resolved` cannot be said
+	/// at all. Cleared when the operation ends or moves to the next commit —
+	/// a rebase that carries on is a new stop with its own set.
+	private var conflictsThisStop: Set<String> = []
+	private var conflictStopAt: Int?
 	/// What git is in the middle of, as of the last refresh. The banner's
 	/// verbs are its verbs, so they are only offered while this is set.
 	private var currentOperation: GitConflicts.Operation?
@@ -298,6 +307,21 @@ final class BranchesPane: NSView {
 			guard let self else { return }
 			self.onOpenFiles?(self.conflictPaths)
 		}
+		// One file, which is how somebody actually works through a conflict:
+		// open it, read the two halves, write a third, come back and say so.
+		conflictBanner.onOpenFile = { [weak self] path in
+			self?.onOpenFiles?([path])
+		}
+		conflictBanner.onTake = { [weak self] side, path in
+			self?.resolveConflict(path, by: { root in
+				await GitConflicts.take(side, of: path, in: root)
+			})
+		}
+		conflictBanner.onMarkResolved = { [weak self] path in
+			self?.resolveConflict(path, by: { root in
+				await GitConflicts.markResolved(path, in: root)
+			})
+		}
 		conflictBanner.onOpenInFork = { [weak self] in
 			guard let self, let fork = ForkIntegration.applicationURL() else { return }
 			NSWorkspace.shared.open(
@@ -451,6 +475,8 @@ final class BranchesPane: NSView {
 			guard let operation else {
 				self.conflictPaths = paths
 				self.currentOperation = nil
+				self.conflictsThisStop = []
+				self.conflictStopAt = nil
 				self.conflictHeight.constant = 0
 				self.conflictBanner.isHidden = true
 				return
@@ -461,15 +487,65 @@ final class BranchesPane: NSView {
 			let what = await GitConflicts.describe(in: root)
 			let staged = await GitWorkingCopy.status(in: root).staged.isEmpty == false
 			let progress = await GitConflicts.progress(in: root)
+			let sides = await GitConflicts.sides(of: operation, in: root)
+
+			// **A new stop starts a new set.** A rebase that carries on lands
+			// on the next commit with its own conflicts, and remembering the
+			// last one's would leave rows ticked for files this stop has never
+			// been waiting on.
+			if self.conflictStopAt != progress?.position {
+				self.conflictStopAt = progress?.position
+				self.conflictsThisStop = []
+			}
+			self.conflictsThisStop.formUnion(paths)
+			// **And what git wrote down before it stopped.** The pane's memory
+			// starts when the window opens; a merge reopened tomorrow would
+			// otherwise show only what is still unresolved and count that as
+			// the whole job. `.git/MERGE_MSG` holds the set under
+			// `# Conflicts:`, which is the same list a day later — and git
+			// removes the file when the stop is over, so it is never a
+			// previous commit's set. A rebase writes one too.
+			self.conflictsThisStop.formUnion(await GitConflicts.recorded(in: root))
+			let waiting = await GitConflicts.waiting(
+				in: root, alsoShowing: self.conflictsThisStop
+			)
+
 			self.conflictBanner.isHidden = false
 			self.conflictBanner.show(
-				operation: operation, conflicted: paths.count, staged: staged,
-				what: what, progress: progress
+				operation: operation, waiting: waiting, staged: staged,
+				what: what, sides: sides, progress: progress
 			)
 			// The strip asks for its own height: what it shows decides how
 			// much it needs, and a constant here was a second opinion about
 			// the same thing.
 			self.conflictHeight.constant = self.conflictBanner.wantedHeight
+		}
+	}
+
+	/// Clears one file, and says so when git will not.
+	///
+	/// **The refresh is the feedback.** Taking a side or staging a hand-edited
+	/// file has no toast on success: the row ticks, the count under the
+	/// headline moves, and `Continue` lights when the last one turns — which
+	/// says more than a message that has to be read and dismissed.
+	private func resolveConflict(
+		_ path: String, by work: @escaping @Sendable (URL) async -> String?
+	) {
+		let root = self.root
+		Task { @MainActor [weak self] in
+			let complaint = await work(root)
+			guard let self else { return }
+			if let complaint {
+				// Git's own words. `error: path 'x' does not have our version`
+				// is what a delete/modify conflict says, and it is better than
+				// anything this could write over the top of it.
+				Toast.post(
+					"\(URL(fileURLWithPath: path).lastPathComponent) was not resolved",
+					detail: complaint,
+					kind: .warning
+				)
+			}
+			self.refresh()
 		}
 	}
 
@@ -1634,6 +1710,16 @@ final class BranchesPane: NSView {
 
 	/// What the operation banner says and offers.
 	func operationBannerForTesting() -> String { conflictBanner.reportForTesting }
+
+	/// What one of the banner's menus holds. Empty argument means the `⋯` one.
+	func bannerMenuForTesting(_ which: String) -> String {
+		conflictBanner.menuForTesting(which)
+	}
+
+	/// Resolves one conflicted file the way its row's menu does.
+	func resolveConflictForTesting(_ path: String, how: String) -> String {
+		conflictBanner.resolveForTesting(path, how)
+	}
 
 	/// Presses one of its buttons — `continue`, `skip`, `abort`. Abort goes
 	/// straight to the verb: the alert in front of it is AppKit's and a driven
