@@ -361,6 +361,15 @@ final class SidebarController: NSObject {
 			// The dialog itself, on screen, for a screenshot of it.
 			case "ask-delete": pane.askAboutDeletingForTesting()
 			case "sheet":      print(pane.deleteSheetForTesting())
+			// The working copy's own verb, and answering the dialog it opens.
+			// Not `stash`, which is taken above for opening a stash row — a
+			// second one is dead code the compiler does not always mention.
+			case "stash-changes": pane.stashWorkingCopyForTesting()
+			case "stash-answer":
+				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+				print("BRANCHES stash-answer: " + pane.answerStashForTesting(
+					parts.first ?? "", untracked: (parts.count > 1 ? parts[1] : "yes") != "no"
+				))
 			// Answering it — the step the two above skip between them. Not
 			// `press`, which the banner below has: a second one is a dead case.
 			case "sheet-press": print("BRANCHES "
