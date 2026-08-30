@@ -415,6 +415,18 @@ public actor GitRepository {
 	/// and there is nothing to say about it here: the full sweep is still coming
 	/// and will answer properly.
 	public func ignored(among paths: [String]) async -> Set<String> {
+		// **The work tree's own root is in that list, and it is the empty
+		// string.** Git refuses the whole batch over it —
+		//
+		//     fatal: empty string is not a valid pathspec.
+		//     please use . instead if you meant to match all paths
+		//
+		// — with exit 128, so one unaskable path meant *nothing* was answered
+		// and every ignored row stayed the colour of a tracked one. That is what
+		// this whole call was added to fix, and it fixed nothing until the root
+		// was dropped: the tests asked about files and never about the node the
+		// tree hangs off.
+		let paths = paths.filter { !$0.isEmpty && $0 != "." }
 		guard !paths.isEmpty else { return [] }
 
 		// NUL in as well as out. `-z` changes *both* directions, and feeding
