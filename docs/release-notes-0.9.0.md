@@ -148,6 +148,12 @@ to draw, which costs the number of rows rather than the size of the project:
 still follows, because it is the one that notices a folder that has *stopped*
 being ignored.
 
+That took two goes. The first shipped doing nothing: the tree's row list includes
+the node everything hangs off, whose path is the empty string, and git refuses a
+whole batch over it — `fatal: empty string is not a valid pathspec` — so one
+unaskable path discarded the other three hundred and twenty-seven. It was
+reported still flickering, which is the only reason it was found.
+
 **And a selected file still says whether git is ignoring it.** Selecting a row
 sent it to one colour whatever its state, so an ignored file looked exactly like
 a tracked one for as long as it was selected — clicking a file to find out about
@@ -168,6 +174,22 @@ it was easy to see.
 without saying how many, and listed the branches as a paragraph that wrapped each
 name in the middle of itself. The branches are rows now, with the refs tree's own
 glyphs and a count each, and the sentence leads with the total.
+
+**The repository row pushes the branch it is describing.** Every word on that row
+is about the branch the work tree is on, and its button pushed whatever was
+*selected* in the tree below it — so a row saying "not published" about the
+checked-out branch published a different one. Reported after it sent `main`
+instead. It names nothing now and lets git push `HEAD`, which is the only
+spelling that cannot be out of step with the work tree; pushing some other branch
+from its own row still works, because doing that without checking it out is
+deliberate.
+
+**A 3MF opens instead of failing to build.** Pressing `o` on a file that is
+already a `.3mf` took the output's name from the input, so the command asked
+go3mf to combine the file with itself and reported the refusal — "at least 2
+files required for combining" — as a build failure. There is nothing to build:
+the file is handed to whatever opens a 3MF. Fixed in gostl, which this release
+takes at 0.23.3.
 
 
 ## Under the suite
