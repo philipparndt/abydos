@@ -48,6 +48,14 @@ final class BranchesPane: NSView {
 	/// becomes safe to delete. Dimming says *nothing here* without saying
 	/// *gone*.
 	private var mergedBranches: Set<String> = []
+	/// The same, for the remote-tracking branches — keyed `origin/x`, because a
+	/// remote row's own `name` has the remote stripped and `origin/x` and
+	/// `upstream/x` would otherwise be one entry.
+	///
+	/// **Measured against the *remote's* default**, not the local one. The
+	/// local `main` can be ahead of `origin/main`, and a branch merged into the
+	/// one you are standing on is not yet merged where deleting it matters.
+	private var mergedRemoteBranches: Set<String> = []
 	/// What origin points at, or nil when there is no origin at all.
 	private var remoteURL: String?
 	/// The branch currently being pushed, if one is.
@@ -60,6 +68,9 @@ final class BranchesPane: NSView {
 	/// `pushingBranch`, and more of it: a delete that takes a worktree with it
 	/// spends its seconds on `rm -rf`, not on git.
 	private var deletingBranches: Set<String> = []
+	/// Set only while a delete is running against a remote, so a local delete
+	/// of `x` cannot set `origin/x` spinning — the two rows share a name.
+	private var deletingRemote: String?
 	/// Kept alive while the recreate sheet is up: it is the combo's delegate,
 	/// and a delegate nobody holds is one nobody hears from.
 	private var tagSourceWatcher: TagSourceWatcher?
@@ -553,8 +564,20 @@ final class BranchesPane: NSView {
 			remoteURL = await GitForge.remoteURL(in: root)
 			if let main = self.defaultBranch {
 				self.mergedBranches = await GitBranches.merged(into: main, in: root)
+				// The remote's own default, per remote. `origin/main` is the
+				// ref a branch has to be inside before deleting it from the
+				// remote loses nothing — and `origin` is a convention rather
+				// than a rule, so the list is asked for rather than assumed.
+				var finished: Set<String> = []
+				for remote in await GitBranches.remotes(in: root) {
+					finished.formUnion(await GitBranches.mergedRemotes(
+						into: "\(remote)/\(main)", in: root
+					))
+				}
+				self.mergedRemoteBranches = finished
 			} else {
 				self.mergedBranches = []
+				self.mergedRemoteBranches = []
 			}
 			self.refreshTraffic()
 			self.refreshConflicts()
@@ -1846,6 +1869,24 @@ final class BranchesPane: NSView {
 	/// What the operation banner says and offers.
 	func operationBannerForTesting() -> String { conflictBanner.reportForTesting }
 
+	/// Opens the remote-delete question for the branches selected, the way the
+	/// menu item does.
+	func deleteRemoteForTesting() { deleteRemoteBranch() }
+
+	/// Whether the pane thinks this branch is finished — asked by ref, so
+	/// `origin/x` and `x` are two questions and not one.
+	func mergedMarkForTesting() -> String {
+		branches.map { branch -> String in
+			let where_: String
+			switch branch.kind {
+			case .local:            where_ = branch.name
+			case .remote(let name): where_ = "\(name)/\(branch.name)"
+			case .tag:              where_ = "tag:\(branch.name)"
+			}
+			return where_ + (isMerged(branch) ? " merged" : "")
+		}.joined(separator: ", ")
+	}
+
 	/// What the repository row offers on a right-click, and when it last
 	/// fetched — neither of which a shot of a closed menu can be asked about.
 	func remoteMenuForTesting() -> String {
@@ -1897,9 +1938,7 @@ final class BranchesPane: NSView {
 				// report of what the row draws, and a row that says
 				// `not published` in a report and draws a cloud in the pane is
 				// a report that cannot catch the cloud being wrong.
-				let merged = branch.kind == .local
-					&& !branch.isCurrent
-					&& mergedBranches.contains(branch.name)
+				let merged = isMerged(branch)
 				var marks: [String] = []
 				if branch.isUnpublished {
 					// Against the default branch, and said so: the same arrow
@@ -2744,12 +2783,65 @@ final class BranchesPane: NSView {
 	/// Deleting a remote branch is a push, which `CLAUDE.md` forbids outright
 	/// except when somebody asks for it by name — so it is not something a
 	/// multiple selection should be able to do by accident.
+	/// Whether this branch is finished: everything on it is somewhere else.
+	///
+	/// **Both kinds, asked of the right target.** A local branch is measured
+	/// against the local default and a remote-tracking one against the remote's
+	/// — which is why there are two sets rather than one. Until this, the
+	/// pane marked a finished local branch and said nothing whatsoever about
+	/// the remote copy of the same work, which is the copy somebody has to go
+	/// and delete.
+	func isMerged(_ branch: GitBranch) -> Bool {
+		switch branch.kind {
+		case .local:
+			return !branch.isCurrent && mergedBranches.contains(branch.name)
+		case .remote(let remote):
+			return mergedRemoteBranches.contains("\(remote)/\(branch.name)")
+		case .tag:
+			return false
+		}
+	}
+
 	private var deletableBranches: [GitBranch] {
 		selectedBranches.filter { $0.kind == .local && !$0.isCurrent }
 	}
 
 	@objc private func deleteBranch() {
 		deletion().ask(about: deletableBranches, target: currentBranchName ?? "HEAD")
+	}
+
+	/// The remote branches in the selection, all on one remote.
+	///
+	/// **One remote at a time.** A selection spanning `origin` and a fork is
+	/// two pushes to two places, and one dialog headed by one of them would be
+	/// telling half the truth about what the press does. The remote taken is
+	/// the one the row under the pointer belongs to.
+	private var deletableRemoteBranches: [GitBranch] {
+		guard let remote = selectedRemote else { return [] }
+		return selectedBranches.filter {
+			if case .remote(let name) = $0.kind { return name == remote }
+			return false
+		}
+	}
+
+	/// Which remote the selection is on, when it is all on one.
+	private var selectedRemote: String? {
+		let remotes = Set(selectedBranches.compactMap { branch -> String? in
+			if case .remote(let name) = branch.kind { return name }
+			return nil
+		})
+		return remotes.count == 1 ? remotes.first : nil
+	}
+
+	@objc private func deleteRemoteBranch() {
+		guard let remote = selectedRemote else { return }
+		let branches = deletableRemoteBranches
+		guard !branches.isEmpty else { return }
+		deletingRemote = remote
+		// The remote's own default, which is what a branch has to be inside
+		// before deleting it from there loses nothing.
+		let target = "\(remote)/\(defaultBranch ?? "main")"
+		deletion().askAboutRemote(branches, on: remote, target: target)
 	}
 
 	/// What a row is waiting on, which is also what it says while it waits —
@@ -2759,10 +2851,24 @@ final class BranchesPane: NSView {
 	/// its remote, so `origin/x` and `x` answer the same here, and pushing one
 	/// used to set the other spinning.
 	private func busyNote(for branch: GitBranch) -> String? {
-		guard case .local = branch.kind else { return nil }
-		if branch.name == pushingBranch { return "Pushing \(branch.name)…" }
-		if deletingBranches.contains(branch.name) { return "Deleting \(branch.name)…" }
-		return nil
+		switch branch.kind {
+		case .local:
+			if branch.name == pushingBranch { return "Pushing \(branch.name)…" }
+			if deletingBranches.contains(branch.name) { return "Deleting \(branch.name)…" }
+			return nil
+		case .remote(let remote):
+			// Only while a *remote* delete is running, which is the only thing
+			// that touches these rows. `deletingRemote` is the remote whose
+			// branches are going, and it is nil for a local delete — otherwise
+			// deleting `x` locally would set `origin/x` spinning over work
+			// nobody had asked for.
+			guard deletingRemote == remote, deletingBranches.contains(branch.name) else {
+				return nil
+			}
+			return "Deleting from \(remote)…"
+		case .tag:
+			return nil
+		}
 	}
 
 	/// One `BranchDeletion` per press, told what this pane knows: where the
@@ -2775,6 +2881,7 @@ final class BranchesPane: NSView {
 			self.tableView.reloadData()
 		}
 		made.onFinished = { [weak self] in
+			self?.deletingRemote = nil
 			self?.refresh()
 			self?.onRepositoryChanged?()
 		}
@@ -2983,7 +3090,7 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 				branch: branch,
 				display: display,
 				busy: busyNote(for: branch),
-				isMerged: branch.kind == .local && mergedBranches.contains(branch.name),
+				isMerged: isMerged(branch),
 				base: defaultBranch
 			)
 		case .worktree(let worktree):
@@ -3206,6 +3313,22 @@ extension BranchesPane: NSMenuDelegate {
 			menu.addItem(item(
 				deleting > 1 ? "Delete \(deleting) Branches…" : "Delete…",
 				#selector(deleteBranch),
+				enabled: deleting > 0
+			))
+		}
+		// **Named for where it deletes from.** A remote branch's row sits under
+		// a section headed by its remote and says only the branch's own name,
+		// so a plain `Delete…` there is the same word for two operations — one
+		// that removes a ref from this disk and one that removes it from
+		// everybody's. The remote is in the title so the press cannot be a
+		// surprise.
+		if case .remote(let remote) = branch.kind {
+			let deleting = deletableRemoteBranches.count
+			menu.addItem(item(
+				deleting > 1
+					? "Delete \(deleting) Branches from \(remote)…"
+					: "Delete from \(remote)…",
+				#selector(deleteRemoteBranch),
 				enabled: deleting > 0
 			))
 		}

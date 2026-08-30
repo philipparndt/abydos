@@ -405,6 +405,12 @@ final class SidebarController: NSObject {
 			// offers — neither of which a shot of a closed menu can show.
 			// Every remote verb the repository row offers, and when it last
 			// fetched — the row draws one verb and there are four.
+			// Which refs the pane calls finished, by ref rather than by name:
+			// `origin/x` and `x` are two questions.
+			case "merged":
+				print("BRANCHES merged: " + pane.mergedMarkForTesting())
+			case "delete-remote":
+				pane.deleteRemoteForTesting()
 			case "remote-menu":
 				print("REPOSITORY menu: " + pane.remoteMenuForTesting())
 			case "fetch":

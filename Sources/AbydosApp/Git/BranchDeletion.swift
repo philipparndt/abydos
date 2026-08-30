@@ -72,6 +72,154 @@ final class BranchDeletion {
 		}
 	}
 
+	/// The same flow for branches on a remote, which is a different question
+	/// wearing the same word.
+	///
+	/// **Deleting on a remote is a push**, and the only one this app makes that
+	/// is not somebody publishing their own work. It takes the ref off
+	/// everybody's copy, not this one — so the dialog says where the branch is
+	/// going from, and says the one reassuring thing that is actually true: a
+	/// deleted branch comes back by pushing the ref again, as long as somebody
+	/// still has the commits.
+	///
+	/// Worktrees do not come into it. A remote-tracking ref is not checked out
+	/// anywhere, and there is nothing on this disk to free.
+	///
+	/// - Parameter target: the remote's own default — `origin/main`. Not the
+	///   local one: a branch merged into the `main` on this machine is not yet
+	///   merged where deleting it from the remote would matter.
+	func askAboutRemote(_ branches: [GitBranch], on remote: String, target: String) {
+		guard !branches.isEmpty else { return }
+		Task { @MainActor in
+			var safe: [GitBranch] = []
+			var carrying: [CarryingBranch] = []
+			for branch in branches {
+				let ref = "\(remote)/\(branch.name)"
+				if await GitBranches.isMerged(ref, into: target, in: self.root) {
+					safe.append(branch)
+				} else {
+					carrying.append(CarryingBranch(
+						branch: branch,
+						commits: await GitCommits.count(of: ref, notIn: target, in: self.root)
+					))
+				}
+			}
+			self.askAboutDeletingOnRemote(
+				safe: safe, carrying: carrying, remote: remote, target: target
+			)
+		}
+	}
+
+	private func askAboutDeletingOnRemote(
+		safe: [GitBranch], carrying: [CarryingBranch], remote: String, target: String
+	) {
+		let all = safe + carrying.map(\.branch)
+		guard let first = all.first else { return }
+
+		let alert = NSAlert()
+		alert.messageText = all.count == 1
+			? "Delete “\(first.name)” from \(remote)?"
+			: "Delete \(all.count) branches from \(remote)?"
+
+		func are(_ count: Int) -> String { count == 1 ? "1 is" : "\(count) are" }
+		var said: [String] = []
+		if !safe.isEmpty {
+			said.append(all.count == 1
+				? "Every commit on it is already on \(target), so nothing would be lost."
+				: "\(are(safe.count)) already on \(target) — "
+					+ "deleting \(safe.count == 1 ? "it loses" : "those loses") nothing.")
+		}
+		if !carrying.isEmpty {
+			let lost = carrying.reduce(0) { $0 + $1.commits }
+			said.append(all.count == 1
+				? "It has \(lost) commit\(lost == 1 ? "" : "s") that "
+					+ "\(lost == 1 ? "is" : "are") not on \(target)."
+				: "\(are(carrying.count)) not on \(target), carrying "
+					+ "\(lost) commit\(lost == 1 ? "" : "s") between them.")
+		}
+		// **The whole difference from a local delete, said plainly.** This one
+		// reaches everybody's copy — and it is the one destructive git
+		// operation with a clean undo, which is worth knowing before pressing
+		// rather than after.
+		said.append(all.count == 1
+			? "It goes from \(remote), so it goes for everybody. "
+				+ "Pushing the branch again puts it back, if the commits are still somewhere."
+			: "They go from \(remote), so they go for everybody. "
+				+ "Pushing them again puts them back, if the commits are still somewhere.")
+		alert.informativeText = said.joined(separator: "\n\n")
+
+		var rows: [BranchDeleteList.Row] = []
+		rows += safe.map { .init(name: $0.name, detail: "already on \(target)", kind: .safe) }
+		rows += carrying.map { .init(name: $0.branch.name, detail: $0.said, kind: .losing) }
+		let listing = all.count > 1 ? BranchDeleteList(rows: rows) : nil
+		alert.accessoryView = Self.accessory(listing: listing, checkbox: nil)
+
+		alert.addButton(withTitle: carrying.isEmpty ? "Delete" : "Delete Anyway")
+		alert.addButton(withTitle: "Cancel")
+		// Red where commits nobody else has would stop being reachable by
+		// name. A merged branch on a remote is a name, same as locally.
+		alert.buttons.first?.hasDestructiveAction = !carrying.isEmpty
+
+		untilTheSheetIsAnswered = self
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard let self else { return }
+			defer { self.untilTheSheetIsAnswered = nil }
+			guard response == .alertFirstButtonReturn else { return }
+			self.deleteOnRemote(all, on: remote)
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: act)
+		} else {
+			act(alert.runModal())
+		}
+	}
+
+	/// One push per branch, and one sentence at the end.
+	///
+	/// One at a time rather than `git push origin --delete a b c`: a refspec
+	/// git refuses takes the whole push with it, and a run that deleted none of
+	/// four because the second had already gone is worse than one that says so
+	/// about the second.
+	private func deleteOnRemote(_ branches: [GitBranch], on remote: String) {
+		Task { @MainActor in
+			var failures: [String] = []
+			var deleted: [String] = []
+
+			var working = Set(branches.map(\.name))
+			self.onDeleting?(working)
+			defer { self.onDeleting?([]) }
+
+			for branch in branches {
+				let result = await GitBranches.deleteOnRemote(
+					branch.name, on: remote, in: self.root
+				)
+				if result.exitCode == 0 {
+					deleted.append(branch.name)
+				} else {
+					let saidIt = result.stderr.isEmpty ? result.stdout : result.stderr
+					failures.append(
+						"\(branch.name): \(saidIt.trimmingCharacters(in: .whitespacesAndNewlines))"
+					)
+				}
+				working.remove(branch.name)
+				self.onDeleting?(working)
+			}
+
+			if failures.isEmpty {
+				Toast.post(
+					deleted.count == 1
+						? "Deleted \(deleted[0]) from \(remote)"
+						: "Deleted \(deleted.count) branches from \(remote)",
+					detail: "The local branches, if any, are untouched.",
+					kind: .information
+				)
+			} else {
+				self.onFailure?(failures.joined(separator: "\n"))
+			}
+			self.onFinished?()
+		}
+	}
+
 	/// A branch that cannot be deleted while a checkout of it exists, and what
 	/// that checkout is.
 	///
