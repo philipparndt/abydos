@@ -340,7 +340,31 @@ final class ImageFileView: NSView, ScalingPage {
 		scrollView.frame = NSRect(
 			x: 0, y: foot, width: bounds.width, height: max(0, bounds.height - foot)
 		)
-		layoutPicture()
+		// **The picture's geometry is applied between layout passes, never
+		// inside one.** Resizing the document view from here makes the scroll
+		// view re-tile and pull its between-scrollers corner out of the
+		// hierarchy mid-flush, which this macOS treats as an illegal layout
+		// engine mutation and turns into `NSApplication _crashOnException` —
+		// three crash reports in two minutes, each from dragging a split
+		// divider with a picture open. One turn later the same frames run
+		// with the engine at rest, and the main queue drains in the
+		// event-tracking mode too, so the picture keeps up during the drag.
+		// The direct callers elsewhere — a zoom, a fit, the image arriving —
+		// stay synchronous: none of them runs inside a layout flush.
+		schedulePictureLayout()
+	}
+
+	/// One pending pass, however many layouts asked for it.
+	private var pictureLayoutScheduled = false
+
+	private func schedulePictureLayout() {
+		guard !pictureLayoutScheduled else { return }
+		pictureLayoutScheduled = true
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			pictureLayoutScheduled = false
+			layoutPicture()
+		}
 	}
 
 	/// How large the picture is drawn, how large a document it needs to be
