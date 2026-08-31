@@ -110,6 +110,13 @@ public enum ContainerImages {
 		let text = output.lowercased()
 		return text.contains("cannot connect") || text.contains("daemon")
 			|| text.contains("is the docker daemon running")
+			// Apple's runtime stopped, in its own words: the CLI answers
+			// `interrupted: "XPC connection error: Connection invalid"` and
+			// advises `container system start`. Neither says "daemon", so a
+			// machine with the service off read as a wrong verb rather than
+			// as a runtime that is not up.
+			|| text.contains("xpc connection error")
+			|| text.contains("container system start")
 	}
 
 	public static func isUnknownImage(_ output: String) -> Bool {

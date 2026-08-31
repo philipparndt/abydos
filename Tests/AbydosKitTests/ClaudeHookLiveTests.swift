@@ -76,9 +76,13 @@ struct ClaudeHookLiveTests {
 		return pane != nil
 	}
 
-	private func badge(_ session: String) -> String {
-		guard let tmux else { return "" }
-		return run(tmux, ["show-options", "-w", "-t", "\(session):0", "-v", "@ai_status"])
+	private func badge() -> String {
+		guard let tmux, let pane else { return "" }
+		// Asked of the pane the events were fired from, not of `session:0`: a
+		// machine whose tmux.conf says `base-index 1` has no window 0 at all,
+		// and asking for one read as an empty badge on every claim here — nine
+		// expectation failures whose real subject was somebody's dotfile.
+		return run(tmux, ["show-options", "-w", "-t", pane, "-v", "@ai_status"])
 	}
 
 	/// The sequence from the tab strip, through the binary Claude Code runs.
@@ -94,23 +98,23 @@ struct ClaudeHookLiveTests {
 		}
 
 		fire(#"{"hook_event_name":"UserPromptSubmit","cwd":"/x"}"#)
-		#expect(badge(session) == "working")
+		#expect(badge() == "working")
 
 		fire(#"{"hook_event_name":"SubagentStop","cwd":"/x"}"#)
-		#expect(badge(session) == "working", "a subagent finishing mid-turn changes nothing")
+		#expect(badge() == "working", "a subagent finishing mid-turn changes nothing")
 
 		fire(#"{"hook_event_name":"Stop","cwd":"/x"}"#)
-		#expect(badge(session) == "done")
+		#expect(badge() == "done")
 
 		// The two that used to unfinish it.
 		fire(#"{"hook_event_name":"SubagentStop","cwd":"/x"}"#)
-		#expect(badge(session) == "done", "a straggling subagent")
+		#expect(badge() == "done", "a straggling subagent")
 
 		fire(#"{"hook_event_name":"Notification","cwd":"/x","notification_type":"idle_prompt"}"#)
-		#expect(badge(session) == "done", "the nudge about nobody having answered")
+		#expect(badge() == "done", "the nudge about nobody having answered")
 
 		fire(#"{"hook_event_name":"UserPromptSubmit","cwd":"/x"}"#)
-		#expect(badge(session) == "working", "and the next turn starts it again")
+		#expect(badge() == "working", "and the next turn starts it again")
 	}
 
 	/// Being asked something really does warn, whatever the tab said before.
@@ -122,14 +126,14 @@ struct ClaudeHookLiveTests {
 		defer { run(tmux, ["kill-session", "-t", session]) }
 
 		run(hook.path, [], input: #"{"hook_event_name":"Stop","cwd":"/x"}"#)
-		#expect(badge(session) == "done")
+		#expect(badge() == "done")
 
 		run(hook.path, [], input: """
 		{"hook_event_name":"Notification","cwd":"/x",
 		 "notification_type":"worker_permission_prompt",
 		 "message":"Claude needs your permission to use Bash"}
 		""")
-		#expect(badge(session) == "needs")
+		#expect(badge() == "needs")
 	}
 
 	/// A session that ends takes its badge with it, rather than leaving a tab
@@ -142,9 +146,9 @@ struct ClaudeHookLiveTests {
 		defer { run(tmux, ["kill-session", "-t", session]) }
 
 		run(hook.path, [], input: #"{"hook_event_name":"UserPromptSubmit","cwd":"/x"}"#)
-		#expect(badge(session) == "working")
+		#expect(badge() == "working")
 
 		run(hook.path, [], input: #"{"hook_event_name":"SessionEnd","cwd":"/x"}"#)
-		#expect(badge(session).isEmpty)
+		#expect(badge().isEmpty)
 	}
 }

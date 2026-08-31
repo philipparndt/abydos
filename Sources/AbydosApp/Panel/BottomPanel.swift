@@ -720,10 +720,15 @@ final class BottomPanel: NSView {
 		DispatchQueue.global(qos: .utility).async { [weak self] in
 			// The pty's descriptor and device name are fixed once it has
 			// started, which is what makes asking from here safe.
-			// **Settled, not current.** The window follows where somebody
-			// walked, not where a script went: `brew` changes directory several
-			// times while it works, and reading the foreground process's own
-			// answer dragged the window through every one of them.
+			// **The shell's own directory, not the foreground's.** The window
+			// follows where somebody walked, not where a script went: `brew`
+			// changes directory several times while it works, and reading the
+			// foreground process's answer dragged the window through every one
+			// of them — while answering nothing during a run deselected the
+			// project a script was started from, and a pane holding a Claude
+			// session never answered at all, so switching to its tab followed
+			// nowhere. The shell's own directory is all three answers at once;
+			// see `TerminalDirectory.settled`.
 			let directory = terminal.settledDirectoryForTesting
 			DispatchQueue.main.async {
 				guard let self, let directory else { return }
@@ -4658,11 +4663,17 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 
 		let colour = isMirroringTmux ? Self.tmuxGreenBar : Theme.current.sidebarBackground
 		let fade = Theme.current.scaled(16)
+		// One point short of the bar's bottom: the hairline is drawn before
+		// this backdrop, and a full-height fill painted it out — the line
+		// under the strip stopped dead where the controls begin, with a
+		// sixteen-point fade-out in front of them. The mirroring strip draws
+		// no hairline, so there the fill keeps the whole height.
+		let height = bounds.height - (isMirroringTmux ? 0 : 1)
 		let solid = NSRect(
 			x: leftmost - Theme.current.scaled(6),
 			y: 0,
 			width: bounds.maxX - leftmost + Theme.current.scaled(6),
-			height: bounds.height
+			height: height
 		)
 		colour.setFill()
 		solid.fill()
@@ -4672,7 +4683,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			ending: colour
 		)
 		gradient?.draw(
-			in: NSRect(x: solid.minX - fade, y: 0, width: fade, height: bounds.height),
+			in: NSRect(x: solid.minX - fade, y: 0, width: fade, height: height),
 			angle: 0
 		)
 	}

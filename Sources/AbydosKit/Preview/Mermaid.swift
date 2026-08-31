@@ -446,7 +446,9 @@ public enum Mermaid {
 						}
 						const value = found.values[property];
 						if (value && value !== 'none' || property === 'fill' || property === 'stroke') {
-							found.element.setAttribute(property, abydosPlainReference(value));
+							found.element.setAttribute(property, property === 'font-family'
+								? abydosPlainFamily(value)
+								: abydosPlainReference(value));
 						}
 					}
 				}
@@ -479,6 +481,17 @@ public enum Mermaid {
 		function abydosPlainReference(value) {
 			return value.indexOf('url(') === -1 ? value
 				: value.replace(/url\\(\\s*["']?([^"')]*)["']?\\s*\\)/g, 'url($1)');
+		}
+		// The same trap again, in the font stack. The computed `font-family`
+		// comes back as `"trebuchet ms", verdana, …` — with the quotes a
+		// browser puts around a name that has a space in it — and the
+		// serialiser writes those out as `&quot;`, six of them per label.
+		// Every kind of diagram carried them once WebKit started quoting the
+		// computed value. The names go out plain: an SVG attribute takes a
+		// multi-word family name without quotes, and every renderer this app
+		// answers to reads it that way.
+		function abydosPlainFamily(value) {
+			return value.replace(/["']/g, '');
 		}
 		/// The plain-text branch of a `<switch>`, kept, and the HTML one dropped.
 		///

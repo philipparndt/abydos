@@ -662,8 +662,16 @@ final class EditorTabBar: NSView {
 			draw(item: item, in: frames[index], isActive: index == activeIndex, index: index)
 		}
 
+		drawOverflowControl()
+		drawPreviewControl()
+		drawMaximizeControl()
+
 		// Hairline under the whole strip, broken by the active tab so it reads as
-		// continuous with the editor beneath it.
+		// continuous with the editor beneath it. After the trailing controls,
+		// not before: their backdrops are opaque fills the full height of the
+		// bar, and painted over the hairline they took it with them — the line
+		// stopped dead under the overflow chevron, and under the other two at
+		// the zoom steps where their backdrop's inset rounds onto the last row.
 		Theme.current.separator.setFill()
 		NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
 		if let activeIndex, activeIndex < frames.count, !frames[activeIndex].isEmpty {
@@ -681,9 +689,6 @@ final class EditorTabBar: NSView {
 			TabSelectionLine.rect(in: rect, alongTop: false).fill()
 		}
 
-		drawOverflowControl()
-		drawPreviewControl()
-		drawMaximizeControl()
 		drawDropCaret()
 	}
 

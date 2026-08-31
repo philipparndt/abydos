@@ -869,10 +869,10 @@ public final class PseudoTerminal {
 		} ?? nil
 	}
 
-	/// Where the shell is, asked only while it is the thing in front — see
-	/// `TerminalDirectory.settled`. Nil while a command is running, which is
-	/// what stops a window being dragged through every directory a script
-	/// visits.
+	/// Where the shell itself is — see `TerminalDirectory.settled`. A script
+	/// never moves the shell's own directory, which is what stops a window
+	/// being dragged through every directory the script visits while still
+	/// naming the project the script was started from.
 	public func settledDirectory() -> URL? {
 		descriptors.withMaster {
 			TerminalDirectory.settled(

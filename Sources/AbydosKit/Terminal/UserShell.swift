@@ -145,10 +145,19 @@ public enum UserShell {
 		var seen = Set<String>()
 		var directories: [String] = []
 		for entry in parts[1].split(separator: ":").map(String.init) where !entry.isEmpty {
+			// A dotfile that single-quotes its export leaves `~/.dotnet/tools`
+			// in the PATH with the tilde still in it — the shell searches that
+			// entry literally and finds nothing, but what the person meant was
+			// their home, and this app can do the expanding the quoting
+			// prevented. What is still relative after that (`.` is legal in a
+			// PATH) means "wherever the shell happens to stand", which for an
+			// app is nowhere in particular, and is dropped.
+			let stated = NSString(string: entry).expandingTildeInPath
+			guard stated.hasPrefix("/") else { continue }
 			// Both forms: the one the shell gave, and the one it points at. The
 			// first is what the user's tools expect to see; the second is what is
 			// still there tomorrow.
-			for candidate in [entry, URL(fileURLWithPath: entry).resolvingSymlinksInPath().path]
+			for candidate in [stated, URL(fileURLWithPath: stated).resolvingSymlinksInPath().path]
 			where seen.insert(candidate).inserted {
 				directories.append(candidate)
 			}
