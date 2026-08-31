@@ -25,6 +25,10 @@ final class EditorViewController: NSViewController {
 		/// nil for anything not opened as text.
 		var document: TextDocument?
 		var codeView: CodeView?
+		/// Which change-marks read is current, so a diff that arrives after
+		/// the tab moved on — a newer save, a close — is dropped rather than
+		/// applied. `anchoringWork`'s shape.
+		var changedLinesGeneration = 0
 		/// The view installed in the content area.
 		var contentView: NSView
 		/// Provisional tabs are replaced by the next preview open instead of
@@ -479,6 +483,15 @@ final class EditorViewController: NSViewController {
 			name: .ideaiLanguageServersChanged,
 			object: nil
 		)
+		// A commit, a checkout, a stage from the sidebar: what differs from
+		// HEAD changed for every open file at once. A commit must take the
+		// marks away — after it, nothing differs any more.
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(repositoryChangedForMarks),
+			name: .abydosRepositoryChanged,
+			object: nil
+		)
 
 		placeholder = NSTextField(labelWithString: "Select a file to open")
 		placeholder.font = Theme.current.uiFont(13)
@@ -603,6 +616,7 @@ final class EditorViewController: NSViewController {
 			guard let tab else { return }
 			self?.textReplaced(in: tab, replacing: range, insertedLength: inserted)
 		}
+		refreshChangedLines(for: tab)
 		tab.codeView?.onSetOtherBreakpointsEnabled = { [weak self, weak tab] line, enabled in
 			guard let tab else { return }
 			self?.onSetOtherBreakpointsEnabled?(tab.url, line + 1, enabled)
@@ -1484,6 +1498,7 @@ final class EditorViewController: NSViewController {
 			guard let tab else { return }
 			self?.textReplaced(in: tab, replacing: range, insertedLength: inserted)
 		}
+		refreshChangedLines(for: tab)
 		codeView.onRunLine = { [weak self] line in
 			// Already 1-based: the gutter converts before reporting a run.
 			self?.onRunLine?(fileURL, line)
@@ -3717,6 +3732,7 @@ final class EditorViewController: NSViewController {
 			try tab.document?.save()
 			refreshTabBar()
 			told(tab, wasSaved: true)
+			refreshChangedLines(for: tab)
 		} catch {
 			Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
 		}
@@ -4249,9 +4265,60 @@ final class EditorViewController: NSViewController {
 	/// Flushes every dirty document, used on focus loss and quit.
 	func autoSaveAll() {
 		for tab in tabs {
-			tab.document?.autoSaveIfNeeded()
+			guard let document = tab.document, document.isDirty else { continue }
+			document.autoSaveIfNeeded()
+			// Saved means the diff on disk is the truth again.
+			if !document.isDirty { refreshChangedLines(for: tab) }
 		}
 		refreshTabBar()
+	}
+
+	// MARK: - Change marks
+
+	/// Reads which of a tab's lines differ from HEAD and hands the marks to
+	/// its gutter. Async and generation-counted so a result arriving for a
+	/// tab that has moved on — a newer save, a close — is dropped, the way
+	/// `anchoringWork` drops stale re-anchors. Never per keystroke: the
+	/// callers are open, save, reload, and the repository moving.
+	private func refreshChangedLines(for tab: Tab) {
+		guard tab.codeView != nil else { return }
+		tab.changedLinesGeneration += 1
+		let generation = tab.changedLinesGeneration
+		let url = tab.url.standardizedFileURL
+		let root = project?.gitRoot
+
+		Task { @MainActor [weak self, weak tab] in
+			guard let self, let root else {
+				tab?.codeView?.setChangedLines(GitChangedLines())
+				return
+			}
+			let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+			guard url.path.hasPrefix(prefix) else {
+				tab?.codeView?.setChangedLines(GitChangedLines())
+				return
+			}
+			let relative = String(url.path.dropFirst(prefix.count))
+			let diff = await GitWorkingCopy.diffAgainstHead(for: relative, in: root)
+			guard let tab, tab.changedLinesGeneration == generation else { return }
+			_ = self
+			let changed = diff.map { GitChangedLines.read(GitPatch.parse($0)) } ?? GitChangedLines()
+			tab.codeView?.setChangedLines(changed)
+		}
+	}
+
+	/// The repository moved under every open file at once. Debounced, so a
+	/// checkout touching a hundred files is one sweep over the open tabs —
+	/// the only files anybody can see — rather than a diff per event.
+	private var marksRefresh: DispatchWorkItem?
+
+	@objc private func repositoryChangedForMarks(_ note: Notification) {
+		marksRefresh?.cancel()
+		let work = DispatchWorkItem { [weak self] in
+			guard let self else { return }
+			for tab in tabs { refreshChangedLines(for: tab) }
+		}
+		marksRefresh = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
 	}
 
 	/// Re-reads any open file that something else has written.
@@ -4265,6 +4332,7 @@ final class EditorViewController: NSViewController {
 			guard document.hasChangedOnDisk else { continue }
 			guard tab.codeView?.reloadFromDisk() == true else { continue }
 			onFileReloaded?(tab.url)
+			refreshChangedLines(for: tab)
 
 			// And tell the language server, or its diagnostics go on describing
 			// the file as it was — which after something else has just fixed

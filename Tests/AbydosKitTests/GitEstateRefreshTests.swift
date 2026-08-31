@@ -41,6 +41,31 @@ struct GitEstateRefreshTests {
 		#expect(work.superproject)
 	}
 
+	/// A repository with no submodules is an estate of one, and attribution
+	/// works the same: a saved file is the superproject stale and nothing
+	/// else — not the inventory, which is what the pane used to re-read on
+	/// every event because plain repositories were routed around this type
+	/// entirely.
+	@Test func aPlainRepositoryAttributesToItselfWithoutTheInventory() {
+		let work = GitEstateRefresh.work(
+			forChangedPaths: [url("Sources/Thing.swift")],
+			in: estate([])
+		)
+		#expect(work.superproject)
+		#expect(!work.inventory)
+		#expect(work.submodulePaths.isEmpty)
+	}
+
+	/// And its `.gitmodules` appearing is the one event that must still ask
+	/// for the inventory: the first submodule arriving is invisible otherwise.
+	@Test func gitmodulesArrivingInAPlainRepositoryAsksForTheInventory() {
+		let work = GitEstateRefresh.work(
+			forChangedPaths: [url(".gitmodules")],
+			in: estate([])
+		)
+		#expect(work.inventory)
+	}
+
 	/// The layout the two-watcher design rests on: a submodule's refs live under
 	/// the superproject's own `.git/modules`, so an event there is about that
 	/// submodule and not about the superproject.

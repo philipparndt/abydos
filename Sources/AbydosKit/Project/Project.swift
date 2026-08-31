@@ -112,6 +112,20 @@ public final class Project {
 		if let loading { return await loading.value }
 
 		let task = Task { @MainActor [scope, root] () -> Void in
+			// **The repository is kept when it is still the same checkout.**
+			// Every `.git` event used to hand back a brand-new actor — status
+			// cache, ignored cache and the ignore-rules fingerprint discarded
+			// together — so the walk the fingerprint exists to prevent ran
+			// after every stage: 0.8–1.6 s in the repository that reported it,
+			// paid for this app's own index writes. Rediscovery is for the
+			// checkout appearing, vanishing or moving, and the root answers
+			// that.
+			if let existing = self.git,
+			   await GitRepository.discoverRoot(from: scope ?? root) == existing.root {
+				await existing.refresh()
+				self.estate = await GitEstate.read(from: existing.root)
+				return
+			}
 			let repo = await GitRepository.discover(from: scope ?? root)
 			await repo?.refresh()
 			self.git = repo

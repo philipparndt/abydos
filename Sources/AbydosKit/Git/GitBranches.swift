@@ -43,6 +43,13 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 	public let aheadOfDefault: Int?
 	public let behindDefault: Int?
 
+	/// When the ref came to be: the tag object's date for an annotated tag,
+	/// the pointed-at commit's for a lightweight one, the tip commit's for a
+	/// branch — `creatordate`, which is the field a newest-first order reads.
+	/// Nil on a git old enough to refuse the field, costing the order and not
+	/// the rows.
+	public let created: Date?
+
 	/// Never pushed anywhere: a local branch with no upstream at all.
 	///
 	/// Told apart from level for the reason `upstream` already gives, and said
@@ -80,7 +87,8 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		upstream: String? = nil,
 		upstreamIsGone: Bool = false,
 		aheadOfDefault: Int? = nil,
-		behindDefault: Int? = nil
+		behindDefault: Int? = nil,
+		created: Date? = nil
 	) {
 		self.name = name
 		self.kind = kind
@@ -92,6 +100,38 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		self.upstreamIsGone = upstreamIsGone
 		self.aheadOfDefault = aheadOfDefault
 		self.behindDefault = behindDefault
+		self.created = created
+	}
+}
+
+/// How a refs-tree section orders the refs in it.
+///
+/// One choice per section *kind* — local, remotes, tags — because that is
+/// what the section headers offer, and a per-remote memory would multiply
+/// keys for a question nobody asks per remote. The raw values are what the
+/// Settings keys store.
+public enum RefsSortOrder: String, CaseIterable, Sendable {
+	/// `localizedStandardCompare` on the display name — the order the project
+	/// tree and the changes tree use, and the branches' default.
+	case name
+	/// Newest `creatordate` first — the tags' default: the tag somebody just
+	/// cut is the one they are looking for, and alphabetical order lies about
+	/// versions besides (`v1.10` before `v1.9`).
+	case newestFirst = "created"
+
+	/// The order between two refs. Newest-first falls back to the name for an
+	/// undated pair, so a git old enough to refuse `creatordate` still gets
+	/// one stable answer.
+	public func orderedBefore(_ a: GitBranch, _ b: GitBranch) -> Bool {
+		switch self {
+		case .name:
+			return a.name.localizedStandardCompare(b.name) == .orderedAscending
+		case .newestFirst:
+			let first = a.created ?? .distantPast
+			let second = b.created ?? .distantPast
+			if first != second { return first > second }
+			return a.name.localizedStandardCompare(b.name) == .orderedAscending
+		}
 	}
 }
 
@@ -201,6 +241,12 @@ public enum GitBranches {
 	///   Asked with `%(ahead-behind:)`, in the call that was already being
 	///   made rather than one `rev-list` per branch.
 	public static func list(in root: URL, comparedTo: String? = nil) async -> [GitBranch] {
+		await list(in: root, comparedTo: comparedTo, withDates: true)
+	}
+
+	private static func list(
+		in root: URL, comparedTo: String?, withDates: Bool
+	) async -> [GitBranch] {
 		var fields = [
 			"%(refname)",
 			"%(HEAD)",
@@ -208,6 +254,9 @@ public enum GitBranches {
 			"%(upstream:track)",
 			"%(upstream:short)",
 		]
+		// Before the ahead-behind field, so the date keeps one index whether
+		// or not there is a branch to compare against.
+		if withDates { fields.append("%(creatordate:unix)") }
 		if let comparedTo { fields.append("%(ahead-behind:\(comparedTo))") }
 		let format = fields.joined(separator: separator)
 
@@ -227,14 +276,17 @@ public enum GitBranches {
 		// **`%(ahead-behind:)` arrived in git 2.41, and an older git refuses
 		// the whole command over it** — not the one field, the list. A branch
 		// pane that went empty on an older git would be this asking for a nicer
-		// number and taking every row away to get it.
+		// number and taking every row away to get it. The same care for
+		// `%(creatordate:unix)`, which is far older but guarded the same way:
+		// a git that refuses it costs the dates, never the rows.
 		guard listed.exitCode == 0 else {
-			guard comparedTo != nil else { return [] }
-			return await list(in: root)
+			if comparedTo != nil { return await list(in: root, comparedTo: nil, withDates: withDates) }
+			if withDates { return await list(in: root, comparedTo: nil, withDates: false) }
+			return []
 		}
 
-		var result = parse(listed.stdout)
-		result += parse(await tags.stdout)
+		var result = parse(listed.stdout, withDates: withDates)
+		result += parse(await tags.stdout, withDates: withDates)
 		return result
 	}
 
@@ -243,7 +295,7 @@ public enum GitBranches {
 	/// Internal so the ref-name rules can be tested against fixtures — there
 	/// are more shapes than they look: remotes nest, branch names contain
 	/// slashes, and `origin/HEAD` is a symbolic ref rather than a branch.
-	static func parse(_ output: String) -> [GitBranch] {
+	static func parse(_ output: String, withDates: Bool = true) -> [GitBranch] {
 		var result: [GitBranch] = []
 
 		for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
@@ -255,11 +307,15 @@ public enum GitBranches {
 			let subject = fields.count > 2 ? fields[2] : ""
 			let track = fields.count > 3 ? fields[3] : ""
 			let upstream = fields.count > 4 && !fields[4].isEmpty ? fields[4] : nil
+			let created: Date? = withDates && fields.count > 5
+				? TimeInterval(fields[5]).map { Date(timeIntervalSince1970: $0) }
+				: nil
 			// `%(ahead-behind:)` prints two numbers separated by a space, and
 			// prints nothing at all for a ref that shares no history with what
-			// it was compared against.
-			let against = fields.count > 5
-				? fields[5].split(separator: " ").compactMap { Int($0) }
+			// it was compared against. Its index moves with the date field.
+			let againstIndex = withDates ? 6 : 5
+			let against = fields.count > againstIndex
+				? fields[againstIndex].split(separator: " ").compactMap { Int($0) }
 				: []
 
 			guard let (name, kind) = classify(refname: refname) else { continue }
@@ -276,7 +332,8 @@ public enum GitBranches {
 				upstream: upstream,
 				upstreamIsGone: isGone,
 				aheadOfDefault: against.count == 2 ? against[0] : nil,
-				behindDefault: against.count == 2 ? against[1] : nil
+				behindDefault: against.count == 2 ? against[1] : nil,
+				created: created
 			))
 		}
 		return result

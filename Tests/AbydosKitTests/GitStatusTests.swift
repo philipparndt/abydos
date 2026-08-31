@@ -162,3 +162,60 @@ struct GitStatusTests {
 		#expect(await repo.statuses(for: []).isEmpty)
 	}
 }
+
+/// The status as a successful stage will make it read, shown ahead of the
+/// porcelain re-read that confirms it. The re-read stays the authority; these
+/// claims are about what the moment in between shows.
+struct GitOptimisticMoveTests {
+	private func change(
+		_ path: String, _ kind: GitChange.Kind, staged: Bool = false, directory: Bool = false
+	) -> GitChange {
+		GitChange(path: path, kind: kind, isStaged: staged, isDirectory: directory)
+	}
+
+	@Test func aStagedPathSwitchesSides() {
+		var status = GitWorkingCopyStatus(unstaged: [change("a.txt", .modified)])
+		status.moveToStaged(["a.txt"])
+		#expect(status.unstaged.isEmpty)
+		#expect(status.staged.map(\.path) == ["a.txt"])
+		#expect(status.staged.first?.isStaged == true)
+	}
+
+	/// What `git add` makes of an untracked path, and the way back.
+	@Test func untrackedBecomesAddedAndBack() {
+		var status = GitWorkingCopyStatus(unstaged: [change("new.txt", .untracked)])
+		status.moveToStaged(["new.txt"])
+		#expect(status.staged.first?.kind == .added)
+		status.moveToUnstaged(["new.txt"])
+		#expect(status.unstaged.first?.kind == .untracked)
+	}
+
+	/// A folder names everything under it, the way `git add` takes one.
+	@Test func aFolderTakesItsContentsWithIt() {
+		var status = GitWorkingCopyStatus(unstaged: [
+			change("docs", .untracked, directory: true),
+			change("docs/readme.md", .untracked),
+			change("other.txt", .modified),
+		])
+		status.moveToStaged(["docs"])
+		#expect(status.unstaged.map(\.path) == ["other.txt"])
+		#expect(Set(status.staged.map(\.path)) == ["docs", "docs/readme.md"])
+	}
+
+	/// A name that merely begins the same is not under the folder.
+	@Test func aSharedPrefixIsNotContainment() {
+		var status = GitWorkingCopyStatus(unstaged: [
+			change("docs", .untracked, directory: true),
+			change("docs-old/readme.md", .untracked),
+		])
+		status.moveToStaged(["docs"])
+		#expect(status.unstaged.map(\.path) == ["docs-old/readme.md"])
+	}
+
+	@Test func aPathOnNeitherSideMovesNothing() {
+		var status = GitWorkingCopyStatus(unstaged: [change("a.txt", .modified)])
+		let before = status
+		status.moveToStaged(["b.txt"])
+		#expect(status == before)
+	}
+}

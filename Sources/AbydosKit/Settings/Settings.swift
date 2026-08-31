@@ -178,6 +178,9 @@ public final class Settings {
 		static let projectSearchPaths = "projectSearchPaths"
 		static let ignoredLanguageServers = "ignoredLanguageServers"
 		static let projectSearchDepth = "projectSearchDepth"
+		static let refsSortLocal = "refsSortLocal"
+		static let refsSortRemotes = "refsSortRemotes"
+		static let refsSortTags = "refsSortTags"
 	}
 
 	// MARK: - Zoom
@@ -728,6 +731,31 @@ public final class Settings {
 		set { set(newValue, Key.commitFilesByFolder) }
 	}
 
+	/// How each kind of refs-tree section orders its refs — one choice per
+	/// kind rather than per repository, for `commitFilesByFolder`'s reason:
+	/// this is a reading habit, and choosing again for every checkout is
+	/// choosing nothing. The defaults differ on purpose: branches read by
+	/// name, tags by newness — the tag somebody just cut is the one they are
+	/// looking for.
+	public var refsSortLocal: RefsSortOrder {
+		get { refsSort(Key.refsSortLocal, default: .name) }
+		set { set(newValue.rawValue, Key.refsSortLocal) }
+	}
+
+	public var refsSortRemotes: RefsSortOrder {
+		get { refsSort(Key.refsSortRemotes, default: .name) }
+		set { set(newValue.rawValue, Key.refsSortRemotes) }
+	}
+
+	public var refsSortTags: RefsSortOrder {
+		get { refsSort(Key.refsSortTags, default: .newestFirst) }
+		set { set(newValue.rawValue, Key.refsSortTags) }
+	}
+
+	private func refsSort(_ key: String, default fallback: RefsSortOrder) -> RefsSortOrder {
+		defaults.string(forKey: key).flatMap(RefsSortOrder.init(rawValue:)) ?? fallback
+	}
+
 	/// Whether "waiting on me" counts a review asked of a team this account is
 	/// in, or only one asked of it by name.
 	///
@@ -863,6 +891,7 @@ public final class Settings {
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.compactsPackages, Key.commitFilesByFolder,
+			Key.refsSortLocal, Key.refsSortRemotes, Key.refsSortTags,
 			Key.excludedDirectories,
 			Key.uiScale, Key.terminalFontName, Key.wordWrap, Key.fontLigatures,
 			Key.terminalScheme, Key.terminalGPURendering, Key.terminalBellStyle,

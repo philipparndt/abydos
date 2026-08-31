@@ -166,6 +166,28 @@ struct BranchGroupingTests {
 		#expect(await BranchGrouping.defaultBranch(in: root) == nil)
 	}
 
+	/// The refs tree's LOCAL section can be put in date order, and the spec
+	/// pins this list to that one: two lists of the same branches in one
+	/// window must not disagree. Pins stay pins, folders stay in name order,
+	/// and the branches inside each group take the dates.
+	@Test func aDateOrderPutsTheNewestFirstWithinEachGroup() {
+		let arranged = BranchGrouping.arrange(
+			["old", "new", "feat/a-old", "feat/b-new", "main"],
+			current: "main",
+			by: .newestFirst,
+			created: [
+				"old": Date(timeIntervalSince1970: 1),
+				"new": Date(timeIntervalSince1970: 9),
+				"feat/a-old": Date(timeIntervalSince1970: 2),
+				"feat/b-new": Date(timeIntervalSince1970: 8),
+			]
+		)
+		#expect(arranged.pinned == ["main"])
+		#expect(arranged.sections.first?.branches == ["new", "old"])
+		#expect(arranged.sections.last?.folder == "feat")
+		#expect(arranged.sections.last?.branches == ["feat/b-new", "feat/a-old"])
+	}
+
 	// MARK: - Helpers
 
 	private func makeRepository(branch: String) async throws -> URL {

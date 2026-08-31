@@ -232,6 +232,10 @@ final class CodeView: NSView, NSTextInputClient {
 	private var charWidth: CGFloat = 7
 	private(set) var gutterWidth: CGFloat = 60
 
+	/// Which lines differ from HEAD, for the gutter's change marks. 1-based
+	/// document lines, as `GitChangedLines` reads them off the diff.
+	private var changedLines = GitChangedLines()
+
 	/// Who last touched each line, when blame is being shown.
 	///
 	/// One entry per line of the file as it was read; a file edited since is
@@ -431,6 +435,9 @@ final class CodeView: NSView, NSTextInputClient {
 		// Breakpoints follow the text they were put on rather than the line
 		// number they were put at.
 		document.onLinesChanged = { [weak self] first, removed, inserted in
+			// The change marks ride the same signal breakpoints anchor by,
+			// before it is relayed: the marks are this view's own.
+			self?.shiftChangedLines(from: first + 1, removed: removed, inserted: inserted)
 			self?.onLinesChanged?(first, removed, inserted)
 			// Every line the edit put in, and not only the one the caret ended
 			// on: a paste drops a block, and the widest line in it can be any of
@@ -1677,7 +1684,38 @@ final class CodeView: NSView, NSTextInputClient {
 					collapsed: folding.isCollapsed(line: docLine)
 				)
 			}
+
+			// The change marks, in the slot between the number and the fold
+			// chevron — a fixed place, so they neither move when blame toggles
+			// nor collide with the breakpoint column on the far left. The
+			// marks are keyed 1-based, as the diff writes lines.
+			let barX = scrollX + gutterWidth - Self.foldColumnWidth - Theme.current.scaled(4)
+			if let mark = changedLines.marks[docLine + 1] {
+				(mark == .added ? Theme.current.gitAdded : Theme.current.gitModified).setFill()
+				NSRect(x: barX, y: y, width: Theme.current.scaled(3), height: lineHeight).fill()
+			}
+			// A deletion has no line to sit beside: the wedge sits on the
+			// boundary the lines vanished from — under this line, or above the
+			// first for lines deleted at the top of the file.
+			if changedLines.deletedAfter.contains(docLine + 1) {
+				drawDeletionMark(atY: y + lineHeight, x: barX)
+			}
+			if docLine == 0, changedLines.deletedAfter.contains(0) {
+				drawDeletionMark(atY: y, x: barX)
+			}
 		}
+	}
+
+	/// A small wedge pointing at the boundary lines were deleted from.
+	private func drawDeletionMark(atY y: CGFloat, x: CGFloat) {
+		let size = Theme.current.scaled(7)
+		let path = NSBezierPath()
+		path.move(to: NSPoint(x: x - size / 2, y: y - size / 2))
+		path.line(to: NSPoint(x: x + size / 2, y: y))
+		path.line(to: NSPoint(x: x - size / 2, y: y + size / 2))
+		path.close()
+		Theme.current.gitConflict.setFill()
+		path.fill()
 	}
 
 	/// Draws the breakpoint marker, and the arrow for the stopped line.
@@ -1964,6 +2002,50 @@ final class CodeView: NSView, NSTextInputClient {
 		breakpointLines = lines
 		needsDisplay = true
 		window?.invalidateCursorRects(for: self)
+	}
+
+	/// Which lines differ from HEAD, for the gutter's change marks.
+	func setChangedLines(_ lines: GitChangedLines) {
+		guard lines != changedLines else { return }
+		changedLines = lines
+		needsDisplay = true
+	}
+
+	/// Keeps the marks beside the lines they belong to while somebody types,
+	/// and marks what the edit touched — the breakpoint anchoring's shape. An
+	/// approximation by design: the next save's diff replaces the whole
+	/// answer; a mark visibly pointing at the line below the one it means, in
+	/// the meantime, is worse than no mark.
+	func shiftChangedLines(from firstLine: Int, removed: Int, inserted: Int) {
+		var marks: [Int: GitChangedLines.Mark] = [:]
+		for (line, mark) in changedLines.marks {
+			if line < firstLine {
+				marks[line] = mark
+			} else if line >= firstLine + removed {
+				marks[line - removed + inserted] = mark
+			}
+			// A mark inside the replaced range dies with the lines it marked;
+			// the touched range below is marked afresh.
+		}
+		var deleted: Set<Int> = []
+		for line in changedLines.deletedAfter {
+			if line < firstLine {
+				deleted.insert(line)
+			} else if line >= firstLine + removed {
+				deleted.insert(line - removed + inserted)
+			}
+		}
+		// The lines the edit put there read as modified until the diff says
+		// better — immediate feedback is the point of shifting at all.
+		if inserted > 0 {
+			for line in firstLine..<(firstLine + inserted) {
+				marks[line] = marks[line] ?? .modified
+			}
+		} else if removed > 0 {
+			deleted.insert(max(0, firstLine - 1))
+		}
+		changedLines = GitChangedLines(marks: marks, deletedAfter: deleted)
+		needsDisplay = true
 	}
 
 	/// The line execution is stopped on, or nil when not stopped here.

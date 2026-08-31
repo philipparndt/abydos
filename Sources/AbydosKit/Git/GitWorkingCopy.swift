@@ -381,6 +381,36 @@ public enum GitWorkingCopy {
 		return untracked.stdout
 	}
 
+	/// The unified diff of one path against HEAD — staged and unstaged edits
+	/// in one answer, because that is the question the editor's change marks
+	/// ask: *what have I changed since the last commit*, not what have I
+	/// staged. One `git diff HEAD` rather than the two sides merged in Swift:
+	/// merging two hunk lists whose line numbers disagree is bookkeeping git
+	/// already does correctly.
+	///
+	/// Nil — no marks, rather than an empty diff — for an untracked or
+	/// ignored file (a wholly-new file with every line marked is a gutter
+	/// saying nothing, loudly), for a file outside the repository, and for a
+	/// repository whose HEAD is unborn.
+	public static func diffAgainstHead(for path: String, in root: URL) async -> String? {
+		let status = await GitRepository.run(
+			["status", "--porcelain=v1", "--ignored=matching", "--no-renames", "-z", "--", path],
+			in: root
+		)
+		guard status.exitCode == 0 else { return nil }
+		if let record = status.stdout
+			.split(separator: "\0", omittingEmptySubsequences: true).first,
+			record.hasPrefix("??") || record.hasPrefix("!!") {
+			return nil
+		}
+
+		let result = await GitRepository.run(
+			["diff", "--no-color", "HEAD", "--", path], in: root
+		)
+		guard result.exitCode == 0 else { return nil }
+		return result.stdout
+	}
+
 	/// The files inside a wholly untracked directory, as paths relative to the
 	/// work tree root, sorted.
 	///
@@ -435,5 +465,56 @@ public enum GitWorkingCopy {
 			text += "\n… and \(files.count - shown.count) more\n"
 		}
 		return text
+	}
+}
+
+public extension GitWorkingCopyStatus {
+	/// The status as it will read once staging these paths is confirmed —
+	/// presentation ahead of the porcelain read, which remains the authority
+	/// and replaces the whole answer moments later. A stage that waited for
+	/// the full re-read to show anything left the click looking unregistered,
+	/// and a second click being made to be sure.
+	///
+	/// A path names itself and everything under it, the way `git add` takes a
+	/// directory. An untracked entry staged becomes added, which is what the
+	/// index will call it; every other kind keeps its name across the boundary.
+	mutating func moveToStaged(_ paths: [String]) {
+		(unstaged, staged) = Self.moved(paths, from: unstaged, to: staged, isStaged: true) {
+			$0 == .untracked ? .added : $0
+		}
+	}
+
+	/// The mirror image, for unstaging: added goes back to untracked.
+	mutating func moveToUnstaged(_ paths: [String]) {
+		(staged, unstaged) = Self.moved(paths, from: staged, to: unstaged, isStaged: false) {
+			$0 == .added ? .untracked : $0
+		}
+	}
+
+	/// Values in and values out rather than two `inout` halves of self, which
+	/// is two simultaneous accesses and a runtime exclusivity fault.
+	private static func moved(
+		_ paths: [String],
+		from source: [GitChange],
+		to target: [GitChange],
+		isStaged: Bool,
+		renaming kind: (GitChange.Kind) -> GitChange.Kind
+	) -> (source: [GitChange], target: [GitChange]) {
+		func belongs(_ change: GitChange) -> Bool {
+			paths.contains { change.path == $0 || change.path.hasPrefix($0 + "/") }
+		}
+		let moved = source.filter(belongs)
+		guard !moved.isEmpty else { return (source, target) }
+		return (
+			source.filter { !belongs($0) },
+			target + moved.map { change in
+				GitChange(
+					path: change.path,
+					kind: kind(change.kind),
+					isStaged: isStaged,
+					isDirectory: change.isDirectory
+				)
+			}
+		)
 	}
 }

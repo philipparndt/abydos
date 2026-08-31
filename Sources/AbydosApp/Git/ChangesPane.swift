@@ -218,6 +218,7 @@ final class ChangesPane: NSView {
 	private var pageSplit: NSSplitView?
 	private var hasPlacedDivider = false
 	private var draftButton: NSButton?
+	private var historyButton: NSButton?
 	private var bodyView: NSTextView!
 	/// Opens the description, which the page starts with put away.
 	private var descriptionChevron: NSButton!
@@ -242,6 +243,9 @@ final class ChangesPane: NSView {
 	/// Guards against a refresh landing while a git command is still running and
 	/// showing a half-applied state.
 	private var isBusy = false
+	/// The diff render waiting out the double-click interval — see the
+	/// selection-change delegate for why it waits.
+	private var pendingDiff: DispatchWorkItem?
 
 	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
@@ -506,18 +510,31 @@ final class ChangesPane: NSView {
 		descriptionChevron.controlSize = .small
 		descriptionChevron.imagePosition = .imageOnly
 
+		// **The messages this repository has already committed, one menu away.**
+		// A message like the last one — a repeated chore, a second try after an
+		// amend — had to be retyped or fished out of the log page by hand.
+		// Hidden while there are no commits, the amend checkbox's emptiness
+		// rule: there is no history to show.
+		let history = NSButton(title: "", target: self, action: #selector(openMessageHistory))
+		history.bezelStyle = .rounded
+		history.controlSize = .small
+		history.image = NSImage(
+			systemSymbolName: "clock", accessibilityDescription: "Message history"
+		)
+		history.imagePosition = .imageOnly
+		history.toolTip = "Use one of the repository's recent commit messages"
+		historyButton = history
+
 		// **The draft sits beside the summary**, because that is the field it
-		// fills and the one that is hardest to start. Absent rather than
-		// disabled when there is no `claude` to run: a control that fails when
-		// pressed is worse than one that is not there.
-		var summaryRow: [NSView] = [descriptionChevron, subjectField]
-		if ClaudeDraft.isAvailable {
-			draftButton = NSButton(title: "Draft", target: self, action: #selector(draftMessage))
-			draftButton?.bezelStyle = .rounded
-			draftButton?.controlSize = .small
-			draftButton?.toolTip = "Write a summary and description from what is staged"
-			summaryRow.append(draftButton!)
-		}
+		// fills and the one that is hardest to start. Disabled rather than
+		// absent when there is no `claude` to run: a disabled control fails
+		// nothing when pressed, and the absent one was requested as a missing
+		// feature by somebody whose machine was hiding it. The reason sits in
+		// the tooltip, the way the push button explains itself.
+		draftButton = NSButton(title: "Draft", target: self, action: #selector(draftMessage))
+		draftButton?.bezelStyle = .rounded
+		draftButton?.controlSize = .small
+		let summaryRow: [NSView] = [descriptionChevron, subjectField, history, draftButton!]
 		let summary = NSStackView(views: summaryRow)
 		summary.orientation = .horizontal
 		summary.spacing = Theme.current.scaled(6)
@@ -641,14 +658,37 @@ final class ChangesPane: NSView {
 
 	func refresh() { refresh(.everything) }
 
+	/// A refresh asked for while an operation was in flight, kept for when it
+	/// ends. Dropped, it was the second double-click during a stage vanishing:
+	/// the trees then waited for an unrelated event to come true again. The
+	/// navigator's `wantsAnotherGitStatus` is the same shape for the same
+	/// reason.
+	private var wantsAnotherRefresh = false
+
+	/// Ends an operation and runs the refresh that arrived during it, if one
+	/// did. For the paths that do not refresh unconditionally afterwards —
+	/// a failed commit returns early, and a kept refresh must not be kept
+	/// for ever.
+	private func endBusy() {
+		isBusy = false
+		guard wantsAnotherRefresh else { return }
+		wantsAnotherRefresh = false
+		refresh()
+	}
+
 	private func refresh(_ read: EstateChanges.Read) {
-		guard !isBusy, read != .nothing else { return }
+		guard read != .nothing else { return }
+		guard !isBusy else {
+			wantsAnotherRefresh = true
+			return
+		}
 		// Outside the comparison below: a clean working copy produces the same
 		// status every time, and the branch can still have moved ahead of its
 		// remote since the last look.
 		refreshPushState()
 		Task { @MainActor in
 			let fresh = await submodules.refresh(read)
+			let statusReturned = Date()
 			// Taken down before the comparison below, not after it. An
 			// unchanged status is still an answer, and a spinner that only
 			// stopped when something had changed span for ever over a clean
@@ -657,6 +697,7 @@ final class ChangesPane: NSView {
 			guard fresh != status else { return }
 			status = fresh
 			reload()
+			sayOperationTiming(statusReturned: statusReturned, reloadDone: Date())
 		}
 	}
 
@@ -679,6 +720,13 @@ final class ChangesPane: NSView {
 	}
 
 	private func reload() {
+		// Marked, because the stall log said `idle` 491 times out of 498 while
+		// staging felt slow: a rebuild that stalls has to name itself before
+		// anybody can shorten it.
+		StallWatch.mark("changes reload") { reloadMarked() }
+	}
+
+	private func reloadMarked() {
 		rebuild(unstagedTable, staged: false, changes: status.unstaged, against: status.staged)
 		rebuild(stagedTable, staged: true, changes: status.staged, against: status.unstaged)
 		// **Once per set of changes, and only when the set has moved.** `refresh`
@@ -954,9 +1002,21 @@ final class ChangesPane: NSView {
 	/// `-uall` scoped to one path: it costs what that directory holds rather
 	/// than what the work tree holds, which is the difference between 0.11 s and
 	/// the seven seconds `GitWorkingCopy.status` measured and refused.
+	/// The directories being asked about right now. One ask at a time per
+	/// directory: a refresh rebuilds the tree more than once — the optimistic
+	/// pass, then the confirming one — and each rebuild sent its own
+	/// `git status -uall` per opened directory. The cached listing is already
+	/// back on the row by the time this runs; this is only the re-check, and
+	/// one in flight answers them all.
+	private var fillsInFlight: Set<String> = []
+
 	private func fill(_ node: GitChangeNode, in outline: ChangesOutlineView, staged: Bool) {
 		let path = node.path
+		let key = (staged ? "staged:" : "unstaged:") + path
+		guard !fillsInFlight.contains(key) else { return }
+		fillsInFlight.insert(key)
 		Task { @MainActor in
+			defer { self.fillsInFlight.remove(key) }
 			// The same question as the diff: an untracked directory inside a
 			// submodule is listed by that submodule, and asking the
 			// superproject for it lists nothing.
@@ -1020,6 +1080,21 @@ final class ChangesPane: NSView {
 		amendCheckbox.isEnabled = canAmend
 		amendCheckbox.toolTip = canAmend ? nil : "There is no commit to amend yet"
 
+		// The same fact gates the history: a repository with no commits has no
+		// messages to offer.
+		historyButton?.isHidden = !canAmend
+
+		// Re-checked on every refresh, so installing `claude` enables the
+		// draft without a restart. Not while a draft is out — that disable is
+		// the in-flight state, and the title says so.
+		if let draft = draftButton, draft.title == "Draft" {
+			let available = ClaudeDraft.isAvailable
+			draft.isEnabled = available
+			draft.toolTip = available
+				? "Write a summary and description from what is staged"
+				: "The claude command was not found"
+		}
+
 		// Amend can commit nothing new — rewording the last commit is a normal
 		// thing to want — so it is the one case where an empty index is allowed.
 		let isAmending = amendCheckbox.state == .on
@@ -1067,7 +1142,7 @@ final class ChangesPane: NSView {
 		updateCommitButton()
 		Task { @MainActor in
 			let result = await GitPush.push(in: root, setUpstream: setsUpstream)
-			isBusy = false
+			endBusy()
 
 			if result.exitCode == 0 {
 				// git reports a push on stderr, which is where the branch and
@@ -1396,6 +1471,9 @@ final class ChangesPane: NSView {
 	/// second click is a lot to have to undo, and the two trees in this window
 	/// answering the same gesture differently would be worse than either.
 	private func activate(row: Int, in outline: ChangesOutlineView) {
+		// The second click makes the first click's diff pointless; the stage
+		// must not queue behind rendering it.
+		pendingDiff?.cancel()
 		if row >= 0, let node = outline.item(atRow: row) as? GitChangeNode, node.isFolder {
 			if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
 			return
@@ -1405,12 +1483,12 @@ final class ChangesPane: NSView {
 
 	@objc private func stageClicked() {
 		guard let clicked = clickedNode else { return }
-		runAcrossOwners([clicked.node.path]) { await GitEstateOperation.stage(paths: $0, in: $1) }
+		runAcrossOwners([clicked.node.path], moving: .toStaged) { await GitEstateOperation.stage(paths: $0, in: $1) }
 	}
 
 	@objc private func unstageClicked() {
 		guard let clicked = clickedNode else { return }
-		runAcrossOwners([clicked.node.path]) { await GitEstateOperation.unstage(paths: $0, in: $1) }
+		runAcrossOwners([clicked.node.path], moving: .toUnstaged) { await GitEstateOperation.unstage(paths: $0, in: $1) }
 	}
 
 	/// Stages what is selected — a folder as one path, which is the whole of
@@ -1420,17 +1498,26 @@ final class ChangesPane: NSView {
 	/// under it is staged as a deletion, so a folder is one argument instead of
 	/// forty in the same argument list. `unstage` is the same shape.
 	private func stageSelected() {
-		let paths = GitChangeTree.reduce(selectedPaths(in: unstagedTable))
-		guard !paths.isEmpty else { return }
-		rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
-		runAcrossOwners(paths) { await GitEstateOperation.stage(paths: $0, in: $1) }
+		StallWatch.mark("stage") {
+			// Here as well as in `activate`: Return and the driver reach this
+			// without a click, and the diff of a row about to change sides is
+			// not worth rendering either way.
+			pendingDiff?.cancel()
+			let paths = GitChangeTree.reduce(selectedPaths(in: unstagedTable))
+			guard !paths.isEmpty else { return }
+			rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
+			runAcrossOwners(paths, moving: .toStaged) { await GitEstateOperation.stage(paths: $0, in: $1) }
+		}
 	}
 
 	private func unstageSelected() {
-		let paths = GitChangeTree.reduce(selectedPaths(in: stagedTable))
-		guard !paths.isEmpty else { return }
-		rememberWhereTheSelectionGoes(in: stagedTable, staged: true)
-		runAcrossOwners(paths) { await GitEstateOperation.unstage(paths: $0, in: $1) }
+		StallWatch.mark("stage") {
+			pendingDiff?.cancel()
+			let paths = GitChangeTree.reduce(selectedPaths(in: stagedTable))
+			guard !paths.isEmpty else { return }
+			rememberWhereTheSelectionGoes(in: stagedTable, staged: true)
+			runAcrossOwners(paths, moving: .toUnstaged) { await GitEstateOperation.unstage(paths: $0, in: $1) }
+		}
 	}
 
 	/// Clicks into the details field and types, and says what happened.
@@ -1463,6 +1550,60 @@ final class ChangesPane: NSView {
 
 	/// Fills the two fields from what is staged.
 	///
+	/// The last twenty commit messages, read from the log when the menu opens —
+	/// opened rarely, costs milliseconds, and a cache would be one more thing
+	/// to invalidate on every commit.
+	@objc private func openMessageHistory() {
+		guard let button = historyButton else { return }
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let commits = await GitHistory.log(in: root, limit: 20)
+			guard !commits.isEmpty else { return }
+			let menu = NSMenu()
+			for (index, commit) in commits.enumerated() {
+				let item = NSMenuItem(
+					title: Self.historyTitle(for: commit),
+					action: #selector(useHistoryMessage(_:)),
+					keyEquivalent: ""
+				)
+				item.target = self
+				item.tag = index
+				item.representedObject = [commit.subject, commit.body]
+				menu.addItem(item)
+			}
+			menu.popUp(
+				positioning: nil,
+				at: NSPoint(x: 0, y: button.bounds.maxY + Theme.current.scaled(4)),
+				in: button
+			)
+		}
+	}
+
+	/// The subject with its age beside it: the subject is how a commit is
+	/// spoken about, and the age is what tells two "Fix build" entries apart.
+	static func historyTitle(for commit: GitCommit) -> String {
+		var subject = commit.subject
+		if subject.count > 60 {
+			subject = subject.prefix(29) + "…" + subject.suffix(29)
+		}
+		return "\(subject)   —   \(CommitRowView.age(of: commit.date))"
+	}
+
+	/// **Choosing replaces.** A history entry is the explicit decision to use
+	/// that message, unlike a refresh, which never touches typing — and nobody
+	/// wants yesterday's message concatenated onto today's half sentence.
+	/// Nothing is staged and nothing committed; both fields stay editable.
+	@objc private func useHistoryMessage(_ sender: NSMenuItem) {
+		guard let parts = sender.representedObject as? [String], parts.count == 2 else { return }
+		fill(subject: parts[0], body: parts[1])
+	}
+
+	private func fill(subject: String, body: String) {
+		subjectField.stringValue = subject
+		bodyView.string = body
+		updateCommitButton()
+	}
+
 	/// **A draft, and never a commit.** Nothing is staged, nothing is
 	/// committed, both fields stay editable, and `Commit` is not disabled while
 	/// this is thinking — a slow answer must not become a blocked one.
@@ -1562,7 +1703,7 @@ final class ChangesPane: NSView {
 		isBusy = true
 		Task { @MainActor in
 			let result = await GitWorkingCopy.commit(subject: subject, body: body, amend: amend, in: root)
-			isBusy = false
+			endBusy()
 
 			guard result.exitCode == 0 else {
 				presentFailure(result.stderr.isEmpty ? result.stdout : result.stderr)
@@ -1588,20 +1729,86 @@ final class ChangesPane: NSView {
 	/// - Parameter reporting: whether to say what failed. False where the
 	///   operation says more than that for itself — a discard reports every
 	///   repository and its backup ref, and two reports would be one too many.
+	/// Which side an operation's rows land on, for showing the landing before
+	/// the status read confirms it.
+	private enum OptimisticMove { case toStaged, toUnstaged }
+
+	/// The operation in flight, so the next one starts after it rather than
+	/// beside it. Two stages clicked quickly enough raced each other for
+	/// git's `index.lock`: whichever `git add` lost the race failed, and the
+	/// click it stood for was silently gone — found by driving exactly that
+	/// pair of clicks.
+	private var operationChain: Task<Void, Never>?
+
 	private func runAcrossOwners(
 		_ paths: [String],
 		reporting: Bool = true,
+		moving: OptimisticMove? = nil,
 		_ operation: @escaping ([String], GitEstate) async -> [GitEstateOutcome]
 	) {
 		let estate = submodules.estate
 		isBusy = true
-		Task { @MainActor in
+		let asked = Date()
+		let previous = operationChain
+		operationChain = Task { @MainActor in
+			await previous?.value
 			let outcomes = await operation(paths, estate)
+			// A gap between these two is not git being slow: the command took
+			// `asked → returned`, and everything before `asked` was this task
+			// waiting its turn on the main actor.
+			operationTiming = (asked: asked, returned: Date())
 			isBusy = false
+			// The row moves now, on the command's own word; the status read
+			// that follows replaces the whole answer as it always did. Not on
+			// a partial failure: half-truths are the status's to sort out, and
+			// it is already on its way.
+			if let moving, !outcomes.contains(where: \.didFail) {
+				apply(move: moving, to: paths)
+			}
 			if reporting { report(outcomes) }
+			wantsAnotherRefresh = false
 			refresh()
 			onWorkingCopyChanged?()
 		}
+	}
+
+	/// Moves the operation's paths between the sides in the model the trees
+	/// draw from — `GitWorkingCopyStatus.moveToStaged`'s presentation, not
+	/// truth: the porcelain status remains the one authority and lands within
+	/// the moment. But the click has to be seen to have worked before a second
+	/// one is made to be sure.
+	private func apply(move: OptimisticMove, to paths: [String]) {
+		let before = status
+		switch move {
+		case .toStaged:   status.moveToStaged(paths)
+		case .toUnstaged: status.moveToUnstaged(paths)
+		}
+		guard status != before else { return }
+		// Said to a driven run before the status lands, so a test can see the
+		// order: the move first, the confirming read after.
+		if DrivenRun.isActive {
+			print("OPTIMISTIC: moved \(paths.count) path\(paths.count == 1 ? "" : "s")")
+			fflush(stdout)
+		}
+		reload()
+	}
+
+	/// When the last operation was asked for and when its command returned, so
+	/// the refresh that follows can say where the time went. Printed on driven
+	/// runs only — a person's stage is not a benchmark.
+	private var operationTiming: (asked: Date, returned: Date)?
+
+	/// One line naming the three spans somebody slow-staging would ask about.
+	private func sayOperationTiming(statusReturned: Date, reloadDone: Date) {
+		guard DrivenRun.isActive, let timing = operationTiming else { return }
+		operationTiming = nil
+		func ms(_ from: Date, _ to: Date) -> String {
+			"\(Int(to.timeIntervalSince(from) * 1000))ms"
+		}
+		print("STAGE-TIMING: command \(ms(timing.asked, timing.returned))"
+			+ " · status \(ms(timing.returned, statusReturned))"
+			+ " · reload \(ms(statusReturned, reloadDone))")
+		fflush(stdout)
 	}
 
 	/// Says what failed, per repository, and says nothing when nothing did.
@@ -1628,6 +1835,8 @@ final class ChangesPane: NSView {
 			if result.exitCode != 0 {
 				presentFailure(result.stderr.isEmpty ? result.stdout : result.stderr)
 			}
+			// The unconditional refresh below is the kept one, if one was kept.
+			wantsAnotherRefresh = false
 			refresh()
 			onWorkingCopyChanged?()
 		}
@@ -1688,7 +1897,12 @@ final class ChangesPane: NSView {
 		said.append("unstaged=\(status.unstaged.count) staged=\(status.staged.count)")
 		said.append("summary=\(subjectField.stringValue)")
 		said.append("body=\(bodyView.string.isEmpty ? "empty" : "\(bodyView.string.count) characters")")
-		said.append("draft=\(draftButton == nil ? "absent" : "offered")")
+		if let draft = draftButton {
+			said.append("draft=\(draft.isEnabled ? "offered" : "disabled")")
+		} else {
+			said.append("draft=absent")
+		}
+		said.append("history=\(historyButton?.isHidden == false ? "shown" : "hidden")")
 		said.append("diff=\(diffView?.reportForTesting ?? "none")")
 		said.append(layoutReportForTesting())
 		return said.joined(separator: "\n")
@@ -1818,6 +2032,51 @@ final class ChangesPane: NSView {
 			}
 		}
 		return lines.joined(separator: "\n")
+	}
+
+	/// The history menu's entries, printed the way the menu would show them,
+	/// and asynchronously — the log is read when the menu opens, so the driver
+	/// settles before reading the answer.
+	func messageHistoryForTesting() {
+		Task { @MainActor in
+			let commits = await GitHistory.log(in: self.root, limit: 20)
+			print("CHANGES history:\n"
+				+ commits.map { "  " + Self.historyTitle(for: $0) }.joined(separator: "\n"))
+			fflush(stdout)
+		}
+	}
+
+	/// Fills from the numbered entry as choosing it would, and prints what the
+	/// fields hold afterwards — the fill is the claim.
+	func useHistoryEntryForTesting(_ index: Int) {
+		Task { @MainActor in
+			let commits = await GitHistory.log(in: self.root, limit: 20)
+			guard commits.indices.contains(index) else {
+				print("CHANGES history: no entry \(index)")
+				fflush(stdout)
+				return
+			}
+			self.fill(subject: commits[index].subject, body: commits[index].body)
+			print("CHANGES history used: subject=\(self.subjectField.stringValue.debugDescription)"
+				+ " body=\(self.bodyView.string.debugDescription)")
+			fflush(stdout)
+		}
+	}
+
+	/// Selects one row the way a first click does — the deferred diff render
+	/// included — so the double-click shape can be driven from outside.
+	func selectForTesting(path: String, staged: Bool) {
+		let outline = staged ? stagedTable! : unstagedTable!
+		guard let node = side(for: outline).byPath[path] else {
+			print("CHANGES select: no row at \(path)")
+			return
+		}
+		let row = outline.row(forItem: node)
+		guard row >= 0 else {
+			print("CHANGES select: \(path) is not visible")
+			return
+		}
+		outline.selectRowIndexes([row], byExtendingSelection: false)
 	}
 
 	/// Selects the rows whose paths these are, in the named list, and stages or
@@ -2075,12 +2334,33 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// A column hands the diff to the editor area; a page keeps it, which is
 		// the whole difference between staging with a trip out to a tab per
 		// file and staging in one place.
-		guard arrangement == .page, diffView != nil else {
-			onSelectChange?(change)
-			return
+		//
+		// **Deferred past the double-click interval, and cancelled by the
+		// second click.** The render is inline on the main thread — a patch
+		// parse and two tree-sitter passes, 194 ms in the stall log — and the
+		// first click of a double-click used to start it, so the stage behind
+		// the second click queued up behind a diff nobody had begun to read.
+		pendingDiff?.cancel()
+		let work = DispatchWorkItem { [weak self] in
+			guard let self else { return }
+			// Said to a driven run, because the claim is about absence: a
+			// double-click that stages must leave no render line behind.
+			if DrivenRun.isActive {
+				print("DIFF-RENDER: \(change.path)")
+				fflush(stdout)
+			}
+			guard arrangement == .page, diffView != nil else {
+				onSelectChange?(change)
+				return
+			}
+			showDiff(of: change)
 		}
-		showDiff(of: change)
+		pendingDiff = work
+		DispatchQueue.main.asyncAfter(
+			deadline: .now() + NSEvent.doubleClickInterval, execute: work
+		)
 	}
+
 }
 
 extension ChangesPane {

@@ -94,11 +94,21 @@ public enum PathTree {
 	///   meant no backup folder, and no way to sweep the backups. The question
 	///   is not how many children a folder has but whether the tree names it in
 	///   its own right.
+	/// - Parameter ordering: how *leaves* stand among their siblings; nil is
+	///   the name order every caller had. A parameter of this one builder
+	///   rather than a second builder, for the reason this type exists at all:
+	///   the refs tree wants its tags newest first, and a third implementation
+	///   that sorted differently would be a difference in one window nobody
+	///   could explain. Folders keep their place before leaves and their name
+	///   order among themselves whatever this says — a folder has no date, and
+	///   ranking it by something invisible inside it would move rows for no
+	///   reason a reader can see.
 	public static func build<Payload>(
 		_ items: [(path: String, payload: Payload)],
 		folding: Bool = false,
 		keeping: Set<String> = [],
-		promoting: ((Payload) -> Int?)? = nil
+		promoting: ((Payload) -> Int?)? = nil,
+		ordering: ((Payload, Payload) -> Bool)? = nil
 	) -> [PathNode<Payload>] {
 		let root = PathNode<Payload>(path: "", payload: nil)
 		var folders: [String: PathNode<Payload>] = ["": root]
@@ -115,7 +125,7 @@ public enum PathTree {
 		}
 
 		if folding { fold(root, keeping: keeping) }
-		sort(root, promoting: promoting)
+		sort(root, promoting: promoting, ordering: ordering)
 		root.tally()
 		return root.children
 	}
@@ -188,14 +198,15 @@ public enum PathTree {
 
 	private static func sort<Payload>(
 		_ node: PathNode<Payload>,
-		promoting: ((Payload) -> Int?)?
+		promoting: ((Payload) -> Int?)?,
+		ordering: ((Payload, Payload) -> Bool)?
 	) {
 		// Folders first, then case-insensitive name order — the arrangement
 		// `FileNode.order` gives the project tree and `GitChangeNode` copies.
 		// A promoted leaf comes before its siblings and before the folders,
 		// which is the one departure: the branch you are on, and the branch
 		// everything merges into, are the answers to the question the list is
-		// usually being asked.
+		// usually being asked. Leaves alone take `ordering` when one is given.
 		node.replaceChildren(with: node.children.sorted { a, b in
 			let rankA = a.payload.flatMap { promoting?($0) ?? nil }
 			let rankB = b.payload.flatMap { promoting?($0) ?? nil }
@@ -206,8 +217,11 @@ public enum PathTree {
 			case (.none, .none):        break
 			}
 			if a.isFolder != b.isFolder { return a.isFolder }
+			if let ordering, let payloadA = a.payload, let payloadB = b.payload {
+				return ordering(payloadA, payloadB)
+			}
 			return a.name.localizedStandardCompare(b.name) == .orderedAscending
 		})
-		for child in node.children { sort(child, promoting: promoting) }
+		for child in node.children { sort(child, promoting: promoting, ordering: ordering) }
 	}
 }

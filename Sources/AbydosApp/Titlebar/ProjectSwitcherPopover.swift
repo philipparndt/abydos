@@ -198,6 +198,8 @@ private final class SwitcherViewController: NSViewController {
 	/// arrive after the popover is on screen — git is asked once, and the list
 	/// is rebuilt when it answers.
 	private var branches: [String] = []
+	/// When each branch came to be, for the newest-first order.
+	private var branchDates: [String: Date] = [:]
 	private var currentBranch: String?
 	private var forge: GitForge.Repository?
 
@@ -253,7 +255,8 @@ private final class SwitcherViewController: NSViewController {
 
 			let (branches, head, forge, main) = await (names, current, repository, fallback)
 			guard let self, self.isViewLoaded else { return }
-			self.branches = branches
+			self.branches = branches.names
+			self.branchDates = branches.created
 			self.currentBranch = head
 			self.forge = forge
 			self.defaultBranch = main
@@ -623,8 +626,12 @@ private final class SwitcherViewController: NSViewController {
 			return
 		}
 
+		// In the refs tree's LOCAL order, because the spec pins the two lists
+		// together: two lists of the same branches in one window must not
+		// disagree about their order.
 		let arranged = BranchGrouping.arrange(
-			branches, current: currentBranch, default: defaultBranch
+			branches, current: currentBranch, default: defaultBranch,
+			by: Settings.shared.refsSortLocal, created: branchDates
 		)
 		for branch in arranged.pinned {
 			rows.append(.branch(branch, isCurrent: branch == currentBranch))

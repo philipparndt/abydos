@@ -209,8 +209,10 @@ public actor GitRepository {
 		return await resolved.exitCode == 0 ? .branch(name) : .unborn(name)
 	}
 
-	/// Locates the enclosing work tree, or nil if the directory is not in one.
-	public static func discover(from directory: URL) async -> GitRepository? {
+	/// Where the enclosing work tree is, without building anything on it — so
+	/// a caller holding a repository already can ask whether it is still the
+	/// same one before deciding to keep it.
+	public static func discoverRoot(from directory: URL) async -> URL? {
 		let result = await Self.run(
 			["rev-parse", "--show-toplevel"],
 			in: directory
@@ -222,9 +224,13 @@ public actor GitRepository {
 		// path — `/private/tmp/...` — where the tree holds `/tmp/...`, and every
 		// file in the tree then failed to match its own repository and was drawn
 		// as if git had never heard of it.
-		return GitRepository(
-			root: URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-		)
+		return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+	}
+
+	/// Locates the enclosing work tree, or nil if the directory is not in one.
+	public static func discover(from directory: URL) async -> GitRepository? {
+		guard let root = await discoverRoot(from: directory) else { return nil }
+		return GitRepository(root: root)
 	}
 
 	public func currentBranch() -> String? { headState.name }
@@ -354,6 +360,12 @@ public actor GitRepository {
 	/// `-unormal` for the same reason `refresh()` uses it: an ignored directory
 	/// arrives as one `dir/` entry, and the rows inside it inherit from that.
 	public func refreshIgnored() async {
+		// Named to a driven run, because how *often* this runs is the claim
+		// under test: it was re-running after every stage, and no log said so.
+		if DrivenRun.isActive {
+			print("IGNORED-WALK: \(root.lastPathComponent)")
+			fflush(stdout)
+		}
 		// Read before the walk, not after: if somebody saves a `.gitignore`
 		// while this is running, the fingerprint stored is the one this answer
 		// belongs to, and the next refresh notices the difference and asks

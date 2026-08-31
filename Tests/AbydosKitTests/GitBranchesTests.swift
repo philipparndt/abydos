@@ -57,6 +57,39 @@ struct GitTrackingParseTests {
 	}
 }
 
+/// The creation date a newest-first order reads, and the layouts around it.
+struct GitBranchDateTests {
+	private let s = "\u{1F}"
+
+	@Test func aRecordCarriesItsCreationDate() {
+		let line = ["refs/heads/main", "*", "first", "", "", "1725000000"].joined(separator: s)
+		#expect(GitBranches.parse(line).first?.created
+			== Date(timeIntervalSince1970: 1_725_000_000))
+	}
+
+	@Test func theComparisonFieldStillReadsBesideTheDate() {
+		let line = ["refs/heads/x", "", "s", "", "", "1725000000", "3 1"].joined(separator: s)
+		let parsed = GitBranches.parse(line)
+		#expect(parsed.first?.aheadOfDefault == 3)
+		#expect(parsed.first?.behindDefault == 1)
+		#expect(parsed.first?.created == Date(timeIntervalSince1970: 1_725_000_000))
+	}
+
+	/// The fallback layout, for a git that refused the field: the rows come
+	/// back without dates rather than not at all.
+	@Test func aGitWithoutTheDateFieldStillListsRows() {
+		let line = ["refs/heads/x", "", "s", "", "", "3 1"].joined(separator: s)
+		let parsed = GitBranches.parse(line, withDates: false)
+		#expect(parsed.first?.created == nil)
+		#expect(parsed.first?.aheadOfDefault == 3)
+	}
+
+	@Test func anEmptyDateFieldIsNoDate() {
+		let line = ["refs/heads/x", "", "s", "", "", ""].joined(separator: s)
+		#expect(GitBranches.parse(line).first?.created == nil)
+	}
+}
+
 struct GitBranchNameValidationTests {
     /// Checked before running git so the failure is a sentence rather than
     /// git's message about ref formats.
@@ -148,6 +181,19 @@ struct GitBranchIntegrationTests {
 		let root = try await makeRepository()
 		_ = await GitRepository.run(["tag", "v0.1.0"], in: root)
 		#expect(await GitBranches.list(in: root).contains { $0.kind == .tag && $0.name == "v0.1.0" })
+	}
+
+	/// Both tag flavours carry a date — the tag object's for an annotated tag,
+	/// the pointed-at commit's for a lightweight one — which is what lets one
+	/// order hold them both.
+	@Test func bothKindsOfTagCarryTheirCreationDate() async throws {
+		let root = try await makeRepository()
+		_ = await GitRepository.run(["tag", "light"], in: root)
+		_ = await GitRepository.run(["tag", "-a", "heavy", "-m", "annotated"], in: root)
+
+		let tags = await GitBranches.list(in: root).filter { $0.kind == .tag }
+		#expect(tags.count == 2)
+		#expect(tags.allSatisfy { $0.created != nil })
 	}
 
 	/// Which branches are finished: everything on them is somewhere else.

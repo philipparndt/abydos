@@ -1247,17 +1247,32 @@ final class BranchesPane: NSView {
 		}
 	}
 
+	/// Which order a section shows its refs in. The sections collapse to three
+	/// kinds on purpose — local, remotes, tags — because that is the choice the
+	/// headers offer, and a per-remote memory would be keys for a question
+	/// nobody asks per remote.
+	private func sortOrder(forSection title: String) -> RefsSortOrder {
+		switch title {
+		case "Local": return Settings.shared.refsSortLocal
+		case "Tags":  return Settings.shared.refsSortTags
+		default:      return Settings.shared.refsSortRemotes
+		}
+	}
+
 	private func appendSection(_ title: String, _ entries: [GitBranch]) {
 		guard !entries.isEmpty else { return }
 		let section = GitNode(key: "section:\(title)", row: .header(title))
 		roots.append(section)
+		let order = sortOrder(forSection: title)
 
 		// **Filtering flattens.** A tree you have to expand to reach a name you
 		// have just typed is worse than no tree, so a filtered list is whole
-		// names and no folders at all.
+		// names and no folders at all. A filter narrows what is shown, not how
+		// it is ordered, so the section's own order applies here too.
 		guard filterText.isEmpty else {
 			for branch in entries.sorted(by: {
-				$0.isCurrent != $1.isCurrent ? $0.isCurrent : $0.name < $1.name
+				if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
+				return order.orderedBefore($0, $1)
 			}) {
 				section.add(GitNode(
 					key: "\(title):\(branch.id)",
@@ -1299,7 +1314,10 @@ final class BranchesPane: NSView {
 				if branch.isCurrent { return 0 }
 				if let main, branch.name == main { return 1 }
 				return nil
-			}
+			},
+			// Nil for the name order, which is the builder's own default: the
+			// parameter exists for the departure, not for restating the rule.
+			ordering: order == .name ? nil : order.orderedBefore
 		)
 		add(refs: tree, under: title, to: section)
 	}
@@ -1345,6 +1363,20 @@ final class BranchesPane: NSView {
 	private var selectedFolder: (key: String, display: String)? {
 		guard case let .folder(key, display, _, _) = selectedNode?.row else { return nil }
 		return (key, display)
+	}
+
+	/// The section header the pointer is on — `Local`, a remote's name,
+	/// `Tags` — when it is one of the sections that hold refs. `Worktrees` and
+	/// `Stashes` are headers too, and they are not this: their contents have
+	/// no order to choose.
+	private var selectedRefsHeader: String? {
+		guard case let .header(title) = selectedNode?.row else { return nil }
+		if title == "Local" || title == "Tags" { return title }
+		let isRemote = branches.contains {
+			if case .remote(let remote) = $0.kind { return remote == title }
+			return false
+		}
+		return isRemote ? title : nil
 	}
 
 	/// Opens a stash to what is in it, or shuts it again.
@@ -2159,8 +2191,31 @@ final class BranchesPane: NSView {
 		menu.delegate = self
 		menuNeedsUpdate(menu)
 		return menu.items
-			.map { $0.isSeparatorItem ? "—" : $0.title + ($0.isEnabled ? "" : " (off)") }
+			.map { item in
+				guard !item.isSeparatorItem else { return "—" }
+				// The tick is half of what a checkable item says — a sort
+				// order the report cannot see is one no test can claim.
+				let tick = item.state == .on ? "✓ " : ""
+				return tick + item.title + (item.isEnabled ? "" : " (off)")
+			}
 			.joined(separator: " · ")
+	}
+
+	/// Fires the menu item with this title on the selected row, the way a
+	/// person choosing it would, so a driven run can change a sort order and
+	/// read the rows again.
+	func chooseMenuItemForTesting(row: Int, titled title: String) -> String {
+		guard row >= 0, row < tableView.numberOfRows else { return "no such row" }
+		tableView.selectRowIndexes([row], byExtendingSelection: false)
+		let menu = NSMenu()
+		menu.delegate = self
+		menuNeedsUpdate(menu)
+		guard let item = menu.items.first(where: { $0.title == title }) else {
+			return "no item titled \(title)"
+		}
+		guard let action = item.action else { return "\(title) has no action" }
+		NSApp.sendAction(action, to: item.target, from: item)
+		return "chose \(title)"
 	}
 
 	func showMenuForTesting(row: Int) {
@@ -3284,6 +3339,21 @@ extension BranchesPane: NSTextFieldDelegate {
 }
 
 extension BranchesPane: NSMenuDelegate {
+	/// A sort order picked on a section header. The header is read back from
+	/// the selection rather than carried in the item: the menu is open over
+	/// it, so it cannot have moved.
+	@objc private func chooseSortOrder(_ sender: NSMenuItem) {
+		guard let raw = sender.representedObject as? String,
+		      let order = RefsSortOrder(rawValue: raw),
+		      let header = selectedRefsHeader else { return }
+		switch header {
+		case "Local": Settings.shared.refsSortLocal = order
+		case "Tags":  Settings.shared.refsSortTags = order
+		default:      Settings.shared.refsSortRemotes = order
+		}
+		rebuildRows()
+	}
+
 	func menuNeedsUpdate(_ menu: NSMenu) {
 		menu.removeAllItems()
 
@@ -3375,6 +3445,23 @@ extension BranchesPane: NSMenuDelegate {
 				menu.addItem(item("Delete Backups Older Than…", #selector(sweepBackups)))
 			}
 			menu.addItem(item("Copy Prefix", #selector(copyFolderPrefix)))
+			return
+		}
+
+		// A section header names a set of refs, and the set's order is the
+		// set's own option. Two checkable items rather than a submenu: there
+		// are two answers, and hiding them a level down would cost more clicks
+		// than the list saves.
+		if let header = selectedRefsHeader {
+			for order in RefsSortOrder.allCases {
+				let choice = item(
+					order == .newestFirst ? "Newest First" : "By Name",
+					#selector(chooseSortOrder(_:))
+				)
+				choice.representedObject = order.rawValue
+				choice.state = sortOrder(forSection: header) == order ? .on : .off
+				menu.addItem(choice)
+			}
 			return
 		}
 

@@ -162,6 +162,54 @@ struct GitGraphTests {
 	@Test func nothingToLayOutIsNoRows() {
 		#expect(GitGraph.lay(out: []).isEmpty)
 	}
+
+	// MARK: - A scoped log fed its upstream's commits too
+
+	/// The upstream simply ahead: its commits are descendants of the local tip
+	/// on the same line, so they sit above it in the lane the branch already
+	/// has. No layout change was made for this — the claim is that none was
+	/// needed.
+	@Test func aFastForwardUpstreamSharesTheLane() {
+		//  r2 ── origin/main, two ahead
+		//  r1
+		//  b  ── main
+		//  a
+		let rows = GitGraph.lay(out: [
+			node("r2", "r1"),
+			node("r1", "b"),
+			node("b", "a"),
+			node("a"),
+		])
+		#expect(rows.map(\.lane) == [0, 0, 0, 0])
+		#expect(rows.map(\.width) == [1, 1, 1, 1])
+	}
+
+	/// Diverged histories: the upstream's own commits take a lane of their own,
+	/// joining the branch's lane at the commit both sides are built on.
+	@Test func aDivergedUpstreamTakesALaneThatJoinsAtTheCommonAncestor() {
+		//  l2 ── main, two ahead
+		//  l1  r ── origin/main, one ahead
+		//   |/
+		//   a
+		let rows = GitGraph.lay(out: [
+			node("l2", "l1"),
+			node("r", "a"),
+			node("l1", "a"),
+			node("a"),
+		])
+		let local = rows.filter { ["l2", "l1"].contains($0.hash) }
+		let remote = rows.first { $0.hash == "r" }
+		let root = rows.first { $0.hash == "a" }
+
+		#expect(Set(local.map(\.lane)).count == 1, "the branch keeps one lane")
+		#expect(remote?.lane != local.first?.lane, "the upstream's commit is beside it")
+		#expect(remote?.isTip == true, "led into from no local commit")
+		#expect(root?.lane == local.first?.lane, "and both sides meet at the ancestor")
+		#expect(
+			root?.edges.contains { $0.from == remote?.lane && $0.to == root?.lane } == true,
+			"the upstream's lane arrives at the commit it was built on"
+		)
+	}
 }
 
 /// Which line of descent a fold marker is about.

@@ -52,7 +52,12 @@ final class EstateChanges {
 	/// attribution; a batch FSEvents could not enumerate — `namesEveryPath` —
 	/// is treated as "everything", because it is.
 	func read(after change: FileSystemChange) -> Read {
-		guard estate.holdsSubmodules, !change.namesEveryPath else { return .everything }
+		guard !change.namesEveryPath else { return .everything }
+		// Attribution works the same with no submodules at all — the estate
+		// is then one repository, and the answer is the superproject or
+		// nothing. The old guard sent every plain repository to `.everything`,
+		// so the cheap path this type exists for never applied to the common
+		// case, and every saved file re-read the inventory too.
 		let work = GitEstateRefresh.work(forChangedPaths: change.paths, in: estate)
 		if work.inventory { return .everything }
 		if work.isEmpty { return .nothing }

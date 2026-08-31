@@ -105,6 +105,39 @@ struct PathTreeTests {
 		#expect(Array(tree.map(\.name).dropFirst(2)) == ["feature", "alpha"])
 	}
 
+	/// The refs tree's tags want newest first, and the order is a parameter of
+	/// this one builder precisely so it cannot become a second builder.
+	@Test func leavesTakeTheOrderTheyAreGiven() {
+		let dates = ["old": 1, "newer": 2, "newest": 3]
+		let tree = PathTree.build(
+			items(["old", "newest", "newer"]),
+			ordering: { (dates[$0] ?? 0) > (dates[$1] ?? 0) }
+		)
+		#expect(tree.map(\.name) == ["newest", "newer", "old"])
+	}
+
+	/// A folder has no date: it keeps its place before the leaves and its name
+	/// order among its fellow folders, and only what is under it takes the
+	/// given order.
+	@Test func foldersKeepTheirPlaceUnderALeafOrder() {
+		let dates = ["release/one": 1, "release/two": 5, "zz-old": 0, "aa-new": 9]
+		let tree = PathTree.build(
+			items(["zz-old", "aa-new", "release/one", "release/two"]),
+			ordering: { (dates[$0] ?? 0) > (dates[$1] ?? 0) }
+		)
+		#expect(tree.map(\.name) == ["release", "aa-new", "zz-old"])
+		#expect(tree.first?.children.map(\.name) == ["two", "one"], "the order holds inside a folder")
+	}
+
+	@Test func promotionStillBeatsTheGivenOrder() {
+		let tree = PathTree.build(
+			items(["b", "a", "current"]),
+			promoting: { $0 == "current" ? 0 : nil },
+			ordering: { $0 > $1 }
+		)
+		#expect(tree.map(\.name) == ["current", "b", "a"])
+	}
+
 	/// **A folder that is an object cannot be flattened, because its verbs go
 	/// with it.** `backup/` is made by this program and the refs tree gives it
 	/// a verb of its own — deleting the entries older than a given age. Folded

@@ -68,8 +68,17 @@ public enum BranchGrouping {
 	/// - `default`: the repository's default, from `refs/remotes/origin/HEAD`
 	///   where the remote has been fetched — git really does mark it — falling
 	///   back to whichever of `main` or `master` exists.
+	/// - `by`/`created`: the order inside each group, and the dates a date
+	///   order reads. The refs tree's LOCAL section takes a chosen order now,
+	///   and the spec pins this list to that one: two lists of the same
+	///   branches in one window must not disagree. A name missing from
+	///   `created` sorts last among the dated, by name.
 	public static func arrange(
-		_ branches: [String], current: String? = nil, default defaultBranch: String? = nil
+		_ branches: [String],
+		current: String? = nil,
+		default defaultBranch: String? = nil,
+		by order: RefsSortOrder = .name,
+		created: [String: Date] = [:]
 	) -> Arrangement {
 		// Ordered, de-duplicated, and only names that are really there: a pin
 		// for a branch that does not exist is a row that checks out nothing.
@@ -95,8 +104,21 @@ public enum BranchGrouping {
 			}
 		}
 
-		let sorted: ([String]) -> [String] = { names in
+		let byName: ([String]) -> [String] = { names in
 			names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+		}
+		let sorted: ([String]) -> [String] = { names in
+			switch order {
+			case .name:
+				return byName(names)
+			case .newestFirst:
+				return names.sorted {
+					let first = created[$0] ?? .distantPast
+					let second = created[$1] ?? .distantPast
+					if first != second { return first > second }
+					return $0.localizedStandardCompare($1) == .orderedAscending
+				}
+			}
 		}
 
 		var sections: [Section] = []
@@ -105,7 +127,9 @@ public enum BranchGrouping {
 		if !loose.isEmpty {
 			sections.append(Section(folder: nil, branches: sorted(loose)))
 		}
-		for folder in sorted(Array(byFolder.keys)) {
+		// The folders themselves stay in name order whatever the branches do:
+		// a folder has no date, and the tree keeps the same rule.
+		for folder in byName(Array(byFolder.keys)) {
 			sections.append(Section(folder: folder, branches: sorted(byFolder[folder] ?? [])))
 		}
 

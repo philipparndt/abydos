@@ -31,8 +31,9 @@ enum BranchMenu {
 			let current = head.name
 
 			// `git branch` sorted by most recent commit puts the branches the user
-			// actually moves between at the top.
-			let branches = await Self.branches(in: root)
+			// actually moves between at the top. The dates ride along for the
+			// switcher; this menu keeps the commit order and has no use for them.
+			let branches = await Self.branches(in: root).names
 
 			// An unborn branch is in no list git can produce: `git branch` reads
 			// refs, and a branch with nothing committed on it has no ref yet. It
@@ -240,16 +241,29 @@ enum BranchMenu {
 		await GitRepository.head(in: root).name
 	}
 
-	/// The branches this repository has, most recently committed to first.
-	static func branches(in root: URL) async -> [String] {
+	/// The branches this repository has, most recently committed to first, and
+	/// when each came to be — the date the pill reads when the refs tree's
+	/// LOCAL section is in its newest-first order, so the two lists of the
+	/// same branches cannot disagree.
+	static func branches(in root: URL) async -> (names: [String], created: [String: Date]) {
 		let result = await GitRepository.run(
-			["branch", "--sort=-committerdate", "--format=%(refname:short)"],
+			["branch", "--sort=-committerdate",
+			 "--format=%(refname:short)\u{1F}%(creatordate:unix)"],
 			in: root
 		)
-		return result.stdout
-			.split(separator: "\n")
-			.map { $0.trimmingCharacters(in: .whitespaces) }
-			.filter { !$0.isEmpty }
+		var names: [String] = []
+		var created: [String: Date] = [:]
+		for line in result.stdout.split(separator: "\n") {
+			let fields = line
+				.split(separator: "\u{1F}", omittingEmptySubsequences: false)
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+			guard let name = fields.first, !name.isEmpty else { continue }
+			names.append(name)
+			if fields.count > 1, let stamp = TimeInterval(fields[1]) {
+				created[name] = Date(timeIntervalSince1970: stamp)
+			}
+		}
+		return (names, created)
 	}
 
 	/// What there is to look at on the host.

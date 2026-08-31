@@ -221,3 +221,144 @@ struct GitUnpushedTests {
 		#expect(!unpushed.contains(pushed))
 	}
 }
+
+/// Which commits the upstream has that the branch does not — what a pull
+/// would bring, and what the scoped log must therefore show.
+struct GitRemoteOnlyTests {
+	/// A working copy publishing `main` to a bare "remote" in temp, and a
+	/// second clone to put the remote ahead with. Returned as (work, remote,
+	/// other); the caller removes all three.
+	private func makePublishedRepository() throws -> (work: URL, remote: URL, other: URL) {
+		let base = URL(fileURLWithPath: NSTemporaryDirectory())
+		let work = base.appendingPathComponent("remote-only-\(UUID().uuidString)")
+		let remote = base.appendingPathComponent("remote-only-\(UUID().uuidString).git")
+		let other = base.appendingPathComponent("remote-only-\(UUID().uuidString)-other")
+		try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+
+		func git(_ arguments: [String], in root: URL = work) {
+			_ = GitRepository.runSync(arguments, in: root)
+		}
+		func commit(_ name: String, message: String, in root: URL) throws {
+			try "\(name)\n".write(
+				to: root.appendingPathComponent(name), atomically: true, encoding: .utf8
+			)
+			git(["add", "-A"], in: root)
+			git(["commit", "-qm", message], in: root)
+		}
+
+		git(["init", "-q", "-b", "main", "."])
+		git(["config", "user.email", "tester@example.com"])
+		git(["config", "user.name", "A Tester"])
+		try commit("a.txt", message: "first", in: work)
+		git(["init", "-q", "--bare", remote.path])
+		git(["remote", "add", "origin", remote.path])
+		git(["push", "-qu", "origin", "main"])
+
+		git(["clone", "-q", remote.path, other.path])
+		git(["config", "user.email", "other@example.com"], in: other)
+		git(["config", "user.name", "An Other"], in: other)
+
+		return (work, remote, other)
+	}
+
+	private func removeAll(_ roots: URL...) {
+		for root in roots { try? FileManager.default.removeItem(at: root) }
+	}
+
+	private func head(of root: URL) -> String {
+		GitRepository.runSync(["rev-parse", "HEAD"], in: root).stdout
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	/// Puts one commit on the remote that `work` does not have, and fetches so
+	/// `origin/main` knows about it. Returns that commit's hash.
+	private func putRemoteAhead(work: URL, other: URL, message: String = "from elsewhere") throws -> String {
+		try "elsewhere\n".write(
+			to: other.appendingPathComponent("elsewhere-\(UUID().uuidString).txt"),
+			atomically: true, encoding: .utf8
+		)
+		_ = GitRepository.runSync(["add", "-A"], in: other)
+		_ = GitRepository.runSync(["commit", "-qm", message], in: other)
+		_ = GitRepository.runSync(["push", "-q", "origin", "main"], in: other)
+		_ = GitRepository.runSync(["fetch", "-q", "origin"], in: work)
+		return head(of: other)
+	}
+
+	@Test func aBehindBranchsScopedLogContainsTheUnpulledCommit() async throws {
+		let (work, remote, other) = try makePublishedRepository()
+		defer { removeAll(work, remote, other) }
+		let unpulled = try putRemoteAhead(work: work, other: other)
+
+		let remoteOnly = await GitHistory.remoteOnly(of: "main", in: work)
+		#expect(remoteOnly.upstream == "origin/main")
+		#expect(remoteOnly.hashes == [unpulled])
+
+		let union = await GitHistory.log(
+			in: work, revision: "main", upstream: remoteOnly.upstream
+		)
+		#expect(union.map(\.subject) == ["from elsewhere", "first"])
+	}
+
+	@Test func aBranchWithNoUpstreamListsOnlyItsOwnAncestry() async throws {
+		let (work, remote, other) = try makePublishedRepository()
+		defer { removeAll(work, remote, other) }
+		_ = try putRemoteAhead(work: work, other: other)
+		_ = GitRepository.runSync(["checkout", "-qb", "private"], in: work)
+
+		let remoteOnly = await GitHistory.remoteOnly(of: "private", in: work)
+		#expect(remoteOnly == .none)
+
+		let log = await GitHistory.log(
+			in: work, revision: "private", upstream: remoteOnly.upstream
+		)
+		#expect(log.map(\.subject) == ["first"])
+	}
+
+	@Test func aDivergedPairReportsExactlyTheUpstreamOnlyHashes() async throws {
+		let (work, remote, other) = try makePublishedRepository()
+		defer { removeAll(work, remote, other) }
+		let unpulled = try putRemoteAhead(work: work, other: other)
+
+		try "mine\n".write(
+			to: work.appendingPathComponent("mine.txt"), atomically: true, encoding: .utf8
+		)
+		_ = GitRepository.runSync(["add", "-A"], in: work)
+		_ = GitRepository.runSync(["commit", "-qm", "mine"], in: work)
+
+		let remoteOnly = await GitHistory.remoteOnly(of: "main", in: work)
+		#expect(remoteOnly.hashes == [unpulled])
+		#expect(!remoteOnly.hashes.contains(head(of: work)))
+
+		let union = await GitHistory.log(
+			in: work, revision: "main", upstream: remoteOnly.upstream
+		)
+		#expect(Set(union.map(\.subject)) == ["mine", "from elsewhere", "first"])
+	}
+
+	@Test func theUnionWindowStillPagesWithSkipAndLimit() async throws {
+		let (work, remote, other) = try makePublishedRepository()
+		defer { removeAll(work, remote, other) }
+		_ = try putRemoteAhead(work: work, other: other)
+
+		let firstPage = await GitHistory.log(
+			in: work, revision: "main", upstream: "origin/main", skip: 0, limit: 1
+		)
+		let secondPage = await GitHistory.log(
+			in: work, revision: "main", upstream: "origin/main", skip: 1, limit: 1
+		)
+		#expect(firstPage.map(\.subject) == ["from elsewhere"])
+		#expect(secondPage.map(\.subject) == ["first"])
+	}
+
+	/// `%(upstream:short)` still names an upstream whose ref was deleted, and
+	/// passing that name on to `git log` would fail the whole command and
+	/// blank the page — so a gone upstream must come back as no upstream.
+	@Test func aGoneUpstreamIsTreatedAsNoUpstream() async throws {
+		let (work, remote, other) = try makePublishedRepository()
+		defer { removeAll(work, remote, other) }
+		_ = GitRepository.runSync(["config", "branch.main.merge", "refs/heads/gone"], in: work)
+
+		let remoteOnly = await GitHistory.remoteOnly(of: "main", in: work)
+		#expect(remoteOnly == .none)
+	}
+}

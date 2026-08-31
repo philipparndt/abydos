@@ -358,6 +358,16 @@ final class SidebarController: NSObject {
 					print("BRANCHES menu: "
 						+ pane.branchMenuTitlesForTesting().joined(separator: " | "))
 				}
+			// `choose:<row>:<title>` fires that row's menu item by title, the
+			// way a person picking a sort order would.
+			case "choose":
+				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+				if parts.count == 2, let row = Int(parts[0]) {
+					print("BRANCHES choose: "
+						+ pane.chooseMenuItemForTesting(row: row, titled: parts[1]))
+				} else {
+					print("BRANCHES choose: wants row:title, got \(argument)")
+				}
 			case "delete-wording":
 				Task { @MainActor in
 					print("BRANCHES delete-wording: \(await pane.deleteWordingForTesting())")
@@ -493,6 +503,10 @@ final class SidebarController: NSObject {
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report":
 				print("CHANGES:\n\(pane.changesTreeForTesting())")
+			// Selects the row the way a first click does, deferred diff and
+			// all, so the double-click shape can be driven: select, then stage.
+			case "select":
+				pane.selectForTesting(path: argument, staged: false)
 			case "stage":
 				pane.stageForTesting(paths: argument.split(separator: "+").map(String.init), staged: false)
 			case "unstage":
@@ -514,10 +528,24 @@ final class SidebarController: NSObject {
 			// still open and still selected afterwards is the whole question.
 			case "refresh":
 				pane.refresh()
+			// The commit message history: `history` prints the menu's entries,
+			// `use-history:<n>` fills the fields from one — both async (the
+			// log is read when the menu opens), so settle before reading.
+			case "history":
+				pane.messageHistoryForTesting()
+			case "use-history":
+				pane.useHistoryEntryForTesting(Int(argument) ?? 0)
+			// Ends the run, and is the one ending that flushes: a script with
+			// no exit is killed by whatever waits on it, and a kill loses what
+			// `print` buffered — reports were written and never seen.
+			case "exit":
+				fflush(stdout)
+				exit(0)
 			default:
 				print("CHANGES: no such step \(step)")
 			}
 		}
+		fflush(stdout)
 	}
 
 	/// Clicks into the commit details field and types there.
@@ -1149,6 +1177,11 @@ final class SidebarController: NSObject {
 			case "type":   page.carrySummaryForTesting(argument)
 			case "chevron": page.toggleDescriptionForTesting()
 			case "return":  page.pressReturnInSummaryForTesting()
+			// The commit message history: `history` prints the menu's entries,
+			// `use-history:<n>` fills the fields from one — both async, so
+			// settle before reading.
+			case "history":     page.messageHistoryForTesting()
+			case "use-history": page.useHistoryEntryForTesting(Int(argument) ?? 0)
 			// A script that says so ends the run. Without it the process is
 			// killed by whatever is waiting on it, and a killed process never
 			// flushes: the report was written and never reached the terminal.
@@ -1165,13 +1198,17 @@ final class SidebarController: NSObject {
 	/// What the log page holds, and what its menu over a commit offers.
 	func logPageForTesting(_ steps: String, waiting: Int = 8) {
 		if logPage == nil { showLogPage(scopedTo: nil) }
-		guard let page = logPage else {
-			print("LOG-PAGE: no page")
-			return
-		}
-		guard page.hasRowsForTesting else {
+		// No page yet is the same waiting game as an empty one: the page needs
+		// the project's git, which loads after the window, and a driver asking
+		// at 2.5 seconds can be earlier than that. Reporting "no page" at the
+		// first ask ended runs that were one loading step from working — and
+		// ended them silently, because a run that then hangs is killed, and a
+		// kill never flushes what `print` buffered. Hence the flushes on every
+		// ending here, not only on `exit`.
+		guard let page = logPage, page.hasRowsForTesting else {
 			guard waiting > 0 else {
-				print("LOG-PAGE: the log is still empty")
+				print(logPage == nil ? "LOG-PAGE: no page" : "LOG-PAGE: the log is still empty")
+				fflush(stdout)
 				return
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -1179,49 +1216,10 @@ final class SidebarController: NSObject {
 			}
 			return
 		}
-
-		let script = steps.split(separator: ",").map(String.init)
-		for (index, step) in script.enumerated() {
-			// The diff of a file is read off the main queue like everything
-			// else here, so a report taken in the same turn as the selection
-			// sees the state before it.
-			if step == "settle" || step.hasPrefix("settle:") {
-				let seconds = step.hasPrefix("settle:")
-					? Double(step.dropFirst("settle:".count)) ?? 1.5
-					: 1.5
-				let rest = script[(index + 1)...].joined(separator: ",")
-				guard !rest.isEmpty else { return }
-				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-					self?.logPageForTesting(rest)
-				}
-				return
-			}
-
-			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
-			switch step.prefix(while: { $0 != ":" }) {
-			case "report": print("LOG-PAGE:\n\(page.pageReportForTesting())")
-			case "verbs":  print("LOG-PAGE verbs: \(page.diffVerbsForTesting())")
-			case "menu":   print("LOG-PAGE-MENU:\n\(page.commitMenuForTesting(row: Int(argument) ?? 0))")
-			case "file":
-				page.selectCommitForTesting(0)
-				page.selectFileForTesting(Int(argument) ?? 0)
-			// The changes view's own rows, which `report` does not carry: how a
-			// commit's files are arranged is the question, and the flat
-			// arrangement has to match what the page drew before it was an
-			// outline at all.
-			// The keyboard's own claims: a click gives the list focus, the
-			// arrows move, and ← and → shut and open without losing the row.
-			case "keys":
-				print("LOG-PAGE keys: " + page.fileKeysForTesting(argument))
-				fflush(stdout)
-			case "files":
-				print("LOG-PAGE files:\n  " + page.fileRowsForTesting().joined(separator: "\n  "))
-			case "arrange": page.toggleFileArrangementForTesting()
-			case "star":    page.pressStarForTesting()
-			case "shut":    page.collapseEveryFolderForTesting()
-			default:       print("LOG-PAGE: unknown step \(step)")
-			}
-		}
+		// The steps are the pane's own — see `HistoryPane.driveForTesting`,
+		// which is the shape `pullRequestsForTesting` already has: this
+		// controller's part is only to have the page and to wait for it.
+		page.driveForTesting(steps)
 	}
 
 	/// Where the lines were selected, so what happens next is shown back in the

@@ -81,12 +81,19 @@ public enum GitHistory {
 	/// Commits, newest first.
 	///
 	/// - `path`: only commits touching it, which is the history of one file.
+	/// - `revision`: only that ref's ancestry, which is the log of one branch.
+	/// - `upstream`: a second tip beside the revision, so the union arrives
+	///   ordered and windowed by git rather than merged here. A repository
+	///   saying "1 behind" in its header used to open "Log · main" with no
+	///   trace of that commit in it, because only the one revision was asked
+	///   for. Meaningless without a revision, and ignored then.
 	/// - `skip`/`limit`: a window, so a long history is read as it is scrolled
 	///   rather than all at once.
 	public static func log(
 		in root: URL,
 		path: String? = nil,
 		revision: String? = nil,
+		upstream: String? = nil,
 		skip: Int = 0,
 		limit: Int = 200,
 		search: String? = nil
@@ -107,6 +114,15 @@ public enum GitHistory {
 
 		if let revision {
 			arguments.append(revision)
+			if let upstream {
+				arguments.append(upstream)
+				// Two tips committed within the same second tie in the date
+				// queue, and git's default order then pops whichever tip was
+				// named first — a parent can arrive before its own child, which
+				// no graph can lay out. `--date-order` is the same order with
+				// the topology guaranteed.
+				arguments.append("--date-order")
+			}
 		} else if path == nil, search == nil {
 			// Every branch, tag and remote — and the stash, which `--all` does
 			// not count as a ref. A graph of one branch is a line, and the
@@ -186,6 +202,51 @@ public enum GitHistory {
 		) || FileManager.default.fileExists(
 			atPath: root.appendingPathComponent(".git/logs/refs/stash").path
 		)
+	}
+
+	/// What a ref's upstream has that the ref does not.
+	///
+	/// The mirror of `unpushed`. The upstream's name rides along because whoever
+	/// asked needs it for the log call that shows these commits, and resolving
+	/// it twice would be two answers to one question.
+	public struct RemoteOnly: Equatable, Sendable {
+		/// Nil when the ref tracks nothing — and then there is nothing to show.
+		public let upstream: String?
+		public let hashes: Set<String>
+
+		public static let none = RemoteOnly(upstream: nil, hashes: [])
+
+		public init(upstream: String?, hashes: Set<String>) {
+			self.upstream = upstream
+			self.hashes = hashes
+		}
+	}
+
+	/// The commits a ref's upstream has and the ref does not.
+	///
+	/// A ref with no upstream, a ref that is not a local branch (a remote ref
+	/// has no upstream of its own), and an upstream that is gone all come back
+	/// as `.none` rather than as an error: every one of them means the log
+	/// should show exactly what it shows today. The gone case matters most —
+	/// `%(upstream:short)` still names a deleted upstream, and passing that
+	/// name to `git log` would fail the whole command and blank the page.
+	public static func remoteOnly(of ref: String, in root: URL) async -> RemoteOnly {
+		let details = await GitRepository.run(
+			["for-each-ref", "--format=%(upstream:short)", "refs/heads/\(ref)"],
+			in: root
+		)
+		let upstream = details.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard details.exitCode == 0, !upstream.isEmpty else { return .none }
+
+		let listed = await GitRepository.run(["rev-list", "\(ref)..\(upstream)"], in: root)
+		guard listed.exitCode == 0 else { return .none }
+		let hashes = Set(
+			listed.stdout
+				.components(separatedBy: .newlines)
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+				.filter { !$0.isEmpty }
+		)
+		return RemoteOnly(upstream: upstream, hashes: hashes)
 	}
 
 	public static func unpushed(in root: URL, limit: Int = 500) async -> Set<String> {
