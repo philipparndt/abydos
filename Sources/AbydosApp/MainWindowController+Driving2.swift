@@ -95,6 +95,14 @@ extension MainWindowController {
 	///
 	/// It also prints the interface's zoom beside the picture's, because the
 	/// claim being checked is about two numbers: one moves and the other does not.
+	/// What the front tab's player is doing, in text: a driven run cannot hear
+	/// autoplay, and "paused" in a report is the claim the open makes.
+	func videoReportForTesting() {
+		print("VIDEO: " + (editor.activeGroup?.videoPreview?.reportForTesting
+			?? "nothing showing a video"))
+		fflush(stdout)
+	}
+
 	func zoomImageForTesting(_ raw: String) {
 		guard let pane = editor.activeGroup?.imagePreview else {
 			print("IMAGE: nothing showing a picture")

@@ -102,6 +102,13 @@ public enum FilePreview {
 		/// to a picture but an editor's document, opened in draw.io's own editor
 		/// rather than shown beside a source nobody reads. See 0426.
 		case drawio
+		/// A video. Screen recordings and test captures live in repositories
+		/// beside what they show, and opening one used to offer a hex dump and
+		/// a Quick Look panel that belongs to no tab. Only the containers
+		/// AVFoundation decodes natively: a `.webm` in this list would be a
+		/// player spinning over a black rectangle, which is worse than the
+		/// notice that is honest about it.
+		case video
 		/// A PDF. A finished document rather than a source: specifications,
 		/// datasheets and the paper an algorithm came from all live in a
 		/// repository beside the code that implements them, and clicking one used
@@ -153,6 +160,8 @@ public enum FilePreview {
 			return .drawio
 		case "pdf":
 			return .pdf
+		case "mp4", "mov", "m4v":
+			return .video
 		default:
 			return nil
 		}
@@ -197,6 +206,10 @@ public enum FilePreview {
 		case .pdf:
 			// A PDF is the finished document and nothing else. Its bytes are a
 			// compressed object graph, so there is no source half to offer.
+			return .preview
+		case .video:
+			// A picture's case at twenty-five frames a second: nothing to edit,
+			// no source to read.
 			return .preview
 		case .model where facts.looksLikeRecipe && Go3mfRecipe.hasRecipeExtension(url):
 			// A go3mf recipe opens as its text, and the model is *asked for*. Not

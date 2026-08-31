@@ -1354,6 +1354,11 @@ final class EditorViewController: NSViewController {
 				// read, and it fails the binary test below on its way to being
 				// useful.
 				return makePdfTab(for: fileURL, preview: preview)
+			case .video:
+				// And a video is the picture's case at twenty-five frames a
+				// second. Only the containers AVFoundation plays natively
+				// arrive here; a `.webm` keeps the notice and its Quick Look.
+				return makeVideoTab(for: fileURL, preview: preview)
 			default:
 				// A `.drawio` opens rendered and has no source half, and it is
 				// still a document this app owns: it goes the ordinary way and
@@ -3016,6 +3021,8 @@ final class EditorViewController: NSViewController {
 			return makeDrawioView(for: tab)
 		case .pdf:
 			return PdfFileView(url: tab.url)
+		case .video:
+			return VideoFileView(url: tab.url)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -3162,6 +3169,9 @@ final class EditorViewController: NSViewController {
 	/// shapes a diagram comes in, and the same reason this is a search rather
 	/// than something kept.
 	var imagePreview: ImageFileView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
+
+	/// The player the file in front is showing, when it is showing one.
+	var videoPreview: VideoFileView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
 
 	/// The first pane of a kind anywhere under a view.
 	///
@@ -3388,6 +3398,20 @@ final class EditorViewController: NSViewController {
 			document: nil,
 			codeView: nil,
 			contentView: ImageFileView(url: fileURL),
+			isPreview: preview
+		)
+		tab.previewMode = .preview
+		return tab
+	}
+
+	/// A tab that is the player, paused — see `VideoFileView` for why it never
+	/// starts by itself.
+	private func makeVideoTab(for fileURL: URL, preview: Bool) -> Tab {
+		let tab = Tab(
+			url: fileURL,
+			document: nil,
+			codeView: nil,
+			contentView: VideoFileView(url: fileURL),
 			isPreview: preview
 		)
 		tab.previewMode = .preview
