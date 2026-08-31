@@ -1160,6 +1160,26 @@ final class HistoryPane: NSView, ScaleFollowing {
 				print("LOG-PAGE files:\n  " + fileRowsForTesting().joined(separator: "\n  "))
 			case "arrange": toggleFileArrangementForTesting()
 			case "star":    pressStarForTesting()
+			// The same diff steps the commit page has, spelled the same way —
+			// a commit's diff is the read-only one, and it is where *Copy* has
+			// to be offered over a diff nothing can be staged from.
+			case "diff-rows":
+				print("LOG-PAGE diff rows:\n" + diffRowsForTesting())
+			case "text":
+				let ends = argument.split(separator: "-").map { end -> (Int, Int) in
+					let place = end.split(separator: ".").compactMap { Int($0) }
+					return (place.first ?? 0, place.count > 1 ? place[1] : 0)
+				}
+				guard let first = ends.first, let last = ends.last else { break }
+				print("LOG-PAGE text: " + selectDiffTextForTesting(
+					fromRow: first.0, offset: first.1, toRow: last.0, offset: last.1
+				))
+			case "copied":
+				print("LOG-PAGE copied:\n" + copiedDiffTextForTesting())
+			case "copy":
+				print("LOG-PAGE copy:\n" + copyDiffTextForTesting())
+			case "diff-menu":
+				print("LOG-PAGE diff menu: " + diffMenuForTesting())
 			case "shut":    collapseEveryFolderForTesting()
 			// A script that says so ends the run, as the commit page's does:
 			// whatever is waiting on the process gets an exit rather than
@@ -1229,6 +1249,34 @@ final class HistoryPane: NSView, ScaleFollowing {
 	/// is that it offers nothing to stage or throw away.
 	func diffVerbsForTesting() -> String {
 		diffView?.verbsForTesting() ?? "no diff view"
+	}
+
+	/// Every row of the diff, numbered, as a `text:` step names them — and what
+	/// a gesture over it selects and copies. A commit's diff is read-only, so
+	/// this is the other half of the claim the commit page checks: *Copy* is
+	/// offered over a diff nothing can be staged from either.
+	func diffRowsForTesting() -> String {
+		diffView?.rowTextsForTesting() ?? "no diff view"
+	}
+
+	func selectDiffTextForTesting(
+		fromRow: Int, offset from: Int, toRow: Int, offset to: Int
+	) -> String {
+		diffView?.selectTextForTesting(
+			fromRow: fromRow, offset: from, toRow: toRow, offset: to
+		) ?? "no diff view"
+	}
+
+	func copiedDiffTextForTesting() -> String {
+		diffView?.copiedTextForTesting() ?? "no diff view"
+	}
+
+	func copyDiffTextForTesting() -> String {
+		diffView?.copyToPasteboardForTesting() ?? "no diff view"
+	}
+
+	func diffMenuForTesting() -> String {
+		diffView?.menuTitlesForTesting() ?? "no diff view"
 	}
 
 	var hasRowsForTesting: Bool { !visible.isEmpty }
