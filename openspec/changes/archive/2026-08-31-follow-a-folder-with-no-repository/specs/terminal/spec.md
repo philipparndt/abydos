@@ -70,19 +70,25 @@ working directory that has been deleted underneath it, and the path it reports
 then names nothing; a window that pointed at it would be showing a root it
 cannot read.
 
-**Only while the shell is waiting.** Where a terminal *is* is where its shell
-is, and while a command runs that is not where the command has got to. `brew`
-changes directory several times over one install; a build script does the same;
-reading the foreground process's own answer dragged the window through every one
-of them and left it wherever the last happened to be. So the question is asked
-only when the shell itself is what the terminal is showing — its process group
-in the foreground, which is what `tcgetpgrp` answers with while nothing else is
-running, and what tmux says through `pane_current_command`.
+**The shell's own directory, whatever runs in front of it.** Where a terminal
+*is* is where its shell is, and while a command runs that is not where the
+command has got to. `brew` changes directory several times over one install; a
+build script does the same; reading the foreground process's own answer dragged
+the window through every one of them and left it wherever the last happened to
+be. The first cure asked only while the shell was waiting, and that traded the
+fault for two more: a running script's own project was deselected the moment it
+started, and a pane holding something long-lived — a Claude session — never
+answered at all, so switching to its tab followed nowhere. So the question is
+asked of the shell process itself — its own working directory for a plain pty,
+and the pane's `#{pane_pid}`'s for a pane inside tmux — which a command never
+moves, a typed `cd` always moves, and which is there to read however long
+whatever is in front of it runs.
 
-Nothing somebody types is lost by this: `cd` is a builtin, so the shell forks
-nothing and never leaves the foreground to do one, and the move is followed at
-the moment it is made. What is lost is every directory a command wandered
-through, which was never a statement about where the terminal was.
+Nothing somebody types is lost by this: `cd` is a builtin, so the move shows in
+the shell's own directory the moment it is made. What is lost is every
+directory a command wandered through, which was never a statement about where
+the terminal was — while the directory the command was *started from*, which
+is one, keeps the project selected for as long as it runs.
 
 **A driven run is the one exception and keeps its own rule: a run given any
 launch verb never follows its terminal anywhere.** The window is showing a

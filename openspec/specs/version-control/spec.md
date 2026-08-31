@@ -695,3 +695,109 @@ what alignment costs.
 - **GIVEN** the pane at 250 points and a deeply nested path
 - **THEN** the columns hold and the name is what is cut
 
+
+### Requirement: Staging answers the click at once
+
+Staging or unstaging SHALL move the affected rows to their new side as soon
+as the git command reports success, with the following status re-read
+confirming or correcting; the rows SHALL NOT wait for the full refresh. A
+stage that took seconds to show left somebody double-clicking again to be
+sure the first one registered.
+
+#### Scenario: a staged file switches sides in one step
+
+- **GIVEN** an unstaged file double-clicked to stage
+- **WHEN** `git add` returns success
+- **THEN** the row is on the staged side before any status re-read completes
+
+#### Scenario: the status remains the authority
+
+- **GIVEN** a stage whose command succeeded for some paths and not others
+- **WHEN** the following status read lands
+- **THEN** the trees show what the status says, whatever moved optimistically
+
+### Requirement: A refresh that arrives busy is kept
+
+A refresh requested while the pane is mid-operation SHALL run after the
+operation instead of being dropped. Dropping it meant a second double-click
+during a stage vanished, and the trees waited for an unrelated event to
+come true again.
+
+#### Scenario: a change lands during a stage
+
+- **GIVEN** a stage in flight
+- **WHEN** a refresh is requested before it finishes
+- **THEN** the trees re-read once the stage completes, without waiting for
+  another event
+
+### Requirement: The app's own writes do not re-walk the ignored files
+
+The ignored-files walk — the expensive read over the whole work tree — SHALL
+run when the ignore rules changed, and SHALL NOT be re-triggered by the
+app's own index writes. Every stage was paying 0.8–1.6 s for it because the
+repository object was rebuilt on each `.git` event, discarding the
+fingerprint that existed to prevent exactly this.
+
+#### Scenario: staging does not pay the walk
+
+- **GIVEN** a repository with a large ignored build directory
+- **WHEN** a file is staged and the watcher reports the index write
+- **THEN** no ignored-files walk runs
+
+#### Scenario: an edited ignore file still does
+
+- **WHEN** a `.gitignore` is saved
+- **THEN** the walk runs and the tree's ignored markings update
+
+### Requirement: The diff render does not stand in front of the stage
+
+The diff shown for a selected row SHALL NOT delay an immediately following
+stage: the render is deferred past the double-click interval and cancelled
+by the activation, so the second click of a double-click is not queued
+behind a parse of a diff nobody kept.
+
+#### Scenario: a double-click stages without rendering the diff first
+
+- **GIVEN** a large changed file
+- **WHEN** it is double-clicked to stage
+- **THEN** the stage runs without a diff render preceding it
+
+#### Scenario: a single click still shows the diff
+
+- **WHEN** a row is clicked once
+- **THEN** its diff appears after the deferral, as before
+
+### Requirement: A checkout made for a pull request says that is what it is
+
+A worktree this program created on a pull request's behalf SHALL be
+distinguishable in the list of checkouts from one somebody made by name, and
+SHALL be removable from where it was made.
+
+The list of checkouts is a list of places somebody chose to work. A checkout
+made to read somebody else's branch is a different kind of thing: it is
+temporary, it belongs to a review rather than to a piece of work, and it will
+accumulate — a repository whose reviewer opens three pull requests a day
+otherwise grows a checkout a day, each named after a stranger's branch, and the
+menu that was ordered, capped and honest becomes a list nobody reads.
+
+Saying which ones those are is what makes them collectable. Removing one SHALL
+obey the rule the branches pane already keeps: a checkout holding changes
+refuses rather than discarding them, whoever made it.
+
+#### Scenario: a checkout made for a review
+
+- **GIVEN** a pull request whose branch has been checked out to read it
+- **WHEN** the list of checkouts is opened
+- **THEN** that one is shown as belonging to the pull request it was made for
+
+#### Scenario: finishing with it
+
+- **GIVEN** such a checkout with nothing modified in it
+- **WHEN** it is finished with
+- **THEN** it is removed, and the list of checkouts is shorter by one
+
+#### Scenario: finishing with one that has been worked in
+
+- **GIVEN** such a checkout with uncommitted changes in it
+- **WHEN** it is finished with
+- **THEN** it refuses, and says what is in it

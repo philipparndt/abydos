@@ -91,7 +91,7 @@
       head that has moved by submission time is said before anything is sent
 - [x] 8.4 A submission that fails says so and leaves what was written where it
       is — the failure that matters is one that looks like success
-- [ ] 8.5 Driven, against a real pull request on a scratch repository: leave a
+- [x] 8.5 Driven, against a real pull request on a scratch repository: leave a
       comment, submit, read it back
 
 ## 9. Proving it

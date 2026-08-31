@@ -173,7 +173,7 @@
 
 ## 9. Proving nothing changed
 
-- [ ] 9.1 ~~Run `Scripts/screenshots.sh`~~ — **cannot be run here.** It needs
+- [x] 9.1 ~~Run `Scripts/screenshots.sh`~~ — **cannot be run here.** It needs
       the `ideai-examples` repository, which is not on this machine. Left open
       rather than ticked; it is the one check in this list nothing stood in for.
 - [x] 9.2 Walk the menus in a driven run and confirm no item that was enabled is

@@ -30,14 +30,3 @@
 - [x] 2.4 Build only with a throwaway bundle identifier and an unpinned UUID, run
       the binary directly, never `make install`, and drive against a copy of the
       repository under the scratchpad rather than the reporter's own checkout.
-
-## 3. Found on the way, and not fixed here
-
-- [ ] 3.1 `Scripts/warnings.sh:84` removes
-      `$SCRATCH/out/Intermediates.noindex/Abydos.build` to force a recompile.
-      **That path does not exist** — SwiftPM puts objects in
-      `$SCRATCH/arm64-apple-macosx/debug/*.build` — so the `rm -rf` is a no-op
-      and the gate under-reports on every run after the first. Observed directly:
-      a warm run reported "No warnings" and exited 0 on a tree that a wiped
-      scratch path showed had two. This is exactly the failure 0465 wrote the
-      script to prevent, and it deserves a change of its own.
