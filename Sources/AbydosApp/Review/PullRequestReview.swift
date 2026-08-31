@@ -365,6 +365,19 @@ final class PullRequestReview {
 	/// - `erase:40` — take a remark back, as the menu over one does
 	/// - `menu:36-40` — what the diff's menu offers over that run of lines
 	/// - `select-comment:40` — click the remark on that line
+	/// - `text:12.4-14.9` — drag over the diff's text, from row 12 offset 4 to
+	///   row 14 offset 9, against the rows on screen; `text-left:` for the
+	///   old-file half of a side-by-side diff
+	/// - `word:12.20` — double-click there; `row-text:12` — triple-click that
+	///   row; `all` — ⌘A over the diff
+	/// - `copied` — what ⌘C would put on the clipboard, without writing it
+	/// - `copy` — press ⌘C for real, and say what it wrote
+	/// - `diff-menu` — what the menu over the diff holds, in order
+	/// - `regions:12` — what the diff says a point is over, either side of
+	///   every boundary of that row
+	/// - `diff-rows` — every row of the diff, numbered, as a `text:` step names
+	///   them
+	/// - `measured` — how many rows have been measured for a selection
 	/// - `press-checkout` — the page's checkout switch
 	/// - `sheet` — open the verdict sheet; `sheet:36-40` opens the remark one
 	/// - `mark:on` / `mark:off` — mark the selected file read, as the row menu does
@@ -453,7 +466,9 @@ final class PullRequestReview {
 				open(number: Int(argument) ?? 0) { print("PULL-REQUESTS: \($0)") }
 			case "page", "whole", "pick", "keys", "diff", "read", "next", "hide", "push",
 			     "comments", "write", "submit", "moved", "erase", "menu", "select-comment",
-			     "press-checkout", "mark", "sheet", "file-menu", "arrange":
+			     "press-checkout", "mark", "sheet", "file-menu", "arrange",
+			     "text", "text-left", "word", "row-text", "all", "copied", "copy",
+			     "diff-menu", "diff-rows", "regions", "measured":
 				// The page is a second round of network calls, so a step that
 				// addresses it waits — and takes the rest of the script with it
 				// rather than running the tail against a page that is not there.
@@ -494,6 +509,43 @@ final class PullRequestReview {
 				case "select-comment":
 					print("PULL-REQUEST PAGE selected: "
 						+ page.selectCommentForTesting(onLine: Int(argument) ?? 0))
+				case "text", "text-left":
+					// `12.4-14.9`: row and offset, to row and offset.
+					let ends = argument.split(separator: "-").map { end -> (Int, Int) in
+						let place = end.split(separator: ".").compactMap { Int($0) }
+						return (place.first ?? 0, place.count > 1 ? place[1] : 0)
+					}
+					guard let first = ends.first, let last = ends.last else { break }
+					print("PULL-REQUEST PAGE text: " + page.selectTextForTesting(
+						fromRow: first.0, offset: first.1,
+						toRow: last.0, offset: last.1,
+						onLeft: step.hasPrefix("text-left")
+					))
+				case "word":
+					let place = argument.split(separator: ".").compactMap { Int($0) }
+					print("PULL-REQUEST PAGE word: " + page.selectWordForTesting(
+						row: place.first ?? 0, offset: place.count > 1 ? place[1] : 0
+					))
+				case "row-text":
+					print("PULL-REQUEST PAGE row: "
+						+ page.selectRowTextForTesting(row: Int(argument) ?? 0))
+				case "all":
+					print("PULL-REQUEST PAGE all: " + page.selectAllTextForTesting())
+				case "copied":
+					print("PULL-REQUEST PAGE copied:\n" + page.copiedTextForTesting())
+				case "copy":
+					// The one step that writes the general pasteboard, because
+					// it is the one that was asked for by name.
+					print("PULL-REQUEST PAGE copy:\n" + page.copyTextForTesting())
+				case "diff-rows":
+					print("PULL-REQUEST PAGE diff rows:\n" + page.diffRowsForTesting())
+				case "diff-menu":
+					print("PULL-REQUEST PAGE diff menu: " + page.diffMenuForTesting())
+				case "regions":
+					print("PULL-REQUEST PAGE regions: "
+						+ page.diffRegionsForTesting(row: Int(argument) ?? 0))
+				case "measured":
+					print("PULL-REQUEST PAGE measured: " + page.measuredRowsForTesting())
 				case "press-checkout":
 					page.pressCheckOutForTesting()
 				case "sheet":

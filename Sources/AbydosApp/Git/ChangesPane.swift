@@ -1748,6 +1748,160 @@ final class ChangesPane: NSView {
 		diffView?.verbsForTesting() ?? "no diff view"
 	}
 
+	/// Selects a run of the diff's text the way a drag does: row and offset to
+	/// row and offset — see `DiffView.selectTextForTesting`.
+	func selectDiffTextForTesting(
+		fromRow: Int, offset from: Int, toRow: Int, offset to: Int, onLeft: Bool = false
+	) -> String {
+		diffView?.selectTextForTesting(
+			fromRow: fromRow, offset: from, toRow: toRow, offset: to, onLeft: onLeft
+		) ?? "no diff view"
+	}
+
+	/// A press at a point in the diff, and the drag that follows it — the
+	/// gesture as the pointer makes it, x in points from the view's left edge.
+	func pressDiffForTesting(row: Int, x: Int, clicks: Int = 1, shift: Bool = false) -> String {
+		diffView?.pressAtForTesting(row: row, x: x, clicks: clicks, shift: shift) ?? "no diff view"
+	}
+
+	func dragDiffForTesting(row: Int, x: Int) -> String {
+		diffView?.dragToForTesting(row: row, x: x) ?? "no diff view"
+	}
+
+	/// What is selected in the diff, whichever of the two selections it is.
+	func diffSelectionForTesting() -> String {
+		diffView?.selectionForTesting() ?? "no diff view"
+	}
+
+	/// A double-click and a triple-click over the diff.
+	func selectDiffWordForTesting(row: Int, offset: Int) -> String {
+		diffView?.selectWordForTesting(row: row, offset: offset) ?? "no diff view"
+	}
+
+	func selectDiffRowTextForTesting(row: Int) -> String {
+		diffView?.selectRowTextForTesting(row: row) ?? "no diff view"
+	}
+
+	/// ⌘A over the diff.
+	func selectAllDiffTextForTesting() -> String {
+		diffView?.selectAllTextForTesting() ?? "no diff view"
+	}
+
+	/// Selects whole lines by number, the way a drag down the numbers does.
+	func selectDiffLinesForTesting(from: Int, to: Int) -> String {
+		guard let diffView else { return "no diff view" }
+		diffView.selectLinesForTesting(from: from, to: to)
+		return "\(diffView.selectedLines.count) lines"
+	}
+
+	/// What ⌘C would copy, and — only where a step asks for it by name — what
+	/// pressing it puts on the clipboard.
+	func copiedDiffTextForTesting() -> String {
+		diffView?.copiedTextForTesting() ?? "no diff view"
+	}
+
+	func copyDiffTextForTesting() -> String {
+		diffView?.copyToPasteboardForTesting() ?? "no diff view"
+	}
+
+	/// What a drag down the whole diff costs beside a draw of it.
+	func diffTimingForTesting() -> String {
+		diffView?.timingForTesting() ?? "no diff view"
+	}
+
+	/// Moves the keyboard between the diff and the file list beside it, so a run
+	/// can photograph a selection with the keys somewhere else — which is the
+	/// grey a selection is drawn in when it is not where the next key goes.
+	func focusForTesting(_ what: String) -> String {
+		guard let diffView else { return "no diff view" }
+		window?.makeFirstResponder(what == "diff" ? diffView : unstagedTable)
+		return keyboardReportForTesting()
+	}
+
+	/// A theme change at the diff's own door, which is where the rows it has
+	/// measured are dropped.
+	func applyDiffThemeForTesting() -> String {
+		guard let diffView else { return "no diff view" }
+		diffView.applyThemeChange()
+		return "\(diffView.measuredRowsForTesting) rows measured"
+	}
+
+	/// ⌘C at the real menu bar, with the keyboard in the diff and then in the
+	/// file list beside it.
+	///
+	/// **The whole path rather than the view's own `copy(_:)`.** The Edit menu's
+	/// *Copy* has no target, so it is the responder chain that has to reach the
+	/// diff and `validateMenuItem` that has to enable it; a run that called the
+	/// method would prove neither. The press itself is the one AppKit says
+	/// reaches that item on this keyboard layout — see `MenuKeyReport`, and
+	/// 0479, which is why it is measured rather than assumed.
+	///
+	/// The clipboard is put back as it was found: it belongs to whoever is using
+	/// this machine, and a report is not a reason to take away what they had
+	/// copied.
+	func copyKeyReportForTesting() -> String {
+		guard let diffView else { return "no diff view" }
+		let selector = #selector(NSText.copy(_:))
+		let items = (NSApp.mainMenu?.items ?? [])
+			.compactMap(\.submenu)
+			.flatMap(\.items)
+			.filter { $0.action == selector }
+		guard let item = items.first else { return "no Copy in the menu bar" }
+
+		let theirs = NSPasteboard.general.string(forType: .string)
+		defer {
+			NSPasteboard.general.clearContents()
+			if let theirs { NSPasteboard.general.setString(theirs, forType: .string) }
+		}
+
+		func enabled() -> Bool {
+			guard let target = NSApp.target(forAction: selector, to: nil, from: item) else {
+				return false
+			}
+			guard let validator = target as? NSMenuItemValidation else { return true }
+			return validator.validateMenuItem(item)
+		}
+
+		var said: [String] = []
+		let places: [(String, NSResponder)] = [("the diff", diffView), ("the file list", unstagedTable)]
+		for (who, responder) in places {
+			window?.makeFirstResponder(responder)
+			NSPasteboard.general.clearContents()
+			var answered = false
+			for (_, event) in MenuKeyReport.presses(reaching: item) {
+				answered = NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+				if answered { break }
+			}
+			let written = NSPasteboard.general.string(forType: .string) ?? ""
+			let first = written.split(separator: "\n", omittingEmptySubsequences: false).first ?? ""
+			said.append("keyboard in \(who): Copy \(enabled() ? "enabled" : "disabled")"
+				+ ", ⌘C \(answered ? "answered" : "reached nothing")"
+				+ ", clipboard \(written.isEmpty ? "empty" : "holds |\(first)|")")
+		}
+		return said.joined(separator: "\n")
+	}
+
+	/// Every row of the diff, numbered, as a `text:` step names them.
+	func diffRowsForTesting() -> String {
+		diffView?.rowTextsForTesting() ?? "no diff view"
+	}
+
+	/// What the menu over the diff holds, in order.
+	func diffMenuForTesting() -> String {
+		diffView?.menuTitlesForTesting() ?? "no diff view"
+	}
+
+	/// What the diff says a point is over, either side of every boundary.
+	func diffRegionsForTesting(row: Int) -> String {
+		diffView?.regionsForTesting(row: row) ?? "no diff view"
+	}
+
+	/// How many of the diff's rows have been measured for a selection.
+	func diffMeasuredRowsForTesting() -> String {
+		guard let diffView else { return "no diff view" }
+		return "\(diffView.measuredRowsForTesting) rows measured"
+	}
+
 	/// Stages the first `count` changed lines of the diff on screen.
 	func stageLinesForTesting(_ count: Int) -> String {
 		diffView?.applyFirstLinesForTesting(count) ?? "no diff view"

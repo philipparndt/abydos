@@ -998,6 +998,34 @@ final class HistoryPane: NSView {
 		diffView?.verbsForTesting() ?? "no diff view"
 	}
 
+	/// Every row of the diff, numbered, as a `text:` step names them — and what
+	/// a gesture over it selects and copies. A commit's diff is read-only, so
+	/// this is the other half of the claim the commit page checks: *Copy* is
+	/// offered over a diff nothing can be staged from either.
+	func diffRowsForTesting() -> String {
+		diffView?.rowTextsForTesting() ?? "no diff view"
+	}
+
+	func selectDiffTextForTesting(
+		fromRow: Int, offset from: Int, toRow: Int, offset to: Int
+	) -> String {
+		diffView?.selectTextForTesting(
+			fromRow: fromRow, offset: from, toRow: toRow, offset: to
+		) ?? "no diff view"
+	}
+
+	func copiedDiffTextForTesting() -> String {
+		diffView?.copiedTextForTesting() ?? "no diff view"
+	}
+
+	func copyDiffTextForTesting() -> String {
+		diffView?.copyToPasteboardForTesting() ?? "no diff view"
+	}
+
+	func diffMenuForTesting() -> String {
+		diffView?.menuTitlesForTesting() ?? "no diff view"
+	}
+
 	var hasRowsForTesting: Bool { !visible.isEmpty }
 
 	/// What the menu over a commit offers, one item per line.

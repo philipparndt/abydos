@@ -1111,7 +1111,42 @@ final class SidebarController: NSObject {
 		}
 	}
 
-	/// What the commit page holds.
+	/// What the commit page holds, and what a gesture over its diff does.
+	///
+	/// The steps are a comma-separated script, as everywhere else here. Beside
+	/// `report`, `rows`, `diff`, `verbs`, `stage`, `stage-lines`, `who`, `keys`,
+	/// `select`, `type`, `chevron`, `return` and `exit`, the diff's own:
+	///
+	/// - `text:12.4-14.9` — drag over the text, from row 12 offset 4 to row 14
+	///   offset 9, against the rows on screen; `text-left:` for the old-file half
+	///   of a side-by-side diff
+	/// - `word:12.20` — double-click there; `row-text:12` — triple-click that
+	///   row; `all` — ⌘A over the diff
+	/// - `select-lines:12-14` — whole lines by number, as a drag down the numbers
+	///   makes them
+	/// - `press:12@60` / `drag:14@60` — the gesture itself, at a point: row 12 at
+	///   x 60 is the number column, x 160 is the code, and the answer says which
+	///   of the two selections the press made. `press:15@160+shift` holds shift,
+	///   which extends from where the gesture began
+	/// - `selected` — what is selected now, whichever of the two it is
+	/// - `copied` — what ⌘C would put on the clipboard, without writing it
+	/// - `copy` — press ⌘C for real, and say what it wrote
+	/// - `diff-menu` — what the menu over the diff holds, in order
+	/// - `regions:12` — what the diff says a point is over, either side of every
+	///   boundary of that row
+	/// - `diff-rows` — every row of the diff, numbered, as a `text:` step names
+	///   them
+	/// - `measured` — how many rows have been measured for a selection
+	/// - `focus:diff` / `focus:list` — where the keyboard is, which is what
+	///   decides the colour a selection is drawn in
+	/// - `theme` — a theme change at the diff's door, which drops those rows
+	/// - `copy-key` — ⌘C at the real menu bar, with the keyboard in the diff and
+	///   then in the file list, and what the clipboard held each time
+	/// - `sides:on` / `sides:off` — the arrangement, which rebuilds the rows
+	/// - `chrome:on` / `chrome:off` — git's preamble, which is what puts a hunk
+	///   header on screen
+	/// - `timing` — what a drag down the whole diff costs beside a draw of it,
+	///   with the load beside both numbers
 	func commitPageForTesting(_ steps: String, waiting: Int = 8) {
 		if commitPage == nil { showCommitPage(carrying: nil) }
 		guard let page = commitPage else {
@@ -1139,6 +1174,86 @@ final class SidebarController: NSObject {
 			case "rows":   print("COMMIT-PAGE rows:\n\(page.rowsForTesting())")
 			case "diff":   print("COMMIT-PAGE diff: \(page.diffForTesting())")
 			case "verbs":  print("COMMIT-PAGE verbs: \(page.diffVerbsForTesting())")
+			// What a gesture over the diff selects, and what ⌘C would take from
+			// it — see `DiffView` and the `--pull-requests` steps of the same
+			// names, which this deliberately spells the same way.
+			case "text", "text-left":
+				// `12.4-14.9`: row and offset, to row and offset.
+				let ends = argument.split(separator: "-").map { end -> (Int, Int) in
+					let place = end.split(separator: ".").compactMap { Int($0) }
+					return (place.first ?? 0, place.count > 1 ? place[1] : 0)
+				}
+				guard let first = ends.first, let last = ends.last else { break }
+				print("COMMIT-PAGE text: " + page.selectDiffTextForTesting(
+					fromRow: first.0, offset: first.1,
+					toRow: last.0, offset: last.1,
+					onLeft: step.hasPrefix("text-left")
+				))
+			case "word":
+				let place = argument.split(separator: ".").compactMap { Int($0) }
+				print("COMMIT-PAGE word: " + page.selectDiffWordForTesting(
+					row: place.first ?? 0, offset: place.count > 1 ? place[1] : 0
+				))
+			case "row-text":
+				print("COMMIT-PAGE row: "
+					+ page.selectDiffRowTextForTesting(row: Int(argument) ?? 0))
+			case "all":
+				print("COMMIT-PAGE all: " + page.selectAllDiffTextForTesting())
+			case "select-lines":
+				let place = argument.split(separator: "-").compactMap { Int($0) }
+				print("COMMIT-PAGE select-lines: " + page.selectDiffLinesForTesting(
+					from: place.first ?? 0, to: place.last ?? place.first ?? 0
+				))
+			case "copied":
+				print("COMMIT-PAGE copied:\n" + page.copiedDiffTextForTesting())
+			case "copy":
+				// The one step that writes the general pasteboard, because it is
+				// the one that was asked for by name.
+				print("COMMIT-PAGE copy:\n" + page.copyDiffTextForTesting())
+			case "press", "drag":
+				// `press:12@60` — row 12 at x 60, which is the number column;
+				// `press:12@160` is the code. `drag:14@160` finishes it.
+				// `+shift` on the end holds shift down, which is how a
+				// selection is extended from where it began.
+				let held = argument.hasSuffix("+shift")
+				let place = argument
+					.replacingOccurrences(of: "+shift", with: "")
+					.split(separator: "@").map(String.init)
+				let row = Int(place.first ?? "") ?? 0
+				let x = place.count > 1 ? Int(place[1]) ?? 0 : 0
+				let said = step.hasPrefix("press")
+					? page.pressDiffForTesting(row: row, x: x, shift: held)
+					: page.dragDiffForTesting(row: row, x: x)
+				print("COMMIT-PAGE \(step.hasPrefix("press") ? "press" : "drag"): " + said)
+			case "selected":
+				print("COMMIT-PAGE selected: " + page.diffSelectionForTesting())
+			case "timing":
+				print("COMMIT-PAGE timing: " + page.diffTimingForTesting())
+			case "chrome":
+				// Git's preamble, from the same preference the View menu flips:
+				// it is what puts a hunk header — the one bold row — on screen.
+				Settings.shared.diffShowsChrome = argument == "on"
+				print("COMMIT-PAGE chrome: \(argument == "on" ? "shown" : "hidden")")
+			case "focus":
+				print("COMMIT-PAGE focus: " + page.focusForTesting(argument))
+			case "theme":
+				print("COMMIT-PAGE theme: " + page.applyDiffThemeForTesting())
+			case "copy-key":
+				print("COMMIT-PAGE copy-key:\n" + page.copyKeyReportForTesting())
+			case "diff-rows":
+				print("COMMIT-PAGE diff rows:\n" + page.diffRowsForTesting())
+			case "diff-menu":
+				print("COMMIT-PAGE diff menu: " + page.diffMenuForTesting())
+			case "regions":
+				print("COMMIT-PAGE regions: "
+					+ page.diffRegionsForTesting(row: Int(argument) ?? 0))
+			case "measured":
+				print("COMMIT-PAGE measured: " + page.diffMeasuredRowsForTesting())
+			case "sides":
+				// The arrangement, from the same preference the View menu
+				// flips: every diff hears about it and rebuilds its rows.
+				Settings.shared.diffIsSideBySide = argument == "on"
+				print("COMMIT-PAGE sides: \(argument == "on" ? "side by side" : "unified")")
 			case "stage-lines":
 				let count = Int(argument) ?? 1
 				print("COMMIT-PAGE stage-lines: \(page.stageLinesForTesting(count))")
@@ -1218,9 +1333,34 @@ final class SidebarController: NSObject {
 				print("LOG-PAGE files:\n  " + page.fileRowsForTesting().joined(separator: "\n  "))
 			case "arrange": page.toggleFileArrangementForTesting()
 			case "star":    page.pressStarForTesting()
+			// The same diff steps the commit page has, spelled the same way —
+			// a commit's diff is the read-only one, and it is where *Copy* has
+			// to be offered over a diff nothing can be staged from.
+			case "diff-rows":
+				print("LOG-PAGE diff rows:\n" + page.diffRowsForTesting())
+			case "text":
+				let ends = argument.split(separator: "-").map { end -> (Int, Int) in
+					let place = end.split(separator: ".").compactMap { Int($0) }
+					return (place.first ?? 0, place.count > 1 ? place[1] : 0)
+				}
+				guard let first = ends.first, let last = ends.last else { break }
+				print("LOG-PAGE text: " + page.selectDiffTextForTesting(
+					fromRow: first.0, offset: first.1, toRow: last.0, offset: last.1
+				))
+			case "copied":
+				print("LOG-PAGE copied:\n" + page.copiedDiffTextForTesting())
+			case "copy":
+				print("LOG-PAGE copy:\n" + page.copyDiffTextForTesting())
+			case "diff-menu":
+				print("LOG-PAGE diff menu: " + page.diffMenuForTesting())
 			case "shut":    page.collapseEveryFolderForTesting()
+			// A script that says so ends the run, as the commit page's does — and
+			// a killed process never flushes, so what was printed would never
+			// reach the terminal.
+			case "exit":   fflush(stdout); exit(0)
 			default:       print("LOG-PAGE: unknown step \(step)")
 			}
+			fflush(stdout)
 		}
 	}
 

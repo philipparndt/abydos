@@ -7,6 +7,29 @@ import AbydosKit
 /// Hand-drawn like the code view rather than built on `NSTextView`: a diff is a
 /// list of short lines with one colour each, and the same virtualised drawing
 /// keeps a large one — a lockfile, a generated file — instant to open.
+///
+/// ## Four files, and why the state below is not `private`
+///
+/// A diff selects two things — whole lines, over the numbers, and characters,
+/// over the code — and saying so took this file past the 1,100-line limit
+/// `Scripts/file-size.sh` keeps. What moved out is:
+///
+///  * `DiffTextRun` — the character selection itself, the lines it measures and
+///    the arithmetic that turns a point into an offset. **A collaborator that
+///    owns its state**, which is the split that costs nothing: it is handed what
+///    a row says and how a row is laid out, and holds no rows.
+///  * `DiffView+Drawing`, `DiffView+Menu`, `DiffView+Driving` — the painting,
+///    what a diff offers over a selection, and what a driven run may ask.
+///
+/// Those three are extensions, and an extension in another file cannot see
+/// `private`: the fields below are internal because they are read there, and
+/// that is the whole of the cost. Two of them write as well, and both are
+/// honest about it — the menu moves the line selection to where the pointer was
+/// aimed, which is what makes a command act on what was clicked, and the driven
+/// verbs are the harness. The rule kept in exchange is that a *text* selection
+/// only ever changes through `textRun`, and a line selection that puts it away
+/// only through `setLineSelection`, so "the last gesture wins" cannot be broken
+/// from a file that does not say it.
 final class DiffView: NSView {
 	/// Stage or unstage the selected lines. The direction depends on which side
 	/// of the index this diff came from, which the pane already knows.
@@ -28,24 +51,45 @@ final class DiffView: NSView {
 	/// Take one back.
 	var onDeleteComment: ((Comment) -> Void)?
 
-	private var patch = GitPatch()
+	var patch = GitPatch()
 	private(set) var isStaged = false
 	/// A diff of something already committed: there is nothing to stage in it.
 	var isReadOnly = false
 	/// Syntax tokens per patch line, when the file is in a language we parse.
-	private var highlights: [Int: [HighlightToken]] = [:]
+	var highlights: [Int: [HighlightToken]] = [:]
 
 	/// Flat rows: hunk headers and lines interleaved, as drawn.
-	private var rows: [Row] = []
+	var rows: [Row] = []
 	/// Selected *line* indices, in `GitPatch`'s flat numbering.
-	private var selection: Set<Int> = []
+	var selection: Set<Int> = []
 	/// Anchor for shift-click range selection.
-	private var anchorRow: Int?
+	var anchorRow: Int?
 	/// The remark under the selection, and the rows it occupies.
 	///
 	/// A remark is several rows and is selected as one thing: picking the third
 	/// line of somebody's paragraph is not a gesture anybody means to make.
-	private var selectedComment: (comment: Comment, rows: ClosedRange<Int>)?
+	var selectedComment: (comment: Comment, rows: ClosedRange<Int>)?
+	/// The run of *characters* selected, if any, and which half of a
+	/// side-by-side row it belongs to.
+	///
+	/// **Two selections rather than one the menu interprets**, and they are
+	/// mutually exclusive: setting either puts the other away. A run of lines
+	/// and a run of characters are different things — one is a set of
+	/// `GitPatch` indices with a `+`/`-` meaning, the other a pair of points —
+	/// and *Stage Selected Lines* over half a word is not a command.
+	///
+	/// A collaborator rather than fields here, and it is given `text(ofRow:in:)`
+	/// and the geometry beside it in `init` — see `DiffTextRun`. What the driven
+	/// verbs in `DiffView+Driving` reach is this, which is the arrangement the
+	/// window controller's own driving file already has.
+	let textRun = DiffTextRun()
+
+	/// Which text column a point or a selection belongs to.
+	typealias Column = DiffTextRun.Column
+
+	/// Which lines the menu was opened over — see `DiffView+Menu`, where it is
+	/// read. Here because an extension may not hold state.
+	var commentRange: (from: Int, to: Int)?
 
 	/// A remark somebody left on a line of this diff.
 	///
@@ -114,7 +158,7 @@ final class DiffView: NSView {
 	/// Whether git's own preamble is drawn, and whether the sides are beside
 	/// each other. Both are preferences; both are read at rebuild.
 	private var showsChrome = Settings.shared.diffShowsChrome
-	private var isSideBySide = Settings.shared.diffIsSideBySide
+	var isSideBySide = Settings.shared.diffIsSideBySide
 
 	/// Re-reads the two preferences and redraws if either moved.
 	///
@@ -132,7 +176,7 @@ final class DiffView: NSView {
 		needsDisplay = true
 	}
 
-	private enum Row {
+	enum Row {
 		case header(String)
 		/// The declaration a hunk is inside, when the preamble is not drawn and
 		/// git has guessed one.
@@ -152,23 +196,30 @@ final class DiffView: NSView {
 	}
 
 	/// One half of a side-by-side row.
-	private struct Side: Equatable {
+	struct Side: Equatable {
 		let index: Int
 		let line: GitPatch.Line
 		let number: Int
 	}
 
-	private var font: NSFont = Theme.terminalFont(size: Theme.current.fontSize)
-	private var lineHeight: CGFloat = 0
-	private static let horizontalInset: CGFloat = 12
+	var font: NSFont = Theme.terminalFont(size: Theme.current.fontSize)
+	var lineHeight: CGFloat = 0
+	static let horizontalInset: CGFloat = 12
 	/// Room for the selection marker down the left edge.
-	private static let gutterWidth: CGFloat = 14
+	static let gutterWidth: CGFloat = 14
+	/// One character of the code font, which is what a diff is drawn in.
+	///
+	/// The numbers are measured off it, and so is the sliver of highlight that
+	/// stands for a line break inside a selection.
+	var characterWidth: CGFloat {
+		("0" as NSString).size(withAttributes: [.font: font]).width
+	}
 	/// Room for the two line numbers beside it.
-	private var numberWidth: CGFloat {
+	var numberWidth: CGFloat {
 		// Measured from the font rather than guessed: a diff of a four-figure
 		// file and one of a hundred lines should not indent differently, so it
 		// is a fixed five columns either side.
-		("0" as NSString).size(withAttributes: [.font: font]).width * 5
+		characterWidth * 5
 	}
 
 	override var isFlipped: Bool { true }
@@ -179,6 +230,7 @@ final class DiffView: NSView {
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
 		updateMetrics()
+		describeRows()
 		// Its own observer rather than a call from each pane that owns one:
 		// three panes draw diffs, and a preference that reached two of them
 		// would be a menu item that half works.
@@ -196,6 +248,9 @@ final class DiffView: NSView {
 
 	private func updateMetrics() {
 		font = Theme.terminalFont(size: Theme.current.fontSize)
+		// A different face measures differently, so what was measured in the
+		// old one is worth nothing.
+		textRun.forget()
 		lineHeight = (font.ascender - font.descender + font.leading).rounded() + 2
 	}
 
@@ -208,23 +263,6 @@ final class DiffView: NSView {
 
 	// MARK: - Content
 
-	/// How much of a diff is on screen, for a driver that cannot photograph it.
-	var reportForTesting: String {
-		guard !rows.isEmpty else { return "empty" }
-		let remarks = rows.filter {
-			if case .comment(_, _, true) = $0 { return true }
-			return false
-		}.count
-		return remarks == 0 ? "\(rows.count) rows" : "\(rows.count) rows, \(remarks) comments"
-	}
-
-	/// The conversation as it is drawn, for a run that cannot photograph it.
-	func commentsForTesting() -> [String] {
-		rows.compactMap { row in
-			guard case let .comment(comment, text, isFirst) = row, isFirst else { return nil }
-			return (comment.isOutdated ? "outdated: " : "at a line: ") + text
-		}
-	}
 
 	func setDiff(_ text: String, staged: Bool, url: URL? = nil) {
 		// A parse of the patch and two whole tree-sitter parses behind
@@ -255,7 +293,7 @@ final class DiffView: NSView {
 	/// whole view is meant to.
 	private static let highlightLineLimit = 5000
 
-	private static func highlights(for patch: GitPatch, url: URL?) -> [Int: [HighlightToken]] {
+	static func highlights(for patch: GitPatch, url: URL?) -> [Int: [HighlightToken]] {
 		guard let url, let languageId = LanguageRegistry.shared.languageId(for: url) else { return [:] }
 		let lines = patch.hunks.reduce(0) { $0 + $1.lines.count }
 		guard lines <= highlightLineLimit else { return [:] }
@@ -304,6 +342,15 @@ final class DiffView: NSView {
 	}
 
 	private func rebuildRows() {
+		// **The rows are about to be different rows.** A text selection is a
+		// pair of positions in *this* list, and a measured line is the width of
+		// one of its rows; neither survives the list being rebuilt. The line
+		// selection is dropped by `setDiff` for the same reason, and the
+		// rebuilds that reach here are all gestures somebody just made —
+		// arrange, whole file, write a remark — rather than something arriving
+		// on its own.
+		textRun.forget()
+
 		// **Git's preamble, or none of it.** The pane already says which file
 		// this is; see `Settings.diffShowsChrome`.
 		rows = showsChrome ? patch.header.map { Row.header($0) } : []
@@ -430,35 +477,242 @@ final class DiffView: NSView {
 		for comment in left { rows += commentRows(for: comment) }
 	}
 
+	// MARK: - Where a character is
+
+	/// Where a row's text begins, before its marker: the inset, the gutter the
+	/// selection bar is drawn in, and the two number columns.
+	var textX: CGFloat { Self.horizontalInset + Self.gutterWidth + numberWidth * 2 }
+
+	/// Where the right-hand half of a side-by-side row begins, and the rule
+	/// between the two.
+	var pairMiddle: CGFloat { (bounds.width / 2).rounded() }
+
+	/// The left edge of one half of a side-by-side row.
+	///
+	/// **One place says it**, because the drawing and the hit test have to
+	/// agree about where a half begins: a highlight drawn from one number and
+	/// hit-tested against another is a selection landing on the other file.
+	func pairMinX(_ column: Column) -> CGFloat { column == .left ? 0 : pairMiddle + 1 }
+
+	/// The bold face, for the two rows that are drawn in it.
+	var boldFont: NSFont {
+		NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+	}
+
+	/// What a row *says*, with none of the diff's furniture on it — no number,
+	/// no `+`/`-` marker, no gutter, and none of the emoji that marks a remark.
+	///
+	/// **This is the rule about what gets copied, and it lives here** so that
+	/// drawing, hit-testing and copying cannot disagree about what a row's text
+	/// is. The reason to take code out of a diff is to paste it somewhere that
+	/// expects code, where a leading `+` makes every line wrong; and it is what
+	/// makes the two arrangements copy the same characters, since side by side
+	/// draws no marker at all.
+	func text(ofRow index: Int, in column: Column = .only) -> String {
+		guard rows.indices.contains(index) else { return "" }
+		switch rows[index] {
+		case let .header(text):        return text
+		case let .scope(text):         return text
+		case let .hunkHeader(_, text): return text
+		case let .comment(_, text, _): return text
+		case let .line(_, line, _, _): return line.text
+		case let .pair(left, right):
+			// The right-hand side unless the left was asked for: it is the side
+			// that still exists, the same reading `lineIndex(atRow:)` makes.
+			guard column == .left else { return right?.line.text ?? "" }
+			return left?.line.text ?? ""
+		}
+	}
+
+	/// Where that text is drawn from, which is where its highlight starts and
+	/// where a pointer's x is measured against.
+	///
+	/// **The marker's measured width, not a column guessed off the font.** A
+	/// line is drawn as a marker at `textX` and its text after it, and the
+	/// expression that puts the text there used to live inside `draw(row:)` —
+	/// so a highlight drawn from `textX` sat one marker-width to the left of the
+	/// glyphs it was meant to be behind.
+	func textOrigin(ofRow index: Int, in column: Column = .only) -> CGFloat {
+		guard rows.indices.contains(index) else { return textX }
+		switch rows[index] {
+		case let .line(_, line, _, _):
+			guard !line.marker.isEmpty else { return textX }
+			return textX + line.marker.size(withAttributes: [.font: font]).width
+		case let .comment(comment, _, isFirst):
+			// ✍️ for one being written here, 💬 for one that has been said, and
+			// three spaces for the rows under either.
+			let prefix = isFirst ? (comment.isPending ? "✍️ " : "💬 ") : "   "
+			return textX + prefix.size(withAttributes: [.font: isFirst ? boldFont : font]).width
+		case .pair:
+			return pairMinX(column) + Self.gutterWidth + numberWidth + Theme.current.scaled(6)
+		default:
+			return textX
+		}
+	}
+
+	/// The face a row's text is drawn in, and therefore the one it is measured
+	/// in: a hunk header and the heading of a remark are bold, and a bold row
+	/// measured in the regular face puts the highlight short of the glyphs.
+	private func face(ofRow index: Int) -> NSFont {
+		guard rows.indices.contains(index) else { return font }
+		switch rows[index] {
+		case .hunkHeader:                 return boldFont
+		case let .comment(_, _, isFirst): return isFirst ? boldFont : font
+		default:                          return font
+		}
+	}
+
+	/// What `DiffTextRun` is told a row is: what it says, the face it says it
+	/// in, and where the saying starts. Set once, in `init`.
+	///
+	/// **One arrow out of the view and none back in.** The rule about what a
+	/// row's text is lives above, in `text(ofRow:in:)`, and the arithmetic that
+	/// turns a point into an offset in it lives in the collaborator — so
+	/// drawing, hit-testing and copying cannot come to disagree about where a
+	/// character is.
+	private func describeRows() {
+		textRun.textAt = { [weak self] row, column in
+			self?.text(ofRow: row, in: column) ?? ""
+		}
+		textRun.rowAt = { [weak self] row, column in
+			guard let self, self.rows.indices.contains(row) else {
+				return DiffTextRun.Row(text: "", font: self?.font ?? .systemFont(ofSize: 12), origin: 0)
+			}
+			return DiffTextRun.Row(
+				text: self.text(ofRow: row, in: column),
+				font: self.face(ofRow: row),
+				origin: self.textOrigin(ofRow: row, in: column)
+			)
+		}
+	}
+
+	/// How far into a row's text a point is, in UTF-16 code units.
+	func offset(at point: NSPoint, ofRow index: Int, in column: Column) -> Int {
+		textRun.offset(atX: point.x, row: index, in: column)
+	}
+
+	/// What a point in the view is over, which is what decides which selection
+	/// a press makes.
+	enum Region: Equatable {
+		/// The numbers and the gutter beside them: whole lines, the selection
+		/// that stages, discards, stashes and carries a remark.
+		case numbers(row: Int, column: Column)
+		/// The code itself: characters. The marker belongs here at offset 0,
+		/// which is what a press on any text does — nothing until it moves.
+		case text(row: Int, column: Column)
+		/// A hunk header, which takes its whole hunk however it is pressed.
+		case header(row: Int)
+		/// Past the last row.
+		case none
+	}
+
+	/// Off the same x boundaries the drawing uses, in both arrangements.
+	func region(at point: NSPoint) -> Region {
+		guard let index = row(at: point) else { return .none }
+		if case .hunkHeader = rows[index] { return .header(row: index) }
+		guard case .pair = rows[index] else {
+			// One column. Everything left of the code is the numbers, the
+			// gutter included — it is where the selection bar for a line is
+			// drawn, so it belongs with the lines.
+			return point.x < textX
+				? .numbers(row: index, column: .only)
+				: .text(row: index, column: .only)
+		}
+		let column: Column = point.x < pairMiddle ? .left : .right
+		return point.x < textOrigin(ofRow: index, in: column)
+			? .numbers(row: index, column: column)
+			: .text(row: index, column: column)
+	}
+
+	/// The row a point is on, brought inside the diff.
+	///
+	/// A drag runs past the last row — that is what autoscroll is for — and a
+	/// selection that stopped answering there would stop at whatever row was
+	/// last under the pointer.
+	func clampedRow(at point: NSPoint) -> Int? {
+		guard let last = rows.indices.last else { return nil }
+		let top = Theme.current.scaled(8)
+		let index = Int((point.y - top) / lineHeight)
+		return min(max(0, index), last)
+	}
+
+	/// Whether the keyboard is here, which is what a selection is drawn from.
+	///
+	/// Asked of the window on each draw rather than kept, for the reason
+	/// `CodeView` gives: AppKit posts nothing when the first responder changes.
+	var hasKeyboard: Bool { window?.firstResponder === self }
+
 	// MARK: - Selection
 
 	var hasSelection: Bool { !selection.isEmpty }
 	var selectedLines: Set<Int> { selection }
 
+	/// Whether a run of characters is selected — which is a different question
+	/// from `hasSelection`, and the one *Copy* is offered over.
+	var hasTextSelection: Bool { !textRun.isEmpty }
+
+	/// ⌘A takes all of the diff's text, which is what it means in every other
+	/// view in this window.
+	///
+	/// **It used to select every line that could be staged**, and nothing
+	/// outside this file invoked it: no menu item targets it and no driven run
+	/// reached it. Staging everything is still the file row's *Stage*, and a
+	/// hunk is still its header.
 	override func selectAll(_ sender: Any?) {
-		selection = Set(patch.selectableIndices())
-		needsDisplay = true
+		guard let last = rows.indices.last else { return }
+		// Side by side, the new side — the one that still exists, and the one a
+		// reader means by "the file".
+		textRun.takeEverything(through: last, in: isSideBySide ? .right : .only)
+		tookText()
 	}
 
 	func clearSelection() {
 		selection = []
 		anchorRow = nil
+		textRun.clear()
 		needsDisplay = true
 	}
 
 	/// Selects every changed line in a hunk, for "stage this hunk".
 	func selectHunk(_ hunkIndex: Int) {
-		selection = Set(patch.indices(inHunk: hunkIndex))
+		setLineSelection(Set(patch.indices(inHunk: hunkIndex)))
+	}
+
+	/// Whole lines, and nothing else selected.
+	///
+	/// **The two selections are mutually exclusive and the last gesture wins.**
+	/// One is a set of `GitPatch` indices with a `+`/`-` meaning and the other a
+	/// pair of points, and the staging path is untouched by any of this: the
+	/// only thing that changed for it is which pixels fill the set.
+	func setLineSelection(_ lines: Set<Int>) {
+		selection = lines
+		textRun.clear()
 		needsDisplay = true
 	}
 
-	private func row(at point: NSPoint) -> Int? {
+	/// A run of characters was just taken, so the line selection goes.
+	private func tookText() {
+		selection = []
+		anchorRow = nil
+		needsDisplay = true
+	}
+
+	/// A remark, all of its rows, the way a click on one takes it.
+	func selectComment(_ comment: Comment, rows block: ClosedRange<Int>) {
+		selectedComment = (comment, block)
+		selection = []
+		anchorRow = nil
+		textRun.clear()
+		needsDisplay = true
+	}
+
+	func row(at point: NSPoint) -> Int? {
 		let top = Theme.current.scaled(8)
 		let index = Int((point.y - top) / lineHeight)
 		return rows.indices.contains(index) ? index : nil
 	}
 
-	private func lineIndex(atRow row: Int) -> Int? {
+	func lineIndex(atRow row: Int) -> Int? {
 		guard rows.indices.contains(row) else { return nil }
 		// Side by side, a row is two lines and the right-hand one is the one a
 		// remark or a stage is about — it is the side that still exists.
@@ -496,7 +750,7 @@ final class DiffView: NSView {
 	}
 
 	/// The new-side number a row carries, in either arrangement.
-	private func newNumber(atRow row: Int) -> Int? {
+	func newNumber(atRow row: Int) -> Int? {
 		guard rows.indices.contains(row) else { return nil }
 		switch rows[row] {
 		case let .line(_, _, _, new): return new
@@ -506,7 +760,7 @@ final class DiffView: NSView {
 	}
 
 	/// Which rows one remark occupies, given the row its heading is on.
-	private func commentBlock(startingAt row: Int) -> ClosedRange<Int>? {
+	func commentBlock(startingAt row: Int) -> ClosedRange<Int>? {
 		guard case let .comment(comment, _, isFirst) = rows[row], isFirst else { return nil }
 		var last = row
 		while last + 1 < rows.count,
@@ -518,7 +772,7 @@ final class DiffView: NSView {
 	}
 
 	/// The remark a row belongs to, whichever of its rows was clicked.
-	private func comment(atRow row: Int) -> (Comment, ClosedRange<Int>)? {
+	func comment(atRow row: Int) -> (Comment, ClosedRange<Int>)? {
 		guard rows.indices.contains(row), case .comment = rows[row] else { return nil }
 		var first = row
 		while first > 0 {
@@ -531,51 +785,139 @@ final class DiffView: NSView {
 		return (comment, block)
 	}
 
+	/// **Where the press landed decides which selection it makes.** The numbers
+	/// take lines, the way a forge does it; the code takes characters, because
+	/// the gesture over the code is needed for the code and there is one
+	/// gesture. A hunk header — which is how most staging is actually done —
+	/// does not move at all.
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
-		guard let row = row(at: convert(event.locationInWindow, from: nil)) else { return }
+		let point = convert(event.locationInWindow, from: nil)
 
-		// A click on a remark takes the remark — all of its rows, because a
-		// paragraph is one thing.
+		switch region(at: point) {
+		case .none:
+			return
+		case let .header(row):
+			selectedComment = nil
+			// A click on a hunk header takes the whole hunk, which is the
+			// common case — line-by-line is for when a hunk mixes two changes.
+			guard case let .hunkHeader(hunkIndex, _) = rows[row] else { return }
+			selectHunk(hunkIndex)
+			anchorRow = row
+		case let .numbers(row, _):
+			pressLine(row: row, with: event)
+		case let .text(row, column):
+			pressText(row: row, in: column, at: point, with: event)
+		}
+	}
+
+	/// The number column: whole lines, with shift and ⌘ behaving as they always
+	/// have.
+	func pressLine(row: Int, with event: NSEvent) {
+		pressLine(
+			row: row,
+			shift: event.modifierFlags.contains(.shift),
+			command: event.modifierFlags.contains(.command)
+		)
+	}
+
+	/// The press itself, in the terms the gesture is made of — so a driven run
+	/// makes the same press a pointer does.
+	func pressLine(row: Int, shift: Bool, command: Bool) {
+		// A remark has no numbers beside it, and a press anywhere on one takes
+		// the remark: all of its rows, because a paragraph is one thing.
 		if let (comment, block) = comment(atRow: row) {
-			selectedComment = (comment, block)
-			selection = []
-			anchorRow = nil
-			needsDisplay = true
+			selectComment(comment, rows: block)
 			return
 		}
 		selectedComment = nil
-
-		// A click on a hunk header takes the whole hunk, which is the common
-		// case — line-by-line is for when a hunk mixes two changes.
-		if case let .hunkHeader(hunkIndex, _) = rows[row] {
-			selectHunk(hunkIndex)
-			anchorRow = row
-			return
-		}
-
 		guard let index = lineIndex(atRow: row) else { return }
 
-		if event.modifierFlags.contains(.shift), let anchor = anchorRow {
+		var updated = selection
+		if shift, let anchor = anchorRow {
 			// Range from the anchor, skipping context that falls between.
-			let bounds = min(anchor, row)...max(anchor, row)
-			for position in bounds {
-				if let candidate = lineIndex(atRow: position) { selection.insert(candidate) }
+			for position in min(anchor, row)...max(anchor, row) {
+				if let candidate = lineIndex(atRow: position) { updated.insert(candidate) }
 			}
-		} else if event.modifierFlags.contains(.command) {
-			if selection.contains(index) { selection.remove(index) } else { selection.insert(index) }
+		} else if command {
+			if updated.contains(index) { updated.remove(index) } else { updated.insert(index) }
 			anchorRow = row
 		} else {
-			selection = [index]
+			updated = [index]
 			anchorRow = row
 		}
-		needsDisplay = true
+		setLineSelection(updated)
+	}
+
+	/// The code: characters, from where the press landed.
+	///
+	/// A press with nothing dragged puts the caretless selection away — a click
+	/// is how a selection is dismissed, not how one is made — and the two
+	/// gestures a reader tries within the minute of discovering the drag are
+	/// here too.
+	func pressText(row: Int, in column: Column, at point: NSPoint, with event: NSEvent) {
+		pressText(
+			row: row,
+			in: column,
+			offset: offset(at: point, ofRow: row, in: column),
+			clicks: event.clickCount,
+			shift: event.modifierFlags.contains(.shift)
+		)
+	}
+
+	/// The press itself, in the terms the gesture is made of rather than in
+	/// AppKit's — so a driven run makes the same press a pointer does.
+	func pressText(row: Int, in column: Column, offset: Int, clicks: Int, shift: Bool) {
+		// A remark is one thing to *click* on and text to *drag over*: the click
+		// takes the remark, and a drag from it hands the rows to the text
+		// selection instead — see `mouseDragged`.
+		if clicks == 1, !shift, let (comment, block) = comment(atRow: row) {
+			selectComment(comment, rows: block)
+		} else if clicks == 1 {
+			selectedComment = nil
+		}
+
+		switch clicks {
+		case 2:
+			textRun.takeWord(row: row, offset: offset, in: column)
+		case 3:
+			textRun.takeRow(row, in: column)
+		default:
+			// Shift extends from where the gesture began, and only within the
+			// half it began in.
+			if shift, !textRun.isEmpty, textRun.column == column {
+				textRun.extend(toRow: row, offset: offset)
+			} else {
+				textRun.press(row: row, offset: offset, in: column)
+			}
+		}
+		tookText()
 	}
 
 	override func mouseDragged(with event: NSEvent) {
-		guard let anchor = anchorRow,
-		      let row = row(at: convert(event.locationInWindow, from: nil))
-		else { return }
+		// A selection that stops at the bottom of the visible rows is a
+		// selection that cannot cover a hunk, and this view is inside a scroll
+		// view in all five places it is used.
+		autoscroll(with: event)
+		let point = convert(event.locationInWindow, from: nil)
+
+		if textRun.isPressed {
+			guard let row = clampedRow(at: point) else { return }
+			// **The half is carried through the drag**, which is how "a
+			// selection belongs to one side" is enforced rather than checked
+			// afterwards: a pointer past the divider goes on extending the side
+			// it started on.
+			textRun.extend(
+				toRow: row, offset: offset(at: point, ofRow: row, in: textRun.column)
+			)
+			// A drag over a remark's rows is a selection of its text rather
+			// than of the remark.
+			if !textRun.isEmpty { selectedComment = nil }
+			needsDisplay = true
+			return
+		}
+
+		guard let anchor = anchorRow, let row = row(at: point) else { return }
 
 		var updated: Set<Int> = []
 		for position in min(anchor, row)...max(anchor, row) {
@@ -584,6 +926,18 @@ final class DiffView: NSView {
 		guard updated != selection else { return }
 		selection = updated
 		needsDisplay = true
+	}
+
+	/// The selection greys when the keyboard leaves and lifts when it comes
+	/// back, and AppKit posts nothing when the first responder changes.
+	override func becomeFirstResponder() -> Bool {
+		needsDisplay = true
+		return super.becomeFirstResponder()
+	}
+
+	override func resignFirstResponder() -> Bool {
+		needsDisplay = true
+		return super.resignFirstResponder()
 	}
 
 	override func keyDown(with event: NSEvent) {
@@ -595,485 +949,62 @@ final class DiffView: NSView {
 		super.keyDown(with: event)
 	}
 
-	override func menu(for event: NSEvent) -> NSMenu? {
-		// A commit's diff has nothing to stage or throw away; it has already
-		// happened, and offering to undo part of it here would be a lie. A pull
-		// request's has nothing to stage either — it is somebody else's branch —
-		// but it does have somewhere to leave a remark.
-		guard !isReadOnly else { return commentMenu(for: event) }
+	// MARK: - Copying
 
-		// Right-clicking outside the selection moves it there first, so the
-		// command acts on what was aimed at.
-		if let row = row(at: convert(event.locationInWindow, from: nil)) {
-			if case let .hunkHeader(hunkIndex, _) = rows[row] {
-				selectHunk(hunkIndex)
-			} else if let index = lineIndex(atRow: row), !selection.contains(index) {
-				selection = [index]
-				anchorRow = row
-				needsDisplay = true
-			}
-		}
-		guard hasSelection else { return nil }
+	/// What ⌘C would put on the clipboard, and nothing at all where nothing is
+	/// selected.
+	///
+	/// **Reads `rows`, not the layout.** No line is measured and nothing
+	/// off-screen is laid out, so ⌘A then ⌘C over a five-thousand-row diff costs
+	/// a string join — which is why the text comes from `GitPatch` by way of
+	/// `text(ofRow:in:)` rather than from anything the drawing built.
+	var copiedText: String? {
+		if let copied = textRun.copiedText { return copied }
 
-		let menu = NSMenu()
-		menu.autoenablesItems = false
-
-		let count = selection.count
-		let suffix = count == 1 ? "" : " (\(count))"
-		// **Only what this view has somewhere to send.** These items used to be
-		// added whatever the view had been told, and a diff whose owner had not
-		// wired them up offered "Stage Selected Lines", enabled, over a closure
-		// nobody had set — which is what the commit page did: fifteen lines
-		// selected, the item pressed, and the working copy exactly as it was.
-		// A missing item is a thing somebody can see; a dead one is not.
-		if onApplySelection != nil {
-			let apply = NSMenuItem(
-				title: (isStaged ? "Unstage Selected Lines" : "Stage Selected Lines") + suffix,
-				action: #selector(applySelection),
-				keyEquivalent: ""
-			)
-			apply.target = self
-			menu.addItem(apply)
-		}
-
-		if !isStaged, onStashSelection != nil {
-			if !menu.items.isEmpty { menu.addItem(.separator()) }
-			let stash = NSMenuItem(
-				title: "Stash Selected Lines" + suffix,
-				action: #selector(stashSelection),
-				keyEquivalent: ""
-			)
-			stash.target = self
-			menu.addItem(stash)
-		}
-
-		if !isStaged, onDiscardSelection != nil {
-			if !menu.items.isEmpty { menu.addItem(.separator()) }
-			let discard = NSMenuItem(
-				title: "Discard Selected Lines" + suffix,
-				action: #selector(discardSelection),
-				keyEquivalent: ""
-			)
-			discard.target = self
-			menu.addItem(discard)
-		}
-		return menu.items.isEmpty ? nil : menu
-	}
-
-	/// What a read-only diff offers: a remark on the lines under the pointer,
-	/// and the verbs for a remark already written here.
-	private func commentMenu(for event: NSEvent) -> NSMenu? {
-		guard onCommentOnLines != nil else { return nil }
-		guard let row = row(at: convert(event.locationInWindow, from: nil)) else { return nil }
-
-		// Over a remark: the two things that can be done to one written here.
-		// Somebody else's is theirs, and this offers nothing over it rather
-		// than something that would fail.
-		if let (comment, block) = comment(atRow: row) {
-			selectedComment = (comment, block)
-			needsDisplay = true
-			guard comment.isPending else { return nil }
-			let menu = NSMenu()
-			for (title, action) in [
-				("Edit Comment…", #selector(editComment)),
-				("Delete Comment", #selector(deleteComment)),
-			] {
-				let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-				item.target = self
-				menu.addItem(item)
-			}
-			return menu
-		}
-
-		// Whichever arrangement is drawn: a row is commentable when it has a
-		// line on the new side, which is the only side a forge can anchor to.
-		guard let index = lineIndex(atRow: row), newNumber(atRow: row) != nil else { return nil }
-
-		// **Right-clicking outside the selection moves it there first**, so the
-		// remark is about what was aimed at — the same rule the staging menu
-		// keeps one function up.
-		if !selection.contains(index) {
-			selection = [index]
-			anchorRow = row
-			selectedComment = nil
-			needsDisplay = true
-		}
-
-		let lines = selectedNewLines
-		guard let from = lines.min(), let to = lines.max() else { return nil }
-		commentRange = (from, to)
-
-		let menu = NSMenu()
-		let item = NSMenuItem(
-			title: from == to ? "Comment on Line \(from)…" : "Comment on Lines \(from)–\(to)…",
-			action: #selector(commentOnLines),
-			keyEquivalent: ""
-		)
-		item.target = self
-		menu.addItem(item)
-		return menu
-	}
-
-	/// Which lines the menu was opened over.
-	private var commentRange: (from: Int, to: Int)?
-
-	@objc private func commentOnLines() {
-		guard let commentRange else { return }
-		onCommentOnLines?(commentRange.from, commentRange.to)
-	}
-
-	@objc private func editComment() {
-		guard let comment = selectedComment?.comment else { return }
-		onEditComment?(comment)
-	}
-
-	@objc private func deleteComment() {
-		guard let comment = selectedComment?.comment else { return }
-		onDeleteComment?(comment)
-	}
-
-	/// Leaves a remark on a run of lines, for a driven run that has no pointer.
-	func commentOnLinesForTesting(from: Int, to: Int) -> Bool {
-		let available = Set(commentableLinesForTesting())
-		guard available.contains(from), available.contains(to) else { return false }
-		onCommentOnLines?(from, to)
-		return true
-	}
-
-	/// Selects a run of lines the way a drag does, so a run can then ask the
-	/// menu what it would offer.
-	func selectLinesForTesting(from: Int, to: Int) {
-		selection = []
-		for row in rows {
-			let place: (index: Int, number: Int)?
+		// **A run of lines selected and nothing selected as text is copied as
+		// those lines.** A selection that is visibly on the screen and copies
+		// nothing is the complaint this answers, and which of the two selections
+		// it is does not matter.
+		guard !selection.isEmpty else { return nil }
+		let lines = rows.compactMap { row -> String? in
 			switch row {
-			case let .line(index, _, _, new): place = new.map { (index, $0) }
-			case let .pair(_, right):         place = right.map { ($0.index, $0.number) }
-			default:                          place = nil
+			case let .line(index, line, _, _):
+				return selection.contains(index) ? line.text : nil
+			case let .pair(left, right):
+				if let right, selection.contains(right.index) { return right.line.text }
+				if let left, selection.contains(left.index) { return left.line.text }
+				return nil
+			default:
+				return nil
 			}
-			guard let place, place.number >= from, place.number <= to else { continue }
-			selection.insert(place.index)
 		}
-		selectedComment = nil
-		needsDisplay = true
+		return lines.isEmpty ? nil : lines.joined(separator: "\n")
 	}
 
-	/// What the menu over a selection would offer, and whether pressing it
-	/// would reach anything.
+	/// ⌘C, and *Copy* wherever it is pressed from.
 	///
-	/// **The second half is the claim.** The menu is built here for any diff
-	/// that is not read-only, so its items appear whether or not the view has
-	/// been told what to do with them — which is how the commit page came to
-	/// offer "Stage Selected Lines" over its own diff and do nothing at all
-	/// when it was pressed.
-	func verbsForTesting() -> String {
-		"readOnly=\(isReadOnly)"
-			+ " apply=\(onApplySelection == nil ? "none" : "wired")"
-			+ " discard=\(onDiscardSelection == nil ? "none" : "wired")"
-			+ " stash=\(onStashSelection == nil ? "none" : "wired")"
+	/// The Edit menu's *Copy* is `NSText.copy(_:)` with no target, so it walks
+	/// the responder chain and arrives here: this is the whole of the keyboard
+	/// plumbing.
+	@objc func copy(_ sender: Any?) {
+		guard let copiedText else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(copiedText, forType: .string)
 	}
 
-	/// Selects the first `count` lines that can be staged and applies them, the
-	/// way the menu item does.
-	func applyFirstLinesForTesting(_ count: Int) -> String {
-		let selectable = patch.selectableIndices().prefix(count)
-		guard !selectable.isEmpty else { return "nothing selectable" }
-		selection = Set(selectable)
-		needsDisplay = true
-		guard onApplySelection != nil else { return "\(selectable.count) selected, nothing wired" }
-		onApplySelection?(selection)
-		return "\(selectable.count) selected, applied"
-	}
 
-	/// The remark the selection is on, if it is on one.
-	func selectedCommentForTesting() -> String? {
-		guard let comment = selectedComment?.comment else { return nil }
-		return "\(comment.author) · \(comment.place)"
-			+ (comment.isPending ? " · not sent" : "")
-	}
+}
 
-	/// Selects a remark the way a click does, by the line it is on.
-	@discardableResult
-	func selectCommentForTesting(onLine line: Int) -> Bool {
-		for (position, row) in rows.enumerated() {
-			guard case let .comment(comment, _, isFirst) = row, isFirst, comment.line == line,
-			      let block = commentBlock(startingAt: position)
-			else { continue }
-			selectedComment = (comment, block)
-			selection = []
-			needsDisplay = true
-			return true
-		}
-		return false
-	}
-
-	/// The line numbers a remark could be left on, so a run can name one.
-	func commentableLinesForTesting() -> [Int] {
-		rows.compactMap {
-			switch $0 {
-			case let .line(_, _, _, new): return new
-			case let .pair(_, right):     return right?.number
-			default:                      return nil
-			}
-		}
-	}
-
-	@objc private func applySelection() { onApplySelection?(selection) }
-	@objc private func discardSelection() { onDiscardSelection?(selection) }
-	@objc private func stashSelection() { onStashSelection?(selection) }
-
-	// MARK: - Drawing
-
-	override var intrinsicContentSize: NSSize {
-		NSSize(
-			width: NSView.noIntrinsicMetric,
-			height: max(CGFloat(rows.count) * lineHeight + Theme.current.scaled(16), 10)
-		)
-	}
-
-	override func draw(_ dirtyRect: NSRect) {
-		Theme.current.editorBackground.setFill()
-		dirtyRect.fill()
-
-		let top = Theme.current.scaled(8)
-		// Only the rows in view are laid out, which is what keeps a huge diff
-		// as cheap to scroll as a small one.
-		let first = max(0, Int((dirtyRect.minY - top) / lineHeight))
-		let last = min(rows.count, Int((dirtyRect.maxY - top) / lineHeight) + 1)
-		guard last > first else { return }
-
-		for position in first..<last {
-			draw(row: rows[position], at: top + CGFloat(position) * lineHeight)
-		}
-	}
-
-	private func draw(row: Row, at y: CGFloat) {
-		let textX = Self.horizontalInset + Self.gutterWidth + numberWidth * 2
-
-		switch row {
-		case .header(let text):
-			guard !text.isEmpty else { return }
-			text.draw(at: NSPoint(x: textX, y: y), font: font, color: Theme.current.gitIgnored)
-
-		case let .comment(comment, text, isFirst):
-			// A tint of its own down the whole row, so a conversation reads as
-			// something other than code at a glance.
-			Theme.current.gitModified.withAlphaComponent(comment.isOutdated ? 0.05 : 0.10).setFill()
-			NSRect(x: 0, y: y, width: bounds.width, height: lineHeight).fill()
-
-			if selectedComment?.comment == comment {
-				Theme.current.gitModified.withAlphaComponent(0.20).setFill()
-				NSRect(x: 0, y: y, width: bounds.width, height: lineHeight).fill()
-				Theme.current.gitModified.setFill()
-				NSRect(x: 0, y: y, width: Theme.current.scaled(3), height: lineHeight).fill()
-			}
-			let colour = comment.isOutdated
-				? Theme.current.gitIgnored
-				: (isFirst ? Theme.current.gitModified : Theme.current.sidebarText)
-			// ✍️ for one being written here, 💬 for one that has been said.
-			let marked = isFirst ? (comment.isPending ? "✍️ " : "💬 ") + text : "   " + text
-			marked.draw(
-				at: NSPoint(x: textX, y: y),
-				font: isFirst
-					? NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-					: font,
-				color: colour
-			)
-
-		case .scope(let text):
-			// A rule with the declaration on it, rather than four lines of
-			// preamble: the one thing git's `@@` line says that the pane around
-			// it does not.
-			Theme.current.gitIgnored.withAlphaComponent(0.12).setFill()
-			NSRect(
-				x: 0, y: y + lineHeight / 2, width: bounds.width, height: max(1, lineHeight * 0.06)
-			).fill()
-			guard !text.isEmpty else { return }
-			let attributes: [NSAttributedString.Key: Any] = [
-				.font: font,
-				.foregroundColor: Theme.current.gitIgnored,
-			]
-			let measured = (text as NSString).size(withAttributes: attributes)
-			// Sitting on the rule with the background cut out behind it, so it
-			// reads as a label on a separator and not as a line of the file.
-			let inset = Theme.current.scaled(6)
-			Theme.current.editorBackground.setFill()
-			NSRect(
-				x: textX - inset, y: y, width: measured.width + inset * 2, height: lineHeight
-			).fill()
-			text.draw(at: NSPoint(x: textX, y: y), font: font, color: Theme.current.gitIgnored)
-
-		case let .pair(left, right):
-			drawPair(left: left, right: right, at: y)
-
-		case .hunkHeader(_, let text):
-			NSColor.white.withAlphaComponent(0.05).setFill()
-			NSRect(x: 0, y: y, width: bounds.width, height: lineHeight).fill()
-			text.draw(
-				at: NSPoint(x: textX, y: y),
-				font: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
-				color: Theme.current.gitModified
-			)
-
-		case .line(let index, let line, let old, let new):
-			let isSelected = selection.contains(index)
-
-			if let background = background(for: line.kind) {
-				background.setFill()
-				NSRect(x: 0, y: y, width: bounds.width, height: lineHeight).fill()
-			}
-
-			if isSelected {
-				// A tint over the whole row plus a bar in the gutter: the tint
-				// alone is hard to see against a row that already has one.
-				Theme.current.gitModified.withAlphaComponent(0.20).setFill()
-				NSRect(x: 0, y: y, width: bounds.width, height: lineHeight).fill()
-				Theme.current.gitModified.setFill()
-				NSRect(x: 0, y: y, width: Theme.current.scaled(3), height: lineHeight).fill()
-			}
-
-			// The two numbers, right-aligned in their own columns and dimmer
-			// than the code: they are there to be read off when you want one,
-			// not to be read past on every line.
-			let numbers = Theme.current.gitIgnored.withAlphaComponent(0.7)
-			let numberFont = font
-			func column(_ value: Int?, at x: CGFloat) {
-				guard let value else { return }
-				let text = "\(value)" as NSString
-				let width = text.size(withAttributes: [.font: numberFont]).width
-				text.draw(
-					at: NSPoint(x: x + numberWidth - width - Theme.current.scaled(4), y: y),
-					withAttributes: [.font: numberFont, .foregroundColor: numbers]
-				)
-			}
-			let numbersX = Self.horizontalInset + Self.gutterWidth
-			column(old, at: numbersX)
-			column(new, at: numbersX + numberWidth)
-
-			guard !line.marker.isEmpty || !line.text.isEmpty else { return }
-
-			// The marker keeps the diff's own colour — it is what the line does,
-			// not what it says — and the text is coloured as code. Which side a
-			// line is on is carried by the tint behind it, the way it is in a
-			// review: reading a diff is reading code, and code that is all one
-			// colour is the thing syntax highlighting exists to fix.
-			line.marker.draw(at: NSPoint(x: textX, y: y), font: font, color: color(for: line.kind))
-			let markerWidth = line.marker.size(withAttributes: [.font: font]).width
-			drawText(line, index: index, at: NSPoint(x: textX + markerWidth, y: y))
-		}
-	}
-
-	/// Draws one row of a side-by-side diff: the old file on the left, the new
-	/// on the right, and a rule between them.
+extension DiffView: NSMenuItemValidation {
+	/// The Edit menu's *Copy* is enabled when this diff has the keyboard and
+	/// something in it is selected, and disabled when nothing is.
 	///
-	/// Each half is clipped to its own column, so a long line runs to the middle
-	/// and stops rather than across the other side of the file.
-	private func drawPair(left: Side?, right: Side?, at y: CGFloat) {
-		let middle = (bounds.width / 2).rounded()
-
-		func half(_ side: Side?, in column: NSRect) {
-			if let side, let background = background(for: side.line.kind) {
-				background.setFill()
-				column.fill()
-			} else if side == nil {
-				// Nothing on this side of the row: a shade rather than the
-				// editor's background, so a deletion with no replacement reads
-				// as an absence rather than as a blank line of the file.
-				Theme.current.gitIgnored.withAlphaComponent(0.06).setFill()
-				column.fill()
-			}
-			guard let side else { return }
-
-			if selection.contains(side.index) {
-				Theme.current.gitModified.withAlphaComponent(0.20).setFill()
-				column.fill()
-				Theme.current.gitModified.setFill()
-				NSRect(
-					x: column.minX, y: y, width: Theme.current.scaled(3), height: lineHeight
-				).fill()
-			}
-
-			let numbers = Theme.current.gitIgnored.withAlphaComponent(0.7)
-			let number = "\(side.number)" as NSString
-			let width = number.size(withAttributes: [.font: font]).width
-			let numberX = column.minX + Self.gutterWidth + numberWidth - width - Theme.current.scaled(4)
-			number.draw(
-				at: NSPoint(x: numberX, y: y),
-				withAttributes: [.font: font, .foregroundColor: numbers]
-			)
-
-			let start = column.minX + Self.gutterWidth + numberWidth + Theme.current.scaled(6)
-			NSGraphicsContext.saveGraphicsState()
-			NSRect(
-				x: start, y: y, width: max(0, column.maxX - start), height: lineHeight
-			).clip()
-			// The marker is dropped: which side a line is on is what the column
-			// says, and a `+` down the left of every line of the right-hand file
-			// is a column of punctuation.
-			drawText(side.line, index: side.index, at: NSPoint(x: start, y: y))
-			NSGraphicsContext.restoreGraphicsState()
-		}
-
-		half(left, in: NSRect(x: 0, y: y, width: middle - 1, height: lineHeight))
-		half(
-			right,
-			in: NSRect(x: middle + 1, y: y, width: bounds.width - middle - 1, height: lineHeight)
-		)
-
-		Theme.current.gitIgnored.withAlphaComponent(0.25).setFill()
-		NSRect(x: middle, y: y, width: 1, height: lineHeight).fill()
-	}
-
-	/// Draws a line's text, in syntax colours where there are any.
-	private func drawText(_ line: GitPatch.Line, index: Int, at origin: NSPoint) {
-		guard !line.text.isEmpty else { return }
-		let fallback = color(for: line.kind)
-
-		guard let tokens = highlights[index], !tokens.isEmpty else {
-			line.text.draw(at: origin, font: font, color: fallback)
-			return
-		}
-
-		let attributed = NSMutableAttributedString(string: line.text, attributes: [
-			.font: font,
-			.foregroundColor: fallback,
-		])
-		for token in tokens {
-			let lower = max(0, token.range.lowerBound)
-			let upper = min(attributed.length, token.range.upperBound)
-			guard upper > lower else { continue }
-			attributed.addAttribute(
-				.foregroundColor,
-				value: Theme.current.color(for: token.kind),
-				range: NSRange(location: lower, length: upper - lower)
-			)
-		}
-		attributed.draw(at: origin)
-	}
-
-	private func background(for kind: GitPatch.Line.Kind) -> NSColor? {
-		switch kind {
-		case .added:   return Theme.current.gitAdded.withAlphaComponent(0.13)
-		case .removed: return Theme.current.gitUnversioned.withAlphaComponent(0.13)
-		default:       return nil
-		}
-	}
-
-	private func color(for kind: GitPatch.Line.Kind) -> NSColor {
-		switch kind {
-		case .added:     return Theme.current.gitAdded
-		case .removed:   return Theme.current.gitUnversioned
-		case .noNewline: return Theme.current.gitIgnored
-		case .context:   return Theme.current.sidebarText
-		}
+	/// **Only when it is the first responder**, because a pull request page is a
+	/// file list beside a diff and each has its own keyboard: ⌘C in the list
+	/// still copies what the list copies.
+	func validateMenuItem(_ item: NSMenuItem) -> Bool {
+		guard item.action == #selector(copy(_:)) else { return true }
+		return hasKeyboard && copiedText != nil
 	}
 }
 
-private extension String {
-	func draw(at point: NSPoint, font: NSFont, color: NSColor) {
-		NSAttributedString(string: self, attributes: [
-			.font: font,
-			.foregroundColor: color,
-		]).draw(at: point)
-	}
-}

@@ -706,6 +706,47 @@ final class PullRequestPage: NSView {
 		return diffView.selectedCommentForTesting() ?? "nothing selected"
 	}
 
+	/// Selects a run of the diff's text the way a drag does: row and offset to
+	/// row and offset — see `DiffView.selectTextForTesting`.
+	func selectTextForTesting(
+		fromRow: Int, offset from: Int, toRow: Int, offset to: Int, onLeft: Bool = false
+	) -> String {
+		diffView.selectTextForTesting(
+			fromRow: fromRow, offset: from, toRow: toRow, offset: to, onLeft: onLeft
+		)
+	}
+
+	/// A double-click, a triple-click and ⌘A over the diff.
+	func selectWordForTesting(row: Int, offset: Int) -> String {
+		diffView.selectWordForTesting(row: row, offset: offset)
+	}
+
+	func selectRowTextForTesting(row: Int) -> String {
+		diffView.selectRowTextForTesting(row: row)
+	}
+
+	func selectAllTextForTesting() -> String { diffView.selectAllTextForTesting() }
+
+	/// What ⌘C would copy, and — only where a step asks for it by name — what
+	/// pressing it puts on the clipboard.
+	func copiedTextForTesting() -> String { diffView.copiedTextForTesting() }
+
+	func copyTextForTesting() -> String { diffView.copyToPasteboardForTesting() }
+
+	/// Every row of the diff, numbered, as a `text:` step names them.
+	func diffRowsForTesting() -> String { diffView.rowTextsForTesting() }
+
+	/// What the menu over the diff holds, in order, and what it says a point is
+	/// over.
+	func diffMenuForTesting() -> String { diffView.menuTitlesForTesting() }
+
+	func diffRegionsForTesting(row: Int) -> String { diffView.regionsForTesting(row: row) }
+
+	/// How many of the diff's rows have been measured for a selection.
+	func measuredRowsForTesting() -> String {
+		"\(diffView.measuredRowsForTesting) rows measured"
+	}
+
 	/// Whether the diff on screen has that line to comment on at all.
 	func canCommentForTesting(line: Int) -> Bool {
 		diffView.commentableLinesForTesting().contains(line)
