@@ -487,6 +487,14 @@ final class SettingsPaneController: NSViewController {
 				set: { Settings.shared.tabWidth = $0 }
 			),
 			.toggle(
+				title: "Conceal secrets",
+				help: "Covers the values in .env and .dec files until the lock in the "
+					+ "status bar reveals them — a shared screen does not announce "
+					+ "itself first.",
+				get: { Settings.shared.concealsSecrets },
+				set: { Settings.shared.concealsSecrets = $0 }
+			),
+			.toggle(
 				title: "Show problems beside the line",
 				help: "The message is written after the code, dimmed. Off, only the "
 					+ "squiggle and the tooltip say what is wrong.",

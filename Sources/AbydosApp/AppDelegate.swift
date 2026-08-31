@@ -604,6 +604,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// After the size and before the pan, for the same reason the pan is last:
 		// each of the three depends on the one above it.
+		if let steps = options.secretsSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.editorForTesting.secretsForTesting(steps)
+			}
+		}
+
 		if options.videoReport {
 			// After the player has had a moment to load the asset: duration is
 			// part of the report, and an unloaded item has none.
@@ -3399,6 +3405,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		presentation.keyEquivalentModifierMask = [.command, .control]
 		viewMenu.addItem(presentation)
 		viewMenu.addItem(.separator())
+		let revealItem = NSMenuItem(
+			title: "Reveal Secrets",
+			action: #selector(MainWindowController.toggleRevealSecrets(_:)),
+			keyEquivalent: ""
+		)
+		viewMenu.addItem(revealItem)
+
 		let blameItem = NSMenuItem(
 			title: "Toggle Blame",
 			action: #selector(MainWindowController.toggleBlame(_:)),

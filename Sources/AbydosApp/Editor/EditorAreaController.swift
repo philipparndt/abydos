@@ -98,6 +98,7 @@ final class EditorAreaController: NSViewController {
 			subview.translatesAutoresizingMaskIntoConstraints = false
 		}
 
+		statusBar.onSecretsToggled = { [weak self] in self?.toggleRevealSecrets() }
 		statusBar.onLanguageChosen = { [weak self] languageId in
 			self?.activeGroup?.setActiveLanguage(languageId)
 		}
@@ -133,6 +134,8 @@ final class EditorAreaController: NSViewController {
 		statusBar.setPosition(line: group.statusLine, column: group.statusColumn)
 		statusBar.setLanguage(group.statusLanguage)
 		statusBar.setServer(group.statusServer)
+		let secrets = group.secretsState
+		statusBar.setSecrets(concealing: secrets.conceals, revealed: secrets.revealed)
 	}
 
 	// MARK: - Groups
@@ -905,6 +908,14 @@ final class EditorAreaController: NSViewController {
 	func expandAllFolds() { activeGroup.expandAllFolds() }
 	func toggleWordWrap() { for group in groups { group.toggleWordWrap() } }
 	func toggleBlame() { activeGroup.toggleBlame() }
+	func toggleRevealSecrets() {
+		activeGroup.toggleRevealSecrets()
+		// The lock has to turn the moment it is pressed, not at the next
+		// caret move.
+		refreshStatus(from: activeGroup)
+	}
+	var secretsState: (conceals: Bool, revealed: Bool) { activeGroup.secretsState }
+	func secretsForTesting(_ steps: String) { activeGroup.secretsForTesting(steps) }
 	func toggleMarkdownPreview() { activeGroup.toggleMarkdownPreview() }
 	func setPreviewMode(_ mode: PreviewMode) { activeGroup.setPreviewMode(mode) }
 	var currentPreviewMode: PreviewMode { activeGroup.currentPreviewMode }

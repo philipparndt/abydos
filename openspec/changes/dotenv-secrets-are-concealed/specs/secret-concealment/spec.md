@@ -7,7 +7,8 @@
 In a file whose name is dotenv-shaped — `.env`, `.env.*`, `*.env` — or a
 decrypted secret file — `*.dec` — the editor
 SHALL draw the value of every `KEY=VALUE` line under an opaque cover from the
-moment the file opens. Keys, comments, blank lines and lines without `=` are
+moment the file opens — a cover of one fixed width for every value, saying
+nothing about what it hides, its length included. Keys, comments, blank lines and lines without `=` are
 shown as they are. A shared screen cannot wait for a signal that sharing
 started: the file at risk is usually open before the call is.
 
@@ -36,9 +37,14 @@ started: the file at risk is usually open before the call is.
 
 ### Requirement: A value is shown only by an explicit action
 
-A cover SHALL be lifted only by an explicit action: a click on the cover
-reveals that one value, and View ▸ Reveal Secrets reveals the file until it is
-toggled back. The caret arriving on a line — by arrow key, by find, by a
+A cover SHALL be lifted only by the file-wide reveal — the lock on the left
+of the editor's status bar, labelled "Secrets hidden" while shut and
+"Secrets shown" while open, and View ▸ Reveal Secrets, the same act in two
+places — which lasts until toggled back. A click on a cover SHALL reveal
+nothing and say how to look instead: a click is exactly what a presenter
+does absentmindedly on the screen everybody is watching. The lock is absent
+for a file that conceals nothing, and the whole feature can be turned off in
+the editor settings, where it is on by default. The caret arriving on a line — by arrow key, by find, by a
 jump — SHALL NOT reveal anything. A click's reveal SHALL end when the caret
 leaves that line, so a revealed value cannot be forgotten open.
 
@@ -47,18 +53,24 @@ leaves that line, so a revealed value cannot be forgotten open.
 - **GIVEN** a covered file and the caret walked through every line
 - **THEN** every cover is still in place
 
-#### Scenario: a click reveals one value, and leaving conceals it
+#### Scenario: a click on a cover explains instead of revealing
 
 - **GIVEN** a click on one cover
-- **THEN** that value is readable
-- **WHEN** the caret moves to another line
-- **THEN** the cover is back
+- **THEN** every cover is still in place, and a notice says the secrets are
+  locked and where the lock is
 
 #### Scenario: the file-wide toggle is remembered until toggled back
 
-- **GIVEN** Reveal Secrets chosen from the View menu
-- **THEN** every value in that tab is readable, and stays readable until the
-  menu item is chosen again
+- **GIVEN** the status bar's lock pressed, or Reveal Secrets chosen from the
+  View menu
+- **THEN** every value in that tab is readable, the lock stands open saying
+  "Secrets shown", and it stays so until either handle is used again
+
+#### Scenario: the feature can be turned off
+
+- **GIVEN** "Conceal secrets" switched off in the editor settings
+- **THEN** open and newly opened dotenv files show their values plainly, and
+  the lock is absent
 
 ### Requirement: Editing a covered value stays covered
 
@@ -70,7 +82,8 @@ freshly pasted key must not appear.
 #### Scenario: pasting a new key under the cover
 
 - **GIVEN** the caret placed in a covered value by clicking the line's key
-  and arrowing past the `=`
+  and arrowing past the `=` — the click on the key moves the caret; only a
+  click on the cover itself is answered with the notice
 - **WHEN** a new value is pasted
 - **THEN** the document holds it and the screen never showed it
 

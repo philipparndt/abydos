@@ -594,6 +594,8 @@ struct LaunchOptions {
 	var imageZoom: String?
 	/// Print what the front tab's video player is doing.
 	var videoReport = false
+	/// Drive the secret covers: report, reveal, caret, toggle.
+	var secretsSteps: String?
 	/// Where the picture pane is scrolled to, as fractions of the picture:
 	/// `0,0` is its top left corner and `1,1` its bottom right.
 	///
@@ -1202,6 +1204,7 @@ struct LaunchOptions {
 			case "--image-fit":  options.imageFit = next()
 			case "--image-zoom": options.imageZoom = next()
 			case "--video-report": options.videoReport = true
+			case "--secrets":    options.secretsSteps = next()
 			case "--image-pan":  options.imagePan = next()
 			case "--probe-lan":  options.probeLAN = next()
 			case "--sidebar-cycle": options.sidebarCycle = true

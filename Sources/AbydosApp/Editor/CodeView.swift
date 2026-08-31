@@ -236,6 +236,105 @@ final class CodeView: NSView, NSTextInputClient {
 	/// document lines, as `GitChangedLines` reads them off the diff.
 	private var changedLines = GitChangedLines()
 
+	// MARK: - Secret covers
+
+	/// Whether this file's values are drawn under redaction covers — set at
+	/// open from the file's name, via `DotenvSecrets.conceals(fileNamed:)`.
+	private var concealsSecrets = false
+	/// The file-wide reveal, toggled from the View menu and lasting until
+	/// toggled back.
+	private(set) var secretsRevealedAll = false
+	/// A cover was clicked: the owner says how to unlock, this view stays out
+	/// of the messaging business.
+	var onCoveredSecretClicked: (() -> Void)?
+
+	func setConcealsSecrets(_ conceals: Bool) {
+		concealsSecrets = conceals
+		needsDisplay = true
+	}
+
+	var showsSecretCovers: Bool { concealsSecrets }
+
+	func setSecretsRevealed(_ revealed: Bool) {
+		secretsRevealedAll = revealed
+		needsDisplay = true
+	}
+
+	/// One word per line — covered, revealed, or plain — so a driven run can
+	/// claim what an arrow-walk did and did not lift without reading pixels.
+	func secretsReportForTesting() -> String {
+		guard let document else { return "no document" }
+		guard concealsSecrets else { return "not concealing" }
+		var lines: [String] = []
+		for docLine in 0..<min(document.lineCount, 40) {
+			let text = document.lineText(docLine)
+			guard DotenvSecrets.valueRange(inLine: text) != nil else {
+				lines.append("\(docLine + 1) plain")
+				continue
+			}
+			lines.append("\(docLine + 1) \(secretsRevealedAll ? "revealed" : "covered")")
+		}
+		return lines.joined(separator: "\n")
+	}
+
+	/// The caret placed on a line, the way an arrow-walk arrives — which must
+	/// reveal nothing, and a driven run proves it by doing exactly this.
+	func moveCaretForTesting(toLine docLine: Int) {
+		guard let document, docLine < document.lineCount else { return }
+		let offset = document.rope.utf16Offset(
+			fromByte: document.rope.byteOffset(ofLine: docLine)
+		)
+		setCaret(offset, extendingSelection: false)
+	}
+
+
+
+	/// The cover over one visual row: what is erased, and the pill drawn on it.
+	///
+	/// **The pill is one fixed width for every secret**, because a cover
+	/// fitted to its value says how long the value is — which for a key is
+	/// something. So the value's glyphs are erased from where the value starts
+	/// to the row's edge (a dotenv value is the rest of its line), in the
+	/// row's own background so the line simply appears to end, and the pill on
+	/// top is the same twelve columns whatever it hides. A wrapped line's
+	/// continuation rows are erased whole with no pill of their own.
+	private func secretCover(
+		docLine: Int, visualRow: Int
+	) -> (erase: NSRect, pill: NSRect?)? {
+		guard concealsSecrets, !secretsRevealedAll, let document,
+		      docLine < document.lineCount else { return nil }
+		let line = document.lineText(docLine)
+		guard let range = DotenvSecrets.valueRange(inLine: line) else { return nil }
+
+		let y = yPosition(forVisualLine: visualRow)
+		let row = NSRect(x: 0, y: y, width: 0, height: lineHeight)
+
+		if wrapSegment(forVisualRow: visualRow) > 0 {
+			return (
+				erase: NSRect(
+					x: textOriginX, y: row.minY,
+					width: max(0, bounds.width - textOriginX), height: row.height
+				),
+				pill: nil
+			)
+		}
+
+		let prefix = String(line[..<range.lowerBound])
+		let startX = textOriginX + NSAttributedString(
+			string: prefix, attributes: [.font: font]
+		).size().width
+		return (
+			erase: NSRect(
+				x: startX, y: row.minY,
+				width: max(0, bounds.width - startX), height: row.height
+			),
+			pill: NSRect(
+				x: startX, y: row.minY + 1,
+				width: charWidth * 12, height: row.height - 2
+			)
+		)
+	}
+
 	/// Who last touched each line, when blame is being shown.
 	///
 	/// One entry per line of the file as it was read; a file edited since is
@@ -768,6 +867,36 @@ final class CodeView: NSView, NSTextInputClient {
 				currentMatch: matches.current,
 				context: context
 			)
+		}
+
+		// **The redaction covers take the top of the paint order** — over the
+		// text, the selection and every match band, under the caret alone —
+		// which is the place the editor spec states for them: a redaction
+		// anything can be painted over is not one. A click's reveal lives
+		// exactly as long as the caret stays on that line; checked here rather
+		// than on every caret move, because this is where every caret move
+		// ends up.
+		if concealsSecrets, !secretsRevealedAll {
+			// Darker than the text it replaces, and one blend away from the
+			// theme rather than a fixed colour, so a light theme's redaction
+			// is a dark pill on paper and a dark theme's is a deeper shadow.
+			let pillColour = Theme.current.gutterText
+				.blended(withFraction: 0.55, of: .black) ?? Theme.current.gutterText
+			for visual in rows {
+				let docLine = documentLine(forVisualRow: visual)
+				guard docLine < document.lineCount else { break }
+				guard let cover = secretCover(docLine: docLine, visualRow: visual) else { continue }
+				// Erased in the row's own background, so the line appears to
+				// end where the value began — the caret's line keeps its band.
+				(docLine == caretLine
+					? Theme.current.currentLineBackground
+					: Theme.current.editorBackground).setFill()
+				cover.erase.fill()
+				if let pill = cover.pill {
+					pillColour.setFill()
+					NSBezierPath(roundedRect: pill, xRadius: 3, yRadius: 3).fill()
+				}
+			}
 		}
 		context.restoreGState()
 
@@ -2513,6 +2642,19 @@ final class CodeView: NSView, NSTextInputClient {
 		if point.x < scrollX + gutterWidth {
 			handleGutterClick(at: point)
 			return
+		}
+
+		// A click on a cover reveals nothing — a click is exactly what a
+		// presenter does absentmindedly on the screen everybody is watching.
+		// It says how to look instead: the lock in the status bar, which is a
+		// deliberate act with a state everybody can see.
+		if concealsSecrets, !secretsRevealedAll {
+			let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
+			let docLine = documentLine(forVisualRow: visual)
+			if let cover = secretCover(docLine: docLine, visualRow: visual),
+			   cover.erase.contains(point) {
+				onCoveredSecretClicked?()
+			}
 		}
 
 		desiredColumnX = nil

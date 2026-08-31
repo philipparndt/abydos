@@ -811,6 +811,12 @@ extension MainWindowController {
 		editor.toggleBlame()
 	}
 
+	/// The explicit action the covers wait for, file-wide: enabled only for a
+	/// tab that conceals, ticked while it is revealed.
+	@objc func toggleRevealSecrets(_ sender: Any?) {
+		editor.toggleRevealSecrets()
+	}
+
 	@objc func toggleWordWrap(_ sender: Any?) {
 		editor.toggleWordWrap()
 	}

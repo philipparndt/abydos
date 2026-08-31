@@ -48,17 +48,37 @@ stays visible. The editor spec's paint-order requirement is modified to say
 so; that requirement exists precisely so this decision is written down rather
 than layered where it was convenient.
 
-### Reveal is explicit, twice over, and undone by leaving
+### The cover is one width, and the rest of the line is erased
 
-Per the request's refinement: nothing reveals on caret arrival. A click on a
-cover reveals that one value, and the reveal lasts while the caret stays on
-that line — leaving the line conceals it again, so a revealed value cannot be
-forgotten open. View ▸ Reveal Secrets toggles the whole file and says so in
-the menu state; it lasts until toggled back, because somebody actively editing
-a dotenv file off-call asked for exactly that. Ruled out: caret-auto-reveal —
-an arrow-key stroll through the file would strip every cover mid-call. Ruled
-out: a timed reveal — a timer taking a value off screen mid-read teaches
-people to screenshot it instead.
+A cover fitted to its value says how long the value is, and a stepped one
+still says it coarsely — reviewed and rejected. Since a dotenv value is the
+rest of its line, everything from the value's start to the row's edge is
+erased in the row's own background, so the line simply appears to end, and
+one fixed twelve-column pill is drawn where the value began. The pill is a
+shade darker than the theme's quiet text — blended toward black rather than
+fixed, so a light theme's redaction is a dark pill on paper.
+
+### The file-wide reveal lives where the eye already checks file facts
+
+A lock on the left of the editor's status bar — the bar that names the
+content type — shut while covered, open while revealed, absent for files
+that conceal nothing. Pressing it is View ▸ Reveal Secrets by another door:
+one state, two handles.
+
+### One reveal, file-wide, and a click explains instead
+
+Reviewed down from two reveals to one: the per-value click-reveal was built
+and then removed, because a click is exactly the gesture a presenter makes
+absentmindedly on the screen everybody is watching — the same argument that
+ruled out caret-auto-reveal (an arrow-key stroll stripping covers mid-call)
+and the timed reveal (a timer teaches people to screenshot). A click on a
+cover now answers with a notice naming the lock. The one reveal is the
+file-wide toggle, deliberately a two-step act with visible state: the lock in
+the status bar and View ▸ Reveal Secrets are the same switch with two
+handles, and it lasts until toggled back because somebody actively editing a
+dotenv file off-call asked for exactly that. The whole feature is a setting
+(on by default — the day it matters is the day nobody remembered to turn it
+on), applied to open tabs the moment it flips.
 
 ### Typing stays covered
 
@@ -80,10 +100,9 @@ that is where every testable decision lives, and this one is all edge cases.
 
 ## Risks / Trade-offs
 
-- [A wide value's cover says how long the secret is] → the cover is drawn at
-  a minimum width and rounded to a step, so length leaks only coarsely; the
-  alternative of fixed-width covers misleads the eye about where the line
-  ends while editing.
+- [A fixed-width cover misleads the eye about where the line ends while
+  editing under it] → the caret stays visible over the erased zone, and the
+  one-click reveal is the honest way to edit a value being looked at.
 - [Somebody's `.env` holds non-secrets (`NODE_ENV=production`)] → the cover
   costs one click to look under; the reverse mistake costs a key. Default-on
   with cheap reveal is the right asymmetry.

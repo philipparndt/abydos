@@ -492,6 +492,12 @@ final class EditorViewController: NSViewController {
 			name: .abydosRepositoryChanged,
 			object: nil
 		)
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(settingsChangedForSecrets),
+			name: .abydosSettingsChanged,
+			object: nil
+		)
 
 		placeholder = NSTextField(labelWithString: "Select a file to open")
 		placeholder.font = Theme.current.uiFont(13)
@@ -617,6 +623,22 @@ final class EditorViewController: NSViewController {
 			self?.textReplaced(in: tab, replacing: range, insertedLength: inserted)
 		}
 		refreshChangedLines(for: tab)
+		tab.codeView?.setConcealsSecrets(
+			Settings.shared.concealsSecrets
+				&& DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent)
+		)
+		tab.codeView?.onCoveredSecretClicked = {
+			// The message, not the value: a click is exactly what a presenter
+			// does absentmindedly on the screen everybody is watching.
+			Toast.post(
+				"Secrets are locked",
+				detail: "Press the lock in the status bar, or View ▸ Reveal Secrets, to show them.",
+				kind: .information
+			)
+		}
+		// Said upward at once: the status bar's lock is drawn from this flag,
+		// and the refresh that runs during the open reads it before this line.
+		onStatusChanged?(self)
 		tab.codeView?.onSetOtherBreakpointsEnabled = { [weak self, weak tab] line, enabled in
 			guard let tab else { return }
 			self?.onSetOtherBreakpointsEnabled?(tab.url, line + 1, enabled)
@@ -1504,6 +1526,22 @@ final class EditorViewController: NSViewController {
 			self?.textReplaced(in: tab, replacing: range, insertedLength: inserted)
 		}
 		refreshChangedLines(for: tab)
+		tab.codeView?.setConcealsSecrets(
+			Settings.shared.concealsSecrets
+				&& DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent)
+		)
+		tab.codeView?.onCoveredSecretClicked = {
+			// The message, not the value: a click is exactly what a presenter
+			// does absentmindedly on the screen everybody is watching.
+			Toast.post(
+				"Secrets are locked",
+				detail: "Press the lock in the status bar, or View ▸ Reveal Secrets, to show them.",
+				kind: .information
+			)
+		}
+		// Said upward at once: the status bar's lock is drawn from this flag,
+		// and the refresh that runs during the open reads it before this line.
+		onStatusChanged?(self)
 		codeView.onRunLine = { [weak self] line in
 			// Already 1-based: the gutter converts before reporting a run.
 			self?.onRunLine?(fileURL, line)
@@ -3818,6 +3856,42 @@ final class EditorViewController: NSViewController {
 	/// Per editor rather than for all of them: blame is something you turn on
 	/// to answer a question about one file, and a column of names beside every
 	/// other file afterwards is not what anybody asked for.
+	/// Drives the covers from outside: `report`, `caret:<line>` (as an
+	/// arrow-walk would arrive, which must lift nothing), `toggle` (the lock
+	/// and the View menu's file-wide reveal, which is the only reveal).
+	func secretsForTesting(_ steps: String) {
+		guard let codeView = activeTab?.codeView else {
+			print("SECRETS: no editor")
+			fflush(stdout)
+			return
+		}
+		for step in steps.split(separator: ",").map(String.init) {
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "report": print("SECRETS:\n\(codeView.secretsReportForTesting())")
+			case "caret":  codeView.moveCaretForTesting(toLine: (Int(argument) ?? 1) - 1)
+			case "toggle": toggleRevealSecrets()
+			default:       print("SECRETS: unknown step \(step)")
+			}
+		}
+		fflush(stdout)
+	}
+
+	/// Per tab, like blame: revealing one file's secrets says nothing about
+	/// the next file's. Only meaningful on a tab that conceals at all.
+	func toggleRevealSecrets() {
+		guard let codeView = activeTab?.codeView, codeView.showsSecretCovers else { return }
+		codeView.setSecretsRevealed(!codeView.secretsRevealedAll)
+		onStatusChanged?(self)
+	}
+
+	/// Whether the front tab conceals, and whether it is revealed — the menu
+	/// item's enabledness and its tick.
+	var secretsState: (conceals: Bool, revealed: Bool) {
+		guard let codeView = activeTab?.codeView else { return (false, false) }
+		return (codeView.showsSecretCovers, codeView.secretsRevealedAll)
+	}
+
 	func toggleBlame() {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		let url = tab.url
@@ -4335,6 +4409,19 @@ final class EditorViewController: NSViewController {
 	/// the only files anybody can see — rather than a diff per event.
 	private var marksRefresh: DispatchWorkItem?
 
+	/// The concealment setting reaches the tabs already open, not only the
+	/// next one: turning protection on must not require reopening the file it
+	/// is about.
+	@objc private func settingsChangedForSecrets(_ note: Notification) {
+		let wanted = Settings.shared.concealsSecrets
+		for tab in tabs {
+			tab.codeView?.setConcealsSecrets(
+				wanted && DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent)
+			)
+		}
+		onStatusChanged?(self)
+	}
+
 	@objc private func repositoryChangedForMarks(_ note: Notification) {
 		marksRefresh?.cancel()
 		let work = DispatchWorkItem { [weak self] in
@@ -4430,6 +4517,8 @@ enum FileInspector {
 final class EditorStatusView: NSView {
 	/// A language was chosen by hand; nil means "no highlighting".
 	var onLanguageChosen: ((String?) -> Void)?
+	/// The lock was pressed: show or hide every secret in the file.
+	var onSecretsToggled: (() -> Void)?
 
 	private var positionText = ""
 	private var languageText = ""
@@ -4449,6 +4538,12 @@ final class EditorStatusView: NSView {
 	private var serverDetail = ""
 	private var serverRect = NSRect.zero
 	private var isServerHovered = false
+	/// Whether the front tab conceals at all, and whether it stands revealed —
+	/// the lock's presence and which way it points.
+	private var secretsConcealing = false
+	private var secretsRevealed = false
+	private var lockRect = NSRect.zero
+	private var isLockHovered = false
 	/// The rectangle the tool tip is currently registered for, so it is put back
 	/// only when it has moved rather than on every redraw. Nil asks for it to be
 	/// registered again whatever the rectangle says.
@@ -4473,6 +4568,14 @@ final class EditorStatusView: NSView {
 	/// would be a footer people learn to stop reading — which would cost the
 	/// sentence it is here to say. The strip above the file is what talks about a
 	/// server that is missing; this only names one that exists.
+	func setSecrets(concealing: Bool, revealed: Bool) {
+		guard concealing != secretsConcealing || revealed != secretsRevealed else { return }
+		secretsConcealing = concealing
+		secretsRevealed = revealed
+		toolTipRect = nil
+		needsDisplay = true
+	}
+
 	func setServer(_ footer: LanguageServerFooter?) {
 		let text = footer?.text(containerMark: MainWindowController.containerMark) ?? ""
 		let detail = footer?.detail ?? ""
@@ -4501,21 +4604,29 @@ final class EditorStatusView: NSView {
 		let point = convert(event.locationInWindow, from: nil)
 		let language = languageRect.contains(point)
 		let server = !serverRect.isEmpty && serverRect.contains(point)
-		guard language != isLanguageHovered || server != isServerHovered else { return }
+		let lock = !lockRect.isEmpty && lockRect.contains(point)
+		guard language != isLanguageHovered || server != isServerHovered
+			|| lock != isLockHovered else { return }
 		isLanguageHovered = language
 		isServerHovered = server
+		isLockHovered = lock
 		needsDisplay = true
 	}
 
 	override func mouseExited(with event: NSEvent) {
-		guard isLanguageHovered || isServerHovered else { return }
+		guard isLanguageHovered || isServerHovered || isLockHovered else { return }
 		isLanguageHovered = false
 		isServerHovered = false
+		isLockHovered = false
 		needsDisplay = true
 	}
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+		if secretsConcealing, lockRect.contains(point) {
+			onSecretsToggled?()
+			return
+		}
 		if languageRect.contains(point) {
 			showLanguageMenu(at: NSPoint(x: languageRect.minX, y: languageRect.maxY))
 			return
@@ -4617,6 +4728,10 @@ final class EditorStatusView: NSView {
 		}
 
 		drawServer(leftOf: x, attributes: attributes)
+		// After the right-aligned chips, not inside `drawServer`: that one
+		// returns early for the many files with no server, and the lock is
+		// about the file's secrets, not its tooling.
+		drawLock()
 	}
 
 	/// The server chip, in the room the position and the language left.
@@ -4651,6 +4766,58 @@ final class EditorStatusView: NSView {
 		attributed.draw(in: NSRect(origin: origin, size: NSSize(width: width, height: size.height)))
 	}
 
+	/// The lock, on the left, where the eye already checks the file's facts:
+	/// shut while the file's secrets are covered, open while they stand
+	/// revealed, absent for a file that conceals nothing. Pressing it shows or
+	/// hides every secret in the file — the same act as View ▸ Reveal Secrets,
+	/// one click closer to where the covers are.
+	private func drawLock() {
+		guard secretsConcealing else {
+			lockRect = .zero
+			return
+		}
+		let height = Theme.current.scaled(12)
+		guard let symbol = Theme.symbol(
+			secretsRevealed ? "lock.open.fill" : "lock.fill",
+			size: 11 * Theme.current.scale,
+			color: secretsRevealed ? Theme.current.gitModified : Theme.current.gitIgnored
+		) else {
+			lockRect = .zero
+			return
+		}
+		// At the symbol's own aspect: the open lock is wider than tall, and a
+		// square rect squeezed it out of shape.
+		let aspect = symbol.size.height > 0 ? symbol.size.width / symbol.size.height : 1
+		let drawn = NSSize(width: height * aspect, height: height)
+		let origin = NSPoint(x: Theme.current.scaled(12), y: bounds.midY - drawn.height / 2)
+
+		// The word beside the symbol, because a lock alone could be about
+		// anything — the file, the git index, the window.
+		let label = NSAttributedString(
+			string: secretsRevealed ? "Secrets shown" : "Secrets hidden",
+			attributes: [
+				.font: Theme.current.uiFont(11),
+				.foregroundColor: secretsRevealed
+					? Theme.current.gitModified : Theme.current.gitIgnored,
+			]
+		)
+		let labelSize = label.size()
+		let labelOrigin = NSPoint(
+			x: origin.x + drawn.width + Theme.current.scaled(5),
+			y: bounds.midY - labelSize.height / 2
+		)
+		lockRect = chipRect(
+			around: origin,
+			size: NSSize(
+				width: drawn.width + Theme.current.scaled(5) + labelSize.width,
+				height: max(drawn.height, labelSize.height)
+			)
+		)
+		if isLockHovered { highlight(lockRect) }
+		symbol.drawFitted(in: NSRect(origin: origin, size: drawn))
+		label.draw(at: labelOrigin)
+	}
+
 	/// The hit area and hover background of a chip, around the text it holds.
 	private func chipRect(around origin: NSPoint, size: NSSize) -> NSRect {
 		let padding = Theme.current.scaled(5)
@@ -4675,12 +4842,37 @@ final class EditorStatusView: NSView {
 	/// Done here because here is where the rectangle is known — the caret's
 	/// position changes width, so the chip beside it moves — and guarded so that
 	/// a redraw for a caret that moved within the same line costs nothing.
+	private var lockToolTipTag: NSView.ToolTipTag?
+
 	private func refreshServerToolTip() {
 		guard serverRect != toolTipRect else { return }
 		toolTipRect = serverRect
 		removeAllToolTips()
+		lockToolTipTag = nil
+		// **The view is the owner, because `addToolTip` retains nothing.** A
+		// bridged NSString passed as owner is released as soon as this method
+		// returns, and the tooltip timer then asks a freed pointer whether it
+		// responds to stringForToolTip — which is a SIGSEGV in
+		// NSToolTipManager, seen in a crash report the first day the lock had
+		// a tooltip. The view outlives its own tooltips by construction, and
+		// answers below with text computed when the tip is shown.
+		if !lockRect.isEmpty {
+			lockToolTipTag = addToolTip(lockRect, owner: self, userData: nil)
+		}
 		guard !serverRect.isEmpty else { return }
-		addToolTip(serverRect, owner: serverDetail as NSString, userData: nil)
+		addToolTip(serverRect, owner: self, userData: nil)
+	}
+
+	@objc func view(
+		_ view: NSView, stringForToolTip tag: NSView.ToolTipTag,
+		point: NSPoint, userData data: UnsafeMutableRawPointer?
+	) -> String {
+		if tag == lockToolTipTag {
+			return secretsRevealed
+				? "Hide the file's secrets again"
+				: "Reveal all secrets in this file"
+		}
+		return serverDetail
 	}
 
 	// MARK: - Testing

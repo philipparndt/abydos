@@ -91,6 +91,9 @@ public final class Settings {
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
 			Key.fontLigatures: true,
+			// On, because the day it matters is the day nobody remembered to
+			// turn it on: a shared screen does not announce itself first.
+			Key.concealsSecrets: true,
 			Key.terminalGPURendering: true,
 			Key.terminalGhosttyEngine: false,
 			Key.terminalOptionAsMeta: false,
@@ -178,6 +181,7 @@ public final class Settings {
 		static let projectSearchPaths = "projectSearchPaths"
 		static let ignoredLanguageServers = "ignoredLanguageServers"
 		static let projectSearchDepth = "projectSearchDepth"
+		static let concealsSecrets = "concealsSecrets"
 		static let refsSortLocal = "refsSortLocal"
 		static let refsSortRemotes = "refsSortRemotes"
 		static let refsSortTags = "refsSortTags"
@@ -737,6 +741,12 @@ public final class Settings {
 	/// choosing nothing. The defaults differ on purpose: branches read by
 	/// name, tags by newness — the tag somebody just cut is the one they are
 	/// looking for.
+	/// Whether dotenv-shaped files draw their values under redaction covers.
+	public var concealsSecrets: Bool {
+		get { defaults.bool(forKey: Key.concealsSecrets) }
+		set { set(newValue, Key.concealsSecrets) }
+	}
+
 	public var refsSortLocal: RefsSortOrder {
 		get { refsSort(Key.refsSortLocal, default: .name) }
 		set { set(newValue.rawValue, Key.refsSortLocal) }
@@ -891,6 +901,7 @@ public final class Settings {
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.compactsPackages, Key.commitFilesByFolder,
+			Key.concealsSecrets,
 			Key.refsSortLocal, Key.refsSortRemotes, Key.refsSortTags,
 			Key.excludedDirectories,
 			Key.uiScale, Key.terminalFontName, Key.wordWrap, Key.fontLigatures,

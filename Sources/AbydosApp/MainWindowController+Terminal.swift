@@ -174,6 +174,16 @@ extension MainWindowController {
 			return false
 		}
 
+		if item.action == #selector(toggleRevealSecrets(_:)) {
+			// Enabled only where there are covers to lift, ticked while they
+			// are lifted: the item is the file-wide explicit action the
+			// covers wait for, and a tab with nothing concealed has nothing
+			// for it to mean.
+			let state = editor.secretsState
+			item.state = state.revealed ? .on : .off
+			return state.conceals
+		}
+
 		if item.action == #selector(choosePreviewMode(_:)) {
 			guard let state = previewModeState(),
 			      let raw = item.representedObject as? String,
