@@ -463,6 +463,9 @@ struct LaunchOptions {
 	/// machines. A screenshot for the documentation is worthless if its size is
 	/// whatever the last person left the window at.
 	var windowSize: CGSize?
+	/// How much wider to make the window, and when — for the claim that a
+	/// width-only resize leaves the panel's height alone.
+	var widenBy: (extra: Double, at: Double)?
 	/// How tall the bottom panel is, for the same reason: the split position is
 	/// remembered per machine, and one somebody dragged to the top of the
 	/// window hides everything a screenshot is meant to show.
@@ -1062,6 +1065,13 @@ struct LaunchOptions {
 			case "--make-debug": options.makeDebug = true
 			case "--save-config": options.saveGutterLine = next().flatMap(Int.init)
 			case "--window-width": options.windowWidth = next().flatMap(Double.init)
+			// `--widen 300@6`: at six seconds, make the window 300 points wider
+			// and report the panel's height either side.
+			case "--widen":
+				let spec = (next() ?? "").split(separator: "@")
+				if let extra = spec.first.flatMap({ Double($0) }) {
+					options.widenBy = (extra, spec.count > 1 ? Double(spec[1]) ?? 6 : 6)
+				}
 			case "--window-size":
 				// `1600x1000`, the way every other tool spells it.
 				let parts = (next() ?? "").split(separator: "x").compactMap { Double($0) }

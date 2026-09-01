@@ -505,7 +505,12 @@ extension MainWindowController {
 				guard let self else { return }
 				let total = self.verticalSplitView.bounds.height
 				guard total > 200 else { return }
-				self.verticalSplitView.setPosition(total - self.panelHeight, ofDividerAt: 0)
+				// Less the divider, or the panel comes back a point shorter
+				// than it went away — every time, which is a habit.
+				self.verticalSplitView.setPosition(
+					total - self.panelHeight - self.verticalSplitView.dividerThickness,
+					ofDividerAt: 0
+				)
 			}
 		} else {
 			if isPanelMaximized {

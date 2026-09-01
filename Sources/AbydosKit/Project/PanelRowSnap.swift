@@ -24,19 +24,34 @@ public enum PanelRowSnap {
 		/// How much of the terminal's height is not a whole row. Nil when the
 		/// pane in front is not a terminal, and so has no grid and no opinion.
 		public var remainder: CGFloat?
+		/// How thick the divider between them is.
+		///
+		/// **Not a detail.** `setPosition` leaves the second subview
+		/// `total - position - thickness` tall, so a position computed without
+		/// it hands the panel one point less than was asked for — and one point
+		/// less than whole rows is a remainder of nearly a whole row, which
+		/// this function then takes off again on the next pass. That is how
+		/// widening a window came to shorten the terminal: dozens of resize
+		/// notifications, a row lost to each.
+		///
+		/// Given rather than assumed: the app's split view decides its own
+		/// thickness and could stop being thin.
+		public var dividerThickness: CGFloat
 
 		public init(
 			isVisible: Bool,
 			isMaximized: Bool,
 			total: CGFloat,
 			panelHeight: CGFloat,
-			remainder: CGFloat?
+			remainder: CGFloat?,
+			dividerThickness: CGFloat = 0
 		) {
 			self.isVisible = isVisible
 			self.isMaximized = isMaximized
 			self.total = total
 			self.panelHeight = panelHeight
 			self.remainder = remainder
+			self.dividerThickness = dividerThickness
 		}
 	}
 
@@ -58,6 +73,8 @@ public enum PanelRowSnap {
 
 		let wanted = state.panelHeight - remainder
 		guard state.total > minimumSplitHeight, wanted >= minimumPanelHeight else { return nil }
-		return state.total - wanted
+		// The thickness, so that the panel is `wanted` tall rather than a point
+		// short of it: a point short is what made this run again, and again.
+		return state.total - wanted - state.dividerThickness
 	}
 }

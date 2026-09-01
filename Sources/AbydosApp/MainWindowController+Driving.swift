@@ -438,6 +438,39 @@ extension MainWindowController {
 	/// where somebody had dragged the terminal to the top of the window shows
 	/// the terminal and nothing else. Zero closes it, which is what a shot of
 	/// the editor alone wants.
+	/// Widens the window and says what the panel's height was either side.
+	///
+	/// **The whole claim in two numbers.** A width-only resize used to cost the
+	/// terminal about a row per resize notification, and a window dragged wider
+	/// posts them by the dozen — so the after-number was a floor rather than the
+	/// height somebody had set. Reported rather than photographed because two
+	/// screenshots of a panel are hard to measure and easy to argue with.
+	func widenForTesting(by extra: Double) {
+		guard let window else { return }
+		func said(_ phase: String) -> String {
+			"PANEL-HEIGHT \(phase): window=\(Int(window.frame.width))"
+				+ " panel=\(Int(bottomPanel.frame.height))"
+				+ " split=\(Int(verticalSplitView.bounds.height))"
+		}
+		print(said("before"))
+		fflush(stdout)
+
+		var frame = window.frame
+		frame.size.width += CGFloat(extra)
+		// Animated off, and in one step: this is the resize a drag performs
+		// many times over, and the point is what one of them costs.
+		window.setFrame(frame, display: true, animate: false)
+		window.layoutIfNeeded()
+
+		// A turn later, because the snap answers on the turn after the resize
+		// it is told about — reading now would read the number before the code
+		// under test had its say.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+			print(said("after"))
+			fflush(stdout)
+		}
+	}
+
 	func setPanelHeightForTesting(_ height: Double) {
 		guard height > 0 else {
 			setPanelVisible(false)
@@ -451,7 +484,12 @@ extension MainWindowController {
 			guard let self else { return }
 			let total = self.verticalSplitView.bounds.height
 			guard total > 200 else { return }
-			self.verticalSplitView.setPosition(total - CGFloat(height), ofDividerAt: 0)
+			// The divider's own point, as everywhere else: a harness that asks
+			// for 300 and gets 299 makes every capture a point out.
+			self.verticalSplitView.setPosition(
+				total - CGFloat(height) - self.verticalSplitView.dividerThickness,
+				ofDividerAt: 0
+			)
 			self.tellTerminalsTheySizeChanged()
 		}
 	}

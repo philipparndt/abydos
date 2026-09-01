@@ -402,6 +402,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// True while the panel is being rounded to whole rows, so the resize that
 	/// causes cannot ask for another one.
 	fileprivate var isSnappingPanel = false
+	/// The two heights the rounding last acted on, so that a resize which
+	/// changed neither can be ignored — a window dragged wider posts one resize
+	/// notification after another, and rounding on each of them is what
+	/// shortened the terminal.
+	fileprivate var lastSnappedHeights: (total: CGFloat, panel: CGFloat)?
 	var navigatorContainer: ColoredView!
 	/// Painted behind the toolbar, since the titlebar itself is transparent.
 	/// Everywhere the editor has been, and where in it we are.
@@ -907,6 +912,18 @@ extension MainWindowController: NSSplitViewDelegate {
 		// took the app out with a stack overflow before the remainder ever
 		// reached zero.
 		guard !isSnappingPanel else { return }
+
+		// **A width change is not a height change.** `NSSplitView` posts this
+		// for any frame change, width included, and a window dragged wider
+		// posts one after another. Each one used to round the panel down again,
+		// and each round lost a point to the divider — so the terminal shed
+		// about a row per notification until it hit its floor. That is the whole
+		// of the reported "widening the window shortens the terminal".
+		let heights = (total: verticalSplitView.bounds.height, panel: bottomPanel.frame.height)
+		if let last = lastSnappedHeights,
+		   abs(last.total - heights.total) < 0.5, abs(last.panel - heights.panel) < 0.5 {
+			return
+		}
 		guard PanelRowSnap.dividerPosition(for: panelSnapState) != nil else { return }
 
 		isSnappingPanel = true
@@ -929,6 +946,12 @@ extension MainWindowController: NSSplitViewDelegate {
 			// is an empty band above the tabs.
 			guard let position = PanelRowSnap.dividerPosition(for: self.panelSnapState) else { return }
 			self.verticalSplitView.setPosition(position, ofDividerAt: 0)
+			// What it settled at, so the next notification can tell a real
+			// height change from a drag along the other axis.
+			self.lastSnappedHeights = (
+				total: self.verticalSplitView.bounds.height,
+				panel: self.bottomPanel.frame.height
+			)
 		}
 	}
 
@@ -939,7 +962,8 @@ extension MainWindowController: NSSplitViewDelegate {
 			isMaximized: isPanelMaximized,
 			total: verticalSplitView.bounds.height,
 			panelHeight: bottomPanel.frame.height,
-			remainder: bottomPanel.terminalHeightRemainder
+			remainder: bottomPanel.terminalHeightRemainder,
+			dividerThickness: verticalSplitView.dividerThickness
 		)
 	}
 

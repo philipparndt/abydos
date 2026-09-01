@@ -512,7 +512,9 @@ extension MainWindowController {
 
 			let half = (total / 2).rounded(.down)
 			guard self.bottomPanel.frame.height > half else { return }
-			self.verticalSplitView.setPosition(total - half, ofDividerAt: 0)
+			self.verticalSplitView.setPosition(
+				total - half - self.verticalSplitView.dividerThickness, ofDividerAt: 0
+			)
 			self.tellTerminalsTheySizeChanged()
 		}
 	}
@@ -585,7 +587,11 @@ extension MainWindowController {
 			verticalSplitView.adjustSubviews()
 			let total = verticalSplitView.bounds.height
 			let restored = heightBeforeMaximize ?? panelHeight
-			if total > 200 { verticalSplitView.setPosition(total - restored, ofDividerAt: 0) }
+			if total > 200 {
+				verticalSplitView.setPosition(
+					total - restored - verticalSplitView.dividerThickness, ofDividerAt: 0
+				)
+			}
 			tellTerminalsTheySizeChanged()
 
 			// The sidebar comes back as it was left, whatever was looked at

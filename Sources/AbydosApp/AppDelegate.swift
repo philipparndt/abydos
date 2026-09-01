@@ -1404,6 +1404,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// A whole window of a stated size, centred on the screen it is on: two
 		// machines taking the same documentation screenshot should produce the
 		// same image, and the saved frame is per machine.
+		if let widen = options.widenBy {
+			DispatchQueue.main.asyncAfter(deadline: .now() + widen.at) {
+				controller?.widenForTesting(by: widen.extra)
+			}
+		}
+
 		if let size = options.windowSize {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				guard let window = controller?.window else { return }
