@@ -872,6 +872,15 @@ final class SettingsPaneController: NSViewController {
 	static func gitRows() -> [Row] {
 		[
 			.toggle(
+				title: "Draft conventional commit messages",
+				help: "The Draft button asks for a Conventional Commits subject — "
+					+ "feat(scope): …, fix:, refactor: and the rest — which is the format "
+					+ "changelog and release tooling reads. Off, it asks for a message in "
+					+ "this repository's own voice, seeded by its recent subjects.",
+				get: { Settings.shared.conventionalCommitDrafts },
+				set: { Settings.shared.conventionalCommitDrafts = $0 }
+			),
+			.toggle(
 				title: "Rebase when pulling",
 				help: "Your commits are replayed on top rather than merged, so the history stays "
 					+ "a line. A repository with pull.rebase in its own config overrules this and "

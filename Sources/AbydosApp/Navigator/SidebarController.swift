@@ -533,6 +533,20 @@ final class SidebarController: NSObject {
 			// log is read when the menu opens), so settle before reading.
 			case "history":
 				pane.messageHistoryForTesting()
+			// What the Draft button would ask for. `draft-ask:plain` asks with
+			// the setting off, so the two shapes can be read in one run.
+			case "draft-ask":
+				if argument == "plain" { Settings.shared.conventionalCommitDrafts = false }
+				pane.draftAskForTesting()
+			// Both halves of a message, and what is left of them: the two steps
+			// a switch-and-return proof needs. `compose:<summary>|<body>`.
+			case "compose":
+				let parts = argument.split(separator: "|", maxSplits: 1).map(String.init)
+				pane.composeForTesting(
+					summary: parts.first ?? "", body: parts.count > 1 ? parts[1] : ""
+				)
+			case "message":
+				print("CHANGES message: " + pane.messageReportForTesting())
 			case "use-history":
 				pane.useHistoryEntryForTesting(Int(argument) ?? 0)
 			// Ends the run, and is the one ending that flushes: a script with

@@ -152,4 +152,115 @@ struct ClaudeDraftTests {
 		#expect(draft.summary == "Release 0.4.0")
 		#expect(draft.description == "The notes.")
 	}
+
+	// MARK: - The format it asks for
+
+	/// Every type the request named, because a prompt that lists eight of the
+	/// ten leaves the model to guess at the other two.
+	@Test func theDefaultAsksForAConventionalCommit() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try write("staged change\n", "a.txt", in: root)
+		#expect(git(["add", "a.txt"], in: root) == 0)
+
+		guard let ask = await ClaudeDraft.ask(in: root) else {
+			Issue.record("something is staged")
+			return
+		}
+		#expect(ask.prompt.contains("Conventional Commit v1.0.0"))
+		#expect(ask.prompt.contains("<type>[optional scope][!]: <description>"))
+		for type in ConventionalCommit.types {
+			#expect(ask.prompt.contains(type), "the prompt names \(type)")
+		}
+		#expect(ask.prompt.contains("BREAKING CHANGE:"))
+	}
+
+	/// A setting that "mostly" restores the old behaviour would leave this
+	/// repository's own drafts subtly worse and nobody would know which change
+	/// did it — so: byte for byte.
+	@Test func turningItOffAsksExactlyWhatItAskedBefore() {
+		let diffs = ["diff --git a/a.txt b/a.txt\n+one\n"]
+		let subjects = ["A Java edit reaches the JVM that is already running"]
+		let plain = ClaudeDraft.prompt(
+			diffs: diffs, subjects: subjects, unread: [], conventional: false
+		)
+		#expect(plain == """
+		Write a git commit message for the staged change below.
+
+		Answer with the summary on the first line, then a blank line, then the \
+		description. No preamble, no code fences, no "Here is". If the change is \
+		small enough to need no description, answer with the summary alone.
+
+		Recent subjects from this repository, so the summary matches how it \
+		is written here:
+
+		- A Java edit reaches the JVM that is already running
+
+		The staged diff:
+
+		\(diffs[0])
+		""")
+	}
+
+	/// The subjects go either way; what changes is what they are said to be for.
+	@Test func theSubjectsAreVocabularyUnderAPrescribedFormat() {
+		let subjects = ["A Java edit reaches the JVM that is already running"]
+		let said = ClaudeDraft.prompt(
+			diffs: ["d"], subjects: subjects, unread: [], conventional: true
+		)
+		#expect(said.contains(subjects[0]))
+		#expect(said.contains("vocabulary"))
+		#expect(!said.contains("so the summary matches how it"))
+	}
+}
+
+/// Reading a Conventional Commits subject line. It reads and never writes:
+/// prepending a type to a summary that lacks one classifies somebody's change
+/// on their behalf.
+struct ConventionalCommitTests {
+	@Test func aTypeAndADescription() {
+		let read = ConventionalCommit.read("fix: the pane no longer forgets its scroll")
+		#expect(read?.type == "fix")
+		#expect(read?.scope == nil)
+		#expect(read?.isBreaking == false)
+		#expect(read?.description == "the pane no longer forgets its scroll")
+	}
+
+	@Test func aScopeIsTheNounInParentheses() {
+		let read = ConventionalCommit.read("feat(navigator): compare a file from its row")
+		#expect(read?.type == "feat")
+		#expect(read?.scope == "navigator")
+	}
+
+	@Test func theBangMarksABreakingChange() {
+		#expect(ConventionalCommit.read("refactor!: drop the old store")?.isBreaking == true)
+		#expect(ConventionalCommit.read("feat(api)!: rename the field")?.scope == "api")
+		#expect(ConventionalCommit.read("feat(api)!: rename the field")?.isBreaking == true)
+	}
+
+	/// All ten, because the eight beside feat and fix are the ones an
+	/// implementation forgets.
+	@Test func everyTypeReads() {
+		for type in ConventionalCommit.types {
+			#expect(ConventionalCommit.isConventional("\(type): something"), "\(type) reads")
+		}
+	}
+
+	/// The spec says the units are not case-sensitive, BREAKING CHANGE apart —
+	/// and that one lives in the body, not on this line.
+	@Test func caseDoesNotDecideTheType() {
+		#expect(ConventionalCommit.read("Fix: a thing")?.type == "fix")
+	}
+
+	@Test func aNarrativeSubjectIsNotConventional() {
+		#expect(!ConventionalCommit.isConventional(
+			"A file compares from its own row, and a scoped commit with now"
+		))
+		#expect(!ConventionalCommit.isConventional("wip: something"))
+		#expect(!ConventionalCommit.isConventional("fix:no space"))
+		#expect(!ConventionalCommit.isConventional("fix: "))
+		#expect(!ConventionalCommit.isConventional("fix(): empty scope"))
+		#expect(!ConventionalCommit.isConventional("no colon at all"))
+	}
 }

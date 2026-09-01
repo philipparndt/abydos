@@ -1624,7 +1624,9 @@ final class ChangesPane: NSView {
 		button.title = "Drafting…"
 
 		Task { @MainActor [weak self] in
-			let answer = await ClaudeDraft.draft(in: root)
+			let answer = await ClaudeDraft.draft(
+				in: root, conventional: Settings.shared.conventionalCommitDrafts
+			)
 			button.isEnabled = true
 			button.title = "Draft"
 
@@ -2037,6 +2039,27 @@ final class ChangesPane: NSView {
 	/// The history menu's entries, printed the way the menu would show them,
 	/// and asynchronously — the log is read when the menu opens, so the driver
 	/// settles before reading the answer.
+	/// What the draft would ask for, without a `claude` on the machine and
+	/// without sending anything: the format is the claim, and the prompt is
+	/// where it is either stated or not.
+	func draftAskForTesting() {
+		let conventional = Settings.shared.conventionalCommitDrafts
+		Task { @MainActor in
+			guard let ask = await ClaudeDraft.ask(in: self.root, conventional: conventional) else {
+				print("CHANGES draft-ask: nothing staged")
+				fflush(stdout)
+				return
+			}
+			// The diff is not printed: it is the half that is somebody's code,
+			// and the claim is about the words around it.
+			let words = ask.prompt.components(separatedBy: "The staged diff:").first ?? ""
+			print("CHANGES draft-ask conventional=\(conventional):\n"
+				+ words.split(separator: "\n", omittingEmptySubsequences: false)
+					.map { "  " + $0 }.joined(separator: "\n"))
+			fflush(stdout)
+		}
+	}
+
 	func messageHistoryForTesting() {
 		Task { @MainActor in
 			let commits = await GitHistory.log(in: self.root, limit: 20)

@@ -107,7 +107,12 @@ public enum ClaudeDraft {
 	// MARK: - What is sent
 
 	/// The request that would be made, or nil when nothing is staged.
-	public static func ask(in root: URL, limit: Int = defaultLimit) async -> Ask? {
+	///
+	/// `conventional` is the setting's answer rather than the setting itself:
+	/// the kit does not read defaults for a caller that may be a test.
+	public static func ask(
+		in root: URL, limit: Int = defaultLimit, conventional: Bool = true
+	) async -> Ask? {
 		let staged = await GitRepository.run(["diff", "--cached", "--name-only"], in: root)
 		let paths = staged.stdout
 			.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
@@ -137,16 +142,25 @@ public enum ClaudeDraft {
 		let subjects = recent.stdout
 			.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
 
-		return Ask(prompt: prompt(diffs: diffs, subjects: subjects, unread: unread), unread: unread)
+		return Ask(
+			prompt: prompt(
+				diffs: diffs, subjects: subjects, unread: unread, conventional: conventional
+			),
+			unread: unread
+		)
 	}
 
 	/// The words around the diff.
 	///
-	/// The recent subjects are in it because this repository does not write
-	/// `fix: update handler`; it writes "A Java edit reaches the JVM that is
-	/// already running". A draft in a house style nobody uses has to be
-	/// rewritten, and reading the last twenty costs one `git log`.
-	static func prompt(diffs: [String], subjects: [String], unread: [String]) -> String {
+	/// Two shapes, because a commit message has two audiences. Conventional
+	/// Commits is what changelog, release and version tooling reads, and it is
+	/// the default: a draft in prose has to be rewritten by hand before such a
+	/// repository can commit it. Turned off, the recent subjects *are* the
+	/// instruction — this repository does not write `fix: update handler`; it
+	/// writes "A Java edit reaches the JVM that is already running".
+	static func prompt(
+		diffs: [String], subjects: [String], unread: [String], conventional: Bool = true
+	) -> String {
 		var said = """
 		Write a git commit message for the staged change below.
 
@@ -155,15 +169,54 @@ public enum ClaudeDraft {
 		small enough to need no description, answer with the summary alone.
 		"""
 
-		if !subjects.isEmpty {
+		if conventional {
 			said += """
 
 
-			Recent subjects from this repository, so the summary matches how it \
-			is written here:
+			The summary must be a Conventional Commit v1.0.0 subject line:
 
-			\(subjects.map { "- \($0)" }.joined(separator: "\n"))
+			  <type>[optional scope][!]: <description>
+
+			The type is one of feat, fix, build, chore, ci, docs, style, \
+			refactor, perf, test. feat is a new feature, fix is a bug fix; the \
+			rest are what their names say. A scope is optional and, when given, \
+			is a noun in parentheses naming a part of the codebase — a component, \
+			not a file name. The description follows the colon and a space, in \
+			the imperative and on one line.
+
+			Mark a breaking change either with ! before the colon or with a \
+			BREAKING CHANGE: footer in the description; BREAKING CHANGE is \
+			uppercase. Footers go at the end of the description, one per line, \
+			as Token: value.
 			"""
+		}
+
+		if !subjects.isEmpty {
+			// With the format prescribed, the subjects are demoted on purpose:
+			// twenty narrative subjects and an instruction to write
+			// `feat(scope):` are contradictory instructions, and examples
+			// usually win. What they are still good for is the nouns — the
+			// difference between `fix(navigator):` and
+			// `fix(ProjectNavigatorViewController):` is a scope and a file name.
+			said += conventional
+				? """
+
+
+				Recent subjects from this repository. They are here for its \
+				vocabulary and for what it calls its parts, so the scope reads \
+				like one of them — not for the shape of the subject line, which \
+				is the format above:
+
+				\(subjects.map { "- \($0)" }.joined(separator: "\n"))
+				"""
+				: """
+
+
+				Recent subjects from this repository, so the summary matches how \
+				it is written here:
+
+				\(subjects.map { "- \($0)" }.joined(separator: "\n"))
+				"""
 		}
 
 		if !unread.isEmpty {
@@ -208,10 +261,13 @@ public enum ClaudeDraft {
 	/// Asks, and answers with a draft.
 	public static func draft(
 		in root: URL,
-		limit: Int = defaultLimit
+		limit: Int = defaultLimit,
+		conventional: Bool = true
 	) async -> Result<Draft, Failure> {
 		guard let command = executable() else { return .failure(.notInstalled) }
-		guard let ask = await ask(in: root, limit: limit) else { return .failure(.nothingStaged) }
+		guard let ask = await ask(in: root, limit: limit, conventional: conventional) else {
+			return .failure(.nothingStaged)
+		}
 
 		let result = await run(command, prompt: ask.prompt, in: root)
 		guard result.exitCode == 0 else {

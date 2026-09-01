@@ -94,6 +94,9 @@ public final class Settings {
 			// On, because the day it matters is the day nobody remembered to
 			// turn it on: a shared screen does not announce itself first.
 			Key.concealsSecrets: true,
+			// On, because the format is a standard and the alternative default
+			// was one repository's voice.
+			Key.conventionalCommitDrafts: true,
 			Key.terminalGPURendering: true,
 			Key.terminalGhosttyEngine: false,
 			Key.terminalOptionAsMeta: false,
@@ -182,6 +185,7 @@ public final class Settings {
 		static let ignoredLanguageServers = "ignoredLanguageServers"
 		static let projectSearchDepth = "projectSearchDepth"
 		static let concealsSecrets = "concealsSecrets"
+		static let conventionalCommitDrafts = "conventionalCommitDrafts"
 		static let refsSortLocal = "refsSortLocal"
 		static let refsSortRemotes = "refsSortRemotes"
 		static let refsSortTags = "refsSortTags"
@@ -745,6 +749,17 @@ public final class Settings {
 	public var concealsSecrets: Bool {
 		get { defaults.bool(forKey: Key.concealsSecrets) }
 		set { set(newValue, Key.concealsSecrets) }
+	}
+
+	/// Whether a drafted commit message is asked for as a Conventional Commit.
+	///
+	/// On: the format is what changelog and release tooling reads, and a draft
+	/// in prose has to be rewritten by hand before such a repository can commit
+	/// it. Off returns the draft to the repository's own voice, seeded by its
+	/// recent subjects — which is what this repository itself wants.
+	public var conventionalCommitDrafts: Bool {
+		get { defaults.bool(forKey: Key.conventionalCommitDrafts) }
+		set { set(newValue, Key.conventionalCommitDrafts) }
 	}
 
 	public var refsSortLocal: RefsSortOrder {
