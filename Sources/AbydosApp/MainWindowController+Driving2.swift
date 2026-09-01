@@ -168,6 +168,14 @@ extension MainWindowController {
 			case "menu":
 				print("TREE menu: \(navigator.contextMenuTitlesForTesting().joined(separator: " | "))")
 				continue
+			// The Compare submenu's verbs on the selected row, and what the
+			// editor then shows: the diff tab's title is the claim.
+			case "compare-head": navigator.compareForTesting(history: false)
+			case "compare-history": navigator.compareForTesting(history: true)
+			case "tabs":
+				print("TREE tabs: "
+					+ (editor.activeGroup?.tabTitlesForTesting.joined(separator: ", ") ?? "no group"))
+				continue
 			case "down": navigator.pressKeyForTesting(125)
 			case "up": navigator.pressKeyForTesting(126)
 			case "right": navigator.pressKeyForTesting(124)

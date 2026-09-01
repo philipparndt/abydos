@@ -350,6 +350,8 @@ extension MainWindowController {
 			self?.openTerminal(in: directory)
 		}
 		navigator.onOpenSubproject = { [weak self] url in self?.openSubproject(at: url) }
+		navigator.onCompareFile = { [weak self] url in self?.sidebar.compareFileAgainstHead(url) }
+		navigator.onShowFileHistory = { [weak self] url in self?.sidebar.showFileHistory(of: url) }
 		navigator.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
 		navigator.onPreviewModel = { url in
 			MainWindowController.previewModel(at: url)

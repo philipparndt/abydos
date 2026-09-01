@@ -15,6 +15,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onLeaveSubproject: (() -> Void)?
 	/// Asked to show a 3D model in the external viewer.
 	var onPreviewModel: ((URL) -> Void)?
+	/// Compare ▸ Against Last Commit on a file row.
+	var onCompareFile: ((URL) -> Void)?
+	/// Compare ▸ History… on a file row.
+	var onShowFileHistory: ((URL) -> Void)?
 	/// Something under the project root changed on disk.
 	///
 	/// Carries the batch rather than announcing that *something* happened: what
@@ -1204,6 +1208,20 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Built once and hidden per click: the menu exists long before anything
 		// has been right-clicked, so it cannot be decided here.
 		menu.addItem(item("Preview in GoSTL", #selector(contextPreviewModel)))
+		// Comparing the file with its git past. Both destinations exist — the
+		// diff tab and the file-scoped log — and neither was reachable from
+		// the file it is about.
+		let compare = NSMenuItem(title: "Compare", action: nil, keyEquivalent: "")
+		let comparing = NSMenu()
+		let against = item("Against Last Commit", #selector(contextCompareAgainstHead))
+		let history = item("History\u{2026}", #selector(contextCompareHistory))
+		comparing.addItem(against)
+		comparing.addItem(history)
+		compare.submenu = comparing
+		compareMenu = comparing
+		compareAgainstItem = against
+		compareHistoryItem = history
+		menu.addItem(compare)
 		menu.addItem(.separator())
 		menu.addItem(item("Open as Subproject", #selector(contextOpenSubproject)))
 		menu.addItem(item("Leave Subproject", #selector(contextLeaveSubproject)))
@@ -1313,6 +1331,13 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// The two items that belong to the sessions root and the rows under it.
 	private weak var resumeItem: NSMenuItem?
 	private weak var revealSessionItem: NSMenuItem?
+
+	/// The Compare submenu and its two entries, held so `menuNeedsUpdate` can
+	/// prune them to the row's truth: an untracked file has no last commit to
+	/// compare against and no history to show.
+	private weak var compareMenu: NSMenu?
+	private weak var compareAgainstItem: NSMenuItem?
+	private weak var compareHistoryItem: NSMenuItem?
 
 	/// The row of the sessions root the menu was opened on — the root itself, or
 	/// one session — if it was opened on either.
@@ -2147,6 +2172,22 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 	}
 
+	/// The submenu's two verbs without the menu, for driving them end to end;
+	/// `menu` is the step that proves they are offered.
+	func compareForTesting(history: Bool) {
+		history ? contextCompareHistory() : contextCompareAgainstHead()
+	}
+
+	@objc private func contextCompareAgainstHead() {
+		guard let node = contextNode, !node.isDirectory else { return }
+		onCompareFile?(node.url)
+	}
+
+	@objc private func contextCompareHistory() {
+		guard let node = contextNode, !node.isDirectory else { return }
+		onShowFileHistory?(node.url)
+	}
+
 	/// What a right-click offers over whatever is selected, with the submenus
 	/// spelled out and the shortcuts each item shows: a menu cannot be
 	/// photographed while it is open, and the keys it writes down are half of
@@ -2159,7 +2200,8 @@ final class ProjectNavigatorViewController: NSViewController {
 			func mark(_ entry: NSMenuItem) -> String {
 				(entry.isEnabled ? "" : " (disabled)") + Self.shortcutText(entry)
 			}
-			let children = (item.submenu?.items ?? []).filter { !$0.isSeparatorItem }.map {
+			let children = (item.submenu?.items ?? [])
+				.filter { !$0.isSeparatorItem && !$0.isHidden }.map {
 				"\(item.title) ▸ \($0.title)\(mark($0))"
 			}
 			return ["\(item.title)\(mark(item))"] + children
@@ -3613,6 +3655,21 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 						// `architecture.png`.
 						editable: single && (node.map { Drawio.isDiagram($0.url) } ?? false)
 					)
+				}
+				continue
+			}
+			if item.submenu === compareMenu {
+				// A file's question and only a file's: folders and the root
+				// have no one file's working copy to compare. An untracked or
+				// ignored file offers Against Last Commit disabled — there is
+				// no last commit of it — and no History…, git holding none.
+				let file = node.map { !$0.isDirectory } ?? false
+				item.isHidden = !file || isRoot
+				item.isEnabled = file
+				if let node, file {
+					let outside = node.gitStatus == .unversioned || node.gitStatus == .ignored
+					compareAgainstItem?.isEnabled = !outside
+					compareHistoryItem?.isHidden = outside
 				}
 				continue
 			}

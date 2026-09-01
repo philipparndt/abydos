@@ -156,4 +156,34 @@ struct GitDiffAgainstHeadTests {
 		let diff = try #require(await GitWorkingCopy.diffAgainstHead(for: "f.txt", in: root))
 		#expect(GitChangedLines.read(GitPatch.parse(diff)).isEmpty)
 	}
+
+	/// Compare with Working Copy on an older commit: the distance from *then*
+	/// to now includes the later commit's edit, which `show` on the old commit
+	/// would not mention.
+	@Test func anOlderCommitDiffsToTheWorkingCopy() async throws {
+		let root = try await makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let first = await GitRepository.run(["rev-parse", "HEAD"], in: root)
+			.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		try "one\ntwo\nthree\nFOUR\n".write(
+			to: root.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8
+		)
+		_ = await GitRepository.run(["commit", "-aqm", "second"], in: root)
+		try "ONE\ntwo\nthree\nFOUR\n".write(
+			to: root.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8
+		)
+
+		let diff = await GitWorkingCopy.diffToWorkingCopy(since: first, for: "f.txt", in: root)
+		let changed = GitChangedLines.read(GitPatch.parse(diff))
+		#expect(changed.marks == [1: .modified, 4: .modified])
+	}
+
+	@Test func theWorkingCopyMatchingTheCommitDiffsToNothing() async throws {
+		let root = try await makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let head = await GitRepository.run(["rev-parse", "HEAD"], in: root)
+			.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		#expect(await GitWorkingCopy.diffToWorkingCopy(since: head, for: "f.txt", in: root).isEmpty)
+	}
 }

@@ -914,6 +914,34 @@ final class HistoryPane: NSView {
 		reload()
 	}
 
+	/// A diff belongs in a tab, and the pane does not own the editor: whoever
+	/// built this pane says where the diff goes.
+	var onOpenWorkingCopyDiff: ((GitChange, URL, String) -> Void)?
+
+	/// How far now is from then, for the one file this log is scoped to.
+	/// Selecting the commit already shows what it changed at the time; this
+	/// is the other question.
+	@objc private func compareCommitWithWorkingCopy() {
+		guard let commit = clickedCommit, let path = scopedPath else { return }
+		Task { @MainActor in
+			let text = await GitWorkingCopy.diffToWorkingCopy(
+				since: commit.hash, for: path, in: self.root
+			)
+			guard !text.isEmpty else {
+				Toast.post(
+					"Nothing to compare",
+					detail: "The working copy matches \(commit.shortHash).",
+					kind: .information
+				)
+				return
+			}
+			self.onOpenWorkingCopyDiff?(
+				GitChange(path: path, kind: .modified, isStaged: false),
+				self.root, text
+			)
+		}
+	}
+
 	@objc private func checkoutCommit() {
 		guard let commit = clickedCommit else { return }
 		// Detaching HEAD is not destructive — nothing is lost by standing
@@ -1051,8 +1079,21 @@ final class HistoryPane: NSView {
 			// driver that can only open the everything-log could not ask about
 			// them. Follow with `settle` — the reload is asynchronous.
 			case "scope":  setRef(argument.isEmpty ? nil : argument)
+			// Narrow to one file, the way Compare ▸ History… arrives.
+			case "path":
+				offerScope(path: argument.isEmpty ? nil : argument)
+				setScope(path: argument.isEmpty ? nil : argument)
 			case "verbs":  print("LOG-PAGE verbs: \(diffVerbsForTesting())")
 			case "menu":   print("LOG-PAGE-MENU:\n\(commitMenuForTesting(row: Int(argument) ?? 0))")
+			// `choose:<row>:<title>` fires that row's menu item by title, the
+			// way a person picking Compare with Working Copy does.
+			case "choose":
+				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+				if parts.count == 2, let row = Int(parts[0]) {
+					print("LOG-PAGE choose: \(chooseCommitMenuItemForTesting(row: row, titled: parts[1]))")
+				} else {
+					print("LOG-PAGE choose: wants row:title, got \(argument)")
+				}
 			case "file":
 				selectCommitForTesting(0)
 				selectFileForTesting(Int(argument) ?? 0)
@@ -1087,6 +1128,12 @@ final class HistoryPane: NSView {
 	/// diff* on the other rather than in a tab somewhere else.
 	func pageReportForTesting() -> String {
 		var said = ["layout=\(arrangement == .page ? "page" : "sidebar")"]
+		// Which segment is lit, because Compare ▸ History…'s claim is that it
+		// lands on "This File" — a state a screenshot of a segmented control
+		// says less reliably than the control itself.
+		let scope = scopeControl.selectedSegment == 1
+			? (scopeControl.label(forSegment: 1) ?? "file") : "whole"
+		said.append("scope=\(scope)")
 		said.append("commits=\(visible.count)")
 		said += visible.prefix(6).map { row in
 			let lanes = row.graph.map { "lane \($0.lane)" } ?? "no graph"
@@ -1119,6 +1166,25 @@ final class HistoryPane: NSView {
 	/// The list is the claim — that a commit has verbs at all, and that the one
 	/// which can lose work is fenced off from the ones that cannot — and a list
 	/// diffs where a photograph of an open menu does not.
+	/// Fires one of the commit menu's items by title, through the same menu
+	/// `menu:` reports, so the verb is proven to be *in* the menu rather than
+	/// merely behind a method the driver knows.
+	func chooseCommitMenuItemForTesting(row: Int, titled title: String) -> String {
+		guard visible.indices.contains(row) else { return "no such row" }
+		commitTable.selectRowIndexes([row], byExtendingSelection: false)
+		let menu = NSMenu()
+		menu.delegate = self
+		menuNeedsUpdate(menu)
+		guard let item = menu.items.first(where: { $0.title == title }) else {
+			return "\(title) is not in the menu"
+		}
+		guard let action = item.action, let target = item.target else {
+			return "\(title) has no action"
+		}
+		_ = NSApp.sendAction(action, to: target, from: item)
+		return "fired \(title)"
+	}
+
 	func commitMenuForTesting(row: Int) -> String {
 		guard visible.indices.contains(row) else { return "no such row" }
 		commitTable.selectRowIndexes([row], byExtendingSelection: false)
@@ -1255,6 +1321,14 @@ extension HistoryPane: NSMenuDelegate {
 		}
 		// Where you can stand, and what you can make from here.
 		menu.addItem(item("Checkout", #selector(checkoutCommit)))
+		// Only on a file-scoped log: on the whole log "the working copy
+		// against then" spans every file, which is not a diff tab, and the
+		// item would lie about what it opens.
+		if scopedPath != nil {
+			menu.addItem(item(
+				"Compare with Working Copy", #selector(compareCommitWithWorkingCopy)
+			))
+		}
 		menu.addItem(item("Branch from Here\u{2026}", #selector(branchFromHere)))
 		menu.addItem(item("Tag Here\u{2026}", #selector(tagHere)))
 		menu.addItem(.separator())

@@ -879,6 +879,9 @@ final class SidebarController: NSObject {
 			// which the caller waits for rather than leaving the sidebar empty.
 			guard let project = project(), project.git != nil else { return nil }
 			let pane = HistoryPane(root: gitCommandRoot() ?? project.root)
+			pane.onOpenWorkingCopyDiff = { [weak self] change, root, text in
+				self?.editor.openDiff(for: change, root: root, text: text)
+			}
 			pane.offerScope(path: relativePathOfActiveFile())
 			pane.onSelectFile = { [weak self] commit, file in
 				self?.showCommitDiff(commit: commit, file: file)
@@ -948,6 +951,9 @@ final class SidebarController: NSObject {
 		let page = (group.page(identifier: "log") as? HistoryPane)
 			?? HistoryPane(root: gitCommandRoot() ?? project.root, layout: .page)
 		logPage = page
+		page.onOpenWorkingCopyDiff = { [weak self] change, root, text in
+			self?.editor.openDiff(for: change, root: root, text: text)
+		}
 
 		// Named for what it is showing: two log tabs both called "Log" would be
 		// the tab strip saying nothing, and a log scoped to a branch is a
@@ -1358,6 +1364,49 @@ final class SidebarController: NSObject {
 	}
 
 	/// Opens the diff for a change as an editor tab.
+	/// Where a file stands in its repository, for the compare verbs: the git
+	/// root and the path git knows the file by. Nil outside the repository,
+	/// where there is nothing to compare against.
+	private func repositoryPlace(of url: URL) -> (root: URL, path: String)? {
+		guard let project = project() else { return nil }
+		let root = (project.gitRoot ?? project.root).standardizedFileURL
+		let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+		let path = url.standardizedFileURL.path
+		guard path.hasPrefix(prefix) else { return nil }
+		return (root, String(path.dropFirst(prefix.count)))
+	}
+
+	/// Compare ▸ Against Last Commit: the file's diff against HEAD — staged
+	/// and unstaged edits in one answer, the question the gutter's change
+	/// marks answer — as a diff tab.
+	func compareFileAgainstHead(_ url: URL) {
+		guard let place = repositoryPlace(of: url) else { return }
+		Task { @MainActor in
+			let text = await GitWorkingCopy.diffAgainstHead(for: place.path, in: place.root)
+			guard let text, !text.isEmpty else {
+				Toast.post(
+					"Nothing to compare",
+					detail: "\(url.lastPathComponent) matches the last commit.",
+					kind: .information
+				)
+				return
+			}
+			editor.openDiff(
+				for: GitChange(path: place.path, kind: .modified, isStaged: false),
+				root: place.root, text: text
+			)
+		}
+	}
+
+	/// Compare ▸ History…: the log page the "This File" segment reaches,
+	/// arrived at from the file's own row.
+	func showFileHistory(of url: URL) {
+		guard let place = repositoryPlace(of: url) else { return }
+		showLogPage(scopedTo: nil)
+		logPage?.offerScope(path: place.path)
+		logPage?.setScope(path: place.path)
+	}
+
 	private func showDiff(for change: GitChange) {
 		guard let project = project() else { return }
 		Task { @MainActor in

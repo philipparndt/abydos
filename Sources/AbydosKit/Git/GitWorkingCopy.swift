@@ -411,6 +411,18 @@ public enum GitWorkingCopy {
 		return result.stdout
 	}
 
+	/// The working copy against one commit, for one path: how far *now* is
+	/// from then, which is the other question a version answers — `show`
+	/// answers what the commit changed at the time.
+	public static func diffToWorkingCopy(
+		since hash: String, for path: String, in root: URL
+	) async -> String {
+		let result = await GitRepository.run(
+			["diff", "--no-color", hash, "--", path], in: root
+		)
+		return result.exitCode == 0 ? result.stdout : ""
+	}
+
 	/// The files inside a wholly untracked directory, as paths relative to the
 	/// work tree root, sorted.
 	///
