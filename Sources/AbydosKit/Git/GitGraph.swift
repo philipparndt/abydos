@@ -94,7 +94,20 @@ public enum GitGraph {
 	/// The order is git's — `log` hands them back newest first — and the lanes
 	/// follow from it: a lane is opened when a commit is first expected by
 	/// something below it, and closed when it is reached.
-	public static func lay(out nodes: [Node]) -> [Row] {
+	/// Lays a history out, optionally leaving some of it undrawn.
+	///
+	/// **`hidden` is what a folded merge needs and dropping the parent could
+	/// not give.** The first attempt at folding simply left the hidden commits
+	/// out of `nodes` and stripped the merge's second parent — which stopped
+	/// the lanes being reserved, and stopped the merge being a merge: with one
+	/// parent it has nothing to fold, so `collapsible` came out zero, the fold
+	/// marker vanished, and a folded merge could never be opened again.
+	///
+	/// So the whole history still goes in, and this says which of it is not on
+	/// screen. The layout keeps counting what a merge brought in — that is a
+	/// fact about the history, not about what is drawn — and stops opening
+	/// lanes for commits nobody will see.
+	public static func lay(out nodes: [Node], hidden: Set<String> = []) -> [Row] {
 		/// What each lane is waiting for, and which line of descent it is.
 		var lanes: [(expects: String, branch: Int)?] = []
 		var nextBranch = 0
@@ -106,6 +119,18 @@ public enum GitGraph {
 		)
 
 		for node in nodes {
+			// **A commit that is not drawn takes no part in the walk.** It was
+			// enough to leave its row out and it was not: a hidden commit still
+			// claimed a lane on its way past — nothing was waiting for it, so
+			// it opened one of its own — and that lane then carried down
+			// through every visible row below it. Which is the dangling line,
+			// arrived at by a second route.
+			//
+			// It stays in `nodes` because `collapsible` counts what a merge
+			// brought in, and that is a fact about the history rather than
+			// about what is on screen.
+			if hidden.contains(node.hash) { continue }
+
 			// The lane already waiting for this commit, or a new one on the
 			// right. The leftmost wins, so a long-lived line — main — keeps the
 			// lane it started in.
@@ -134,7 +159,7 @@ public enum GitGraph {
 
 			// The first parent carries this lane on; the others take a lane of
 			// their own unless something is already waiting for them.
-			if let first = node.parents.first {
+			if let first = node.parents.first, !hidden.contains(first) {
 				lanes[lane] = (expects: first, branch: branch)
 			} else {
 				lanes[lane] = nil
@@ -157,6 +182,15 @@ public enum GitGraph {
 			// decided, whether the lane already existed or is being opened.
 			var mergedBranch: Int?
 			for (offset, parent) in node.parents.dropFirst().enumerated() {
+				// A parent nobody will see gets no lane and no line. Its branch
+				// number is still taken, because the fold marker is drawn in
+				// the colour of what it hides and that colour has to be the
+				// same whether the merge is folded or open.
+				if hidden.contains(parent) {
+					if offset == 0 { mergedBranch = nextBranch }
+					nextBranch += 1
+					continue
+				}
 				if let existing = lanes.firstIndex(where: { $0?.expects == parent }) {
 					let taken = lanes[existing]?.branch ?? 0
 					if offset == 0 { mergedBranch = taken }

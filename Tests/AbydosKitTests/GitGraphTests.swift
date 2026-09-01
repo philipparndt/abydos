@@ -210,6 +210,66 @@ struct GitGraphTests {
 			"the upstream's lane arrives at the commit it was built on"
 		)
 	}
+
+	// MARK: - Folding a merge
+
+	/// **The report: lanes that start in nowhere.** The log page used to lay
+	/// the graph out over every commit and filter the rows afterwards, so a
+	/// surviving row kept lanes assigned for commits that were no longer drawn
+	/// — lines running down the graph with nothing above them to begin at.
+	///
+	/// The fix is the input, not the output, and this is the claim that says
+	/// so: a layout over a subset draws nothing that belongs to a commit
+	/// outside it. The lane count is the whole test — a row cannot be wider
+	/// than the lanes actually in use.
+	@Test func layingOutASubsetLeavesNoLaneBehind() {
+		// A mainline with a branch merged into it at `f`.
+		let all = [
+			node("g", "f"),
+			node("f", "e", "c"),   // the merge
+			node("e", "d"),
+			node("c", "b"),        // the side branch
+			node("d", "b"),
+			node("b", "a"),
+			node("a"),
+		]
+		let full = GitGraph.lay(out: all)
+		#expect(full.map(\.width).max() ?? 0 > 1, "the branch needs a lane of its own to be worth folding")
+
+		// Folding the merge hides `c`. The whole history still goes in — the
+		// merge has to stay a merge, or it could never be unfolded — and the
+		// layout is told what is off screen.
+		let hidden: Set<String> = ["c"]
+		let folded = GitGraph.lay(out: all, hidden: hidden)
+
+		#expect(folded.map(\.hash) == all.map(\.hash).filter { !hidden.contains($0) })
+		// Nothing wider than one lane is left: the only thing that needed a
+		// second lane has gone, and its lane went with it.
+		#expect(folded.allSatisfy { $0.width == 1 }, "a folded branch left its lane behind")
+		#expect(folded.allSatisfy { row in row.edges.allSatisfy { $0.from < row.width && $0.to < row.width } })
+
+		// **And the merge is still a merge.** Filtering the input instead of
+		// naming the hidden commits made `collapsible` zero, which took the
+		// fold marker away and left a folded merge with no way back.
+		let merge = folded.first { $0.hash == "f" }
+		#expect(merge?.collapsible ?? 0 > 0, "a folded merge stopped offering to unfold")
+	}
+
+	/// Unfolding is laying the whole thing out again, so the picture comes
+	/// back exactly. Stated because "it looks the same afterwards" is the half
+	/// of folding that is easy to break and hard to notice.
+	@Test func unfoldingGivesTheSamePictureBack() {
+		let all = [
+			node("g", "f"),
+			node("f", "e", "c"),
+			node("e", "d"),
+			node("c", "b"),
+			node("d", "b"),
+			node("b", "a"),
+			node("a"),
+		]
+		#expect(GitGraph.lay(out: all) == GitGraph.lay(out: all))
+	}
 }
 
 /// Which line of descent a fold marker is about.
@@ -247,3 +307,4 @@ struct GraphFoldColourTests {
 		#expect(rows.first?.collapsedBranch == nil)
 	}
 }
+

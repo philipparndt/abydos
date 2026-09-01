@@ -37,6 +37,32 @@ lane for a commit it never reaches — the same dangling line by a shorter route
 *Ruled out: leaving the parent and trusting the layout to cope.* Worth stating
 because it is the tempting smaller diff, and it reintroduces the bug.
 
+## What implementing it changed about this design
+
+**The decision above was wrong, and driving it is what said so.** "Lay out what
+will be drawn" was right about *where* the fix goes — the input — and wrong
+about what the input should be.
+
+Filtering the commits and stripping the merge's hidden parent did remove the
+lanes. It also stopped the merge being a merge: with one parent it has nothing
+to fold, so `collapsible` came out zero, `CommitRowView` draws no fold marker
+without it, and **a folded merge could never be opened again**. Driven, the
+first attempt read `rows 9 -> 6` and then `rows 6 -> 6` — folded, and stuck.
+
+So the whole history goes into the layout and a `hidden` set says what is off
+screen. `collapsible` keeps counting what a merge brought in, which is a fact
+about the history rather than about what is drawn, and no lane is opened for a
+commit nobody will see.
+
+Then a second driven run said `dangling=1` while folded, and that was the same
+mistake one level down: leaving a hidden commit's *row* out is not enough,
+because the commit still walks the layout, and nothing is waiting for it, so it
+opens a lane of its own — which then carries down through every visible row
+below. A hidden commit takes no part in the walk at all now.
+
+Both were found by running it. Neither would have been found by reading, and the
+first one is worse than the bug it was fixing.
+
 ## Risks / Trade-offs
 
 **Lane colours may shift when a merge is folded**, because a lane's index comes

@@ -656,10 +656,6 @@ final class HistoryPane: NSView, ScaleFollowing {
 			return
 		}
 
-		graph = GitGraph.lay(out: commits.map {
-			GitGraph.Node(hash: $0.hash, parents: $0.parentHashes)
-		})
-
 		// What each folded merge hides: everything its side brought in, which
 		// is the same walk the layout does to count them.
 		let nodes = commits.map { GitGraph.Node(hash: $0.hash, parents: $0.parentHashes) }
@@ -669,9 +665,18 @@ final class HistoryPane: NSView, ScaleFollowing {
 			hiddenByCollapse.formUnion(GitGraph.mergedHashes(of: node, nodes: nodes))
 		}
 
-		visible = zip(commits, graph)
-			.filter { !hiddenByCollapse.contains($0.0.hash) }
-			.map { ($0.0, $0.1) }
+		// **The layout is told what is not drawn, rather than being handed a
+		// filtered list.** It used to lay out every commit and the rows were
+		// filtered afterwards, so a surviving row kept lanes it had been given
+		// while the hidden commits were still there — lines running down the
+		// graph with no commit to start from, which is the report.
+		//
+		// Filtering the *input* fixed the lanes and broke the fold: a merge
+		// with its second parent removed is not a merge, so it had nothing to
+		// fold, lost its marker, and could never be opened again. The whole
+		// history goes in and `hidden` says what is off screen.
+		graph = GitGraph.lay(out: nodes, hidden: hiddenByCollapse)
+		visible = Array(zip(commits.filter { !hiddenByCollapse.contains($0.hash) }, graph))
 		rebuildFadedLanes()
 	}
 
@@ -1089,6 +1094,9 @@ final class HistoryPane: NSView, ScaleFollowing {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("LOG-PAGE:\n\(pageReportForTesting())")
+			// Folds or unfolds the merge on a row, so the graph after a fold is
+			// something a run can read rather than something to look at.
+			case "fold":   print("LOG-PAGE fold: \(toggleCollapseForTesting(row: Int(argument) ?? 0))")
 			// Narrow to one ref, the way a branch row's "show log" does: the
 			// scoped log is where the upstream's unpulled commits appear, and a
 			// driver that can only open the everything-log could not ask about
@@ -1141,6 +1149,27 @@ final class HistoryPane: NSView, ScaleFollowing {
 	/// The claim is that a page holds what a column cannot: the graph with
 	/// lanes and refs on one side, and the selected commit's files *and its
 	/// diff* on the other rather than in a tab somewhere else.
+	/// Lines drawn on a row that nothing above it hands down.
+	///
+	/// **The claim a folded merge is under.** A lane leaves a row through an
+	/// edge and arrives at the next one; a line whose `from` lane is neither
+	/// this row's own dot nor something the row above passed down is a line
+	/// starting in nowhere — which is what folding used to leave behind, when
+	/// the graph was laid out over every commit and the rows were filtered
+	/// afterwards. Counted rather than drawn, so a run can assert zero.
+	func danglingLanesForTesting() -> Int {
+		var carried: Set<Int> = []
+		var dangling = 0
+		for row in visible {
+			guard let graph = row.graph else { continue }
+			for edge in graph.edges where edge.from != graph.lane && !carried.contains(edge.from) {
+				dangling += 1
+			}
+			carried = Set(graph.edges.map(\.to))
+		}
+		return dangling
+	}
+
 	func pageReportForTesting() -> String {
 		var said = ["layout=\(arrangement == .page ? "page" : "sidebar")"]
 		// Which segment is lit, because Compare ▸ History…'s claim is that it
@@ -1150,6 +1179,7 @@ final class HistoryPane: NSView, ScaleFollowing {
 			? (scopeControl.label(forSegment: 1) ?? "file") : "whole"
 		said.append("scope=\(scope)")
 		said.append("commits=\(visible.count)")
+		said.append("dangling=\(danglingLanesForTesting())")
 		said += visible.prefix(6).map { row in
 			let lanes = row.graph.map { "lane \($0.lane)" } ?? "no graph"
 			// Dimming is a drawing, and a driven run reads text: the marker is
