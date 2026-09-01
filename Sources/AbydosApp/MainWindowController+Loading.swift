@@ -223,7 +223,14 @@ extension MainWindowController {
 		// which is what makes opening it again feel like coming back rather
 		// than starting.
 		if let remembered {
-			if !editor.hasOpenFiles { editor.restore(remembered) }
+			// Whether this window is *opening* the project or is midway through
+			// a switch, told apart by the tabs: a switch still has the outgoing
+			// project's open when this runs, and its own `editor.restore` — and
+			// the `closeAllTabs` inside it — comes after this function returns.
+			// Pages reopened here would be closed by it, so the switch reopens
+			// its own.
+			let isOpening = !editor.hasOpenFiles
+			if isOpening { editor.restore(remembered) }
 			// Where the work was left off, which for a repository of several
 			// projects is as much a part of it as the open files.
 			if let path = remembered.subprojectPath,
@@ -239,6 +246,14 @@ extension MainWindowController {
 				run.refreshRunControl()
 			}
 			run.xcodeDestinations = remembered.xcodeDestinations
+			// The message and the pages, for the door a switch does not come
+			// through: a window *opening* a project. Held rather than applied —
+			// the changes pane does not exist yet and will not until the
+			// repository has been read, which is the whole reason this is a
+			// property. `switchProject` sets the same two.
+			rememberedMessage = remembered.composedMessage
+			rememberedPages = remembered.pages
+			if isOpening { sidebar.reopen(pages: remembered.pages) }
 		}
 
 		// The terminal is where half the work happens, so a window arrives with

@@ -388,6 +388,10 @@ extension MainWindowController {
 			session.breakpoints = debug.breakpointsToRemember()
 			session.reviewTicks = sidebar.pullRequests.ticksToRemember()
 			session.reviewCheckouts = sidebar.pullRequests.checkoutsToRemember()
+			// The message somebody is in the middle of writing, and the pages
+			// they had open: the two things a switch used to take with it.
+			session.composedMessage = sidebar.composedMessage
+			session.pages = sidebar.openPagesToRemember()
 			// The in-memory store is keyed by root, which is the wrong key for a
 			// folder: they share one session, so a folder's goes straight to the
 			// file every folder reads.
@@ -415,12 +419,24 @@ extension MainWindowController {
 		// is a list nobody can find a project in.
 		if !asLooseFolder { RecentProjects.shared.record(url: root) }
 
+		// Held for whoever builds the changes pane, which is not now: reading
+		// the repository rebuilds the sidebar tool a second or two after this,
+		// and a message pushed at the pane standing here would go with it.
+		rememberedMessage = previous?.composedMessage
+		rememberedPages = previous?.pages ?? []
+
 		if let previous {
 			editor.restore(previous)
 		} else {
 			editor.closeAllTabs()
 			editor.restoreScratches()
 		}
+		// After the editor, because a page is a tab: restoring tabs first and
+		// then reopening pages puts them where they were relative to the files.
+		// The sidebar waits for the repository itself — every page opener
+		// refuses while the project's git is unread, which would drop this
+		// silently.
+		sidebar.reopen(pages: rememberedPages)
 
 		// The terminals a project had, but only into a window that has none.
 		//
@@ -464,6 +480,8 @@ extension MainWindowController {
 		session.breakpoints = debug.breakpointsToRemember()
 		session.reviewTicks = sidebar.pullRequests.ticksToRemember()
 		session.reviewCheckouts = sidebar.pullRequests.checkoutsToRemember()
+		session.composedMessage = sidebar.composedMessage
+		session.pages = sidebar.openPagesToRemember()
 		try? SessionStore.write(session, in: project.sessionRoot)
 	}
 

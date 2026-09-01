@@ -25,6 +25,11 @@ final class SidebarController: NSObject {
 	// What the window knows and this object asks for.
 	var project: () -> Project? = { nil }
 	var hostWindow: () -> NSWindow? = { nil }
+	/// The message the project was left composing, asked for when a pane is
+	/// built rather than pushed at whatever pane exists — the sidebar tool is
+	/// rebuilt when the repository finishes reading, and a push would go with
+	/// the pane it landed in.
+	var rememberedMessage: () -> ProjectSession.ComposedMessage? = { nil }
 	var gitCommandRoot: () -> URL? = { nil }
 	var relativePathOfActiveFile: () -> String? = { nil }
 	var symbols: (String, SymbolPalette.Scope) async -> [LSPSymbol] = { _, _ in [] }
@@ -851,6 +856,11 @@ final class SidebarController: NSObject {
 			}
 			pane.onWorkingCopyChanged = { [weak self] in self?.navigator.refreshGitStatus() }
 			changesPane = pane
+			// Here rather than after the switch, because this is the moment a
+			// pane exists: a message put into the pane standing before the
+			// repository was read went into the bin with it, which is the loss
+			// the code that rebuilds this tool already records having caused.
+			if let message = rememberedMessage() { pane.restore(message: message) }
 			view = pane
 		case .branches:
 			// Nothing to show until the project's repository has been read,
@@ -1001,6 +1011,86 @@ final class SidebarController: NSObject {
 	/// The commit page, likewise.
 	private weak var commitPage: ChangesPane?
 
+	/// The message being composed, wherever it is being composed.
+	///
+	/// The page first: somebody who promoted the message with `…` is typing in
+	/// the page, and the sidebar's field holds what they left behind. Nil when
+	/// nothing has been typed in either.
+	var composedMessage: ProjectSession.ComposedMessage? {
+		commitPage?.composedMessage ?? changesPane?.composedMessage
+	}
+
+	/// The pages that are open, with what each is showing.
+	///
+	/// Read off the editor's own tabs rather than the weak handles here: a page
+	/// this controller never opened — a pull request review, the settings page —
+	/// is still a page the window had.
+	func openPagesToRemember() -> [ProjectSession.OpenPage] {
+		editor.openPageIdentifiers().map { identifier in
+			switch identifier {
+			case "log":
+				return ProjectSession.OpenPage(
+					identifier: identifier, showing: logPage?.scopeToRemember() ?? [:]
+				)
+			case "stash":
+				return ProjectSession.OpenPage(
+					identifier: identifier, showing: stashPage?.stashToRemember() ?? [:]
+				)
+			default:
+				return ProjectSession.OpenPage(identifier: identifier)
+			}
+		}
+	}
+
+	/// Reopens the pages a session remembered, once the repository is readable.
+	///
+	/// **After the git read, and not before.** Every opener below refuses while
+	/// `project.git` is nil, which is the state a window is in for the second or
+	/// two after it opens — reopening there would drop the lot in silence. The
+	/// openers are the ones a click uses and each reuses an existing tab, so a
+	/// restore that races somebody opening the same page cannot make two.
+	func reopen(pages: [ProjectSession.OpenPage]) {
+		guard !pages.isEmpty else { return }
+		Task { @MainActor [weak self] in
+			await self?.project()?.loadGit()
+			guard let self, let project = self.project(), project.git != nil else { return }
+			for page in pages { self.reopen(page: page) }
+		}
+	}
+
+	private func reopen(page: ProjectSession.OpenPage) {
+		switch page.identifier {
+		case "commit":
+			showCommitPage(carrying: nil)
+		case "log":
+			showLogPage(scopedTo: page.showing["ref"])
+			if let path = page.showing["path"] {
+				logPage?.offerScope(path: path)
+				logPage?.setScope(path: path)
+			}
+		case "stash":
+			// **By commit, not by index.** `stash@{0}` is a different commit
+			// after one `git stash push`, so an index would reopen the page on
+			// somebody else's work. The commit may also be gone — popped from
+			// another window — and a page about a stash that no longer exists
+			// has nothing to show, so it stays closed.
+			guard let commit = page.showing["commit"],
+			      let root = gitCommandRoot() ?? project()?.root else { return }
+			Task { @MainActor [weak self] in
+				let entries = await GitStash.list(in: root)
+				guard let entry = entries.first(where: { $0.commit == commit }) else { return }
+				self?.showStashPage(entry)
+			}
+		case "estate":
+			showEstatePage()
+		default:
+			// A page this version has no opener for — one a later version wrote
+			// down, or one whose owner is elsewhere in the app. Left closed
+			// rather than guessed at.
+			break
+		}
+	}
+
 	/// Opens the commit view as a page in the editor area.
 	///
 	/// **The same pane at the size it needs**, exactly as the log is: the tree,
@@ -1060,6 +1150,10 @@ final class SidebarController: NSObject {
 		DispatchQueue.main.async { [weak page] in page?.focusList() }
 
 		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
+		// A page reopened by a session is where the message was being written
+		// if `…` had been pressed, so it is offered here too — into empty
+		// fields only, so promoting a summary from the sidebar still wins.
+		if let message = rememberedMessage() { page.restore(message: message) }
 		page.refresh()
 	}
 

@@ -433,6 +433,23 @@ final class EditorAreaController: NSViewController {
 		return ProjectSession(files: files, activePath: activeGroup?.captureSession().activePath)
 	}
 
+	/// The pages open across every group, in the order the tabs are in.
+	///
+	/// Pages are left out of `captureSession` — a page is not a file and its
+	/// synthetic path is nothing to reopen — so they are asked for separately
+	/// and reopened by whoever owns them.
+	func openPageIdentifiers() -> [String] {
+		var seen: Set<String> = []
+		var identifiers: [String] = []
+		for group in groups {
+			for identifier in group.openPageIdentifiers() where !seen.contains(identifier) {
+				seen.insert(identifier)
+				identifiers.append(identifier)
+			}
+		}
+		return identifiers
+	}
+
 	func restore(_ session: ProjectSession) {
 		recordsNavigation = false
 		rearranging { (activeGroup ?? groups.first)?.restore(session) }

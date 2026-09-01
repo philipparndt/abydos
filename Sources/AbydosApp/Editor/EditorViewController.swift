@@ -3435,6 +3435,15 @@ final class EditorViewController: NSViewController {
 		return tabs.first { $0.pageTitle != nil && $0.url == url }?.contentView
 	}
 
+	/// The identifiers of the pages open here, in tab order.
+	///
+	/// Off the same synthetic path `openPage` writes: the identifier is the last
+	/// component, which is what makes a page reopenable at all — the *path* is
+	/// nothing to reopen, and that is why pages are not in `captureSession`.
+	func openPageIdentifiers() -> [String] {
+		tabs.filter { $0.pageTitle != nil }.map { $0.url.lastPathComponent }
+	}
+
 	/// A tab showing a picture.
 	///
 	/// An SVG keeps its source: the control offers it and a split, since it is

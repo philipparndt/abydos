@@ -351,6 +351,8 @@ struct LaunchOptions {
 	/// A comma-separated script for the changes tree: `report`, `stage:<path>`,
 	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`.
 	var changesSteps: String?
+	/// The same steps at a chosen moment, for reading a pane after a switch.
+	var changesLater: (at: Double, steps: String)?
 	/// Print what the branch half of the titlebar pill says. See
 	/// `branchPillForTesting`.
 	///
@@ -939,6 +941,14 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
 			case "--changes-tree": options.changesSteps = next()
+			// The same steps again, later: a switch-and-return proof has to
+			// compose before the switch and read after it, which one script
+			// fired at a fixed moment cannot do. `--changes-later 14@steps`.
+			case "--changes-later":
+				let spec = (next() ?? "").split(separator: "@", maxSplits: 1)
+				if spec.count == 2 {
+					options.changesLater = (Double(spec[0]) ?? 12, String(spec[1]))
+				}
 			case "--pill-state": options.pillState = true
 			case "--branch-rows": options.branchRowSteps = next()
 			case "--commit-menu": options.commitMenuRow = next().flatMap(Int.init)

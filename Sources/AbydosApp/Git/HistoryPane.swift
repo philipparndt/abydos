@@ -914,6 +914,16 @@ final class HistoryPane: NSView {
 		reload()
 	}
 
+	/// What this log is narrowed to, for a session to write down: the ref and
+	/// the file, each only where there is one. Empty for the everything-log,
+	/// which is what reopening with nothing gives back.
+	func scopeToRemember() -> [String: String] {
+		var showing: [String: String] = [:]
+		if let ref = scopedRef { showing["ref"] = ref }
+		if let path = scopedPath { showing["path"] = path }
+		return showing
+	}
+
 	/// A diff belongs in a tab, and the pane does not own the editor: whoever
 	/// built this pane says where the diff goes.
 	var onOpenWorkingCopyDiff: ((GitChange, URL, String) -> Void)?

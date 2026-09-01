@@ -357,7 +357,20 @@ extension MainWindowController {
 	func reportPanesForTesting(_ phase: String) {
 		let window = project?.root.lastPathComponent ?? "none"
 		let board = bottomPanel.existingBacklogPane?.projectReportForTesting ?? "no pane"
-		print("PANES \(phase): window=\(window) board=[\(board)]")
+		// The pages and the message beside it: they are what a switch used to
+		// take with it, so a report of a switch that did not name them could
+		// not say whether they came back.
+		let pages = sidebar.openPagesToRemember()
+			.map { page in
+				page.showing.isEmpty
+					? page.identifier
+					: page.identifier + "(" + page.showing.sorted { $0.key < $1.key }
+						.map { "\($0.key)=\($0.value)" }.joined(separator: " ") + ")"
+			}
+		let message = sidebar.composedMessage
+		print("PANES \(phase): window=\(window) board=[\(board)]"
+			+ " pages=[\(pages.joined(separator: " "))]"
+			+ " message=[\(message?.summary ?? "")]")
 		fflush(stdout)
 	}
 

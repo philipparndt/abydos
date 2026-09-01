@@ -46,6 +46,13 @@ final class StashPage: NSView {
 	/// Whether the stash this page is about has been dropped.
 	private var isGone = false
 
+	/// Which stash this page is on, for a session to write down.
+	///
+	/// The commit, because that is the stash: `stash@{0}` names a different one
+	/// after a single `git stash push`, and a page reopened by index would come
+	/// back on somebody else's work.
+	func stashToRemember() -> [String: String] { ["commit": entry.commit] }
+
 	init(root: URL, entry: GitStash.Entry) {
 		self.root = root
 		self.entry = entry

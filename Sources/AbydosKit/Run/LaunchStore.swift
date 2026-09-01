@@ -239,9 +239,40 @@ public enum SessionStore {
 			breakpoints: readBreakpoints(object["breakpoints"]),
 			reviewTicks: readReviewTicks(object["review"]),
 			reviewCheckouts: (object["reviewCheckouts"] as? [String: Any] ?? [:])
-				.compactMapValues { $0 as? Int }
+				.compactMapValues { $0 as? Int },
+			composedMessage: readComposedMessage(object["message"]),
+			pages: readPages(object["pages"])
 		)
 		return session.isEmpty ? nil : session
+	}
+
+	/// The commit message a session file claims, if there is anything to it.
+	///
+	/// Either half may be missing — a summary with no description is the common
+	/// shape — and a pair with nothing in it reads as nothing typed, so that a
+	/// file left holding empty strings does not make a session non-empty.
+	private static func readComposedMessage(_ raw: Any?) -> ProjectSession.ComposedMessage? {
+		guard let entry = raw as? [String: Any] else { return nil }
+		let message = ProjectSession.ComposedMessage(
+			summary: entry["summary"] as? String ?? "",
+			description: entry["description"] as? String ?? ""
+		)
+		return message.isEmpty ? nil : message
+	}
+
+	/// The pages a session file claims.
+	///
+	/// An entry with no identifier is nothing to reopen and is dropped rather
+	/// than guessed at; what a page was showing is read as strings, since that
+	/// is what a ref, a path and a stash's name are, and an identifier this
+	/// version does not know simply finds no opener.
+	private static func readPages(_ raw: Any?) -> [ProjectSession.OpenPage] {
+		(raw as? [[String: Any]] ?? []).compactMap { entry in
+			guard let identifier = entry["id"] as? String, !identifier.isEmpty else { return nil }
+			let showing = (entry["showing"] as? [String: Any] ?? [:])
+				.compactMapValues { $0 as? String }
+			return ProjectSession.OpenPage(identifier: identifier, showing: showing)
+		}
 	}
 
 	/// A divider a session file claims, if it is one a pane could have.
@@ -377,6 +408,23 @@ public enum SessionStore {
 		}
 		if !session.reviewCheckouts.isEmpty {
 			object["reviewCheckouts"] = session.reviewCheckouts
+		}
+		if let message = session.composedMessage, !message.isEmpty {
+			// Each half only where it says something, for the reason `mode` is
+			// written that way: a `"description": ""` beside every summary is a
+			// line of noise in a file somebody reads when a session comes back
+			// wrong.
+			var entry: [String: Any] = [:]
+			if !message.summary.isEmpty { entry["summary"] = message.summary }
+			if !message.description.isEmpty { entry["description"] = message.description }
+			object["message"] = entry
+		}
+		if !session.pages.isEmpty {
+			object["pages"] = session.pages.map { page -> [String: Any] in
+				var entry: [String: Any] = ["id": page.identifier]
+				if !page.showing.isEmpty { entry["showing"] = page.showing }
+				return entry
+			}
 		}
 		if !session.terminals.isEmpty {
 			object["terminals"] = session.terminals.map { terminal -> [String: Any] in

@@ -43,6 +43,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// What each project had open, so going back to one looks as it was left.
 	var sessions = ProjectSessions()
+
+	/// The message the project being opened was left composing, held until
+	/// something exists to put it in.
+	///
+	/// **Not applied when the project loads**, which is the mistake this
+	/// property is here to avoid: reading the repository finishes a second or
+	/// two afterwards and rebuilds the sidebar tool, and a message pushed at
+	/// the pane standing there goes into the bin with it. The pane asks for
+	/// this when it is built instead.
+	var rememberedMessage: ProjectSession.ComposedMessage?
+	/// The pages the project being opened was left with, for the same reason:
+	/// every page opener refuses while the project's git is unread.
+	var rememberedPages: [ProjectSession.OpenPage] = []
 	/// Whether the window follows the terminal's working directory.
 	/// Whether this window follows the terminal into another project.
 	///
@@ -90,6 +103,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bar.project = { [weak self] in self?.project }
 		bar.hostWindow = { [weak self] in self?.window }
 		bar.gitCommandRoot = { [weak self] in self?.gitCommandRoot }
+		bar.rememberedMessage = { [weak self] in self?.rememberedMessage }
 		bar.relativePathOfActiveFile = { [weak self] in self?.relativePathOfActiveFile() }
 		bar.symbols = { [weak self] query, scope in
 			await self?.serverActions.symbols(matching: query, scope: scope) ?? []

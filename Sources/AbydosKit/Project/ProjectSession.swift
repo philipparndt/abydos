@@ -74,6 +74,50 @@ public struct ProjectSession: Equatable, Sendable {
 		}
 	}
 
+	/// A commit message somebody was in the middle of writing.
+	///
+	/// **The most expensive text in the app to lose.** It is written once, from
+	/// a diff that has just been read, and typing it again means reading the
+	/// diff again. Both halves, because the description is where the *why* goes
+	/// and is the expensive one — carrying only the summary is what the
+	/// sidebar-to-page hand-off did, and it is not carrying the message.
+	public struct ComposedMessage: Equatable, Sendable {
+		public var summary: String
+		public var description: String
+
+		public init(summary: String, description: String) {
+			self.summary = summary
+			self.description = description
+		}
+
+		/// Nothing typed is nothing to remember, so an empty pair is not
+		/// written and does not make a session non-empty.
+		public var isEmpty: Bool {
+			summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+				&& description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+		}
+	}
+
+	/// A page that was open, and what it was showing.
+	///
+	/// A page was left out of a session on the argument that "a path like
+	/// `/ideai/page/launch` is nothing to reopen" — true of the synthetic URL
+	/// and false of the page, which is a view over a repository with a scope
+	/// and a selection, opened on purpose.
+	///
+	/// `showing` is what the identifier does not settle: the log page's ref,
+	/// its path scope, the stash page's ref. A stash by *ref* rather than by
+	/// index, because an index is a different commit after one `git stash push`.
+	public struct OpenPage: Equatable, Sendable {
+		public var identifier: String
+		public var showing: [String: String]
+
+		public init(identifier: String, showing: [String: String] = [:]) {
+			self.identifier = identifier
+			self.showing = showing
+		}
+	}
+
 	public var files: [OpenFile]
 	/// Which one was in front.
 	public var activePath: String?
@@ -137,6 +181,13 @@ public struct ProjectSession: Equatable, Sendable {
 	/// too. Not in `.git`, for the reason that type gives: it is this program's
 	/// opinion about a directory rather than a fact about the repository.
 	public var reviewCheckouts: [String: Int]
+	/// The commit message being composed, or nil where nothing was typed.
+	///
+	/// Additive: absent from every session written before it existed, which
+	/// reads as nothing having been typed — the safe direction.
+	public var composedMessage: ComposedMessage?
+	/// The pages that were open, in the order they were in.
+	public var pages: [OpenPage]
 
 	public init(
 		files: [OpenFile] = [],
@@ -149,12 +200,16 @@ public struct ProjectSession: Equatable, Sendable {
 		xcodeDestinations: [String: String] = [:],
 		breakpoints: [String: [Breakpoint]] = [:],
 		reviewTicks: [String: [String: String]] = [:],
-		reviewCheckouts: [String: Int] = [:]
+		reviewCheckouts: [String: Int] = [:],
+		composedMessage: ComposedMessage? = nil,
+		pages: [OpenPage] = []
 	) {
 		self.xcodeDestinations = xcodeDestinations
 		self.breakpoints = breakpoints
 		self.reviewTicks = reviewTicks
 		self.reviewCheckouts = reviewCheckouts
+		self.composedMessage = composedMessage
+		self.pages = pages
 		self.files = files
 		self.activePath = activePath
 		self.terminals = terminals
@@ -168,7 +223,8 @@ public struct ProjectSession: Equatable, Sendable {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
 			&& breakpoints.isEmpty && tmuxWindow == nil && reviewTicks.isEmpty
-			&& reviewCheckouts.isEmpty
+			&& reviewCheckouts.isEmpty && pages.isEmpty
+			&& (composedMessage?.isEmpty ?? true)
 	}
 
 	/// The same session with everything that belongs to a project taken out.
@@ -178,7 +234,9 @@ public struct ProjectSession: Equatable, Sendable {
 	/// terminal it came with, no tmux window it was left in, no configuration
 	/// the play button was pointing at, and no subproject — a folder has no
 	/// parts. The breakpoints go too: they are lines in files a debugger was
-	/// going to stop at, and there is nothing here to run.
+	/// going to stop at, and there is nothing here to run. So do the commit
+	/// message and the git pages: a folder in no working copy has nothing to
+	/// commit and no history to page through.
 	public var filesOnly: ProjectSession {
 		ProjectSession(files: files, activePath: activePath, isPanelVisible: isPanelVisible)
 	}

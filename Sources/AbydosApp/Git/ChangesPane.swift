@@ -1604,6 +1604,39 @@ final class ChangesPane: NSView {
 		updateCommitButton()
 	}
 
+	/// The message being composed, for the session to write down.
+	///
+	/// Both halves: the description is where the *why* goes and is the expensive
+	/// one to lose. Nil where nothing has been typed, so that a pane somebody
+	/// has not touched does not make a session out of two empty strings.
+	var composedMessage: ProjectSession.ComposedMessage? {
+		let message = ProjectSession.ComposedMessage(
+			summary: subjectField.stringValue, description: bodyView.string
+		)
+		return message.isEmpty ? nil : message
+	}
+
+	/// Puts a remembered message back, and only where nothing has been typed
+	/// since.
+	///
+	/// The rule the draft already follows: somebody who has started typing in
+	/// this pane has said something more recent than the session file has. The
+	/// description is opened where it has something in it, for the reason a
+	/// draft opens it — a description behind a chevron reads as one that was
+	/// not restored.
+	func restore(message: ProjectSession.ComposedMessage) {
+		if subjectField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty {
+			subjectField.stringValue = message.summary
+		}
+		if bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
+			bodyView.string = message.description
+		}
+		if !bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
+			setDescription(showing: true)
+		}
+		updateCommitButton()
+	}
+
 	/// **A draft, and never a commit.** Nothing is staged, nothing is
 	/// committed, both fields stay editable, and `Commit` is not disabled while
 	/// this is thinking — a slow answer must not become a blocked one.
@@ -1872,6 +1905,21 @@ final class ChangesPane: NSView {
 	func carrySummaryForTesting(_ text: String) {
 		subjectField.stringValue = text
 		updateCommitButton()
+	}
+
+	/// Types both halves of a message, as somebody composing one does.
+	///
+	/// Both, because `carrySummaryForTesting` is the summary alone and the
+	/// description is the half that is expensive to lose — a proof that only
+	/// carried a subject would pass over the bug it is about.
+	func composeForTesting(summary: String, body: String) {
+		fill(subject: summary, body: body)
+		if !body.isEmpty { setDescription(showing: true) }
+	}
+
+	/// What the fields hold, in one line, for a report either side of a switch.
+	func messageReportForTesting() -> String {
+		"summary=[\(subjectField.stringValue)] body=[\(bodyView.string)]"
 	}
 
 	/// Selects a change by path, in whichever list holds it.
