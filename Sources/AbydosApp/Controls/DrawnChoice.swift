@@ -23,8 +23,16 @@ final class DrawnChoice: NSControl, ScaleFollowing {
 		case symbol(String, description: String)
 	}
 
-	private let segments: [Segment]
+	private var segments: [Segment]
 	private var frames: [NSRect] = []
+
+	/// Segments that cannot be chosen.
+	///
+	/// The log page's second segment names the file the log is scoped to, and
+	/// there is not always one — so it says `This File` and refuses, rather
+	/// than disappearing and leaving one lonely segment that reads as a
+	/// button.
+	private var disabled: Set<Int> = []
 
 	/// Which one is chosen. Setting it does not call `onChange`: that is for
 	/// the person pressing, not for the code putting the control back.
@@ -64,14 +72,35 @@ final class DrawnChoice: NSControl, ScaleFollowing {
 		return super.resignFirstResponder()
 	}
 
+	// MARK: - Changing what it says
+
+	/// Renames a segment. The log page's file segment carries the file's name,
+	/// which is not known when the control is built.
+	func setLabel(_ text: String, forSegment index: Int) {
+		guard segments.indices.contains(index) else { return }
+		segments[index] = .words(text)
+		invalidateIntrinsicContentSize()
+		needsDisplay = true
+	}
+
+	func label(forSegment index: Int) -> String? {
+		guard segments.indices.contains(index) else { return nil }
+		if case let .words(text) = segments[index] { return text }
+		return nil
+	}
+
+	func setEnabled(_ enabled: Bool, forSegment index: Int) {
+		if enabled { disabled.remove(index) } else { disabled.insert(index) }
+		needsDisplay = true
+	}
+
 	// MARK: - Measuring
 
-	private func words(_ text: String, chosen: Bool) -> NSAttributedString {
-		NSAttributedString(string: text, attributes: [
+	private func words(_ text: String, chosen: Bool, enabled: Bool = true) -> NSAttributedString {
+		let colour = chosen ? Theme.current.sidebarText : Theme.current.sidebarHeaderText
+		return NSAttributedString(string: text, attributes: [
 			.font: Theme.current.uiFont(11, weight: chosen ? .medium : .regular),
-			.foregroundColor: chosen
-				? Theme.current.sidebarText
-				: Theme.current.sidebarHeaderText,
+			.foregroundColor: enabled ? colour : colour.withAlphaComponent(0.4),
 		])
 	}
 
@@ -130,7 +159,9 @@ final class DrawnChoice: NSControl, ScaleFollowing {
 
 			switch segment {
 			case let .words(text):
-				let drawn = words(text, chosen: index == selectedIndex)
+				let drawn = words(
+					text, chosen: index == selectedIndex, enabled: !disabled.contains(index)
+				)
 				let size = drawn.size()
 				drawn.draw(at: NSPoint(
 					x: (box.midX - size.width / 2).rounded(),
@@ -179,6 +210,7 @@ final class DrawnChoice: NSControl, ScaleFollowing {
 
 	private func choose(_ index: Int) {
 		guard index != selectedIndex, segments.indices.contains(index) else { return }
+		guard !disabled.contains(index) else { return }
 		selectedIndex = index
 		onChange?(index)
 	}

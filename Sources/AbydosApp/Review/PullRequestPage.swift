@@ -37,12 +37,12 @@ final class PullRequestPage: NSView {
 	private var fileList: ChangedFileList!
 	private var diffView: DiffView!
 	private var diffScroll: NSScrollView!
-	private var arrangeControl: NSSegmentedControl!
-	private var wholeFileSwitch: NSButton!
-	private var hideReadSwitch: NSButton!
-	private var checkOutButton: NSButton!
-	private var reviewButton: NSButton!
-	private var progressLabel: NSTextField!
+	private var arrangeControl: DrawnChoice!
+	private var wholeFileSwitch: DrawnCheckbox!
+	private var hideReadSwitch: DrawnCheckbox!
+	private var checkOutButton: DrawnButton!
+	private var reviewButton: DrawnButton!
+	private var progressLabel: ScaledLabel!
 	private var headingLabel: NSTextField!
 	private var subheadingLabel: NSTextField!
 	private var split: NSSplitView!
@@ -149,34 +149,28 @@ final class PullRequestPage: NSView {
 			diffView.topAnchor.constraint(equalTo: diffScroll.contentView.topAnchor),
 		])
 
-		arrangeControl = ChangedFileList.makeArrangeControl(
-			target: self, action: #selector(arrangementChanged)
-		)
-		arrangeControl.selectedSegment = Settings.shared.commitFilesByFolder ? 1 : 0
+		arrangeControl = ChangedFileList.makeArrangeControl { [weak self] index in
+			self?.arrangementChanged(to: index)
+		}
+		arrangeControl.selectedIndex = Settings.shared.commitFilesByFolder ? 1 : 0
 
 		// **The whole file, not three lines either side of the change.** This is
 		// the advantage a review in an editor has and a review in a browser
 		// cannot have: the file is here, the language server is here, and the
 		// question a reviewer has is usually about the code around the change
 		// rather than the change.
-		wholeFileSwitch = NSButton(
-			checkboxWithTitle: "Whole file", target: self, action: #selector(wholeFileChanged)
-		)
-		wholeFileSwitch.controlSize = .small
-		wholeFileSwitch.font = Theme.current.uiFont(11)
+		wholeFileSwitch = DrawnCheckbox(title: "Whole file") { [weak self] in
+			self?.wholeFileChanged()
+		}
 		wholeFileSwitch.state = Settings.shared.reviewShowsWholeFile ? .on : .off
 		wholeFileSwitch.toolTip = "Show the change inside the whole file, not only its hunks"
 
-		hideReadSwitch = NSButton(
-			checkboxWithTitle: "Hide read", target: self, action: #selector(hideReadChanged)
-		)
-		hideReadSwitch.controlSize = .small
-		hideReadSwitch.font = Theme.current.uiFont(11)
+		hideReadSwitch = DrawnCheckbox(title: "Hide read") { [weak self] in
+			self?.hideReadChanged()
+		}
 		hideReadSwitch.toolTip = "Leave only the files still to read"
 
-		progressLabel = NSTextField(labelWithString: "")
-		progressLabel.font = Theme.current.uiFont(11)
-		progressLabel.textColor = Theme.current.gitIgnored
+		progressLabel = ScaledLabel(colour: { Theme.current.gitIgnored })
 
 		// **The point of reading a review in an editor**, one button along from
 		// the diff: the language server, go-to-definition, the outline and the
@@ -192,25 +186,18 @@ final class PullRequestPage: NSView {
 		// So it says whether the branch is checked out and toggles it, staying
 		// pressed while it is. Opening it as a project is still there, in the
 		// list's own menu, for when that is what somebody means.
-		checkOutButton = NSButton(
-			title: "Check Out", target: self, action: #selector(checkOutPressed)
-		)
-		checkOutButton.controlSize = .small
-		checkOutButton.font = Theme.current.uiFont(11)
-		checkOutButton.bezelStyle = .rounded
-		checkOutButton.setButtonType(.pushOnPushOff)
+		checkOutButton = DrawnButton(title: "Check Out") { [weak self] in
+			self?.checkOutPressed()
+		}
 		checkOutButton.toolTip = "Check this branch out beside the project, to read it in place"
 
 		// **The point at which a review is finished** is the point at which it
 		// is worth doing here at all. Everything up to saying something happens
 		// on this page; without this the app is a viewer and the reviewer opens
 		// a browser, finds the pull request again, and finds the line again.
-		reviewButton = NSButton(
-			title: "Review…", target: self, action: #selector(reviewPressed)
-		)
-		reviewButton.controlSize = .small
-		reviewButton.font = Theme.current.uiFont(11)
-		reviewButton.bezelStyle = .rounded
+		reviewButton = DrawnButton(title: "Review…") { [weak self] in
+			self?.reviewPressed()
+		}
 		reviewButton.toolTip = "Submit what has been written as one review"
 
 		let controls = NSStackView(views: [
@@ -467,8 +454,8 @@ final class PullRequestPage: NSView {
 	/// Which file the diff is showing — for whatever is built on top of it.
 	var onFileShown: ((String) -> Void)?
 
-	@objc private func arrangementChanged() {
-		Settings.shared.commitFilesByFolder = arrangeControl.selectedSegment == 1
+	private func arrangementChanged(to index: Int) {
+		Settings.shared.commitFilesByFolder = index == 1
 		fileList.arrangesByFolder = Settings.shared.commitFilesByFolder
 	}
 
@@ -480,7 +467,7 @@ final class PullRequestPage: NSView {
 		// answer while the work is going on; the state below puts it right if
 		// the work refuses — a checkout with changes in it, say.
 		let wanted = !isCheckedOut()
-		checkOutButton.state = wanted ? .on : .off
+		checkOutButton.isLit = wanted
 		checkOutButton.isEnabled = false
 		let done: (String) -> Void = { [weak self] said in
 			self?.checkOutButton.isEnabled = true
@@ -495,8 +482,8 @@ final class PullRequestPage: NSView {
 
 	private func showCheckOutState() {
 		let out = isCheckedOut()
-		checkOutButton.state = out ? .on : .off
-		checkOutButton.title = out ? "Checked Out" : "Check Out"
+		checkOutButton.isLit = out
+		checkOutButton.setLabel(out ? "Checked Out" : "Check Out")
 		checkOutButton.toolTip = out
 			? "The branch is checked out beside the project. Press to remove that checkout."
 			: "Check this branch out beside the project, to read it in place"
@@ -726,7 +713,7 @@ final class PullRequestPage: NSView {
 	/// Flips the arrangement, and says how long the rebuild took.
 	func arrangeForTesting() -> String {
 		Settings.shared.commitFilesByFolder.toggle()
-		arrangeControl.selectedSegment = Settings.shared.commitFilesByFolder ? 1 : 0
+		arrangeControl.selectedIndex = Settings.shared.commitFilesByFolder ? 1 : 0
 		let started = ProcessInfo.processInfo.systemUptime
 		fileList.arrangesByFolder = Settings.shared.commitFilesByFolder
 		let took = (ProcessInfo.processInfo.systemUptime - started) * 1000

@@ -39,13 +39,26 @@ final class DrawnButton: NSButton, ScaleFollowing {
 	}
 
 	/// An SF Symbol instead of words, when the button is a glyph.
-	private let symbol: String?
+	///
+	/// A `var` because a glyph can be the button's state: the commit page's
+	/// chevron points right while the description is shut and down while it is
+	/// open, and the same button carries both.
+	private var symbol: String?
 
 	/// The design-time size of the words. 11 is the strip's and the toasts';
 	/// a pane's buttons sit beside 12-point rows and ask for 12.
 	private let fontSize: CGFloat
 
 	var prominence: Prominence = .normal {
+		didSet { applyTheme() }
+	}
+
+	/// Drawn as held down, for a button that is a switch rather than a verb.
+	///
+	/// `Check Out` on the review page is one: it says whether the branch is
+	/// checked out and stays pressed while it is. A bezel gave that through
+	/// `.pushOnPushOff`; a drawn button is told.
+	var isLit: Bool = false {
 		didSet { applyTheme() }
 	}
 
@@ -78,6 +91,17 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		// to be registered by whoever makes it is a control somebody will make
 		// without registering, which is the fault this library exists for.
 		ScaledControls.register(self)
+	}
+
+	/// A new glyph, in the app's own colour and at the app's own size.
+	///
+	/// Setting `image` directly would work and would be wrong: the image would
+	/// be the system's at the system's size, so the one button whose glyph
+	/// changes would stop following the zoom while its neighbours carried on.
+	func setSymbol(_ name: String, description: String) {
+		symbol = name
+		setAccessibilityLabel(description)
+		applyTheme()
 	}
 
 	/// New words, in the app's own type.
@@ -127,6 +151,7 @@ final class DrawnButton: NSButton, ScaleFollowing {
 	}
 
 	private var fillColour: NSColor {
+		if isLit { return Theme.current.selection(.row, hasKeyboard: true) }
 		switch prominence {
 		case .normal: return Theme.current.editorBackground
 		case .prominent: return Theme.current.caret

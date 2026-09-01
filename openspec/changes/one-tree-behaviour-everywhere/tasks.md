@@ -14,6 +14,8 @@
 - [ ] 2b.1 Apply the fallback the pane already computes when staging takes the selected row away, so the neighbour is selected.
 - [ ] 2b.2 Give the changes tree a row view that draws the app's selection through `Theme.selection`, the way `NavigatorRowView` does, instead of leaving AppKit to paint its band.
 - [ ] 2b.3 Check the other three trees draw the app's selection too, and say in the design which of the four did not.
+- [ ] 2b.4 Make the log page's detail file list take the keyboard when it is clicked into, so the arrows stop going to the commit list above it.
+- [ ] 2b.5 Check the same for the other three trees: click a row, then press ↓, and say which trees did not already move.
 
 ## 3. The four trees, one at a time
 

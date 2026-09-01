@@ -166,6 +166,16 @@ final class ChangedFileList: NSView {
 		if let previous { select(path: previous) }
 	}
 
+	/// Takes a new row height and re-lays-out the rows it already has.
+	///
+	/// Not a reload: the rows are the same rows, and reloading a tree to change
+	/// a height loses the selection and the expansion — which is a fault of its
+	/// own, one pane over.
+	func applyRowHeight(_ height: CGFloat) {
+		outline.rowHeightOverride = height
+		outline.noteHeightOfRows(withIndexesChanged: IndexSet(0..<outline.numberOfRows))
+	}
+
 	/// How much of each folder has been read, in one walk of the tree.
 	///
 	/// Per rebuild and not per drawn row: the folder row used to walk its own
@@ -213,22 +223,18 @@ final class ChangedFileList: NSView {
 	/// in the same order with the same tooltips. Where it goes is the page's
 	/// business — the log page puts it in the strip beside its tabs, and that
 	/// strip's own comment says why nothing may go in the split below it.
-	static func makeArrangeControl(target: AnyObject, action: Selector) -> NSSegmentedControl {
-		let arrange = NSSegmentedControl(
-			images: [
-				Theme.symbol("list.bullet", size: 11, color: Theme.current.sidebarText)
-					?? NSImage(),
-				Theme.symbol("folder", size: 11, color: Theme.current.sidebarText)
-					?? NSImage(),
+	/// Shared by the log page and the pull-request page, which is why it is a
+	/// factory: two view-mode controls that came to disagree would be two
+	/// answers to one question.
+	static func makeArrangeControl(onChange: @escaping (Int) -> Void) -> DrawnChoice {
+		let arrange = DrawnChoice(
+			segments: [
+				.symbol("list.bullet", description: "List the files a commit touched"),
+				.symbol("folder", description: "Group them under the folders holding them"),
 			],
-			trackingMode: .selectOne,
-			target: target,
-			action: action
+			onChange: onChange
 		)
-		arrange.controlSize = .small
 		arrange.translatesAutoresizingMaskIntoConstraints = false
-		arrange.setToolTip("List the files a commit touched", forSegment: 0)
-		arrange.setToolTip("Group them under the folders holding them", forSegment: 1)
 		return arrange
 	}
 

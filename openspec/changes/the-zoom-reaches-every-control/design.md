@@ -189,16 +189,35 @@ kept by its pane stays registered.** → That is correct: it will be shown again
 and has to be right when it is. The registry is swept of nil boxes when it is
 walked.
 
+## What the open questions turned out to be
+
+**The commit page's detail area is not `PanelRowSnap`'s fault.** Read before
+anything was written, as the task said. That machinery is about rounding a
+terminal's height to whole rows and has nothing to say here; the page's own
+split is placed as a *fraction* of the width and follows a resize correctly.
+What does not follow is the description box, whose height is
+`Theme.current.scaled(150)` in a constraint constant — copied once when the pane
+was built. Leaving presentation mode put the type back to 1.0× and left the box
+at the height 1.5× had asked for. So: no second divider path, and instead the
+pane remembers every height it took out of the theme and takes them again.
+
+**The drawn choice keeps the arrow keys**, so the fallback is not needed and
+`NSSegmentedControl` is gone from these panes rather than kept as a measured
+member. ← and → are answered in `DrawnChoice.keyDown` directly. The reason this
+was worth checking rather than assuming: two `DrawnButton`s in a stack view
+would have looked identical in a screenshot and lost the behaviour silently.
+
+**Why `ThemeSwap` misses the navigator's outline was not chased**, and this is
+the record of that decision rather than a gap. The explicit re-apply is two
+lines in the method that was *already* re-applying that view's other metrics
+and had simply never been given its colours; chasing a general mechanism to
+find out why it missed one view would have been a change of its own, on the
+critical path of a release that is being held. It is worth knowing — it may be
+missing other views for the same reason — and it is filed as its own question
+rather than as part of this.
+
 ## Open Questions
 
-- Whether the commit page's detail area is genuinely the same fault as
-  `PanelRowSnap`'s or only looks like it. To be settled by reading that code
-  before writing a second divider-position path, not by assuming either way.
-- Whether `NSSegmentedControl` can be replaced by a drawn choice without losing
-  the keyboard behaviour people use on it (arrow keys between segments). If it
-  cannot, the choice control keeps the segmented control and becomes a
-  *measured* member like the search field, and the design's two camps hold.
-- Why `ThemeSwap` does not reach the navigator's outline view. Worth knowing —
-  it may be missing other views for the same reason — but not on this change's
-  critical path, and not a licence to leave the tree broken while it is worked
-  out.
+- Why `ThemeSwap.apply` does not reach `NavigatorOutlineView.backgroundColor`
+  when it walks the window's content view and has an `NSTableView` case that
+  should match. Not chased here; see above.

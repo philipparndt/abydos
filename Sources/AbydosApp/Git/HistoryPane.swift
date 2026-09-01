@@ -8,7 +8,7 @@ import AbydosKit
 /// selected commit touched. Clicking a file opens that commit's diff for it,
 /// which is the question a log is nearly always being asked: not "what
 /// happened" but "what happened to this".
-final class HistoryPane: NSView {
+final class HistoryPane: NSView, ScaleFollowing {
 	/// How much room this has, and therefore what it can draw.
 	///
 	/// **One pane and not two.** A graph needs width for its lanes and its
@@ -78,8 +78,8 @@ final class HistoryPane: NSView {
 
 	private static let pageSize = 150
 
-	private var searchField: NSSearchField!
-	private var scopeControl: NSSegmentedControl!
+	private var searchField: ScaledSearchField!
+	private var scopeControl: DrawnChoice!
 	private var commitTable: HistoryTableView!
 	/// The changed files of the selected commit — the list a pull request page
 	/// hosts too, which is why it is a view of its own rather than an outline
@@ -114,7 +114,7 @@ final class HistoryPane: NSView {
 	}
 	/// The two arrangements, as a control. Only the page has one — see
 	/// `arrangesFilesByFolder` for why the column does not.
-	private var arrangeControl: NSSegmentedControl?
+	private var arrangeControl: DrawnChoice?
 	private var detailLabel: NSTextField!
 	/// The diff of the selected file, in `.page` only.
 	private var diffView: DiffView?
@@ -126,7 +126,7 @@ final class HistoryPane: NSView {
 	private var messageView: NSTextView?
 	/// How tall the message strip is, and whether it is open.
 	/// The two tabs on the right, and what they show.
-	private var detailTabs: NSSegmentedControl?
+	private var detailTabs: DrawnChoice?
 	private var detailMessage: NSScrollView?
 
 	init(root: URL, layout: Layout = .sidebar) {
@@ -139,9 +139,29 @@ final class HistoryPane: NSView {
 		beginFirstRead()
 		reload()
 
+		// **The pane registers, not only its controls.** Its row heights are
+		// numbers taken out of the theme and kept, which is the same fault a
+		// bezel has by another route: the fonts drawn into a row are re-read
+		// on every repaint and the height the row was given is not. Registering
+		// here puts both on the one path.
+		ScaledControls.register(self)
+
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(reload), name: .abydosRepositoryChanged, object: nil
 		)
+	}
+
+	/// Re-takes the heights that were read when the tables were built.
+	///
+	/// `noteHeightOfRows` rather than `reloadData`: the rows are the same rows
+	/// and their contents have not changed, so re-asking for their heights is
+	/// the whole of it — and a reload here would lose the selection every time
+	/// somebody pressed ⌘+.
+	func applyTheme() {
+		commitTable.rowHeightOverride = CommitRowView.rowHeight()
+		commitTable.noteHeightOfRows(withIndexesChanged: IndexSet(0..<commitTable.numberOfRows))
+		fileList.applyRowHeight(Theme.current.scaled(22))
+		needsDisplay = true
 	}
 
 	/// Shown until the first log comes back — see `ChangesPane.activity` for why
@@ -179,10 +199,7 @@ final class HistoryPane: NSView {
 	// MARK: - Layout
 
 	private func build() {
-		searchField = NSSearchField()
-		searchField.placeholderString = "Search messages"
-		searchField.font = Theme.current.uiFont(12)
-		searchField.focusRingType = .none
+		searchField = ScaledSearchField(placeholder: "Search messages")
 		searchField.delegate = self
 		searchField.sendsWholeSearchString = false
 
@@ -190,17 +207,11 @@ final class HistoryPane: NSView {
 		// naming the other state: "Only main.go" and "Whole Repository" each
 		// read as a description of what is showing, so a single button cannot
 		// say which it is.
-		scopeControl = NSSegmentedControl(
-			labels: ["Whole Repository", "This File"],
-			trackingMode: .selectOne,
-			target: self,
-			action: #selector(scopeChanged)
-		)
-		scopeControl.controlSize = .small
-		scopeControl.font = Theme.current.uiFont(11)
-		scopeControl.selectedSegment = 0
+		scopeControl = DrawnChoice(
+			segments: [.words("Whole Repository"), .words("This File")]
+		) { [weak self] index in self?.scopeChanged(to: index) }
 
-		commitTable = makeTable(rowHeight: Theme.current.scaled(40))
+		commitTable = makeTable(rowHeight: CommitRowView.rowHeight())
 		commitTable.onSelectionChange = { [weak self] in self?.commitSelected() }
 		commitTable.menu = makeCommitMenu()
 		commitTable.onScrolledToEnd = { [weak self] in self?.loadMore() }
@@ -375,16 +386,10 @@ final class HistoryPane: NSView {
 		changes.translatesAutoresizingMaskIntoConstraints = false
 		detailSplit = changes
 
-		let tabs = NSSegmentedControl(
-			labels: ["Changes", "Message"],
-			trackingMode: .selectOne,
-			target: self,
-			action: #selector(detailTabChanged)
-		)
-		tabs.controlSize = .small
-		tabs.font = Theme.current.uiFont(11)
 		// Changes first and selected: it is what somebody opened the log for.
-		tabs.selectedSegment = 0
+		let tabs = DrawnChoice(
+			segments: [.words("Changes"), .words("Message")]
+		) { [weak self] index in self?.detailTabChanged(to: index) }
 		tabs.translatesAutoresizingMaskIntoConstraints = false
 		detailTabs = tabs
 
@@ -401,10 +406,10 @@ final class HistoryPane: NSView {
 		//
 		// Two segments rather than a button that flips, so the arrangement in
 		// force is on screen rather than remembered.
-		let arrange = ChangedFileList.makeArrangeControl(
-			target: self, action: #selector(fileArrangementChanged)
-		)
-		arrange.selectedSegment = Settings.shared.commitFilesByFolder ? 1 : 0
+		let arrange = ChangedFileList.makeArrangeControl { [weak self] index in
+			self?.fileArrangementChanged(to: index)
+		}
+		arrange.selectedIndex = Settings.shared.commitFilesByFolder ? 1 : 0
 		arrangeControl = arrange
 
 		// Frame-positioned, because it is a pane of the split above it.
@@ -527,7 +532,7 @@ final class HistoryPane: NSView {
 		let name = (scopedPath ?? offeredPath).map { ($0 as NSString).lastPathComponent }
 		scopeControl.setLabel(name ?? "This File", forSegment: 1)
 		scopeControl.setEnabled(name != nil, forSegment: 1)
-		scopeControl.selectedSegment = scopedPath == nil ? 0 : 1
+		scopeControl.selectedIndex = scopedPath == nil ? 0 : 1
 	}
 
 	// MARK: - Loading
@@ -794,14 +799,14 @@ final class HistoryPane: NSView {
 	// MARK: - Actions
 
 	/// Shows the diff of the selected file, or the whole commit message.
-	@objc private func detailTabChanged() {
-		let showingMessage = detailTabs?.selectedSegment == 1
+	private func detailTabChanged(to index: Int) {
+		let showingMessage = index == 1
 		detailMessage?.isHidden = !showingMessage
 		detailSplit?.isHidden = showingMessage
 	}
 
-	@objc private func scopeChanged() {
-		setScope(path: scopeControl.selectedSegment == 1 ? offeredPath : nil)
+	private func scopeChanged(to index: Int) {
+		setScope(path: index == 1 ? offeredPath : nil)
 	}
 
 	/// Folds the branch a row's merge brought in, for checking it works.
@@ -1141,7 +1146,7 @@ final class HistoryPane: NSView {
 		// Which segment is lit, because Compare ▸ History…'s claim is that it
 		// lands on "This File" — a state a screenshot of a segmented control
 		// says less reliably than the control itself.
-		let scope = scopeControl.selectedSegment == 1
+		let scope = scopeControl.selectedIndex == 1
 			? (scopeControl.label(forSegment: 1) ?? "file") : "whole"
 		said.append("scope=\(scope)")
 		said.append("commits=\(visible.count)")
@@ -1229,8 +1234,8 @@ final class HistoryPane: NSView {
 	/// drew when its file list was a table.
 	func fileRowsForTesting() -> [String] { fileList.rowsForTesting() }
 
-	@objc private func fileArrangementChanged() {
-		Settings.shared.commitFilesByFolder = arrangeControl?.selectedSegment == 1
+	private func fileArrangementChanged(to index: Int) {
+		Settings.shared.commitFilesByFolder = index == 1
 		fileList.arrangesByFolder = arrangesFilesByFolder
 	}
 
@@ -1239,7 +1244,7 @@ final class HistoryPane: NSView {
 	/// The menu item flips the preference; this is the page catching up. Public
 	/// because the window owns the menu and the page owns the rows.
 	func applyFileArrangement() {
-		arrangeControl?.selectedSegment = Settings.shared.commitFilesByFolder ? 1 : 0
+		arrangeControl?.selectedIndex = Settings.shared.commitFilesByFolder ? 1 : 0
 		fileList.arrangesByFolder = arrangesFilesByFolder
 	}
 

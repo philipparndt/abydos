@@ -48,6 +48,12 @@ That is the fourth question the trees answer separately — *what does a selecte
 row look like* — and it is the one where the difference is visible in a
 screenshot rather than only in a behaviour.
 
+A third arrived after that: **the log page's detail file list never takes the
+keyboard.** Clicking into it leaves the arrow keys going to the view that had
+them before, so the pane can be looked at and not moved around in. That is the
+question the proposal listed and had no report for — *where the keyboard goes* —
+and it now has one.
+
 ## What Changes
 
 - The selection survives expanding and collapsing a row, in every tree — which

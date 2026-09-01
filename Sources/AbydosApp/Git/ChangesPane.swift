@@ -217,13 +217,15 @@ final class ChangesPane: NSView {
 	private var diffView: DiffView?
 	private var pageSplit: NSSplitView?
 	private var hasPlacedDivider = false
-	private var draftButton: NSButton?
-	private var historyButton: NSButton?
+	private var draftButton: DrawnButton?
+	private var historyButton: DrawnButton?
 	private var bodyView: NSTextView!
 	/// Opens the description, which the page starts with put away.
-	private var descriptionChevron: NSButton!
+	private var descriptionChevron: DrawnButton!
 	/// The description's own height, turned off while it is collapsed.
 	private var descriptionHeight: NSLayoutConstraint!
+	/// Every height this pane takes out of the theme — see `ScaledHeights`.
+	private let heights = ScaledHeights()
 	/// The scroll view around the description, which is what is hidden: an
 	/// `NSStackView` collapses a hidden arranged subview, and hiding rather than
 	/// removing is what keeps the text through being put away.
@@ -234,9 +236,9 @@ final class ChangesPane: NSView {
 	/// The summary, description and commit row together, for saying where they
 	/// ended up.
 	private var messageStack: NSStackView!
-	private var amendCheckbox: NSButton!
-	private var commitButton: NSButton!
-	private var pushButton: NSButton!
+	private var amendCheckbox: DrawnCheckbox!
+	private var commitButton: DrawnButton!
+	private var pushButton: DrawnButton!
 	/// Where the branch stands against its remote, for what push should say.
 	private var pushState: GitPush.State?
 
@@ -257,6 +259,8 @@ final class ChangesPane: NSView {
 		build()
 		beginFirstRead()
 		refresh()
+		heights.follow(self.unstagedTable)
+		heights.follow(self.stagedTable)
 
 		// The lists have to follow the work tree, not just this view's own
 		// commands: editing a file in the editor changes what is stageable.
@@ -366,12 +370,9 @@ final class ChangesPane: NSView {
 		bodyScroll.drawsBackground = true
 		bodyScroll.backgroundColor = Theme.current.editorBackground
 
-		amendCheckbox = NSButton(checkboxWithTitle: "Amend", target: self, action: #selector(amendToggled))
-		amendCheckbox.font = Theme.current.uiFont(11)
+		amendCheckbox = DrawnCheckbox(title: "Amend") { [weak self] in self?.amendToggled() }
 
-		commitButton = NSButton(title: "Commit", target: self, action: #selector(commit))
-		commitButton.bezelStyle = .rounded
-		commitButton.controlSize = .small
+		commitButton = DrawnButton(title: "Commit") { [weak self] in self?.commit() }
 		commitButton.keyEquivalent = "\r"
 		// **⌘Return, not Return.** The button carried plain Return, which is the
 		// key the summary field now uses to open the description — and a page
@@ -385,9 +386,7 @@ final class ChangesPane: NSView {
 		// people want, but pushing what somebody else committed is a different
 		// decision from making a commit, and hiding it in a split button makes
 		// it hard to do on its own.
-		pushButton = NSButton(title: "Push", target: self, action: #selector(push))
-		pushButton.bezelStyle = .rounded
-		pushButton.controlSize = .small
+		pushButton = DrawnButton(title: "Push") { [weak self] in self?.push() }
 		pushButton.isEnabled = false
 		// The two swap `\r` between them in `updateCommitButton`, so the modifier
 		// belongs to both or the swap would give Return back.
@@ -412,9 +411,7 @@ final class ChangesPane: NSView {
 		// where a commit message goes to be one line long; the page is where a
 		// message somebody will read in a year gets written, and `…` is how you
 		// get there with what you have already typed.
-		let more = NSButton(title: "…", target: self, action: #selector(openPage))
-		more.bezelStyle = .rounded
-		more.controlSize = .small
+		let more = DrawnButton(title: "…") { [weak self] in self?.openPage() }
 		more.toolTip = "Write the message on a page, with room for a description"
 		commitRow.addArrangedSubview(more)
 
@@ -444,7 +441,7 @@ final class ChangesPane: NSView {
 			// The two lists share the space that is left after the commit box,
 			// so neither can squeeze the other out.
 			unstagedScroll.heightAnchor.constraint(equalTo: stagedScroll.heightAnchor),
-			subjectField.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24)),
+			heights.height(subjectField, design: 24),
 		])
 
 		// Inset the message box from the edges without inseting the lists, which
@@ -503,25 +500,18 @@ final class ChangesPane: NSView {
 		// the one-line case; this page is reached because somebody wants the
 		// diff or a longer message, and the diff is the half that is already
 		// there.
-		descriptionChevron = NSButton(
-			title: "", target: self, action: #selector(toggleDescription)
-		)
-		descriptionChevron.bezelStyle = .accessoryBarAction
-		descriptionChevron.controlSize = .small
-		descriptionChevron.imagePosition = .imageOnly
+		descriptionChevron = DrawnButton(
+			symbol: "chevron.right", description: "Show the description"
+		) { [weak self] in self?.toggleDescription() }
 
 		// **The messages this repository has already committed, one menu away.**
 		// A message like the last one — a repeated chore, a second try after an
 		// amend — had to be retyped or fished out of the log page by hand.
 		// Hidden while there are no commits, the amend checkbox's emptiness
 		// rule: there is no history to show.
-		let history = NSButton(title: "", target: self, action: #selector(openMessageHistory))
-		history.bezelStyle = .rounded
-		history.controlSize = .small
-		history.image = NSImage(
-			systemSymbolName: "clock", accessibilityDescription: "Message history"
-		)
-		history.imagePosition = .imageOnly
+		let history = DrawnButton(
+			symbol: "clock", description: "Message history"
+		) { [weak self] in self?.openMessageHistory() }
 		history.toolTip = "Use one of the repository's recent commit messages"
 		historyButton = history
 
@@ -531,9 +521,7 @@ final class ChangesPane: NSView {
 		// nothing when pressed, and the absent one was requested as a missing
 		// feature by somebody whose machine was hiding it. The reason sits in
 		// the tooltip, the way the push button explains itself.
-		draftButton = NSButton(title: "Draft", target: self, action: #selector(draftMessage))
-		draftButton?.bezelStyle = .rounded
-		draftButton?.controlSize = .small
+		draftButton = DrawnButton(title: "Draft") { [weak self] in self?.draftMessage() }
 		let summaryRow: [NSView] = [descriptionChevron, subjectField, history, draftButton!]
 		let summary = NSStackView(views: summaryRow)
 		summary.orientation = .horizontal
@@ -571,16 +559,14 @@ final class ChangesPane: NSView {
 
 		addSubview(split)
 
-		descriptionHeight = body.heightAnchor.constraint(
-			equalToConstant: Theme.current.scaled(150)
-		)
+		descriptionHeight = heights.height(body, design: 150)
 		NSLayoutConstraint.activate([
 			split.topAnchor.constraint(equalTo: topAnchor),
 			split.leadingAnchor.constraint(equalTo: leadingAnchor),
 			split.trailingAnchor.constraint(equalTo: trailingAnchor),
 			split.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-			subjectField.heightAnchor.constraint(equalToConstant: Theme.current.scaled(26)),
+			heights.height(subjectField, design: 26),
 			lists.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(280)),
 			diffScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(320)),
 		])
@@ -602,9 +588,9 @@ final class ChangesPane: NSView {
 		isDescriptionShowing = showing
 		descriptionBox.isHidden = !showing
 		descriptionHeight.isActive = showing
-		descriptionChevron.image = NSImage(
-			systemSymbolName: showing ? "chevron.down" : "chevron.right",
-			accessibilityDescription: showing ? "Hide the description" : "Write a description"
+		descriptionChevron.setSymbol(
+			showing ? "chevron.down" : "chevron.right",
+			description: showing ? "Hide the description" : "Write a description"
 		)
 		descriptionChevron.toolTip = showing ? "Hide the description" : "Write a description"
 	}
@@ -1099,11 +1085,11 @@ final class ChangesPane: NSView {
 		// thing to want — so it is the one case where an empty index is allowed.
 		let isAmending = amendCheckbox.state == .on
 		commitButton.isEnabled = hasSubject && (count > 0 || isAmending)
-		commitButton.title = count > 0
+		commitButton.setLabel(count > 0
 			? "Commit \(count) File\(count == 1 ? "" : "s")"
-			: (isAmending ? "Amend" : "Commit")
+			: (isAmending ? "Amend" : "Commit"))
 
-		pushButton.title = pushState?.buttonTitle ?? "Push"
+		pushButton.setLabel(pushState?.buttonTitle ?? "Push")
 		pushButton.isEnabled = !isBusy && pushState?.canPush == true
 		pushButton.toolTip = pushTooltip
 
@@ -1116,6 +1102,12 @@ final class ChangesPane: NSView {
 		)
 		commitButton.keyEquivalent = primary == .commit ? "\r" : ""
 		pushButton.keyEquivalent = primary == .push ? "\r" : ""
+		// **The accent is drawn, so it has to be said.** A bezelled default
+		// button took its blue from `keyEquivalent`; a drawn one is told, and
+		// the two must not disagree — the accent is the page saying which verb
+		// Return means.
+		commitButton.prominence = primary == .commit ? .prominent : .normal
+		pushButton.prominence = primary == .push ? .prominent : .normal
 	}
 
 	/// Nil only where there is no branch at all — a detached HEAD, or a pane
@@ -1654,14 +1646,14 @@ final class ChangesPane: NSView {
 		}
 
 		button.isEnabled = false
-		button.title = "Drafting…"
+		button.setLabel("Drafting…")
 
 		Task { @MainActor [weak self] in
 			let answer = await ClaudeDraft.draft(
 				in: root, conventional: Settings.shared.conventionalCommitDrafts
 			)
 			button.isEnabled = true
-			button.title = "Draft"
+			button.setLabel("Draft")
 
 			switch answer {
 			case let .success(draft):
@@ -2565,20 +2557,17 @@ private final class SectionHeaderView: NSView {
 
 	private let title: String
 	private var count = 0
-	private let button: NSButton
+	private let button: DrawnButton
 
 	override var isFlipped: Bool { true }
 
 	init(title: String, actionTitle: String) {
 		self.title = title
-		button = NSButton(title: actionTitle, target: nil, action: nil)
+		let made = DrawnButton(title: actionTitle) {}
+		button = made
 		super.init(frame: .zero)
 
-		button.bezelStyle = .rounded
-		button.controlSize = .small
-		button.font = Theme.current.uiFont(11)
-		button.target = self
-		button.action = #selector(buttonClicked)
+		made.onAction = { [weak self] in self?.buttonClicked() }
 		button.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(button)
 

@@ -36,8 +36,8 @@ final class PullRequestsPane: NSView {
 
 	private var table: PullRequestTable!
 	private var scroll: NSScrollView!
-	private var scopeControl: NSSegmentedControl!
-	private var refreshButton: NSButton!
+	private var scopeControl: DrawnChoice!
+	private var refreshButton: DrawnButton!
 	private var troubleView: NSTextField!
 	private var activity: PaneActivityView?
 	/// Which `gh`, for a driven run — see `reportForTesting`.
@@ -81,27 +81,16 @@ final class PullRequestsPane: NSView {
 		// screen rather than remembered. Which of the two is right depends on
 		// how a repository assigns its reviews, which cannot be worked out from
 		// here — see `ReviewRequestScope`.
-		scopeControl = NSSegmentedControl(
-			labels: ReviewRequestScope.allCases.map(\.title),
-			trackingMode: .selectOne,
-			target: self,
-			action: #selector(scopeChanged)
-		)
-		scopeControl.controlSize = .small
-		scopeControl.font = Theme.current.uiFont(11)
-		scopeControl.selectedSegment = scope == .meOrMyTeams ? 1 : 0
-		scopeControl.setToolTip("Pull requests asked of you by name", forSegment: 0)
-		scopeControl.setToolTip("Those, and any asked of a team you are in", forSegment: 1)
+		scopeControl = DrawnChoice(
+			segments: ReviewRequestScope.allCases.map { .words($0.title) },
+			selectedIndex: scope == .meOrMyTeams ? 1 : 0
+		) { [weak self] index in self?.scopeChanged(to: index) }
 
 		// **Asked for, never polled.** The list costs a network call and an API
 		// budget; a button is how somebody says they want to spend one.
-		refreshButton = NSButton(
-			image: Theme.symbol("arrow.clockwise", size: 11, color: Theme.current.sidebarText)
-				?? NSImage(),
-			target: self,
-			action: #selector(refreshPressed)
-		)
-		refreshButton.isBordered = false
+		refreshButton = DrawnButton(
+			symbol: "arrow.clockwise", description: "Ask GitHub again"
+		) { [weak self] in self?.refreshPressed() }
 		refreshButton.toolTip = "Ask GitHub again"
 
 		table = PullRequestTable()
@@ -205,8 +194,8 @@ final class PullRequestsPane: NSView {
 		table.reloadData()
 	}
 
-	@objc private func scopeChanged() {
-		Settings.shared.reviewRequestsIncludeTeams = scopeControl.selectedSegment == 1
+	private func scopeChanged(to index: Int) {
+		Settings.shared.reviewRequestsIncludeTeams = index == 1
 		reload()
 	}
 
@@ -344,8 +333,9 @@ final class PullRequestsPane: NSView {
 	var hasAnsweredForTesting: Bool { activity == nil }
 
 	func setScopeForTesting(_ scope: ReviewRequestScope) {
-		scopeControl.selectedSegment = scope == .meOrMyTeams ? 1 : 0
-		scopeChanged()
+		let index = scope == .meOrMyTeams ? 1 : 0
+		scopeControl.selectedIndex = index
+		scopeChanged(to: index)
 	}
 }
 

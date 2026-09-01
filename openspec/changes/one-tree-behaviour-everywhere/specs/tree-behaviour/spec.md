@@ -39,3 +39,14 @@ A selected row SHALL be drawn in the app's own selection — a rounded, inset sh
 #### Scenario: The keyboard is somewhere else
 - **WHEN** a tree holds a selection while the keyboard is in another pane
 - **THEN** the selection is drawn in the quiet colour, saying where you were without claiming where your keys are going
+
+### Requirement: A tree takes the keyboard when it is used
+Clicking a row, or opening a tree that is the pane's subject, SHALL make that tree the first responder, so the arrow keys move within it rather than in whatever held the keyboard before.
+
+#### Scenario: Clicking into the log page's file list
+- **WHEN** a file is clicked in the log page's detail list
+- **THEN** the arrow keys move between the files, not between the commits above them
+
+#### Scenario: The tree says whether it has the keyboard
+- **WHEN** a tree holds the keyboard
+- **THEN** its selection is drawn in the strong colour, and the pane that lost it draws its own selection quietly

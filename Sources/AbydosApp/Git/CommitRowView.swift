@@ -117,6 +117,27 @@ final class CommitRowView: NSView {
 		laneColours[abs(branch) % laneColours.count]
 	}
 
+	/// How tall a row has to be for the two lines it draws.
+	///
+	/// **Measured here because it is drawn here.** The table used to be built
+	/// with `Theme.current.scaled(40)` read once, so the fonts inside the row
+	/// grew with the zoom and the row did not: at a large zoom the second line
+	/// — the short hash — was clipped by the row's own edge, which is the
+	/// screenshot reported on 2026-09-01. A height and a drawing that are
+	/// decided in two places will disagree eventually; these are one function
+	/// apart.
+	static func rowHeight() -> CGFloat {
+		CommitRowMetrics.height(
+			subjectLineHeight: lineHeight(Theme.current.uiFont(12)),
+			detailLineHeight: lineHeight(Theme.current.uiFont(10)),
+			scale: Theme.current.scale
+		)
+	}
+
+	private static func lineHeight(_ font: NSFont) -> CGFloat {
+		ceil(NSAttributedString(string: "Hg", attributes: [.font: font]).size().height)
+	}
+
 	/// The graph column's width for this row, or nothing when there is no
 	/// graph — a filtered log has no shape worth drawing.
 	private var graphWidth: CGFloat {
@@ -128,7 +149,7 @@ final class CommitRowView: NSView {
 		drawGraph()
 
 		let left = Theme.current.scaled(10) + graphWidth
-		let top = Theme.current.scaled(5)
+		let top = (CommitRowMetrics.topPadding * Theme.current.scale).rounded()
 
 		var x = left
 		// Where a branch or tag points, said before the subject: it is how a
@@ -223,9 +244,13 @@ final class CommitRowView: NSView {
 			.font: Theme.current.uiFont(10),
 			.foregroundColor: faded(Theme.current.gitIgnored),
 		])
+		// Through the same arithmetic that decided the row's height, so the
+		// line cannot be drawn past an edge the row thought it had room inside.
 		detail.draw(in: NSRect(
 			x: left,
-			y: top + subject.size().height + Theme.current.scaled(2),
+			y: CommitRowMetrics.detailTop(
+				subjectLineHeight: ceil(subject.size().height), scale: Theme.current.scale
+			),
 			width: max(0, bounds.width - left - Theme.current.scaled(10)),
 			height: detail.size().height
 		))
