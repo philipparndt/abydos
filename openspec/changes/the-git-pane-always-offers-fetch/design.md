@@ -51,6 +51,28 @@ level.* A row whose verb disappears is the fault being fixed, one control over.
 Then the button is missing again, in the one state where it is least expected to
 be, and "always there" was the request.
 
+## What implementing it found
+
+**The local re-read was already on the menu.** `Read the Repository Again` has
+been on the repository row's context menu since the glyph was added, with a
+comment saying why — after a rebase in a terminal there is nothing to fetch and
+no reason to wait for one. So removing the glyph's no-remote fallback moves
+nothing and loses nothing; the migration line in the spec was already true when
+it was written.
+
+**The row's second verb was glyph-only on purpose, and that had to be undone.**
+`ActionableRowView`'s own comment made the case: the width arithmetic exists so
+a row is never truncated to make space for a button, and two sets of spellings
+competing for one trailing edge is that problem twice — a symbol at a fixed
+twenty points kept it to one subtraction. What that bought was a verb nobody
+could read, which is the report.
+
+So the second verb may now carry words, and the row keeps the rule rather than
+abandoning it: the second verb is measured like the first, and where there is
+not room for both, **the second one is what goes**. The row's own name still
+comes first. That is the risk below, answered in the arithmetic instead of in a
+promise.
+
 ## Risks / Trade-offs
 
 **A titled control is wider than a glyph, and the row is narrow.** → The row

@@ -25,7 +25,16 @@ public enum ControlMetrics {
 	///
 	/// Split evenly, so a control's text sits on its centre line — which is
 	/// what makes a row of controls of different heights read as a row.
-	public static let verticalPadding: CGFloat = 8
+	///
+	/// **Five, because twenty is what it is replacing.** This was eight, which
+	/// put a one-line control at 23 points at 1× against the system bezel's 20
+	/// and `DrawnButton`'s old hand-picked 19 — so every converted button came
+	/// out visibly fatter than the one it replaced, and in a 26-point strip
+	/// like the commit page's section headers it nearly filled the strip. That
+	/// was reported within minutes of the sweep being run, and it broke the
+	/// promise the drawn button was written under: *nothing visibly moves at
+	/// the zoom almost everybody is at*.
+	public static let verticalPadding: CGFloat = 5
 	/// Design-time space at each end of the words.
 	public static let horizontalPadding: CGFloat = 10
 	/// Design-time corner radius.
@@ -107,5 +116,41 @@ public enum CommitRowMetrics {
 	/// hash came to be drawn past the bottom of a row that thought it fitted.
 	public static func detailTop(subjectLineHeight: CGFloat, scale: CGFloat) -> CGFloat {
 		((topPadding + lineGap) * scale + subjectLineHeight).rounded()
+	}
+}
+
+/// Where the editor's gutter puts the line numbers and the git change mark.
+///
+/// **They were placed by two different rules and closed on each other.** The
+/// mark's x scaled with the zoom; the number's right inset was a fixed half of
+/// the gutter padding. One point apart at 1×, touching at about 1.2×, and the
+/// mark drawn over the digits above that — reported as the mark needing a gap
+/// from the numbers, which is what it looks like at the zoom it was seen at.
+///
+/// One anchor now, and both are placed from it, so they cannot drift: the mark
+/// has a column of its own with a gap on each side, and the numbers are
+/// right-aligned against that column rather than against the fold chevron.
+public enum GutterMetrics {
+	/// Design-time width of the change bar.
+	public static let markWidth: CGFloat = 3
+	/// Design-time gap on each side of it.
+	public static let markGap: CGFloat = 5
+
+	/// The left edge of the mark's column, measured from the gutter's left.
+	public static func markX(
+		gutterWidth: CGFloat, foldColumnWidth: CGFloat, scale: CGFloat
+	) -> CGFloat {
+		gutterWidth - foldColumnWidth - ((markGap + markWidth) * scale).rounded()
+	}
+
+	/// The right edge the line numbers are aligned to.
+	public static func numberRight(markX: CGFloat, scale: CGFloat) -> CGFloat {
+		markX - (markGap * scale).rounded()
+	}
+
+	/// What the mark's column adds to the gutter's width, so pushing the
+	/// numbers off it does not push them into the breakpoint strip.
+	public static func columnWidth(scale: CGFloat) -> CGFloat {
+		((markWidth + markGap * 2) * scale).rounded()
 	}
 }

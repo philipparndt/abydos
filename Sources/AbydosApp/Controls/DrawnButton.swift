@@ -131,9 +131,17 @@ final class DrawnButton: NSButton, ScaleFollowing {
 			])
 		}
 		layer?.cornerRadius = ControlMetrics.radius(scale: Theme.current.scale)
-		layer?.backgroundColor = fillColour.cgColor
+		// **Disabled has to reach the shape, not only the words.** Dimming the
+		// title alone left a full-strength pill with faint text in it, which
+		// reads as a button whose label happens to be light — reported as the
+		// dimming not working. A bezel greyed the whole control and that is
+		// what a drawn one has to do too.
+		let dim: (NSColor) -> NSColor = { colour in
+			self.isEnabled ? colour : colour.withAlphaComponent(colour.alphaComponent * 0.4)
+		}
+		layer?.backgroundColor = dim(fillColour).cgColor
 		layer?.borderWidth = prominence == .prominent ? 0 : 1
-		layer?.borderColor = Theme.current.separator.cgColor
+		layer?.borderColor = dim(Theme.current.separator).cgColor
 		invalidateIntrinsicContentSize()
 	}
 

@@ -13,7 +13,7 @@ import AbydosKit
 /// hard to read, and staging a directory used to mean selecting every file
 /// under it by hand. `GitChangeTree` decides the shape; this decides what the
 /// rows look like and what happens to them.
-final class ChangesPane: NSView {
+final class ChangesPane: NSView, ScaleFollowing {
 	/// How much room this has, and therefore what it can draw.
 	///
 	/// **One pane and not two**, the rule `HistoryPane` already keeps: the
@@ -212,6 +212,26 @@ final class ChangesPane: NSView {
 	/// rebuild, so that its own work is not mistaken for somebody's.
 	private var isRestoring = false
 
+	/// Stops restoring, but not until the run loop comes round again.
+	///
+	/// **Because `NSTableView` posts its selection change on a later turn.**
+	/// The flag was cleared on the line after the restore, so a notification
+	/// the restore itself caused arrived with the pane no longer claiming to be
+	/// restoring — and was treated as somebody clicking. The handler's job when
+	/// somebody clicks is to clear the *other* list, so staging put the
+	/// selection on the right row, the staged list's own restore posted a
+	/// moment later, and the row that had just been chosen was deselected.
+	///
+	/// That is the report exactly: *it shortly blinks at the right selection
+	/// and is then refreshed again and cleared out* — and its mirror, the
+	/// staged rows briefly taking the selection while unstaging.
+	///
+	/// A person cannot click in the same turn the restore ran in, so nothing
+	/// real is swallowed by waiting one.
+	private func stopRestoring() {
+		DispatchQueue.main.async { [weak self] in self?.isRestoring = false }
+	}
+
 	private var subjectField: NSTextField!
 	/// The diff of the selected change, in `.page` only.
 	private var diffView: DiffView?
@@ -261,6 +281,7 @@ final class ChangesPane: NSView {
 		refresh()
 		heights.follow(self.unstagedTable)
 		heights.follow(self.stagedTable)
+		ScaledControls.register(self)
 
 		// The lists have to follow the work tree, not just this view's own
 		// commands: editing a file in the editor changes what is stageable.
@@ -752,15 +773,30 @@ final class ChangesPane: NSView {
 				for root in self.side(for: outline).roots { root.applyLineCounts(counts) }
 				self.lineCounts[staged] = counts
 				self.refreshColumns(for: outline)
-				outline.reloadData()
-				// A reload throws the expansion away, so it goes back the way it
-				// does everywhere else in this pane.
+				// **A reload throws the selection away too.** This knew about
+				// the expansion — its comment said so — and not about the
+				// selection, so the `--numstat` counts landing a moment after a
+				// stage wiped whatever the rebuild had just restored. That is
+				// the staging report: the right row was chosen, and this
+				// arrived afterwards and cleared it. Found by driving it, after
+				// two other reloads had been fixed for the same reason.
 				self.isRestoring = true
-				self.expand(
-					self.side(for: outline).roots, in: outline,
-					collapsed: self.side(for: outline).collapsed
+				TreeSelectionKeeper.keepingSelection(
+					in: outline,
+					path: { (outline.item(atRow: $0) as? GitChangeNode)?.path },
+					row: { path in
+						guard let node = self.side(for: outline).byPath[path] else { return -1 }
+						return outline.row(forItem: node)
+					},
+					during: {
+						outline.reloadData()
+						self.expand(
+							self.side(for: outline).roots, in: outline,
+							collapsed: self.side(for: outline).collapsed
+						)
+					}
 				)
-				self.isRestoring = false
+				self.stopRestoring()
 			}
 		}
 	}
@@ -835,7 +871,7 @@ final class ChangesPane: NSView {
 			if let node = byPath[path] { outline.expandItem(node) }
 		}
 		restore(selection: selected, in: outline, staged: staged)
-		isRestoring = false
+		stopRestoring()
 		// Rows arrive after the page opens, so the keyboard may have been put
 		// into a list that was empty at the time. Now that there are rows, move
 		// it to one that has some — but only if it is still sitting somewhere
@@ -929,7 +965,16 @@ final class ChangesPane: NSView {
 		}
 		if !rows.isEmpty {
 			outline.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
-			setFallback(nil, staged: staged)
+			// **The fallback is not cleared here, and that was the bug.**
+			// Staging writes `.git/index`, the watcher sees it, and a refresh
+			// runs *between* the fallback being recorded and the rows actually
+			// going. That rebuild still finds the selected row — it is still
+			// there — restores it, and threw the fallback away on its way past.
+			// The rebuild that then loses the row had nothing to fall back to.
+			//
+			// It is only ever read when the whole selection has gone, and every
+			// operation records a fresh one, so keeping it costs nothing and
+			// removes a whole class of "something rebuilt in between".
 			return
 		}
 
@@ -1027,13 +1072,40 @@ final class ChangesPane: NSView {
 				unstagedSide.untrackedContents[path] = rows
 			}
 			guard let current = self.side(for: outline).byPath[path] else { return }
+			// **Nothing to do when the answer has not changed**, which is the
+			// usual case: `refill` sends this out for every open untracked
+			// directory on every filesystem event, and the directory is
+			// almost always exactly as it was. Reloading anyway is where the
+			// flicker while staging came from — two rebuilds and then a third
+			// from here, all drawing the same rows.
+			let unchanged = current.isFilled
+				&& current.children.map(\.path) == rows.map(\.path)
+			guard !unchanged else { return }
 			current.fill(with: rows)
 			if let counts = self.lineCounts[staged] { current.applyLineCounts(counts) }
 			// An opened untracked directory brings its own counts with it, and
 			// they can be wider than anything measured before.
 			self.refreshColumns(for: outline)
-			outline.reloadData()
-			outline.expandItem(current)
+			// **The selection is kept across this**, and two reports are the
+			// one fault here. `reloadData()` clears an outline view's
+			// selection; this call is asynchronous, so it lands *after* the
+			// rebuild has carefully put the selection back. Expanding an
+			// untracked folder with → left it open with nothing selected, and
+			// staging anything in a repository with an untracked folder open
+			// did the same — the rebuild restored, and this wiped it a moment
+			// later. One keeper closes both.
+			TreeSelectionKeeper.keepingSelection(
+				in: outline,
+				path: { (outline.item(atRow: $0) as? GitChangeNode)?.path },
+				row: { path in
+					guard let node = self.side(for: outline).byPath[path] else { return -1 }
+					return outline.row(forItem: node)
+				},
+				during: {
+					outline.reloadData()
+					outline.expandItem(current)
+				}
+			)
 		}
 	}
 
@@ -1497,7 +1569,6 @@ final class ChangesPane: NSView {
 			pendingDiff?.cancel()
 			let paths = GitChangeTree.reduce(selectedPaths(in: unstagedTable))
 			guard !paths.isEmpty else { return }
-			rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
 			runAcrossOwners(paths, moving: .toStaged) { await GitEstateOperation.stage(paths: $0, in: $1) }
 		}
 	}
@@ -1507,7 +1578,6 @@ final class ChangesPane: NSView {
 			pendingDiff?.cancel()
 			let paths = GitChangeTree.reduce(selectedPaths(in: stagedTable))
 			guard !paths.isEmpty else { return }
-			rememberWhereTheSelectionGoes(in: stagedTable, staged: true)
 			runAcrossOwners(paths, moving: .toUnstaged) { await GitEstateOperation.unstage(paths: $0, in: $1) }
 		}
 	}
@@ -1774,6 +1844,16 @@ final class ChangesPane: NSView {
 		_ operation: @escaping ([String], GitEstate) async -> [GitEstateOutcome]
 	) {
 		let estate = submodules.estate
+		// **Where the selection lands, remembered here and not at the call
+		// sites.** Three of them staged and only two said where the selection
+		// should go, so staging from the context menu emptied the selection —
+		// the same fault as the pane forgetting to re-apply a font, one floor
+		// down. Every path that moves rows comes through here.
+		switch moving {
+		case .toStaged:   rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
+		case .toUnstaged: rememberWhereTheSelectionGoes(in: stagedTable, staged: true)
+		case nil:         break
+		}
 		isBusy = true
 		let asked = Date()
 		let previous = operationChain
@@ -2206,10 +2286,23 @@ final class ChangesPane: NSView {
 		if expanded { outline.expandItem(node) } else { outline.collapseItem(node) }
 	}
 
-	func applyThemeChange() {
+	/// **This existed and nothing called it.** Written to re-take the pane's
+	/// type on a theme change, and never wired to anything — so the commit page
+	/// followed a zoom only where the sidebar rebuilt it, and the page in a tab
+	/// did not follow at all. It is on the library's one path now, which is the
+	/// point of there being one.
+	func applyTheme() {
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
-		subjectField.font = Theme.current.uiFont(12)
+		subjectField.font = Theme.current.uiFont(12, weight: .medium)
 		bodyView.font = Theme.current.uiFont(12)
+		// **The placeholder keeps the font it was set with.** `NSTextField`
+		// renders it from the font in force at the moment it was assigned, so
+		// a field whose font has just grown draws "Summary" at the old size —
+		// the one part of the commit page that did not follow, and reported as
+		// exactly that. Setting it again is the whole fix.
+		let placeholder = subjectField.placeholderString
+		subjectField.placeholderString = nil
+		subjectField.placeholderString = placeholder
 		// A zoom changes the indent as well as the type, and through `reload`
 		// so that the trees come back open where they were open.
 		unstagedTable.indentationPerLevel = Theme.current.scaled(14)
@@ -2328,6 +2421,10 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		if let known = side(for: outline).untrackedContents[node.path] {
 			node.fill(with: known)
 			refreshColumns(for: outline)
+			// `reloadItem` rather than `reloadData` keeps the selection by
+			// itself — it is the one node's children being replaced, not the
+			// row map — which is why the synchronous path was never the
+			// reported one.
 			outline.reloadItem(node, reloadChildren: true)
 			return
 		}
@@ -2336,6 +2433,14 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 
 	func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
 		Theme.current.scaled(22)
+	}
+
+	/// **This tree had no row view, so AppKit drew its own selection band.** A
+	/// selected file sat in the system's full-bleed blue inside a window that
+	/// draws a rounded, inset pill everywhere else — reported on 2026-09-01 as
+	/// the tree's selection not being themed, which is what it was.
+	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+		TreeRowView()
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor column: NSTableColumn?, item: Any) -> NSView? {
@@ -2367,7 +2472,7 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// whose insides are shut while everything around it is open.
 		isRestoring = true
 		expand(node.children, in: outline, collapsed: side(for: outline).collapsed)
-		isRestoring = false
+		stopRestoring()
 	}
 
 	func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -2506,100 +2611,6 @@ extension ChangesPane: NSTextFieldDelegate {
 		if !isDescriptionShowing { setDescription(showing: true) }
 		window?.makeFirstResponder(bodyView)
 		return true
-	}
-}
-
-/// Tree that reports Return and double-click, for stage/unstage.
-///
-/// Left and right arrows are left to `NSOutlineView`, which already folds and
-/// unfolds with them — the keyboard expansion the navigator has, for nothing.
-private final class ChangesOutlineView: NSOutlineView {
-	/// The row under the pointer for a click, and -1 from the keyboard, where
-	/// the selection is what counts rather than any one row.
-	var onActivate: ((Int) -> Void)?
-
-	/// A click from an inactive window lands on the row rather than being spent
-	/// activating the app, as the branches tree and the project tree do.
-	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-	/// The editor's tab strip draws which tab holds the keyboard, and AppKit
-	/// posts nothing when the first responder changes.
-	override func becomeFirstResponder() -> Bool {
-		needsDisplay = true
-		announceKeyboardFocusChange()
-		return super.becomeFirstResponder()
-	}
-
-	override func resignFirstResponder() -> Bool {
-		needsDisplay = true
-		announceKeyboardFocusChange()
-		return super.resignFirstResponder()
-	}
-
-	override func keyDown(with event: NSEvent) {
-		// 36 is Return, 76 the numeric keypad's.
-		if event.keyCode == 36 || event.keyCode == 76 {
-			onActivate?(-1)
-			return
-		}
-		super.keyDown(with: event)
-	}
-
-	override func mouseDown(with event: NSEvent) {
-		super.mouseDown(with: event)
-		if event.clickCount == 2 { onActivate?(clickedRow) }
-	}
-}
-
-/// A section title with a count and its bulk action.
-private final class SectionHeaderView: NSView {
-	var onAction: (() -> Void)?
-
-	private let title: String
-	private var count = 0
-	private let button: DrawnButton
-
-	override var isFlipped: Bool { true }
-
-	init(title: String, actionTitle: String) {
-		self.title = title
-		let made = DrawnButton(title: actionTitle) {}
-		button = made
-		super.init(frame: .zero)
-
-		made.onAction = { [weak self] in self?.buttonClicked() }
-		button.translatesAutoresizingMaskIntoConstraints = false
-		addSubview(button)
-
-		NSLayoutConstraint.activate([
-			heightAnchor.constraint(equalToConstant: Theme.current.scaled(26)),
-			button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.current.scaled(8)),
-			button.centerYAnchor.constraint(equalTo: centerYAnchor),
-		])
-	}
-
-	required init?(coder: NSCoder) { fatalError("not used") }
-
-	func setCount(_ count: Int) {
-		self.count = count
-		button.isEnabled = count > 0
-		needsDisplay = true
-	}
-
-	@objc private func buttonClicked() { onAction?() }
-
-	override func draw(_ dirtyRect: NSRect) {
-		Theme.current.sidebarBackground.setFill()
-		bounds.fill()
-		Theme.current.separator.setFill()
-		NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
-
-		let text = count > 0 ? "\(title) (\(count))" : title
-		let label = NSAttributedString(string: text, attributes: [
-			.font: NSFont.systemFont(ofSize: Theme.current.scaled(11), weight: .semibold),
-			.foregroundColor: Theme.current.sidebarHeaderText,
-		])
-		label.draw(at: NSPoint(x: Theme.current.scaled(8), y: bounds.midY - label.size().height / 2))
 	}
 }
 

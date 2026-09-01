@@ -53,6 +53,15 @@ final class ControlMetricsTests: XCTestCase {
 		}
 	}
 
+	/// **The promise the drawn button was written under**, and which a wrong
+	/// padding broke: at the zoom almost everybody is at, a drawn control is
+	/// the size of the bezel it replaced — 20 points on macOS 27 — so nothing
+	/// visibly moves when a pane is converted.
+	func testAControlIsTheSizeOfTheBezelItReplacesAtOneToOne() {
+		let height = ControlMetrics.height(lineHeight: lineHeight(at: 1.0), scale: 1.0)
+		XCTAssertEqual(height, 20, accuracy: 1.5)
+	}
+
 	func testWidthLeavesRoomAtBothEnds() {
 		for scale in steps {
 			let width = ControlMetrics.width(textWidth: 100, scale: scale)

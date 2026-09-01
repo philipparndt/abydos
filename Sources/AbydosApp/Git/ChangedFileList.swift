@@ -685,7 +685,7 @@ extension ChangedFileList: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-		ThemedRowView()
+		TreeRowView()
 	}
 
 	/// The rows are all one height, which an outline has to be told.
@@ -705,6 +705,18 @@ extension ChangedFileList: NSOutlineViewDataSource, NSOutlineViewDelegate {
 /// a branch in; a list of files opens all of itself with `*` and has no merges.
 private final class FileOutlineView: NSOutlineView {
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+	/// **Takes the keyboard on a click, said rather than assumed.** The log
+	/// page's comment beside `focusList` says the files get the keyboard
+	/// "the way any table does", and the report of 2026-09-01 is that they do
+	/// not: clicking a file left the arrow keys moving between the commits
+	/// above. The two trees on the commit page already say this explicitly, for
+	/// their own reasons; saying it here costs a line and removes the
+	/// assumption.
+	override func mouseDown(with event: NSEvent) {
+		window?.makeFirstResponder(self)
+		super.mouseDown(with: event)
+	}
 
 	/// AppKit posts nothing when the first responder changes, and the editor's
 	/// tab strip draws which tab holds the keyboard. Without this a click here

@@ -131,4 +131,53 @@ struct TreeSelectionAfterDeleteTests {
 	@Test func deletingNothingMovesNothing() {
 		#expect(TreeSelection.surviving(above: [], path: path) == nil)
 	}
+
+	// MARK: - Staging, which empties rows exactly as deleting does
+
+	/// **Staging is a deletion from the list it was in**, so where the
+	/// selection lands is the same question and gets the same answer. Written
+	/// from the two cases as they were put:
+	///
+	///     a
+	///      - b
+	///      - c  ← selected, and staged
+	///      - d
+	///
+	/// The row above `c` is `b`, and that is where the selection goes — not
+	/// `d`, and not the top of the list.
+	@Test func stagingAMiddleChildSelectsTheOneAboveIt() {
+		let rows = ["a", "a/b", "a/c", "a/d"]
+		#expect(
+			TreeSelection.surviving(above: [2], path: { rows.indices.contains($0) ? rows[$0] : nil })
+				== "a/b"
+		)
+	}
+
+	/// The second case, and the one that says why "the row above" is the whole
+	/// rule rather than "the sibling above":
+	///
+	///     a
+	///      - b  ← selected, and staged
+	///      - c
+	///
+	/// `b` has no sibling above it, and the row above it is its parent. One
+	/// walk up the visible rows gives both without knowing which it is.
+	@Test func stagingTheFirstChildSelectsItsParent() {
+		let rows = ["a", "a/b", "a/c"]
+		#expect(
+			TreeSelection.surviving(above: [1], path: { rows.indices.contains($0) ? rows[$0] : nil })
+				== "a"
+		)
+	}
+
+	/// A folder staged as one gesture takes its children with it, and the
+	/// selection still lands on the row above the folder rather than inside
+	/// what has gone.
+	@Test func stagingAFolderLandsAboveTheFolder() {
+		let rows = ["a", "a/b", "a/c", "a/c/one", "a/c/two", "a/d"]
+		#expect(
+			TreeSelection.surviving(above: [2, 3, 4], path: { rows.indices.contains($0) ? rows[$0] : nil })
+				== "a/b"
+		)
+	}
 }

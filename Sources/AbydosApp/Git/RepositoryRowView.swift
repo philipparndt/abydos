@@ -239,5 +239,10 @@ final class RepositoryRowView: ActionableRowView {
 			+ "\(drawnDistance.isEmpty ? distance : drawnDistance)"
 			+ (submoduleCount > 0 ? " · \(submoduleCount) submodules" : "")
 			+ " · \(action?.title ?? "nothing to press")"
+			// The second verb by name, because the claim this row is now under
+			// is that `Fetch` is there *whatever* the first verb says — and a
+			// screenshot of a row is the least reliable way to check a control
+			// that is dropped when the row is narrow.
+			+ " · second \(secondaryAction?.title ?? secondaryAction?.symbol ?? "none")"
 	}
 }

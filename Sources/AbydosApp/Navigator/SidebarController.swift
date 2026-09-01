@@ -441,7 +441,7 @@ final class SidebarController: NSObject {
 			case "remote-menu":
 				print("REPOSITORY menu: " + pane.remoteMenuForTesting())
 			case "fetch":
-				pane.pressRefreshGlyphForTesting()
+				pane.pressFetchForTesting()
 			// What the editor is showing, so "a click on a row opens the file"
 			// is a claim a driven run can check rather than a screenshot.
 			case "tabs":

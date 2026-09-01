@@ -1,21 +1,23 @@
 ## 1. Name the cause before writing anything
 
-- [ ] 1.1 Driven, on a scratch repository with an untracked nested folder: reproduce → losing the selection, and capture what runs between the key and the lost selection.
-- [ ] 1.2 Write the mechanism into the design, replacing the compaction hypothesis with what was found — including if it is the hypothesis.
+- [x] 1.1 Found by reading rather than by driving: `ChangesPane.fill` answers an untracked directory's listing with `outline.reloadData()`, which clears the selection, and nothing puts it back. A driven run still owes the *proof* — see 3.1 — but the mechanism is named and the code is quoted in the design.
+- [x] 1.2 Written into the design, and the compaction hypothesis recorded as wrong rather than replaced quietly.
 
 ## 2. The behaviour
 
-- [ ] 2.1 Add the tree behaviour to `Controls/`: holding a selection across a rebuild, restoring it, and the fallback when the row has gone.
-- [ ] 2.2 Make a failed restore fall back to the nearest surviving row through `TreeSelection.surviving`, and log that it missed.
-- [ ] 2.3 Settle the row-identity question from 1.2 and put whatever arithmetic it needs in AbydosKit beside `TreeSelection`, with tests.
+- [x] 2.1 Add the tree behaviour to `Controls/`: holding a selection across a rebuild, restoring it, and the fallback when the row has gone.
+- [x] 2.2 Make a failed restore fall back to the nearest surviving row through `TreeSelection.surviving`, and log that it missed.
+- [x] 2.3 Settle the row-identity question from 1.2 and put whatever arithmetic it needs in AbydosKit beside `TreeSelection`, with tests.
 
 ## 2b. The two reports that arrived after the proposal
 
-- [ ] 2b.1 Apply the fallback the pane already computes when staging takes the selected row away, so the neighbour is selected.
-- [ ] 2b.2 Give the changes tree a row view that draws the app's selection through `Theme.selection`, the way `NavigatorRowView` does, instead of leaving AppKit to paint its band.
-- [ ] 2b.3 Check the other three trees draw the app's selection too, and say in the design which of the four did not.
-- [ ] 2b.4 Make the log page's detail file list take the keyboard when it is clicked into, so the arrows stop going to the commit list above it.
+- [x] 2b.1 Apply the fallback the pane already computes when staging takes the selected row away, so the neighbour is selected.
+- [x] 2b.2 Give the changes tree a row view that draws the app's selection through `Theme.selection`, the way `NavigatorRowView` does, instead of leaving AppKit to paint its band.
+- [x] 2b.3 Check the other three trees draw the app's selection too, and say in the design which of the four did not.
+- [x] 2b.4 Make the log page's detail file list take the keyboard when it is clicked into, so the arrows stop going to the commit list above it.
 - [ ] 2b.5 Check the same for the other three trees: click a row, then press ↓, and say which trees did not already move.
+- [x] 2b.6 Staging took three passes: the async `reloadData`, then the fallback recorded at two of three call sites, then the real cause — `isRestoring` cleared synchronously while `NSTableView` posts its selection change a turn later, so the pane's own restore read as a click and deselected the other list. Written up in the design.
+- [x] 2b.7 The redundant untracked listing: `refill` sends one per open directory per filesystem event and `fill` reloaded whatever came back. It compares against what the node already holds and returns when nothing changed — which is the flicker while staging.
 
 ## 3. The four trees, one at a time
 

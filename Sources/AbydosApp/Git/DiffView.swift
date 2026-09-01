@@ -122,9 +122,19 @@ final class DiffView: NSView {
 	/// nothing changed — a diff of five thousand rows should not rebuild because
 	/// somebody changed the font.
 	@objc func applyDiffSettings() {
+		// **The zoom is a settings change too, and this used to drop it.** The
+		// guard below asked only whether the two *diff* preferences had moved,
+		// so a ⌘+ arrived here, matched neither, and returned — leaving the
+		// font and the line height at the size they were read at when the view
+		// was built. The diff scaled when it was closed and opened again and
+		// not before, which is exactly how it was reported.
+		let was = lineHeight
+		updateMetrics()
+		let metricsMoved = lineHeight != was
+
 		let chrome = Settings.shared.diffShowsChrome
 		let sideBySide = Settings.shared.diffIsSideBySide
-		guard chrome != showsChrome || sideBySide != isSideBySide else { return }
+		guard metricsMoved || chrome != showsChrome || sideBySide != isSideBySide else { return }
 		showsChrome = chrome
 		isSideBySide = sideBySide
 		rebuildRows()

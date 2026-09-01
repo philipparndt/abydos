@@ -1,9 +1,9 @@
 ## 1. The control
 
-- [ ] 1.1 Replace the repository row's symbol `secondaryAction` with a titled one reading `Fetch`, drawn with the library from `the-zoom-reaches-every-control`.
-- [ ] 1.2 Draw no secondary control where the repository has no remote, and drop the no-remote branch from `refreshPressed()`.
-- [ ] 1.3 Put the local re-read on the row's context menu beside the verbs already there.
-- [ ] 1.4 Rename `pressRefreshGlyphForTesting` for what it presses now, and keep the driver step working.
+- [x] 1.1 Replace the repository row's symbol `secondaryAction` with a titled one reading `Fetch`, drawn with the library from `the-zoom-reaches-every-control`.
+- [x] 1.2 Draw no secondary control where the repository has no remote, and drop the no-remote branch from `refreshPressed()`.
+- [x] 1.3 Put the local re-read on the row's context menu beside the verbs already there.
+- [x] 1.4 Rename `pressRefreshGlyphForTesting` for what it presses now, and keep the driver step working.
 
 ## 2. Proving it
 

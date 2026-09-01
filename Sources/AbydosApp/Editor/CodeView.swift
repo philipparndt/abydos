@@ -858,7 +858,7 @@ final class CodeView: NSView, NSTextInputClient {
 		let digits = max(2, String(document.lineCount).count)
 		// The extra column on the left is the breakpoint gutter.
 		gutterWidth = ceil(CGFloat(digits) * charWidth) + Self.gutterPadding * 2 + 14
-			+ Self.breakpointColumnWidth + blameWidth
+			+ GutterMetrics.columnWidth(scale: Theme.current.scale) + Self.breakpointColumnWidth + blameWidth
 
 		if isWordWrapEnabled { rebuildWrapLayout() }
 
@@ -1892,6 +1892,8 @@ final class CodeView: NSView, NSTextInputClient {
 
 		drawBlame(rows: rows, scrollX: scrollX)
 
+		let scale = Theme.current.scale, markX = scrollX + GutterMetrics.markX(
+			gutterWidth: gutterWidth, foldColumnWidth: Self.foldColumnWidth, scale: scale)
 		for visual in rows {
 			let docLine = documentLine(forVisualRow: visual)
 			guard docLine < document.lineCount else { break }
@@ -1923,9 +1925,8 @@ final class CodeView: NSView, NSTextInputClient {
 				.foregroundColor: colour,
 			])
 			let size = number.size()
-			// Right-aligned against the fold column.
 			number.draw(at: NSPoint(
-				x: scrollX + gutterWidth - Self.foldColumnWidth - Self.gutterPadding / 2 - size.width,
+				x: GutterMetrics.numberRight(markX: markX, scale: scale) - size.width,
 				y: y + (lineHeight - size.height) / 2
 			))
 
@@ -1940,19 +1941,18 @@ final class CodeView: NSView, NSTextInputClient {
 			// chevron — a fixed place, so they neither move when blame toggles
 			// nor collide with the breakpoint column on the far left. The
 			// marks are keyed 1-based, as the diff writes lines.
-			let barX = scrollX + gutterWidth - Self.foldColumnWidth - Theme.current.scaled(4)
 			if let mark = changedLines.marks[docLine + 1] {
 				(mark == .added ? Theme.current.gitAdded : Theme.current.gitModified).setFill()
-				NSRect(x: barX, y: y, width: Theme.current.scaled(3), height: lineHeight).fill()
+				NSRect(x: markX, y: y, width: (GutterMetrics.markWidth * scale).rounded(), height: lineHeight).fill()
 			}
 			// A deletion has no line to sit beside: the wedge sits on the
 			// boundary the lines vanished from — under this line, or above the
 			// first for lines deleted at the top of the file.
 			if changedLines.deletedAfter.contains(docLine + 1) {
-				drawDeletionMark(atY: y + lineHeight, x: barX)
+				drawDeletionMark(atY: y + lineHeight, x: markX)
 			}
 			if docLine == 0, changedLines.deletedAfter.contains(0) {
-				drawDeletionMark(atY: y, x: barX)
+				drawDeletionMark(atY: y, x: markX)
 			}
 		}
 	}

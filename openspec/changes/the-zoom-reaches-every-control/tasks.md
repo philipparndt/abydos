@@ -38,6 +38,16 @@
 - [x] 6.2 Give the navigator's container the `colourSource` closure its sibling containers in `MainWindowController+Layout` already have.
 - [ ] 6.3 Driven: switch the palette with the tree showing and capture it, which is the screenshot that was reported — one pane, half light and half dark.
 
+## 6b. What running it found
+
+- [x] 6b.1 The diff view hears `.abydosSettingsChanged` and *discarded* it: its handler guarded on the two diff preferences only, so a zoom matched neither and returned. It re-takes its font and line height first now, and rebuilds when they move.
+- [x] 6b.2 `ControlMetrics.verticalPadding` was 8, which put a one-line control at 23 points at 1× against the bezel's 20 — every converted button came out fatter than the one it replaced, and nearly filled the commit page's 26-point section strip. Five now, with a test asserting the size of the bezel it replaces.
+- [x] 6b.3 The commit page's `Stage` / `Unstage` were the height and nothing else: confirmed against the report once the padding was five. The fill was never wrong — a pill four points too tall reads heavier than one that is not, which is worth knowing before chasing a colour that was correct.
+
+- [x] 6b.4 The commit page's `Summary` placeholder did not follow. `NSTextField` renders a placeholder in the font that was in force when it was *assigned*, so a field whose font has just grown draws its placeholder at the old size — the same trap the search field already had. Set again after the font.
+- [x] 6b.5 And the reason the whole pane did not follow: `ChangesPane.applyThemeChange()` existed, did the right thing, and **nothing ever called it**. The sidebar hid that by rebuilding the pane; the page in a tab is not rebuilt, so it never followed at all. Renamed to `applyTheme()` and registered.
+- [x] 6b.6 The editor's git change mark had no gap from the line numbers — and worse than none: the bar's position was scaled and the number's right inset was a fixed `gutterPadding / 2`, so the two closed on each other as the zoom rose and the bar drew over the digits above about 1.2×. The mark has its own scaled column now, with the numbers right-aligned against it.
+
 ## 7. Finishing
 
 - [x] 7.1 Note in the design what was found out about why `ThemeSwap` did not reach the outline view, or that it was not chased and why.

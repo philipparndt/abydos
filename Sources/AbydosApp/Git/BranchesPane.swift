@@ -289,20 +289,17 @@ final class BranchesPane: NSView {
 		repositoryRow = RepositoryRowView()
 		repositoryRow.translatesAutoresizingMaskIntoConstraints = false
 		repositoryRow.onAction = { [weak self] in self?.trafficPressed() }
-		// **Re-reading the repository is a verb on the repository**, so it hangs
-		// off the row that draws one — this pane has no header to put a button
-		// in, and its own comment above says why it does not.
+		// **Fetch, in the word, always.** The row's own verb is chosen from the
+		// state — Pull when behind, Push when ahead — so Fetch was the one verb
+		// that disappeared exactly when somebody wanted it: a branch one commit
+		// ahead offered Push and no way at all to ask whether anybody else had
+		// pushed.
 		//
-		// It is here as well as on every filesystem event because the two are
-		// different questions: the watcher notices what happens *here*, and a
-		// fetch, a rebase or a branch deleted in another window happens
-		// somewhere else and arrives silently.
-		repositoryRow.secondaryAction = RowAction(
-			symbol: "arrow.clockwise",
-			help: "Read the repository again",
-			isAlwaysShown: true
-		)
-		repositoryRow.onSecondaryAction = { [weak self] in self?.refreshPressed() }
+		// The glyph that used to be here already fetched. It said so in a
+		// tooltip, and a tooltip is not a label, so it was reported as a
+		// missing button while it was on the row being pressed for something
+		// else. Nothing about what it does has changed; it says what it does.
+		repositoryRow.onSecondaryAction = { [weak self] in self?.fetchPressed() }
 		repositoryRow.buildMenu = { [weak self] in self?.remoteMenu() }
 		repositoryRow.onDownArrow = { [weak self] in self?.moveKeyboardIntoTree() }
 
@@ -422,21 +419,16 @@ final class BranchesPane: NSView {
 	/// The spinner is the point. `refresh` is several git calls and on a large
 	/// repository it takes long enough that a button with no feedback reads as a
 	/// button that did nothing — so somebody presses it again.
-	/// The glyph beside the traffic verb.
+	/// The `Fetch` verb beside the traffic one.
 	///
-	/// **It goes to the remote when there is one.** Re-reading was local only,
-	/// and the pane already re-reads on every filesystem event — so a press was
-	/// only ever for something that happened *elsewhere*, and the largest
-	/// elsewhere is the remote. A repository with no remote has nothing to
-	/// fetch and gets the read it always had.
-	private func refreshPressed() {
-		guard trafficState?.hasRemote == true else {
-			activity = PaneActivityView.install(over: self, message: "Reading branches…")
-			refresh()
-			refreshConflicts()
-			refreshTraffic()
-			return
-		}
+	/// **Only where there is a remote**, and nothing where there is not. The
+	/// glyph used to fall back to a local re-read there, which was doing what
+	/// the pane's own filesystem watcher already does on every event — and a
+	/// control quietly meaning two different things depending on state is
+	/// half of why the glyph was unreadable. Re-reading is `Read the
+	/// Repository Again` on this row's menu, where it was already.
+	private func fetchPressed() {
+		guard trafficState?.hasRemote == true else { return }
 		fetch(pruning: false)
 	}
 
@@ -782,19 +774,17 @@ final class BranchesPane: NSView {
 			// verbs — the row saying it too, truncated, put the same sentence
 			// on screen twice in twenty-four points. Off the banner, the row
 			// is the only thing that says it.
-			// **The glyph says which of the two things it does.** It fetches
-			// where there is a remote and re-reads where there is not, and a
-			// control that goes to the network should not look identical to
-			// one that does not. The sync arrows are the glyph every other
-			// client uses for it.
-			self.repositoryRow.secondaryAction = RowAction(
-				symbol: state?.hasRemote == true ? "arrow.triangle.2.circlepath" : "arrow.clockwise",
-				help: state?.hasRemote == true
-					? "Fetch from the remote and read the repository again — "
-						+ "right-click the row for pull, push and prune"
-					: "Read the repository again",
-				isAlwaysShown: true
-			)
+			// **Nothing where there is nowhere to fetch from.** A permanently
+			// grey button is furniture; a repository with no remote simply has
+			// no second verb, and its menu still carries the local re-read.
+			self.repositoryRow.secondaryAction = state?.hasRemote == true
+				? RowAction(
+					title: "Fetch",
+					help: "Fetch from the remote and read the repository again — "
+						+ "right-click the row for pull, push and prune",
+					isAlwaysShown: true
+				)
+				: nil
 			self.repositoryRow.show(
 				branch: self.currentBranchName,
 				state: state,
@@ -1988,7 +1978,7 @@ final class BranchesPane: NSView {
 	}
 
 	/// Presses the glyph beside the traffic verb, the way a click does.
-	func pressRefreshGlyphForTesting() { refreshPressed() }
+	func pressFetchForTesting() { fetchPressed() }
 
 	/// What one of the banner's menus holds. Empty argument means the `⋯` one.
 	func bannerMenuForTesting(_ which: String) -> String {
@@ -3220,7 +3210,7 @@ extension BranchesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	/// `ThemedRowView` exists for exactly this, and was written the last time
 	/// two lists in one window disagreed about what "selected" looks like.
 	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-		ThemedRowView()
+		TreeRowView()
 	}
 
 	func outlineView(

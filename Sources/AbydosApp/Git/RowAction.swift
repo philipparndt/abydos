@@ -55,24 +55,37 @@ class ActionableRowView: NSView {
 	}
 	var onAction: (() -> Void)?
 
-	/// A second verb, to the left of the first, drawn as a glyph and never as
-	/// words.
+	/// A second verb, to the left of the first.
 	///
-	/// **Glyph-only on purpose.** The width arithmetic below exists because a
-	/// row whose name was truncated to make space for a button has been made
-	/// worse by the button, and two sets of spellings competing for the same
-	/// trailing edge is that problem twice. A symbol is a fixed twenty points,
-	/// so what the row has left is still one subtraction.
+	/// **It was glyph-only, and is not any more.** The width arithmetic below
+	/// exists because a row whose name was truncated to make space for a button
+	/// has been made worse by the button, and two sets of spellings competing
+	/// for the same trailing edge is that problem twice — so a symbol, at a
+	/// fixed twenty points, kept what the row had left to one subtraction.
 	///
-	/// One user so far: re-reading the repository, which is a verb on the
-	/// repository and had nowhere to live — this pane deliberately has no header
-	/// to put a button in, and its own comment says why.
+	/// What that cost was a verb nobody could read. The glyph fetched, and said
+	/// so only in a tooltip, and `Fetch` was asked for on 2026-09-01 as a
+	/// missing button while it was sitting on the row. A tooltip is not a
+	/// label, the same way a hidden Draft button was not a feature.
+	///
+	/// So it may carry words, and the row keeps its rule: the second verb is
+	/// measured like the first, and where there is not room for both **it is
+	/// the one that goes**. The row's own name still comes first.
 	var secondaryAction: RowAction? {
 		didSet { needsDisplay = true }
 	}
 	var onSecondaryAction: (() -> Void)?
 
 	private var isPointedAt = false
+
+	/// Where the pointer is, when it is over this row.
+	///
+	/// **Because `isPointedAt` is about the row and a hover is about a
+	/// control.** Both verbs took their lift from the row-wide flag, so
+	/// pointing anywhere on the repository row lit `Push` and `Fetch` at once —
+	/// invisible while the second one was a glyph, and obviously wrong the day
+	/// it became a word. Reported within an hour of that change being run.
+	private var pointer: NSPoint?
 	private var actionFrame: NSRect = .zero
 	private var secondaryFrame: NSRect = .zero
 
@@ -86,6 +99,7 @@ class ActionableRowView: NSView {
 
 	private var showsSecondary: Bool {
 		guard let secondaryAction else { return false }
+		guard hasRoomForSecondary else { return false }
 		return secondaryAction.isAlwaysShown || isPointedAt || isRowSelected
 	}
 
@@ -94,19 +108,46 @@ class ActionableRowView: NSView {
 		trackingAreas.forEach(removeTrackingArea)
 		addTrackingArea(NSTrackingArea(
 			rect: bounds,
-			options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+			options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
 			owner: self
 		))
 	}
 
 	override func mouseEntered(with event: NSEvent) {
 		isPointedAt = true
+		pointer = convert(event.locationInWindow, from: nil)
+		needsDisplay = true
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		let was = pointer
+		pointer = convert(event.locationInWindow, from: nil)
+		// Only when it has crossed into or out of a control: a redraw per
+		// mouse-moved event down a long list is a lot of drawing to decide
+		// nothing.
+		guard lit(was) != lit(pointer) else { return }
 		needsDisplay = true
 	}
 
 	override func mouseExited(with event: NSEvent) {
 		isPointedAt = false
+		pointer = nil
 		needsDisplay = true
+	}
+
+	/// Which of the two verbs the pointer is over, as something comparable.
+	private func lit(_ point: NSPoint?) -> Int {
+		guard let point else { return 0 }
+		if secondaryFrame.contains(point) { return 2 }
+		if actionFrame.contains(point) { return 1 }
+		return 0
+	}
+
+	/// The lift a control gets, which is the pointer being on **it** rather
+	/// than anywhere on its row.
+	private func lift(over frame: NSRect) -> CGFloat {
+		guard let pointer, frame.contains(pointer) else { return 0.10 }
+		return 0.20
 	}
 
 	override func mouseDown(with event: NSEvent) {
@@ -192,8 +233,24 @@ class ActionableRowView: NSView {
 		return first + second + RowMetrics.trailingInset
 	}
 
-	/// The box a second verb's glyph is drawn in.
-	private var secondaryWidth: CGFloat { Theme.current.scaled(24) }
+	/// The box a second verb is drawn in: measured where it has words, and the
+	/// fixed square where it is a glyph.
+	private var secondaryWidth: CGFloat {
+		guard let title = secondaryAction?.title else { return Theme.current.scaled(24) }
+		return ceil(text(title).size().width) + padding * 2
+	}
+
+	/// Whether the row can hold the second verb *and* keep its own name
+	/// readable, by the same measure the first verb is held to.
+	private var hasRoomForSecondary: Bool {
+		guard secondaryAction?.title != nil else { return true }
+		let first: CGFloat = {
+			guard let action, showsAction else { return 0 }
+			return label(for: action).map { ceil($0.size().width) + padding * 2 } ?? 0
+		}()
+		let wanted = first + secondaryWidth + secondaryGap + RowMetrics.trailingInset
+		return bounds.width - wanted >= Theme.current.scaled(96)
+	}
 
 	/// **Between the two of them, and it was missing.** The glyph fills its box,
 	/// so `Fetch` and the refresh arrow were drawn edge to edge and read as one
@@ -230,7 +287,7 @@ class ActionableRowView: NSView {
 			xRadius: Theme.current.scaled(4),
 			yRadius: Theme.current.scaled(4)
 		)
-		Theme.current.sidebarHeaderText.withAlphaComponent(isPointedAt ? 0.20 : 0.10).setFill()
+		Theme.current.sidebarHeaderText.withAlphaComponent(lift(over: frame)).setFill()
 		path.fill()
 
 		if let label {
@@ -271,8 +328,18 @@ class ActionableRowView: NSView {
 			xRadius: Theme.current.scaled(4),
 			yRadius: Theme.current.scaled(4)
 		)
-		Theme.current.sidebarHeaderText.withAlphaComponent(isPointedAt ? 0.20 : 0.10).setFill()
+		Theme.current.sidebarHeaderText.withAlphaComponent(lift(over: frame)).setFill()
 		path.fill()
+
+		if let title = secondary.title {
+			let drawn = text(title)
+			let size = drawn.size()
+			drawn.draw(at: NSPoint(
+				x: (frame.midX - size.width / 2).rounded(),
+				y: (frame.midY - size.height / 2).rounded()
+			))
+			return
+		}
 
 		guard let symbol = secondary.symbol,
 		      let icon = Theme.symbol(

@@ -128,7 +128,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		outline.headerView = nil
 		outline.backgroundColor = Theme.current.sidebarBackground
 		// `.none` would suppress drawSelection(in:) entirely; `.regular` keeps the
-		// callback so NavigatorRowView can draw the rounded highlight itself.
+		// callback so TreeRowView can draw the rounded highlight itself.
 		outline.selectionHighlightStyle = .regular
 		outline.rowSizeStyle = .custom
 		outline.rowHeight = Theme.current.scaled(24)
@@ -3509,8 +3509,12 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 
 	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
 		let node = item as? FileNode
-		let row = NavigatorRowView()
-		row.isExcluded = node?.isExcluded ?? false
+		let row = TreeRowView()
+		// The one thing this tree draws that the others do not: excluded output
+		// directories get a warm wash, as in the reference.
+		row.tint = (node?.isExcluded ?? false)
+			? Theme.current.excludedDirectoryTint.withAlphaComponent(0.35)
+			: nil
 		return row
 	}
 
@@ -3907,50 +3911,6 @@ private final class NavigatorHeaderView: NSView {
 /// off the view controller, and the one weak hop is all the handler needs.
 private final class FileUndoTarget {
 	weak var navigator: ProjectNavigatorViewController?
-}
-
-private final class NavigatorRowView: NSTableRowView {
-	var isExcluded = false
-
-	/// Cells draw their label colour from the selection state, so they have to
-	/// repaint when it changes — NSTableRowView only invalidates itself.
-	override var isSelected: Bool {
-		didSet {
-			guard isSelected != oldValue else { return }
-			for subview in subviews { subview.needsDisplay = true }
-		}
-	}
-
-	override func drawBackground(in dirtyRect: NSRect) {
-		super.drawBackground(in: dirtyRect)
-		// Excluded output directories get a warm tint, as in the reference.
-		if isExcluded && !isSelected {
-			Theme.current.excludedDirectoryTint.withAlphaComponent(0.35).setFill()
-			bounds.fill()
-		}
-	}
-
-	override func drawSelection(in dirtyRect: NSRect) {
-		// A rounded, inset pill rather than a full-bleed band — the shape IDEA
-		// uses. Focused selection is blue; unfocused grey, so the tree still
-		// shows where you are while the editor has keyboard focus.
-		//
-		// Through `Theme.selection` rather than the two colours by name: the
-		// results list and the editor answer the same question now, and this is
-		// where the answer was first worked out.
-		let color = Theme.current.selection(.row, hasKeyboard: isTreeFocused)
-		let rect = bounds.insetBy(dx: Theme.current.scaled(5), dy: 1)
-		let radius = Theme.current.scaled(6)
-		let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-		color.setFill()
-		path.fill()
-	}
-
-	/// True when the outline view containing this row holds keyboard focus.
-	var isTreeFocused: Bool {
-		guard let window, let responder = window.firstResponder as? NSView else { return false }
-		return responder === superview || responder.isDescendant(of: superview ?? self)
-	}
 }
 
 /// A text field cell whose text sits in the middle of its box.
