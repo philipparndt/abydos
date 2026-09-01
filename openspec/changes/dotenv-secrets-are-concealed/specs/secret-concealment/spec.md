@@ -25,6 +25,15 @@ started: the file at risk is usually open before the call is.
 - **WHEN** the file is opened
 - **THEN** the value after the separator is covered
 
+#### Scenario: a block scalar is covered whole
+
+- **GIVEN** a `.dec` holding `pk: |` with an RSA key on the indented lines
+  below it
+- **WHEN** the file is opened
+- **THEN** every line of the block is covered — the value of `pk:` is not
+  the `|`, it is what follows — and the first line back at the key's indent
+  is classified as itself
+
 #### Scenario: a comment is not a secret
 
 - **GIVEN** a line `# rotate this monthly`

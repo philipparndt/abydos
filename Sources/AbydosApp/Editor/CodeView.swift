@@ -250,7 +250,26 @@ final class CodeView: NSView, NSTextInputClient {
 
 	func setConcealsSecrets(_ conceals: Bool) {
 		concealsSecrets = conceals
+		refreshSecretRoles()
 		needsDisplay = true
+	}
+
+	/// Every line's role, kept because a line's own text cannot say it: a
+	/// YAML block scalar's value lives on the lines *after* `pk: |`, and
+	/// classifying rows one at a time drew an RSA key in the clear under a
+	/// covered indicator. Recomputed whole on every edit — a secrets file is
+	/// small, and O(lines) per keystroke in one is cheaper than being wrong
+	/// once.
+	private var secretRoles: [DotenvSecrets.LineRole] = []
+
+	private func refreshSecretRoles() {
+		guard concealsSecrets, let document else {
+			secretRoles = []
+			return
+		}
+		secretRoles = DotenvSecrets.roles(
+			forLines: (0..<document.lineCount).map { document.lineText($0) }
+		)
 	}
 
 	var showsSecretCovers: Bool { concealsSecrets }
@@ -318,8 +337,13 @@ final class CodeView: NSView, NSTextInputClient {
 		guard concealsSecrets else { return "not concealing" }
 		var lines: [String] = []
 		for docLine in 0..<min(document.lineCount, 40) {
-			let text = document.lineText(docLine)
-			guard DotenvSecrets.valueRange(inLine: text) != nil else {
+			let covered: Bool
+			if docLine < secretRoles.count {
+				covered = secretRoles[docLine] != .plain
+			} else {
+				covered = DotenvSecrets.valueRange(inLine: document.lineText(docLine)) != nil
+			}
+			guard covered else {
 				lines.append("\(docLine + 1) plain")
 				continue
 			}
@@ -373,11 +397,31 @@ final class CodeView: NSView, NSTextInputClient {
 	) -> (erase: NSRect, pill: NSRect?)? {
 		guard concealsSecrets, !secretsRevealedAll, let document,
 		      docLine < document.lineCount else { return nil }
-		let line = document.lineText(docLine)
-		guard let range = DotenvSecrets.valueRange(inLine: line) else { return nil }
 
 		let y = yPosition(forVisualLine: visualRow)
 		let row = NSRect(x: 0, y: y, width: 0, height: lineHeight)
+
+		// A block scalar's content line: the whole row is the value, however
+		// it is indented, and it gets the pill so thirty erased rows read as
+		// a redaction rather than as the file ending early.
+		if docLine < secretRoles.count, secretRoles[docLine] == .blockContent {
+			return (
+				erase: NSRect(
+					x: textOriginX, y: row.minY,
+					width: max(0, bounds.width - textOriginX), height: row.height
+				),
+				pill: wrapSegment(forVisualRow: visualRow) == 0
+					? NSRect(
+						x: textOriginX, y: row.minY + 1,
+						width: charWidth * 12, height: row.height - 2
+					)
+					: nil
+			)
+		}
+		if docLine < secretRoles.count, secretRoles[docLine] == .plain { return nil }
+
+		let line = document.lineText(docLine)
+		guard let range = DotenvSecrets.valueRange(inLine: line) else { return nil }
 
 		if wrapSegment(forVisualRow: visualRow) > 0 {
 			return (
@@ -603,10 +647,18 @@ final class CodeView: NSView, NSTextInputClient {
 		self.document = document
 		// Breakpoints follow the text they were put on rather than the line
 		// number they were put at.
+		// The conceal flag arrives at tab wiring, before this document does:
+		// computed then, the roles were an empty array over a nil document and
+		// a block scalar's key sat in the clear. Computed again here, they see
+		// the file.
+		refreshSecretRoles()
 		document.onLinesChanged = { [weak self] first, removed, inserted in
 			// The change marks ride the same signal breakpoints anchor by,
 			// before it is relayed: the marks are this view's own.
 			self?.shiftChangedLines(from: first + 1, removed: removed, inserted: inserted)
+			// And the secret roles, because an edit can open or close a block
+			// scalar lines away from itself.
+			if self?.concealsSecrets == true { self?.refreshSecretRoles() }
 			self?.onLinesChanged?(first, removed, inserted)
 			// Every line the edit put in, and not only the one the caret ended
 			// on: a paste drops a block, and the widest line in it can be any of

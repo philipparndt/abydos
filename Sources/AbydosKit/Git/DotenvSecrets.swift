@@ -19,6 +19,55 @@ public enum DotenvSecrets {
 		return false
 	}
 
+	/// What each line is, once the lines above have had their say.
+	///
+	/// Line-by-line classification cannot see a YAML block scalar: `pk: |`
+	/// carries its value on the *following* more-indented lines, which a
+	/// stateless look called plain — and an RSA private key was drawn in the
+	/// clear under a dutifully covered `pk: |`. So the roles are computed
+	/// over the file: a line whose value is a block-scalar indicator (`|`,
+	/// `>`, with chomping and indent modifiers) opens a block, every following
+	/// line indented deeper than the key — blank lines included, as YAML keeps
+	/// them — is block content, and the first line back at or above the key's
+	/// indent closes it and classifies as itself.
+	public enum LineRole: Equatable, Sendable {
+		case plain
+		case value
+		case blockContent
+	}
+
+	public static func roles(forLines lines: [String]) -> [LineRole] {
+		var roles: [LineRole] = []
+		var blockIndent: Int?
+		for line in lines {
+			let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+			let isBlank = line.trimmingCharacters(in: .whitespaces).isEmpty
+			if let opened = blockIndent {
+				if isBlank || indent > opened {
+					roles.append(.blockContent)
+					continue
+				}
+				blockIndent = nil
+			}
+			guard let range = valueRange(inLine: line) else {
+				roles.append(.plain)
+				continue
+			}
+			if isBlockScalarIndicator(line[range].trimmingCharacters(in: .whitespaces)) {
+				blockIndent = indent
+			}
+			roles.append(.value)
+		}
+		return roles
+	}
+
+	/// `|`, `>`, and their modifier forms — `|-`, `|+`, `>2` — and nothing
+	/// else: a value that merely begins with a pipe is a value.
+	static func isBlockScalarIndicator(_ value: String) -> Bool {
+		guard let first = value.first, first == "|" || first == ">" else { return false }
+		return value.dropFirst().allSatisfy { "+-0123456789".contains($0) }
+	}
+
 	/// The range of the value in one line — what a cover hides.
 	///
 	/// After the first separator: `=` for the dotenv shape, and `:` too for
