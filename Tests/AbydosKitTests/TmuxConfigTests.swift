@@ -114,3 +114,30 @@ struct TmuxConfigRealFileTests {
 			== original.trimmingCharacters(in: .newlines))
 	}
 }
+
+/// Whether this app's own `PAGER=cat` is what a running server is holding.
+///
+/// tmux hands its global environment to every window it makes for the life of
+/// the server — weeks — so deleting the line that set `cat` does not reach a
+/// server that is already up. Taking it back is only safe for that one value.
+struct TmuxForgetPagerTests {
+	@Test func itsOwnLeftoverIsForgotten() {
+		#expect(TmuxConfig.shouldForgetPager(said: "PAGER=cat"))
+		#expect(TmuxConfig.shouldForgetPager(said: "PAGER=cat\n"))
+	}
+
+	/// A pager somebody chose is a choice, and `less -FRX` is not ours.
+	@Test func anybodyElsesPagerIsLeftAlone() {
+		#expect(!TmuxConfig.shouldForgetPager(said: "PAGER=less"))
+		#expect(!TmuxConfig.shouldForgetPager(said: "PAGER=less -FRX"))
+		#expect(!TmuxConfig.shouldForgetPager(said: "PAGER=bat"))
+	}
+
+	/// No server, or a server that never heard of it: nothing to do, and not a
+	/// failure to report.
+	@Test func nothingToForget() {
+		#expect(!TmuxConfig.shouldForgetPager(said: nil))
+		#expect(!TmuxConfig.shouldForgetPager(said: ""))
+		#expect(!TmuxConfig.shouldForgetPager(said: "unknown variable: PAGER"))
+	}
+}

@@ -142,6 +142,55 @@ public enum TmuxConfig {
 		return backup
 	}
 
+	/// Takes this app's old `PAGER=cat` out of a server that is already running.
+	///
+	/// **A fix to the environment a pane is started with does not reach a server
+	/// that is already up.** tmux copies the environment it was started with
+	/// into its global environment and hands that to every window it makes
+	/// afterwards, for as long as the server lives — and these live for weeks.
+	/// A server first started by an Abydos pane therefore keeps handing out the
+	/// `cat` that pane was given, and `git log` goes on printing everything long
+	/// after the line that did it was deleted.
+	///
+	/// Only ever `cat`, and only from the global environment: that is this app's
+	/// own footprint and nothing else's. A `PAGER` somebody set in tmux
+	/// themselves is almost certainly not `cat` — and one they export from a
+	/// profile is set by the shell inside the pane, which this cannot touch.
+	public static func forgetPagerInRunningServer() {
+		guard let tmux = Executables.locate("tmux") else { return }
+
+		func run(_ arguments: [String]) -> String? {
+			let process = Process()
+			process.executableURL = URL(fileURLWithPath: tmux)
+			process.arguments = arguments
+			// Rather than inheriting it, for the reason in `TmuxSocketPath`.
+			process.environment = TmuxSocketPath.environment
+			let out = Pipe()
+			process.standardOutput = out
+			process.standardError = FileHandle.nullDevice
+			do { try process.run() } catch { return nil }
+			let data = out.fileHandleForReading.readDataToEndOfFile()
+			process.waitUntilExit()
+			guard process.terminationStatus == 0 else { return nil }
+			return String(decoding: data, as: UTF8.self)
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+		}
+
+		// No server is the common case at launch and is not a failure: there is
+		// nothing to clean, and starting one to find that out would be worse.
+		guard shouldForgetPager(said: run(["show-environment", "-g", "PAGER"])) else { return }
+		_ = run(["set-environment", "-g", "-u", "PAGER"])
+	}
+
+	/// Whether what `show-environment -g PAGER` said is this app's own leftover.
+	///
+	/// Separated out so the decision can be checked without a tmux server, the
+	/// way `PseudoTerminal.mergedEnvironment` is: nil is no server or no such
+	/// variable, and anything but `cat` is somebody's own choice.
+	static func shouldForgetPager(said: String?) -> Bool {
+		said?.trimmingCharacters(in: .whitespacesAndNewlines) == "PAGER=cat"
+	}
+
 	/// Tells a server that is already running, so nobody has to reload.
 	private static func applyToRunningServer(hidden: Bool) {
 		guard let tmux = Executables.locate("tmux") else { return }

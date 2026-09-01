@@ -517,8 +517,19 @@ public final class PseudoTerminal {
 		merged["TERM"] = merged["TERM"] ?? "xterm-256color"
 		merged["COLORTERM"] = merged["COLORTERM"] ?? "truecolor"
 		merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
-		// Stop pagers from hanging a pane waiting for a keypress.
-		merged["PAGER"] = merged["PAGER"] ?? "cat"
+		// **`PAGER` is deliberately not set.** It was `cat` here, to stop a
+		// pager hanging a pane waiting for a keypress — true of a terminal that
+		// could not run a full-screen program, and this one runs `vim`, `htop`,
+		// `claude`'s own full-screen UI and tmux. A pager is that same class of
+		// program.
+		//
+		// The `??` it was written with looked like deference and was not: this
+		// dictionary starts from the *app's* environment, and a `PAGER` exported
+		// from a profile is set by the shell that runs inside the pane, long
+		// after the fork. So the app's value was what `git` saw, `git log`
+		// printed everything and returned to the prompt, and it read as this
+		// terminal being broken — which is how it was reported. Every tool the
+		// pane started inherited it, not only `git log`.
 
 		// Which terminal this is, by the name every other terminal uses for
 		// itself. `abydos <file>` reads it to decide whether the escape that

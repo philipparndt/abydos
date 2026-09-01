@@ -179,6 +179,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// writing to ~/.tmux.conf. It is per session now, so that line goes.
 		TmuxSettings.migrateAwayFromConfigEdit()
 
+		// And an earlier version started every pane with `PAGER=cat`, which a
+		// tmux server that was up at the time is still handing out — off the
+		// main thread, because it runs `tmux` twice and a launch waits for
+		// nothing that a pane will ask about later.
+		DispatchQueue.global(qos: .utility).async {
+			TmuxConfig.forgetPagerInRunningServer()
+		}
+
 		// Where the user's tools actually are, asked of their shell before the
 		// first file wants to know.
 		UserShell.warmLoginPath()

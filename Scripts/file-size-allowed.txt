@@ -23,5 +23,5 @@
 1580 Sources/AbydosKit/Run/DevPod.swift
 1374 Sources/AbydosKit/Terminal/GhosttyTerminalEngine.swift
 1097 Sources/AbydosKit/Terminal/KittyGraphics.swift
-1132 Sources/AbydosKit/Terminal/PseudoTerminal.swift
+1143 Sources/AbydosKit/Terminal/PseudoTerminal.swift
 1657 Sources/AbydosKit/Terminal/TerminalEmulator.swift

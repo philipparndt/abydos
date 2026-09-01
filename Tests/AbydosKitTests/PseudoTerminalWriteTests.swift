@@ -231,7 +231,14 @@ struct PseudoTerminalEnvironmentTests {
 		let merged = PseudoTerminal.mergedEnvironment(nil, bundled: nil, inherited: [:])
 		#expect(merged["TERM"] == "xterm-256color")
 		#expect(merged["COLORTERM"] == "truecolor")
-		#expect(merged["PAGER"] == "cat")
+	}
+
+	/// **Nothing is set**, so `git log` opens `less` with git's own `LESS=FRX`
+	/// the way it does in every other terminal. This was `cat`, which cost the
+	/// pager in every pane and was found by a user unsetting it by hand.
+	@Test func doesNotDisableThePager() {
+		let merged = PseudoTerminal.mergedEnvironment(nil, bundled: nil, inherited: [:])
+		#expect(merged["PAGER"] == nil)
 	}
 
 	/// What somebody already has wins: this is claiming a capable terminal, not
