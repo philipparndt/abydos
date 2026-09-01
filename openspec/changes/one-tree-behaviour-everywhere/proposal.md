@@ -30,10 +30,34 @@ diagnosis, and the first task is to make it one or replace it.
 There is no originating `.abydos/backlog` item: this comes from a direct report,
 2026-09-01, with two screenshots.
 
+Two more reports on the same tree arrived while this was being written, and
+both are the same shape:
+
+- **Staging a file loses the selection.** The row moves from `Unstaged` to
+  `Staged`, so it stops existing where it was, and nothing lands on the
+  neighbour above or below. `ChangesPane` already computes exactly that
+  fallback — `TreeSelection.surviving`, the function the navigator uses when
+  rows are deleted — and does not apply it here.
+- **That tree draws AppKit's selection, not the app's.** The screenshot shows
+  the system's full-bleed blue band, where every other tree in this app draws a
+  rounded, inset pill through `Theme.selection`, blue with the keyboard and grey
+  without it. The navigator does that in `NavigatorRowView.drawSelection(in:)`
+  and the changes tree simply has no row view of its own, so AppKit fills in.
+
+That is the fourth question the trees answer separately — *what does a selected
+row look like* — and it is the one where the difference is visible in a
+screenshot rather than only in a behaviour.
+
 ## What Changes
 
 - The selection survives expanding and collapsing a row, in every tree — which
-  is the report.
+  is the first report.
+- The selection survives a row moving out from under it: staging a file lands
+  the selection on the neighbour, through the fallback the pane already
+  computes and does not use.
+- Every tree draws the app's selection — the rounded inset pill, blue with the
+  keyboard and grey without — rather than leaving AppKit to paint its own band
+  where a pane forgot to say.
 - A tree behaviour is extracted into the control library that
   `the-zoom-reaches-every-control` introduces, so the four questions above have
   one answer rather than three: holding a selection across a rebuild, the arrow

@@ -9,6 +9,12 @@
 - [ ] 2.2 Make a failed restore fall back to the nearest surviving row through `TreeSelection.surviving`, and log that it missed.
 - [ ] 2.3 Settle the row-identity question from 1.2 and put whatever arithmetic it needs in AbydosKit beside `TreeSelection`, with tests.
 
+## 2b. The two reports that arrived after the proposal
+
+- [ ] 2b.1 Apply the fallback the pane already computes when staging takes the selected row away, so the neighbour is selected.
+- [ ] 2b.2 Give the changes tree a row view that draws the app's selection through `Theme.selection`, the way `NavigatorRowView` does, instead of leaving AppKit to paint its band.
+- [ ] 2b.3 Check the other three trees draw the app's selection too, and say in the design which of the four did not.
+
 ## 3. The four trees, one at a time
 
 - [ ] 3.1 The changes tree, which is the report. Driven capture of its keys before and after.

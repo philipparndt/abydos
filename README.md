@@ -1,5 +1,5 @@
 # Abydos
-
+ 
 A terminal-first IDE for AI and cloud development, on macOS.
 
 The terminal is not a strip at the bottom of an editor here. It is where the

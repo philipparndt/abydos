@@ -22,8 +22,29 @@ Both were survivable while the zoom was rarely touched. Presentation mode made
 the zoom something people flip in front of a room, and the reports followed
 within a day.
 
-The app has one worked answer already: `DrawnButton`, written for the
-missing-server strip when exactly this was reported, and used by two callers.
+The app does not have one worked answer already. It has **three**, in three
+files, none of them shared, and each written the day somebody noticed a control
+that would not grow:
+
+- `DrawnButton` (`NSButton`, drawn), for the missing-server strip and the
+  toasts — two callers;
+- `PillButton` (`NSView`, drawn), for the titlebar;
+- `RowAction` / `ActionableRowView`, which is not a control at all but a verb
+  painted into a row by the git tree — `Review 3 changes…`, the traffic button,
+  the glyph beside it.
+
+The third was pointed at during this change as "the one that works at all zoom
+levels", and it does, for the reason all three do: **every dimension is read
+from `Theme.current` inside a drawing call**, so it is re-read on the next
+repaint and there is nothing stored to go stale. `RowAction`'s own comment gives
+the same reason from the other side — an `NSButton` there "would be the one
+control in the tree that did not match the rest of it".
+
+Three correct implementations of one idea, in three files, is the argument for
+the library rather than against it. The library is not a new answer; it is the
+fourth writing of an answer that has been found three times, made shared before
+it is found a fourth.
+
 The rest of the app is about seventy bare `NSButton`s, nine
 `NSSegmentedControl`s and ten `NSSearchField`s.
 
@@ -56,7 +77,13 @@ The rest of the app is about seventy bare `NSButton`s, nine
 
 **The library draws, and does not bezel.** Every member paints itself in
 `draw(_:)` from `Theme.current`, which is what makes it follow the zoom for free
-— the same mechanism that already works everywhere else in the app.
+— the same mechanism the three existing drawn controls already prove.
+
+**The rule underneath it, stated once**: a dimension is *read where it is used*,
+never stored. That is the whole difference between the controls that work and
+the controls that do not, and it is why `DrawnButton` follows the zoom while an
+`NSButton` beside it does not — and equally why `commitTable`'s row height does
+not follow while the fonts drawn into that row do.
 
 *Ruled out: keeping `NSButton` and raising `controlSize` with the scale.* It
 buys a factor of about 1.4 and then stops, which turns a visible fault into one
@@ -67,6 +94,19 @@ measurement in `DrawnButton` is what kills it.
 controls.* It scales the artwork's pixels rather than laying out at the size, so
 text goes soft, hit regions drift from what is drawn, and the focus ring is
 scaled too. A control that is blurry in a room is worse than one that is small.
+
+**The three that already work are folded in, not left beside it.**
+`DrawnButton` becomes the library's drawn button. `PillButton` and `RowAction`
+stay where they are for now — the titlebar and the git tree draw them into
+contexts of their own, and moving them is a second change with nothing to gain
+in this one — but the library's metrics are the ones they already use, so the
+three cannot drift further apart while this is in flight.
+
+*Ruled out: making the library out of `PillButton` because it is an `NSView`
+rather than an `NSButton`.* `NSButton` carries the target/action, the
+accessibility role and the key loop for free; `PillButton` reimplements the
+first and does without the others because the titlebar does not need them. The
+library is for controls in panes, which do.
 
 **One observer, not one per control.** A `ScaledControls` registry holds weak
 references to live controls, observes `.abydosSettingsChanged` once, and tells

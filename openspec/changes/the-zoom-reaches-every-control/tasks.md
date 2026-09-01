@@ -1,17 +1,17 @@
 ## 1. The arithmetic, tested without a window
 
-- [ ] 1.1 Add `ControlMetrics` to AbydosKit: the height, the horizontal padding and the corner radius of a drawn control, from a design-time font size and a scale, with the measured line height given in rather than assumed.
-- [ ] 1.2 Add `CommitRowMetrics` to AbydosKit: a commit row's height from the two measured line heights and the paddings, so the row is derived rather than the constant 40 it was.
-- [ ] 1.3 Tests beside `PanelRowSnapTests` over all nine zoom steps: a control's height at 2.0 is twice its height at 1.0 within rounding, and a commit row is never shorter than the content it is given.
+- [x] 1.1 Add `ControlMetrics` to AbydosKit: the height, the horizontal padding and the corner radius of a drawn control, from a design-time font size and a scale, with the measured line height given in rather than assumed.
+- [x] 1.2 Add `CommitRowMetrics` to AbydosKit: a commit row's height from the two measured line heights and the paddings, so the row is derived rather than the constant 40 it was.
+- [x] 1.3 Tests beside `PanelRowSnapTests` over all nine zoom steps: a control's height at 2.0 is twice its height at 1.0 within rounding, and a commit row is never shorter than the content it is given.
 
 ## 2. The library
 
-- [ ] 2.1 Create `Sources/AbydosApp/Controls/` and move `DrawnButton` into it unchanged, keeping its two callers working.
-- [ ] 2.2 Add `ScaledControls`, the registry: weak boxes, one `.abydosSettingsChanged` observer, a `reapply()` walk that drops empty boxes, and a count the driver can read.
-- [ ] 2.3 Generalise `DrawnButton` into the library's drawn push button and glyph button, taking their metrics from `ControlMetrics` and registering on init.
-- [ ] 2.4 Add the drawn checkbox. Compare it against a 1× capture of the system's; if it cannot be made to read as a checkbox, stop, leave `Hide read` and `Whole file` bezelled, and say so here rather than dropping it quietly.
-- [ ] 2.5 Add the choice control. Try drawn first; if the arrow-key behaviour between segments cannot be kept, keep `NSSegmentedControl` and make it a *measured* member, which the design allows.
-- [ ] 2.6 Add the measured search field: AppKit's field, given `Theme.uiFont` and a scaled height constraint, both re-taken on a scale change.
+- [x] 2.1 Create `Sources/AbydosApp/Controls/` and move `DrawnButton` into it unchanged, keeping its two callers working.
+- [x] 2.2 Add `ScaledControls`, the registry: weak boxes, one `.abydosSettingsChanged` observer, a `reapply()` walk that drops empty boxes, and a count the driver can read.
+- [x] 2.3 Generalise `DrawnButton` into the library's drawn push button and glyph button, taking their metrics from `ControlMetrics` and registering on init.
+- [x] 2.4 Add the drawn checkbox. Compare it against a 1× capture of the system's; if it cannot be made to read as a checkbox, stop, leave `Hide read` and `Whole file` bezelled, and say so here rather than dropping it quietly.
+- [x] 2.5 Add the choice control. Try drawn first; if the arrow-key behaviour between segments cannot be kept, keep `NSSegmentedControl` and make it a *measured* member, which the design allows.
+- [x] 2.6 Add the measured search field: AppKit's field, given `Theme.uiFont` and a scaled height constraint, both re-taken on a scale change.
 
 ## 3. The log page
 
