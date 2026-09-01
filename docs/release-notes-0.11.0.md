@@ -12,7 +12,17 @@ because the screen it is on might be being shared. Both are the editor answering
 the question somebody actually had, and neither of them fits under a point
 release.
 
-Seven commits, 136 files.
+The concealment then kept going for two more days on its own reports — a YAML
+block scalar whose key was in the clear under a covered `pk: |`, and a revealed
+file that stayed revealed in a background window — and two more doorways were
+found to be missing rather than absent: comparing a file from the row it is on,
+and blame from the gutter it draws in. Then a project learnt to come back with
+the commit message somebody was halfway through typing, a draft learnt the format
+most repositories' tooling actually reads, a pane got the pager every other
+terminal has, and a terminal stopped losing a row every time the window got
+wider.
+
+Twenty commits, 190 files.
 
 ## Secrets in a dotenv file are not on the screen
 
@@ -48,6 +58,28 @@ find and copy all see the real text — copying a value copies the value, which 
 a deliberate act that puts nothing on a screen. Typing into a covered value stays
 covered, the way a password field takes input; the screen is precisely where the
 new key must not appear.
+
+**A block scalar is covered whole.** This was reported with a screenshot that
+made the point better than words could: a `secrets.yaml.dec` with a covered
+`pk: |` and the RSA private key it introduces drawn in the clear on the indented
+lines below it. Per-line classification cannot see a YAML block scalar, because
+its value lives on the lines *after* the indicator. The roles are computed over
+the whole file now — a value that is exactly an indicator (`|`, `>`, and the
+`|-`, `|+`, `>2` modifier forms; a value merely *starting* with a pipe is a
+value) opens a block, every deeper-indented or blank line after it is block
+content, and the first line back at the key's indent closes it and is a line
+again. A mapping's children are keys and stay readable. Block-content rows erase
+whole with a pill each, so a redacted key reads as a redaction rather than as the
+file ending early.
+
+**A revealed file covers itself again.** Five minutes with no key, click, scroll
+or edit and the covers go back on by themselves, the lock in the status bar
+shutting with them — a document left unlocked in a background window is exactly
+the leak the covers exist for, and it is the case nobody remembers to close.
+Scrolling counts as touching the file: reading a long one is interaction, and
+covers marching in over somebody mid-read is how a feature gets switched off for
+good. The cost is a timestamp, not a timer per keystroke — one deferred check,
+re-armed for whatever is left of the five minutes.
 
 The whole thing is *Conceal secrets* in the editor settings, on by default, and
 it reaches already-open tabs the moment it flips. The detection and the value
@@ -177,6 +209,59 @@ several versions, came to be requested as a missing feature. It is disabled now,
 with a tooltip naming what is missing. A verb that vanishes teaches nobody what
 the page can do.
 
+## A drafted message is a Conventional Commit
+
+The Draft button asked Claude for a message in *this* repository's voice: the
+prompt carried the last twenty subjects, and the code beside it said in as many
+words that this repository does not write `fix: update handler`. That is one
+house's style shipped as everybody's default. Most repositories that want a
+message drafted want the format their tooling reads — changelogs, releases and
+version bumps all key off Conventional Commits — and a draft in prose has to be
+rewritten by hand before it can be committed at all.
+
+The summary is now asked for as v1.0.0 states it: `<type>[optional scope][!]:
+<description>`, the type one of feat, fix, build, chore, ci, docs, style,
+refactor, perf or test, the scope a noun in parentheses naming a part of the
+codebase, and a breaking change marked either with `!` before the colon or an
+uppercase `BREAKING CHANGE:` footer. A toggle on the Git settings page turns it
+off, on by default — and with it off the prompt is **byte for byte** what it was,
+which a test asserts rather than assumes. A setting that "mostly" restores the
+old behaviour would leave this repository's own drafts quietly worse, and nobody
+would connect that to a release.
+
+The twenty subjects still go either way, demoted to vocabulary when the format is
+on. Twenty narrative subjects and an instruction to write `feat(scope):` are
+contradictory instructions and the examples usually win — but the scope is the
+half a diff alone cannot settle, and `fix(navigator):` against
+`fix(ProjectNavigatorViewController):` is the difference between a scope and a
+file name.
+
+**What comes back is never rewritten into the format.** Prepending a type is
+classifying somebody's change on their behalf, and a wrong classification reads
+as deliberate and lands in a changelog under the wrong heading.
+`ConventionalCommit` reads a summary and never writes one; the fields stay
+editable, which is the recovery.
+
+## Comparing a file, from the row it is on
+
+Both destinations already existed, and neither was reachable from the file it is
+about. A file row's menu gains a **Compare** submenu: *Against Last Commit*
+opens the HEAD diff as the diff tab — staged and unstaged edits in one answer,
+not two — and *History…* opens the log page scoped to that file with the *This
+File* segment lit.
+
+On a file-scoped log, a commit's own menu gains **Compare with Working Copy**:
+`git diff <hash> -- <path>`, which is the other question a version answers — not
+what changed *in* it, but how far *now* is from then. It is offered only while
+the log is path-scoped, because on the whole log that question spans every file
+and the menu item would be lying about what it opens.
+
+The submenu obeys the row it is on: an untracked file has *Against Last Commit*
+disabled and no *History…* at all, and a folder or the repository root has no
+submenu. In the kit, `diffToWorkingCopy` joins `diffAgainstHead`, with live tests
+proving that an older commit's diff carries a later commit's edit and that a
+matching working copy diffs to nothing.
+
 ## Changed lines in the editor gutter
 
 A file open in the editor said nothing about what git thought of it. The gutter
@@ -200,6 +285,52 @@ machinery that was already there, so it is tested without a window. One `git
 diff` per file per save, reload or repository change — async, debounced, never
 per keystroke.
 
+## Blame, from the gutter's own menu
+
+Right-clicking the line numbers opened the *text* area's menu — Go to Definition,
+Paste — so blame mode, which has been behind ⌥⌘B all along, was reported as a
+missing feature. The gutter answers with a menu of its own now: *Show Blame* or
+*Hide Blame*, the title saying which state the gutter is in, and the action
+walking the responder chain to the one toggle that ⌥⌘B and the View menu already
+share. The text area's menu is byte for byte what it was. Blame mode also gets
+its first account in the specs, having shipped for months without one.
+
+## A project comes back with its message and its pages
+
+Switching to another project and back lost two things somebody was in the middle
+of, and neither loss was an accident.
+
+The session filtered git pages out of its capture, on the argument that "a path
+like `/ideai/page/launch` is nothing to reopen" — true of the synthetic URL, and
+false of the page, which is a view over a repository with a scope and a
+selection. And the commit message lived in two private text fields and nowhere
+else, so a rebuilt pane came back empty.
+
+**A commit message is the most expensive text in the app to lose.** It is written
+once, from a diff that has just been read, and typing it again means reading the
+diff again. So both halves travel, summary and description, the description being
+the one that says why.
+
+There is a second door onto the same loss, and the code had already confessed to
+it in a comment: reading the repository finishes a second or two after a window
+opens, and when it lands on a different work tree the sidebar tool is rebuilt —
+taking, in the comment's own words, "the commit message half typed into the
+pane". The message is therefore re-applied wherever a pane is *built* rather than
+once after the switch, and only into an empty field: somebody who has started
+typing has said something more recent than the file has.
+
+The pages come back through the openers a click uses, after the repository is
+readable — every one of them refuses while the project's git is unread, and would
+have dropped the restore in silence. They are idempotent, so a restore racing a
+click cannot produce two log pages. A stash page is remembered **by commit, not
+by index**: `stash@{0}` is a different commit after one `git stash push`, and a
+page reopened by index would come back on somebody else's work. A stash that has
+since been popped opens nothing.
+
+Both fields are additive optional values in `ProjectSession`, absent from every
+session written before them, so an older session file loses nothing by not having
+them.
+
 ## Dragging a divider with a picture open took the app down
 
 Three identical reports in two minutes against 0.10.0. The drag's nested event
@@ -216,6 +347,36 @@ drains in the event-tracking mode too, so the picture still follows the divider
 live — one turn behind, with the layout engine at rest. The direct callers, a
 zoom and a fit and the image arriving, stay synchronous; none of them runs inside
 a flush.
+
+## The terminal keeps its height when the window gets wider
+
+Dragging the window's right edge out took a row off the terminal per resize
+notification — dozens in a single drag — until the panel hit its 160 pt floor and
+the height somebody had set was gone. Reported with two screenshots of the same
+window at two widths.
+
+Nothing couples width to height on purpose: the panel's height is points rather
+than a fraction, and the terminal's cell size comes from font metrics alone. It
+was two mistakes standing together, neither of them visible on its own.
+
+**The snap was not a fixed point.** `setPosition(_:ofDividerAt:)` leaves the
+second subview `total - p - dividerThickness` tall, and the position was computed
+as `total - wanted` with no thickness term. So the panel came out a point short,
+its usable height a point short of whole rows, and the *next* remainder was
+nearly a whole row for the next pass to take off again. The comment beside it
+said "it converges in one step: the second pass finds nothing left over and
+stops", which is exactly what did not happen — and the test asserted the
+off-by-one as an expectation.
+
+**And a width-only resize asked the question at all.** `NSSplitView` posts
+`didResizeSubviews` for any frame change, and the handler filtered on which split
+view sent it and never on whether the height had moved.
+
+Both are fixed, along with the three other places computing a divider position as
+`total - height` — putting the panel away and back, making room for the editor,
+maximising it — and the harness's own copy, which had been placing captures a
+point out. The test asserts the property now rather than the arithmetic: apply
+the answer, recompute the state it produces, and there is nothing left to round.
 
 ## The hairline under both tab bars
 
@@ -236,6 +397,33 @@ typed `cd` always does, and it is always there to read. For tmux that is the
 `pane_pid`'s directory and **not** `pane_current_path`, which on this platform
 follows the foreground process and so is the dragging fault a third time.
 
+## A pane has a pager
+
+`git log` in a pane printed everything and returned to the prompt, where every
+other terminal on the machine opens a pager without being asked. One line did it:
+`PAGER` was defaulted to `cat`, to stop a pager hanging a pane waiting for a
+keypress. That was true of a terminal that could not run a full-screen program.
+This one runs vim, htop, Claude's own full-screen UI and tmux, and a pager is
+that same class of program.
+
+The `??` it was written with looked like deference and was not. The dictionary
+starts from the *app's* environment, and a `PAGER` exported from a profile is set
+by the shell inside the pane, long after the fork — so the app's value was what
+git saw, and every tool a pane started inherited it, not just `git log`. It was
+reported by somebody who found it by unsetting the variable by hand and asking
+whether it was deliberate.
+
+**Deleting the line is not the whole fix**, which is the part worth knowing. tmux
+copies the environment it was started with into its global environment and hands
+that to every window it makes for the rest of the server's life. The server on
+this machine has been up since 28 August, so with the line gone a pane on it
+still reported `PAGER=[cat]` and `git log` still printed everything — measured,
+not assumed. So the app takes its own footprint back at launch:
+`show-environment -g PAGER`, and only if the answer is exactly `cat`,
+`set-environment -g -u PAGER`. Nobody chooses `cat` deliberately, a session's
+environment is not ours to edit beyond what we put there, and no server running
+is nothing to clean rather than a failure.
+
 ## Also
 
 **A tooltip could take the app with it.** `addToolTip` retains no owner, and a
@@ -254,12 +442,21 @@ recognised by its own words rather than reading as a wrong verb. And the hook
 tests address the pane rather than `window :0`, which a `tmux.conf` carrying
 `base-index 1` does not have.
 
-**Ten changes were archived into `openspec/specs`** during this release — five
-finished the day after 0.10.0 and five that had been waiting since — so what they
-decided lives in the specs rather than only in the change directories. Five
-capabilities are written down for the first time: `commit-message-history`,
+**Fourteen changes were archived into `openspec/specs`** over this release — ten
+on the 31st and the four features above on the 1st — so what they decided lives
+in the specs rather than only in the change directories. Six capabilities are
+written down for the first time: `secret-concealment`, `commit-message-history`,
 `editor-change-marks`, `titlebar-capsule`, `pull-requests` and
-`source-file-size`. The two features above carry their own delta specs — a new
-`secret-concealment`, additions to `previews`, and the `editor` paint order
-gaining the cover's place, over every band and under the caret — and they join
-the specs when their changes are archived.
+`source-file-size`. `previews` gains the video player, `editor` gains the
+gutter's own menu and the redaction band's place in its painting order — over
+every band, under the caret — and `git-pages` and `project-view` take one compare
+doorway each.
+
+Four more changes are finished and not yet archived — `a-draft-is-a-conventional-commit`,
+`a-pane-has-a-pager`, `a-project-comes-back-as-it-was-left` and
+`the-terminal-keeps-its-height` — carrying deltas to `commit-message-drafts`,
+`terminal`, `sessions` and `git-pages`. Their work is in this release; only the
+move into the specs is outstanding.
+
+`a-java-edit-reaches-the-running-jvm` stays where it is, at 24 tasks of 31. It is
+somebody else's work and it is not finished.
