@@ -1304,6 +1304,11 @@ non-current find matches have: over the line background, under the selection.
 They never share a row with a find match, because find's matches win while find
 is showing.
 
+A secret's redaction cover is the fourth kind, and it takes the top: over the
+text, the selection and every match band — a redaction that anything can be
+painted over is not one — and under the caret alone, so the editing position
+stays visible in a covered value.
+
 #### Scenario: an occurrence under a selection extended over it
 
 - **GIVEN** a selection extended across another place its own text appears
@@ -1314,3 +1319,37 @@ is showing.
 - **GIVEN** a file with find matches and a selection over the current one
 - **THEN** the current match is drawn over the selection, as it is today, and no
   occurrence band is drawn anywhere on the page
+
+#### Scenario: a find match inside a covered value stays covered
+
+- **GIVEN** a find whose match lies inside a concealed value
+- **THEN** the row shows the cover on top, and the match band does not lift it
+
+### Requirement: The gutter answers a right-click with its own menu
+
+A right-click on the gutter — the left area holding the line numbers — SHALL
+open a menu about the gutter, not the text area's menu, and that menu SHALL
+offer toggling blame mode: Show Blame when the column is hidden, Hide Blame
+when it is showing. Blame mode is the column beside the lines naming who last
+changed each line, loaded when the mode is turned on; the gutter menu, the
+View menu and ⌥⌘B toggle one state and never disagree.
+
+"Who changed this line" is asked at the line, and the gutter used to answer a
+right-click with Go to Definition and Paste.
+
+#### Scenario: blame from the line numbers
+
+- **GIVEN** a file open in the editor, blame hidden
+- **WHEN** the gutter is right-clicked and Show Blame chosen
+- **THEN** the blame column appears, exactly as ⌥⌘B would have shown it
+
+#### Scenario: the title tells the state
+
+- **GIVEN** blame showing
+- **WHEN** the gutter is right-clicked
+- **THEN** the entry reads Hide Blame, and choosing it takes the column away
+
+#### Scenario: the text area keeps its menu
+
+- **WHEN** the text — right of the gutter — is right-clicked
+- **THEN** the menu is the text area's menu, unchanged
