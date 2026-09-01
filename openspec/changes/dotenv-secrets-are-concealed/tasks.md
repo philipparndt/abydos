@@ -29,3 +29,4 @@
 - [x] 5.4 The per-value click-reveal is removed on review: a click on a cover reveals nothing and posts a notice naming the lock — a click is what a presenter does absentmindedly on the very screen being watched
 - [x] 5.5 The lock keeps its shape (drawn at the symbol's own aspect; the open lock was squeezed square) and carries its label: "Secrets hidden" shut, "Secrets shown" open
 - [x] 5.6 The feature is a setting — "Conceal secrets" in the editor settings, on by default, registered and reset like every key, applied to already-open tabs the moment it flips
+- [x] 5.7 A revealed file covers itself after five untouched minutes — key, click, scroll and edit all reset the clock (one deferred check re-armed for the remainder, never a timer per keystroke), the lock shuts with the covers, and the interval is driver-settable: proven with a 3-second limit, a mid-countdown touch keeping it revealed past the limit, and the covers returning once left alone

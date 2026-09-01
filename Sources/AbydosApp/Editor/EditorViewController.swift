@@ -627,6 +627,11 @@ final class EditorViewController: NSViewController {
 			Settings.shared.concealsSecrets
 				&& DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent)
 		)
+		tab.codeView?.onSecretsAutoConcealed = { [weak self] in
+			guard let self else { return }
+			// The lock in the status bar shuts with the covers.
+			onStatusChanged?(self)
+		}
 		tab.codeView?.onCoveredSecretClicked = {
 			// The message, not the value: a click is exactly what a presenter
 			// does absentmindedly on the screen everybody is watching.
@@ -1530,6 +1535,11 @@ final class EditorViewController: NSViewController {
 			Settings.shared.concealsSecrets
 				&& DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent)
 		)
+		tab.codeView?.onSecretsAutoConcealed = { [weak self] in
+			guard let self else { return }
+			// The lock in the status bar shuts with the covers.
+			onStatusChanged?(self)
+		}
 		tab.codeView?.onCoveredSecretClicked = {
 			// The message, not the value: a click is exactly what a presenter
 			// does absentmindedly on the screen everybody is watching.
@@ -3856,6 +3866,30 @@ final class EditorViewController: NSViewController {
 	/// Per editor rather than for all of them: blame is something you turn on
 	/// to answer a question about one file, and a column of names beside every
 	/// other file afterwards is not what anybody asked for.
+	/// Drives the editor's context menus from outside: `gutter` and `text`
+	/// print the menu a right-click builds on each side of the boundary,
+	/// `blame` presses the toggle the gutter's entry presses.
+	func editorMenuForTesting(_ steps: String) {
+		guard let codeView = activeTab?.codeView else {
+			print("EDITOR-MENU: no editor")
+			fflush(stdout)
+			return
+		}
+		for step in steps.split(separator: ",").map(String.init) {
+			switch step {
+			case "gutter":
+				print("EDITOR-MENU gutter: \(codeView.contextMenuReportForTesting(atGutter: true))")
+			case "text":
+				print("EDITOR-MENU text: \(codeView.contextMenuReportForTesting(atGutter: false))")
+			case "blame":
+				toggleBlame()
+			default:
+				print("EDITOR-MENU: unknown step \(step)")
+			}
+		}
+		fflush(stdout)
+	}
+
 	/// Drives the covers from outside: `report`, `caret:<line>` (as an
 	/// arrow-walk would arrive, which must lift nothing), `toggle` (the lock
 	/// and the View menu's file-wide reveal, which is the only reveal).
@@ -3865,10 +3899,26 @@ final class EditorViewController: NSViewController {
 			fflush(stdout)
 			return
 		}
-		for step in steps.split(separator: ",").map(String.init) {
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			// Everything after a settle goes back to the run loop, the way
+			// every other driver waits: the idle re-conceal is a deferred
+			// check, and a nested wait here would never see it fire.
+			if step.hasPrefix("settle") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.secretsForTesting(rest)
+				}
+				return
+			}
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("SECRETS:\n\(codeView.secretsReportForTesting())")
+			case "idle-limit": codeView.secretsIdleLimit = Double(argument) ?? 300
 			case "caret":  codeView.moveCaretForTesting(toLine: (Int(argument) ?? 1) - 1)
 			case "toggle": toggleRevealSecrets()
 			default:       print("SECRETS: unknown step \(step)")

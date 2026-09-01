@@ -64,7 +64,21 @@ leaves that line, so a revealed value cannot be forgotten open.
 - **GIVEN** the status bar's lock pressed, or Reveal Secrets chosen from the
   View menu
 - **THEN** every value in that tab is readable, the lock stands open saying
-  "Secrets shown", and it stays so until either handle is used again
+  "Secrets shown", and it stays so until either handle is used again — or
+  until the idle limit passes
+
+#### Scenario: a revealed file left alone covers itself
+
+- **GIVEN** a revealed file untouched — no key, click, scroll or edit — for
+  five minutes
+- **THEN** the covers come back on their own and the lock shuts, so an
+  unlocked document forgotten in the background does not sit open through
+  the next call
+
+#### Scenario: reading resets the clock
+
+- **GIVEN** a revealed file being read — arrowed or scrolled through
+- **THEN** it stays revealed; only five untouched minutes cover it
 
 #### Scenario: the feature can be turned off
 

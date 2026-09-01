@@ -255,9 +255,60 @@ final class CodeView: NSView, NSTextInputClient {
 
 	var showsSecretCovers: Bool { concealsSecrets }
 
+	/// How long a revealed file stays revealed with nobody touching it —
+	/// five minutes, and then the covers come back on their own, so an
+	/// unlocked document forgotten in the background does not sit open
+	/// through the next call. A variable rather than a constant so a driven
+	/// run can prove the re-conceal without five minutes of wall clock.
+	var secretsIdleLimit: TimeInterval = 300
+
+	/// When the document was last touched — a key, a click, a scroll, an
+	/// edit — and the one deferred check. The check is re-armed for the
+	/// remainder when it finds recent touches, so activity costs a `Date()`
+	/// store and never a timer reset per keystroke.
+	private var secretsLastTouched = Date()
+	private var secretsIdleCheck: DispatchWorkItem?
+
 	func setSecretsRevealed(_ revealed: Bool) {
 		secretsRevealedAll = revealed
 		needsDisplay = true
+		secretsIdleCheck?.cancel()
+		secretsIdleCheck = nil
+		guard revealed, concealsSecrets else { return }
+		secretsLastTouched = Date()
+		scheduleIdleConceal(after: secretsIdleLimit)
+	}
+
+	/// A cover came back by itself; whoever owns the lock in the status bar
+	/// wants to know.
+	var onSecretsAutoConcealed: (() -> Void)?
+
+	private func scheduleIdleConceal(after delay: TimeInterval) {
+		let work = DispatchWorkItem { [weak self] in
+			guard let self, secretsRevealedAll, concealsSecrets else { return }
+			let idle = Date().timeIntervalSince(secretsLastTouched)
+			if idle >= secretsIdleLimit {
+				setSecretsRevealed(false)
+				onSecretsAutoConcealed?()
+			} else {
+				scheduleIdleConceal(after: secretsIdleLimit - idle)
+			}
+		}
+		secretsIdleCheck = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+	}
+
+	/// The cheap half of the idle clock, called from the interaction paths.
+	private func noteSecretsTouch() {
+		guard secretsRevealedAll else { return }
+		secretsLastTouched = Date()
+	}
+
+	/// Scrolling is reading, and reading is interaction: without this the
+	/// covers would come back over a long file somebody is in the middle of.
+	override func scrollWheel(with event: NSEvent) {
+		noteSecretsTouch()
+		super.scrollWheel(with: event)
 	}
 
 	/// One word per line — covered, revealed, or plain — so a driven run can
@@ -277,9 +328,28 @@ final class CodeView: NSView, NSTextInputClient {
 		return lines.joined(separator: "\n")
 	}
 
+	/// The context menu as a right-click at the gutter or in the text would
+	/// build it, one title per line — so which menu answers where is a text
+	/// claim rather than a screenshot.
+	func contextMenuReportForTesting(atGutter: Bool) -> String {
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		let x = atGutter ? scrollX + gutterWidth / 2 : scrollX + gutterWidth + 40
+		let location = convert(NSPoint(x: x, y: lineHeight / 2), to: nil)
+		guard let event = NSEvent.mouseEvent(
+			with: .rightMouseDown, location: location, modifierFlags: [],
+			timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil,
+			eventNumber: 0, clickCount: 1, pressure: 1
+		), let menu = menu(for: event) else { return "no menu" }
+		return menu.items
+			.map { $0.isSeparatorItem ? "—" : $0.title }
+			.joined(separator: " · ")
+	}
+
 	/// The caret placed on a line, the way an arrow-walk arrives — which must
 	/// reveal nothing, and a driven run proves it by doing exactly this.
 	func moveCaretForTesting(toLine docLine: Int) {
+		// A touch, as the arrow key it stands for would be.
+		noteSecretsTouch()
 		guard let document, docLine < document.lineCount else { return }
 		let offset = document.rope.utf16Offset(
 			fromByte: document.rope.byteOffset(ofLine: docLine)
@@ -2619,6 +2689,7 @@ final class CodeView: NSView, NSTextInputClient {
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
 	override func mouseDown(with event: NSEvent) {
+		noteSecretsTouch()
 		let point = convert(event.locationInWindow, from: nil)
 		// **Before anything else, and only while stopped.** A hint sits past the
 		// end of the line, where a click would otherwise put the caret at the
@@ -2742,6 +2813,29 @@ final class CodeView: NSView, NSTextInputClient {
 
 	override func menu(for event: NSEvent) -> NSMenu? {
 		guard document != nil else { return nil }
+
+		// **The gutter answers for itself.** A right-click on the line numbers
+		// used to open the text area's menu — Go to Definition, Cut, Paste —
+		// none of which is about the gutter. The boundary is the same
+		// scroll-adjusted width every gutter click already respects.
+		let point = convert(event.locationInWindow, from: nil)
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		if point.x < scrollX + gutterWidth {
+			let gutter = NSMenu()
+			// A title, not a checkmark: the menu is transient and the state
+			// lives visibly in the editor — the column is there or it is not.
+			// A nil target walks the responder chain to the one implementation
+			// the View menu and ⌥⌘B already share, so the three handles cannot
+			// drift.
+			let blame = NSMenuItem(
+				title: isBlameVisible ? "Hide Blame" : "Show Blame",
+				action: #selector(MainWindowController.toggleBlame(_:)),
+				keyEquivalent: ""
+			)
+			gutter.addItem(blame)
+			return gutter
+		}
+
 		let menu = NSMenu()
 
 		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
@@ -3116,6 +3210,7 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	override func keyDown(with event: NSEvent) {
+		noteSecretsTouch()
 		// Routes through the input system so dead keys, IME, and the standard
 		// key bindings all behave as they do in a native text view.
 		interpretKeyEvents([event])

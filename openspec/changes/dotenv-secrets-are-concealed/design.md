@@ -80,6 +80,15 @@ dotenv file off-call asked for exactly that. The whole feature is a setting
 (on by default — the day it matters is the day nobody remembered to turn it
 on), applied to open tabs the moment it flips.
 
+And a reveal expires: five minutes with no key, click, scroll or edit in the
+document and the covers come back by themselves, the lock shutting with
+them — an unlocked file forgotten in the background is exactly the leak the
+covers exist for. The clock is one deferred check re-armed for the remainder
+when it finds recent touches, so activity costs a timestamp store and never
+a timer reset per keystroke; scrolling counts as touching, because reading a
+long file is interaction, and covers marching in over it would teach people
+to toggle the feature off.
+
 ### Typing stays covered
 
 A keystroke into a covered value updates the document and the cover widens

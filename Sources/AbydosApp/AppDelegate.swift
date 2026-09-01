@@ -604,6 +604,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// After the size and before the pan, for the same reason the pan is last:
 		// each of the three depends on the one above it.
+		if let steps = options.editorMenuSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.editorForTesting.editorMenuForTesting(steps)
+			}
+		}
+
 		if let steps = options.secretsSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.editorForTesting.secretsForTesting(steps)

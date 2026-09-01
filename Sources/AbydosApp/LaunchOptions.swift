@@ -596,6 +596,8 @@ struct LaunchOptions {
 	var videoReport = false
 	/// Drive the secret covers: report, reveal, caret, toggle.
 	var secretsSteps: String?
+	/// Drive the editor's context menus: gutter, text, blame.
+	var editorMenuSteps: String?
 	/// Where the picture pane is scrolled to, as fractions of the picture:
 	/// `0,0` is its top left corner and `1,1` its bottom right.
 	///
@@ -1205,6 +1207,7 @@ struct LaunchOptions {
 			case "--image-zoom": options.imageZoom = next()
 			case "--video-report": options.videoReport = true
 			case "--secrets":    options.secretsSteps = next()
+			case "--editor-menu": options.editorMenuSteps = next()
 			case "--image-pan":  options.imagePan = next()
 			case "--probe-lan":  options.probeLAN = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
