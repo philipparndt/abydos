@@ -265,6 +265,8 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// Guards against a refresh landing while a git command is still running and
 	/// showing a half-applied state.
 	private var isBusy = false
+	/// A push is out, and the button is saying so.
+	private var isPushing = false
 	/// Which selection the diff on its way belongs to. Bumped by every
 	/// `showDiff`, and a render that comes back to a different number is for
 	/// a row nobody is looking at any more — see `showDiff`.
@@ -600,13 +602,14 @@ final class ChangesPane: NSView, ScaleFollowing {
 			heights.height(subjectField, design: 26),
 			lists.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(280)),
 			diffScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(320)),
-
-			// **Amend on the field's edge, not the chevron's.** The chevron
-			// sits in front of the field, so the row under it started a slot
-			// further left than the thing it was under and the checkbox looked
-			// dropped rather than placed.
-			amendCheckbox.leadingAnchor.constraint(equalTo: subjectField.leadingAnchor),
 		])
+		// **Amend on the field's edge, not the chevron's**, through a slot the
+		// chevron's width inside the row. A constraint from the checkbox across
+		// to the field pulled the whole row over instead, and left Push 32
+		// points short of Draft.
+		let slot = NSView()
+		commitRow.insertArrangedSubview(slot, at: 0)
+		slot.widthAnchor.constraint(equalTo: descriptionChevron.widthAnchor).isActive = true
 		ControlRow.matchHeights(to: subjectField, of: [
 			descriptionChevron, history, draftButton!, amendCheckbox, commitButton, pushButton,
 		])
@@ -1190,7 +1193,13 @@ final class ChangesPane: NSView, ScaleFollowing {
 			? "Commit \(count) File\(count == 1 ? "" : "s")"
 			: (isAmending ? "Amend" : "Commit"))
 
-		pushButton.setLabel(pushState?.buttonTitle ?? "Push")
+		// The count as a tag beside the word, and a spinner in its place
+		// while the push is out — see `DrawnButton.isWorking`.
+		pushButton.setLabel(
+			isPushing ? "Pushing" : pushState?.buttonWord ?? "Push",
+			count: isPushing ? nil : pushState?.buttonCount
+		)
+		pushButton.isWorking = isPushing
 		pushButton.isEnabled = !isBusy && pushState?.canPush == true
 		pushButton.toolTip = pushTooltip
 
@@ -1203,14 +1212,11 @@ final class ChangesPane: NSView, ScaleFollowing {
 		)
 		commitButton.keyEquivalent = primary == .commit ? "\r" : ""
 		pushButton.keyEquivalent = primary == .push ? "\r" : ""
-		// **Neither is filled.** The accent used to follow `primary` — a bezel
-		// gave the default button its blue for free, and the drawn one was
-		// told — but drawn, it is the caret colour, which on the dark page is
-		// a white block, and it landed on Push: the one action in the row that
-		// is not about the message being written. The row's loudest object
-		// pointed away from the field. Return still follows `primary`; the
-		// two buttons now say what they do with their words and their
-		// enabled state, and the key is in Commit's tooltip.
+		// **Neither is filled.** The accent used to follow `primary`, but drawn
+		// it is the caret colour — a white block on the dark page — and it
+		// landed on Push, the one action not about the message being written.
+		// Return still follows `primary`; the words and the enabled state say
+		// the rest.
 		commitButton.prominence = .normal
 		pushButton.prominence = .normal
 	}
@@ -1236,10 +1242,13 @@ final class ChangesPane: NSView, ScaleFollowing {
 		let setsUpstream = state.upstream == nil
 
 		isBusy = true
+		isPushing = true
 		updateCommitButton()
 		Task { @MainActor in
 			let result = await GitPush.push(in: root, setUpstream: setsUpstream)
+			isPushing = false
 			endBusy()
+			updateCommitButton()
 
 			if result.exitCode == 0 {
 				// git reports a push on stderr, which is where the branch and

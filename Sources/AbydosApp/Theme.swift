@@ -80,6 +80,17 @@ struct Theme {
 		// rather than left to be overwritten, because the old ones would never be
 		// asked for again and a theme somebody flips twice would keep both.
 		forgetSymbols()
+		// **The drawn controls, from here and not only from the notification.**
+		// They re-read the palette on `abydosSettingsChanged`, and so does the
+		// window — which is where the palette is actually switched, in its own
+		// observer of the same notification. Observers run in the order they
+		// registered, and the first drawn button was made before the window
+		// finished listening, so the controls re-read the *old* palette and
+		// then nothing told them again: the commit page's chevron and clock
+		// kept the previous theme's glyph until a hover redrew them, and Draft
+		// and Push caught up a second later only because a refresh relabelled
+		// them. Re-applied here, after the switch, whoever asked for it.
+		ScaledControls.reapply()
 		return true
 	}
 

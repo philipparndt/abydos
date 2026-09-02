@@ -60,6 +60,19 @@ public enum GitPush {
 			return ahead > 0 ? "Push \(ahead)" : "Push"
 		}
 
+		/// How many commits the push would send, for a button that shows the
+		/// number as a tag beside the word rather than inside it — so the
+		/// word keeps its width from one refresh to the next. Nil when the
+		/// title carries no number.
+		public var buttonCount: Int? {
+			guard hasRemote, hasCommits, upstream != nil, ahead > 0 else { return nil }
+			return ahead
+		}
+
+		/// `buttonTitle` without the number, for a button that shows the
+		/// number as `buttonCount`.
+		public var buttonWord: String { buttonCount == nil ? buttonTitle : "Push" }
+
 		/// Why the button is the way it is, for the tooltip on it.
 		///
 		/// Here rather than in the pane so that every reason is written in one
