@@ -30,7 +30,7 @@ painted by hand, the git tree had four different ways of throwing a selection
 away, and a folded merge left the lanes of the branch it hid running down the
 graph with nothing above them.
 
-Twenty-nine commits, 255 files.
+Thirty-three commits, 257 files.
 
 ## Secrets in a dotenv file are not on the screen
 
@@ -265,6 +265,20 @@ repository; `Commit` and `Push` are the only bordered controls, and everything
 takes the summary field's height. Neither action is filled: the accent pill was
 a white block that landed on `Push`, the one action that is not about the
 message being written. ⌘⏎ still follows whichever the page is for.
+
+`Push` wears its count as a tag beside the word rather than in it, so the word
+keeps its width as the number moves, and while the push is out the tag gives way
+to a spinner and the word to `Pushing` — a button that only went grey looked
+like one that had refused.
+
+Getting that tag to sit straight took three goes and is worth the sentence.
+Handing the count to the cell as a text attachment let the cell centre the pair
+by its own measure, and it landed a point or two high; drawing it with
+`NSAttributedString` put down a line box and landed the baseline where the
+typesetter rounded it, not where the font says. The button draws its words and
+its digits through Core Text now, at a baseline it chooses: **the middle of the
+capitals**, because a line box carries the descender under it and its middle is
+not the word's.
 
 And the diff arrives on the click. Selecting a change waited out the
 double-click interval before asking git — half a second on every click and every
