@@ -22,7 +22,15 @@ most repositories' tooling actually reads, a pane got the pager every other
 terminal has, and a terminal stopped losing a row every time the window got
 wider.
 
-Twenty commits, 190 files.
+And then the release stopped in notarisation, and the version was held open
+while somebody used the app and said what was wrong with it. That last part is
+most of what is below: a day of reports, each one a person looking at a pane and
+naming what it did. The zoom turned out to reach almost nothing that was not
+painted by hand, the git tree had four different ways of throwing a selection
+away, and a folded merge left the lanes of the branch it hid running down the
+graph with nothing above them.
+
+Twenty-nine commits, 255 files.
 
 ## Secrets in a dotenv file are not on the screen
 
@@ -109,6 +117,162 @@ Only the containers AVFoundation decodes natively are claimed. A `.webm` keeps
 the notice and its Quick Look button, because a player spinning over a black
 rectangle is worse than a notice that is honest about it. That negative is in the
 change's screenshots, driven, beside the positive one.
+
+## The zoom reaches every control
+
+⌘+ and ⌘- have always reached everything this app paints for itself, because
+those read the theme as they draw and so re-read it on the next repaint. They
+reached almost nothing else. Seven reports on 2026-09-01, with screenshots, and
+they were one fault: the log page's search field and its scope control at system
+size beside rows that had grown; the commit page's `Stage`, `Draft`, `Commit`
+and `Push` keeping their bezel while the words inside them grew; the whole
+pull-request header not moving at all; the commit row's height read once, so at
+a larger zoom the short hash on its second line was **clipped by the row**; and
+the commit page's detail area still at the presentation size after presentation
+mode was switched off.
+
+`DrawnButton` already carried the diagnosis and the measurement: on macOS 27 a
+system bezel is 20 points tall at `.small` and 28 at `.large` whatever font is
+inside it, so raising `controlSize` moves the wall from 1× to about 1.4× and
+then stops. What it did not carry was any reach — two callers, against about
+seventy bare `NSButton`s.
+
+**The app already had three right answers and no shared one.** `DrawnButton` for
+the missing-server strip, `PillButton` for the titlebar, and `RowAction` for the
+git tree's `Review 3 changes…` — which was pointed at during the work as "the
+one that works at all zoom levels", and does, for the reason all three do: every
+dimension is read from the theme *where it is used*, so there is nothing stored
+to go stale. Three correct implementations of one idea, in three files, is the
+argument for a library rather than against it. What is new is only that the
+answer is shared, and that one registry sees a control asked again when the zoom
+moves under it — because the seven reports were seven panes that forgot, and a
+mechanism whose correctness depends on remembering is what was being replaced.
+
+Four panes moved onto it: the log page, the commit page, the pull-request review
+page and the pull-request list. Along the way the same fault turned up in five
+more places, none of them a control:
+
+- **The commit row's height is derived from the two lines it draws**, through
+  arithmetic tested at all nine zoom steps, rather than the `40` that was right
+  once. The line is drawn at the offset that arithmetic gives, so what is
+  measured and what is drawn cannot disagree — which is how they came to.
+- **The diff view heard the zoom and threw it away.** Its handler opened by
+  asking whether either of the two *diff* preferences had moved; a zoom matched
+  neither and returned, leaving the font at the size it was read at. That is why
+  a diff scaled only when it was closed and opened again.
+- **`ChangesPane.applyThemeChange` existed, did the right thing, and nothing
+  ever called it.** The sidebar hid that by rebuilding the pane wholesale; the
+  commit page in a tab is never rebuilt, so it never followed at all.
+- **A placeholder keeps the font it was assigned with.** `NSTextField` renders
+  it from the font in force at the moment it is set, so the commit page's
+  `Summary` stayed small while everything around it grew.
+- **The editor's change mark had no gap from the line numbers** — and worse than
+  none. The mark's position scaled and the number's inset was a fixed five
+  points, so the two closed on each other as the zoom rose: touching at about
+  1.2×, and the bar drawn over the digits above that.
+
+And the project tree kept its dark background in a light window. Its colours
+were copied when the view was built, and the method that re-applies its row
+height and its indentation had never been given them — while the header directly
+above it fills as it draws, and followed. One pane, half light and half dark, in
+one screenshot.
+
+## The tree keeps hold of the selection
+
+Expanding a folder with → left it open with nothing selected. Staging a file
+emptied the selection. Both were reported within an hour of each other, and they
+were **the same fault**: an outline view's `reloadData()` clears its selection,
+and the commit page reloads from four places, three of them asynchronous — so
+the rebuild carefully put the selection back and something landed a moment later
+and wiped it.
+
+It took four goes, and each fix uncovered the next. The untracked-directory
+listing reloading when it came back. Three staging paths of which only two
+recorded where the selection should land. `isRestoring` cleared on the next
+*line* while `NSTableView` posts its selection change on the next *turn*, so the
+pane's own restore read as a click — and what that does is clear the other list,
+which is why the selection blinked onto the right row and vanished. And finally
+the one that was still doing it: the `--numstat` line counts come back and
+reload, and that code knew a reload throws the *expansion* away, put the
+expansion back, and had never heard of the selection.
+
+Where the selection goes is the tree's other half. Staging a row is a deletion
+from the list it was in, so it lands on the nearest surviving row above — the
+sibling, or the parent when there is no sibling, which in an outline view are
+the same movement. And when the file was the only one in its folder the folder
+empties too, so there is nothing above at all: it falls to the row below
+instead.
+
+**The tree also draws the app's selection now.** The changes tree had no row
+view of its own, so AppKit painted its system-blue band inside a window that
+draws a rounded, inset pill everywhere else. The four trees people use all day
+share one row view. The commit list, the debugger's variables, the breakpoint
+list and the value popup keep the full-bleed band, which is right for a run of
+records and wrong for a hierarchy, where a band swallows the indentation that
+says what is inside what.
+
+## A folded merge takes its lanes with it
+
+Folding a merge hid its commits and left the branch's lanes running down every
+row below, starting nowhere — "the green and purple lanes start in the nowhere".
+The graph was laid out over every commit and the rows were filtered afterwards,
+so a surviving row kept lanes it had been given while the hidden commits were
+still there.
+
+The obvious fix is worse than the bug, which is worth recording. Filtering the
+commits and dropping the merge's hidden parent removes the lanes — and stops the
+merge being a merge: with one parent it has nothing to fold, so it loses its fold
+marker and **can never be opened again**. So the whole history goes to the
+layout and it is told which of it is off screen. It keeps counting what a merge
+brought in, which is a fact about the history rather than about what is drawn,
+and opens no lane for a commit nobody will see.
+
+## The tree marks a changed file
+
+The project tree said a file had changed by colouring its name and in no other
+way, which is only legible against the names beside it: a run of untracked files
+reads as a tree of green text, and one modified file among forty is a word in a
+slightly different colour. A row with a version-control state now carries a dot
+at its trailing edge in that state's colour, files and folders alike — and a
+folder's state is already the roll-up of what is under it, which is what makes
+the mark worth having on a **collapsed** one. Nothing for unmodified or ignored:
+in a project with a build directory those rows outnumber everything else, and a
+mark on nearly every row is furniture.
+
+## The git pane always offers Fetch
+
+The repository row draws one verb chosen from its state — `Fetch` when level,
+`Pull` when behind, `Push` when ahead — so `Fetch` was the one verb that
+disappeared exactly when somebody wanted it: a branch one commit ahead offered
+`Push` and no way at all to ask whether anybody else had pushed.
+
+There was a glyph beside it that already fetched, and said so only in a tooltip.
+A tooltip is not a label, so it was reported as a missing button while it sat on
+the row being pressed for something else — the same shape as a hidden `Draft`
+button being reported as a missing feature two releases ago. It is a control
+that says `Fetch`, shown whenever there is a remote.
+
+**Removed**: the glyph's local re-read where there is no remote. The pane's own
+watcher already re-reads on every filesystem event, and `Read the Repository
+Again` is on the row's context menu, where it already was.
+
+## The commit page's row settles
+
+Seven controls at four heights with two kinds of emphasis. The chevron, the
+clock and `Draft` are quiet now — no edge, no fill, the pill back under the
+pointer — because they help write the message rather than doing anything to the
+repository; `Commit` and `Push` are the only bordered controls, and everything
+takes the summary field's height. Neither action is filled: the accent pill was
+a white block that landed on `Push`, the one action that is not about the
+message being written. ⌘⏎ still follows whichever the page is for.
+
+And the diff arrives on the click. Selecting a change waited out the
+double-click interval before asking git — half a second on every click and every
+arrow key — to stop a second click's stage queueing behind a render that held
+the main thread. A double-click is nearly always on the row that is already
+selected, which changes no selection and never reached the wait; and the render
+is off the main thread now, with a generation counter dropping the answer for a
+row nobody is looking at any more.
 
 ## The log page shows what the upstream has
 
@@ -433,6 +597,13 @@ first day the secrets lock had a tooltip. The view is the owner now, for the loc
 and for the server chip in the status bar, which had been getting away with the
 same mistake for some time.
 
+**Three classes moved out of the commit page to make room**, which is the size
+ledger doing its job rather than getting in the way. It refused a change twice,
+and the second time it was right about something real: the machinery for
+re-taking a pane's heights had been written inside `ChangesPane`, and it is
+generic — every pane that copies a height out of the theme has the same fault.
+Moved to the library, it left the pane eleven lines smaller than it started.
+
 **Four test suites were red for reasons that were the environment rather than the
 app**, and are not any more. The mermaid bake writes font stacks plain, because
 WebKit began quoting computed `font-family` and the serialiser turned the quotes
@@ -452,11 +623,27 @@ gutter's own menu and the redaction band's place in its painting order — over
 every band, under the caret — and `git-pages` and `project-view` take one compare
 doorway each.
 
-Four more changes are finished and not yet archived — `a-draft-is-a-conventional-commit`,
-`a-pane-has-a-pager`, `a-project-comes-back-as-it-was-left` and
-`the-terminal-keeps-its-height` — carrying deltas to `commit-message-drafts`,
-`terminal`, `sessions` and `git-pages`. Their work is in this release; only the
-move into the specs is outstanding.
+**Ten changes are not archived, and that is the honest state of this release.**
+Four were finished before the version was held open —
+`a-draft-is-a-conventional-commit`, `a-pane-has-a-pager`,
+`a-project-comes-back-as-it-was-left` and `the-terminal-keeps-its-height`,
+carrying deltas to `commit-message-drafts`, `terminal`, `sessions` and
+`git-pages`. Their work is here; only the move into the specs is outstanding.
+
+Five more were written during the day of reports above, and are complete in the
+app and short of their driven proofs: `the-zoom-reaches-every-control` (26 tasks
+of 31, the five outstanding being captures), `the-git-pane-always-offers-fetch`
+(4 of 8), `one-tree-behaviour-everywhere` (12 of 19 — every report fixed, the
+extraction across the other three trees still to do),
+`a-collapsed-merge-takes-its-lanes-with-it` (done) and
+`the-tree-marks-changed-files` (3 of 4).
+
+One is filed and not started. `the-backlog-pane-stays-under-the-tab-strip` is
+the backlog's toolbar drawn over the panel's tab strip, reported with a
+screenshot and with the word *sometimes* in it — which is what an ordering fault
+looks like from outside. Its first task is reproducing it before anything is
+written, because the panel's constraints say it cannot happen, and a plausible
+fix for an intermittent fault will appear to work.
 
 `a-java-edit-reaches-the-running-jvm` stays where it is, at 24 tasks of 31. It is
 somebody else's work and it is not finished.
