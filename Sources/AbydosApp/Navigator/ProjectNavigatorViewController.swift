@@ -4153,7 +4153,14 @@ private final class NavigatorCellView: NSTableCellView {
 		])
 		let nameSize = name.size()
 		let trailing = Theme.current.scaled(8)
-		let available = max(0, bounds.width - x - trailing)
+		// The change mark's room, taken before anything is measured against it.
+		// Colouring the name was the only signal, and a shade of text is only
+		// legible against the shades beside it.
+		let mark = markColour(for: node)
+		let markRoom = mark == nil ? 0 : Theme.current.scaled(12)
+		// Against the same edge the mark is drawn at, or a narrow pane runs the
+		// name under the dot.
+		let available = max(0, markEdge - x - trailing - markRoom)
 		let nameWidth = min(ceil(nameSize.width), available)
 		name.draw(in: NSRect(
 			x: x,
@@ -4173,9 +4180,42 @@ private final class NavigatorCellView: NSTableCellView {
 			attributed.draw(in: NSRect(
 				x: x,
 				y: bounds.midY - size.height / 2,
-				width: max(0, bounds.width - x - trailing),
+				width: max(0, markEdge - x - trailing - markRoom),
 				height: size.height
 			))
+		}
+
+		if let mark {
+			let side = Theme.current.scaled(6)
+			mark.setFill()
+			NSBezierPath(ovalIn: NSRect(
+				x: markEdge - trailing - side,
+				y: (bounds.midY - side / 2).rounded(),
+				width: side, height: side
+			)).fill()
+		}
+	}
+
+	/// The right-hand edge the mark is drawn against — **not `bounds.maxX`**,
+	/// which is off screen. The column is sized to its widest row and the root
+	/// carries the project's whole path, so a cell is routinely wider than the
+	/// pane. Found by capturing the sidebar and finding no dots in it.
+	private var markEdge: CGFloat {
+		guard let clip = enclosingScrollView?.contentView else { return bounds.maxX }
+		let visible = convert(clip.bounds, from: clip)
+		return min(bounds.maxX, visible.maxX)
+	}
+
+	/// The colour a row's change mark is drawn in, or nothing to say.
+	///
+	/// **`ignored` says nothing on purpose**: in a project with a build
+	/// directory those rows outnumber everything else, and a mark on nearly
+	/// every row is furniture. `unmodified` is that argument from the other end.
+	private func markColour(for node: FileNode?) -> NSColor? {
+		guard let node, !isRoot, !isSubproject else { return nil }
+		switch node.gitStatus {
+		case .unmodified, .ignored: return nil
+		default: return Theme.current.color(for: node.gitStatus)
 		}
 	}
 
