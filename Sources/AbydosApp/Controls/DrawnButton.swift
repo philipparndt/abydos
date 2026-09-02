@@ -61,6 +61,8 @@ final class DrawnButton: NSButton, ScaleFollowing {
 	/// beside it rather than `Push 7`, so the word stays put as the number
 	/// moves and the number reads as a count rather than as part of a verb.
 	private var count: Int?
+	/// The tag drawn after the words, made in `applyTheme` for `draw`.
+	private var badge: NSImage?
 
 	/// Drawn as busy: a spinner at the trailing end, in the tag's place.
 	///
@@ -179,15 +181,18 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		} else {
 			let font = Theme.current.uiFont(fontSize)
 			let colour = isEnabled ? textColour : textColour.withAlphaComponent(0.45)
-			let words = NSMutableAttributedString(string: title, attributes: [
+			// **The words and the tag are drawn by `draw`, not by the cell.**
+			// The cell was handed the tag as a text attachment and centred
+			// the pair by its own measure, which put the tag a space and a
+			// half from the word and closer to the edge than the word was to
+			// its side — reported as the content not being centred. Drawing
+			// them here makes the gap a number and the centring arithmetic.
+			attributedTitle = NSAttributedString(string: title, attributes: [
 				.font: font, .foregroundColor: colour,
 			])
-			if let count, !isWorking {
-				words.append(NSAttributedString(string: " ", attributes: [.font: font]))
-				words.append(Self.tag(count, after: font, colour: colour, size: fontSize))
-			}
-			attributedTitle = words
+			badge = (count != nil && !isWorking) ? Self.tag(count!, colour: colour, size: fontSize) : nil
 			showSpinner(isWorking, colour: colour)
+			needsDisplay = true
 		}
 		layer?.cornerRadius = ControlMetrics.radius(scale: Theme.current.scale)
 		// **Disabled has to reach the shape, not only the words.** Dimming the
@@ -226,11 +231,8 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		}
 	}
 
-	/// The number as a pill, sized to the words it sits beside and centred
-	/// on their middle rather than their baseline.
-	private static func tag(
-		_ count: Int, after font: NSFont, colour: NSColor, size: CGFloat
-	) -> NSAttributedString {
+	/// The number as a pill, sized to the words it sits beside.
+	private static func tag(_ count: Int, colour: NSColor, size: CGFloat) -> NSImage {
 		let scale = Theme.current.scale
 		let number = NSAttributedString(string: "\(count)", attributes: [
 			.font: Theme.current.uiFont(size - 1, weight: .semibold),
@@ -238,7 +240,7 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		])
 		let text = number.size()
 		let pill = NSSize(width: ceil(text.width) + 8 * scale, height: ceil(text.height) + 1 * scale)
-		let image = NSImage(size: pill, flipped: false) { rect in
+		return NSImage(size: pill, flipped: false) { rect in
 			colour.withAlphaComponent(0.14).setFill()
 			NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
 			number.draw(at: NSPoint(
@@ -247,29 +249,56 @@ final class DrawnButton: NSButton, ScaleFollowing {
 			))
 			return true
 		}
-		let attachment = NSTextAttachment()
-		attachment.image = image
-		let middle = (font.ascender + font.descender) / 2
-		attachment.bounds = NSRect(
-			x: 0, y: (middle - pill.height / 2).rounded(), width: pill.width, height: pill.height
-		)
-		return NSAttributedString(attachment: attachment)
+	}
+
+	/// Between the words and the tag, and between the words and the spinner.
+	private var gap: CGFloat { (5 * Theme.current.scale).rounded() }
+
+	/// What the words, the tag and the spinner's room add up to across.
+	private var contentWidth: CGFloat {
+		var width = ceil(attributedTitle.size().width)
+		if let badge { width += gap + badge.size.width }
+		if isWorking { width += gap + spinnerSide }
+		return width
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		// A glyph is the cell's to draw; the words and the tag are this
+		// view's, centred as one group.
+		guard symbol == nil else { super.draw(dirtyRect); return }
+		let words = attributedTitle
+		let text = words.size()
+		var x = ((bounds.width - contentWidth) / 2).rounded()
+		let bottom = ((bounds.height - text.height) / 2).rounded()
+		words.draw(at: NSPoint(x: x, y: bottom))
+		x += ceil(text.width)
+		if let badge {
+			// **On the capitals' middle, not the line's.** The line box has
+			// the descender under it, so its middle sits above the middle
+			// of a word with no descenders — which is what put the tag a
+			// point or two high beside "Push". The baseline is the box's
+			// bottom plus the descender, and the middle is half a capital
+			// above that.
+			let font = Theme.current.uiFont(fontSize)
+			let middle = bottom - font.descender + font.capHeight / 2
+			x += gap
+			badge.draw(in: NSRect(
+				x: x, y: (middle - badge.size.height / 2).rounded(),
+				width: badge.size.width, height: badge.size.height
+			))
+		}
 	}
 
 	/// The spinner's side, at the current zoom.
 	private var spinnerSide: CGFloat { (12 * Theme.current.scale).rounded() }
 
-	/// Puts the spinner up or takes it down. The cell is given an empty image
-	/// of the spinner's size at the trailing end, so the words move over to
-	/// make room the way they would for a glyph; the spinner itself is a view
-	/// laid over that space in `layout()`.
+	/// Puts the spinner up or takes it down. `draw` leaves its room at the
+	/// trailing end of the content, and `layout()` puts the view there.
 	private func showSpinner(_ showing: Bool, colour: NSColor) {
 		guard showing else {
 			spinner?.stopAnimation(nil)
 			spinner?.removeFromSuperview()
 			spinner = nil
-			image = nil
-			imagePosition = .noImage
 			return
 		}
 		if spinner == nil {
@@ -282,8 +311,6 @@ final class DrawnButton: NSButton, ScaleFollowing {
 			made.startAnimation(nil)
 			spinner = made
 		}
-		image = NSImage(size: NSSize(width: spinnerSide, height: spinnerSide))
-		imagePosition = .imageTrailing
 		needsLayout = true
 	}
 
@@ -292,7 +319,7 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		guard let spinner else { return }
 		let side = spinnerSide
 		spinner.frame = NSRect(
-			x: bounds.width - ControlMetrics.horizontalPadding * Theme.current.scale - side,
+			x: ((bounds.width - contentWidth) / 2).rounded() + contentWidth - side,
 			y: ((bounds.height - side) / 2).rounded(),
 			width: side, height: side
 		)
@@ -313,11 +340,8 @@ final class DrawnButton: NSButton, ScaleFollowing {
 			return NSSize(width: side, height: side)
 		}
 		let line = attributedTitle.size()
-		// The spinner is not in the title, so its room is added here: the
-		// side of it and the gap the cell leaves before a trailing image.
-		let busy = isWorking ? spinnerSide + 4 * scale : 0
 		return NSSize(
-			width: ControlMetrics.width(textWidth: ceil(line.width) + busy, scale: scale),
+			width: ControlMetrics.width(textWidth: contentWidth, scale: scale),
 			height: ControlMetrics.height(lineHeight: ceil(line.height), scale: scale)
 		)
 	}
