@@ -359,7 +359,9 @@ final class ChangesPane: NSView, ScaleFollowing {
 		subjectField.layer?.backgroundColor = Theme.current.editorBackground.cgColor
 		subjectField.layer?.borderColor = Theme.current.separator.cgColor
 		subjectField.layer?.borderWidth = 1
-		subjectField.layer?.cornerRadius = 3
+		// The library's radius, not a third one: a corner that disagrees with
+		// the drawn buttons' by two points reads as a different kind of object.
+		subjectField.layer?.cornerRadius = ControlMetrics.radius(scale: Theme.current.scale)
 
 		bodyView = NSTextView()
 		bodyView.font = Theme.current.uiFont(12)
@@ -465,6 +467,7 @@ final class ChangesPane: NSView, ScaleFollowing {
 			unstagedScroll.heightAnchor.constraint(equalTo: stagedScroll.heightAnchor),
 			heights.height(subjectField, design: 24),
 		])
+		ControlRow.matchHeights(to: subjectField, of: [amendCheckbox, commitButton, pushButton, more])
 
 		// Inset the message box from the edges without inseting the lists, which
 		// read better running the full width.
@@ -525,6 +528,7 @@ final class ChangesPane: NSView, ScaleFollowing {
 		descriptionChevron = DrawnButton(
 			symbol: "chevron.right", description: "Show the description"
 		) { [weak self] in self?.toggleDescription() }
+		descriptionChevron.prominence = .quiet
 
 		// **The messages this repository has already committed, one menu away.**
 		// A message like the last one — a repeated chore, a second try after an
@@ -535,6 +539,7 @@ final class ChangesPane: NSView, ScaleFollowing {
 			symbol: "clock", description: "Message history"
 		) { [weak self] in self?.openMessageHistory() }
 		history.toolTip = "Use one of the repository's recent commit messages"
+		history.prominence = .quiet
 		historyButton = history
 
 		// **The draft sits beside the summary**, because that is the field it
@@ -544,6 +549,10 @@ final class ChangesPane: NSView, ScaleFollowing {
 		// feature by somebody whose machine was hiding it. The reason sits in
 		// the tooltip, the way the push button explains itself.
 		draftButton = DrawnButton(title: "Draft") { [weak self] in self?.draftMessage() }
+		// **Quiet, all three.** The chevron, the clock and Draft help write the
+		// message; Commit and Push act on it. Drawn alike, five bordered
+		// controls at three heights said nothing about which two mattered.
+		draftButton!.prominence = .quiet
 		let summaryRow: [NSView] = [descriptionChevron, subjectField, history, draftButton!]
 		let summary = NSStackView(views: summaryRow)
 		summary.orientation = .horizontal
@@ -591,6 +600,15 @@ final class ChangesPane: NSView, ScaleFollowing {
 			heights.height(subjectField, design: 26),
 			lists.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(280)),
 			diffScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(320)),
+
+			// **Amend on the field's edge, not the chevron's.** The chevron
+			// sits in front of the field, so the row under it started a slot
+			// further left than the thing it was under and the checkbox looked
+			// dropped rather than placed.
+			amendCheckbox.leadingAnchor.constraint(equalTo: subjectField.leadingAnchor),
+		])
+		ControlRow.matchHeights(to: subjectField, of: [
+			descriptionChevron, history, draftButton!, amendCheckbox, commitButton, pushButton,
 		])
 
 		// Collapsed at build, and the same at every height: a description that
@@ -1185,12 +1203,16 @@ final class ChangesPane: NSView, ScaleFollowing {
 		)
 		commitButton.keyEquivalent = primary == .commit ? "\r" : ""
 		pushButton.keyEquivalent = primary == .push ? "\r" : ""
-		// **The accent is drawn, so it has to be said.** A bezelled default
-		// button took its blue from `keyEquivalent`; a drawn one is told, and
-		// the two must not disagree — the accent is the page saying which verb
-		// Return means.
-		commitButton.prominence = primary == .commit ? .prominent : .normal
-		pushButton.prominence = primary == .push ? .prominent : .normal
+		// **Neither is filled.** The accent used to follow `primary` — a bezel
+		// gave the default button its blue for free, and the drawn one was
+		// told — but drawn, it is the caret colour, which on the dark page is
+		// a white block, and it landed on Push: the one action in the row that
+		// is not about the message being written. The row's loudest object
+		// pointed away from the field. Return still follows `primary`; the
+		// two buttons now say what they do with their words and their
+		// enabled state, and the key is in Commit's tooltip.
+		commitButton.prominence = .normal
+		pushButton.prominence = .normal
 	}
 
 	/// Nil only where there is no branch at all — a detached HEAD, or a pane

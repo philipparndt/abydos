@@ -36,6 +36,14 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		case normal
 		/// The one the ⏎ key would press.
 		case prominent
+		/// No edge and no fill: words or a glyph that sit on the surface.
+		///
+		/// For a control that helps with something rather than doing it — the
+		/// commit page's chevron, its history clock and its Draft. Drawn with
+		/// the same pill as Commit beside them, the row had five bordered
+		/// objects on it and two of them mattered; a border is how the row
+		/// says *this one changes the repository*, so the helpers give it up.
+		case quiet
 	}
 
 	/// An SF Symbol instead of words, when the button is a glyph.
@@ -52,6 +60,34 @@ final class DrawnButton: NSButton, ScaleFollowing {
 	var prominence: Prominence = .normal {
 		didSet { applyTheme() }
 	}
+
+	/// Whether the pointer is over the button, for a quiet one to answer.
+	///
+	/// A normal button is a pill and a pill is an invitation; a quiet one is
+	/// words on the surface, and words on a surface do not say they can be
+	/// pressed. Under the pointer it takes the pill back — the same fill and
+	/// hairline as its normal neighbours — so the answer to "is this a
+	/// button?" arrives before the click rather than after it.
+	private var isHovered = false {
+		didSet { if prominence == .quiet { applyTheme() } }
+	}
+	private var trackingArea: NSTrackingArea?
+
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		if let trackingArea { removeTrackingArea(trackingArea) }
+		let area = NSTrackingArea(
+			rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp], owner: self
+		)
+		addTrackingArea(area)
+		trackingArea = area
+	}
+
+	override func mouseEntered(with event: NSEvent) { isHovered = true }
+	override func mouseExited(with event: NSEvent) { isHovered = false }
+
+	/// A quiet button drawn as a normal one while the pointer is on it.
+	private var isQuietAtRest: Bool { prominence == .quiet && !(isHovered && isEnabled) }
 
 	/// Drawn as held down, for a button that is a switch rather than a verb.
 	///
@@ -140,7 +176,7 @@ final class DrawnButton: NSButton, ScaleFollowing {
 			self.isEnabled ? colour : colour.withAlphaComponent(colour.alphaComponent * 0.4)
 		}
 		layer?.backgroundColor = dim(fillColour).cgColor
-		layer?.borderWidth = prominence == .prominent ? 0 : 1
+		layer?.borderWidth = prominence == .normal || (prominence == .quiet && !isQuietAtRest) ? 1 : 0
 		layer?.borderColor = dim(Theme.current.separator).cgColor
 		invalidateIntrinsicContentSize()
 	}
@@ -153,7 +189,7 @@ final class DrawnButton: NSButton, ScaleFollowing {
 
 	private var textColour: NSColor {
 		switch prominence {
-		case .normal: return Theme.current.sidebarHeaderText
+		case .normal, .quiet: return Theme.current.sidebarHeaderText
 		case .prominent: return Theme.current.editorBackground
 		}
 	}
@@ -163,6 +199,7 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		switch prominence {
 		case .normal: return Theme.current.editorBackground
 		case .prominent: return Theme.current.caret
+		case .quiet: return isQuietAtRest ? .clear : Theme.current.editorBackground
 		}
 	}
 
