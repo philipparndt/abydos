@@ -235,9 +235,11 @@ final class StashPage: NSView {
 			guard let self else { return }
 			let text = await GitStash.diff(entry, path: file.path, in: self.root)
 			guard self.entry == entry, self.showing == file.path else { return }
-			self.diffView.setDiff(
-				text, staged: false, url: self.root.appendingPathComponent(file.path)
+			let prepared = await DiffView.prepareOffMain(
+				text, url: self.root.appendingPathComponent(file.path)
 			)
+			guard self.entry == entry, self.showing == file.path else { return }
+			self.diffView.setDiff(prepared, staged: false)
 		}
 	}
 

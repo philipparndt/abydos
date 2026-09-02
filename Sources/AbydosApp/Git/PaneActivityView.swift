@@ -50,6 +50,41 @@ final class PaneActivityView: NSView {
 	///
 	/// `visibleRect` is the answer to that question and it changes as the pane
 	/// is scrolled or resized, so this is laid out by hand rather than pinned.
+	/// The rounded panel the spinner and its words sit on.
+	///
+	/// **Because the pane underneath is not empty.** The view covers the whole
+	/// pane so that what is stale is hidden, and where the wait is short — a
+	/// fetch on a small repository — what is under it is a list of branches
+	/// that reads straight through the words. `Fetching…` over a branch name is
+	/// two sentences in the same place.
+	///
+	/// A panel rather than a wash over everything: dimming the pane would say
+	/// the whole list is unavailable, which is not what waiting for a fetch
+	/// means. This says *here is the thing that is happening*, and leaves the
+	/// list legible around it.
+	private func drawPanel(around content: NSRect) {
+		let padding = Theme.current.scaled(14)
+		let panel = content.insetBy(dx: -padding, dy: -padding)
+		let radius = Theme.current.scaled(10)
+		let path = NSBezierPath(roundedRect: panel, xRadius: radius, yRadius: radius)
+		// The pane's own surface at most of its strength, so it reads as
+		// something laid over the list rather than a hole cut in it.
+		Theme.current.sidebarBackground.withAlphaComponent(0.92).setFill()
+		path.fill()
+		Theme.current.separator.setStroke()
+		path.lineWidth = 1
+		path.stroke()
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		guard !panelFrame.isEmpty else { return }
+		drawPanel(around: panelFrame)
+	}
+
+	/// What the panel is drawn around, worked out in `layout` where the two
+	/// pieces are placed.
+	private var panelFrame: NSRect = .zero
+
 	override func layout() {
 		super.layout()
 
@@ -77,6 +112,17 @@ final class PaneActivityView: NSView {
 			width: max(0, area.width - inset * 2),
 			height: captionSize.height
 		)
+
+		// Around the two of them, and no wider than the words actually take:
+		// a panel the width of the pane would be the wash this is not.
+		let width = max(wheelSize.width, min(captionSize.width, area.width - inset * 2))
+		panelFrame = NSRect(
+			x: (area.midX - width / 2).rounded(),
+			y: top.rounded(),
+			width: width.rounded(),
+			height: stack.rounded()
+		)
+		needsDisplay = true
 	}
 
 	override var isFlipped: Bool { true }

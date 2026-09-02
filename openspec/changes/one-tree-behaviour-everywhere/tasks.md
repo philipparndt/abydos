@@ -17,6 +17,7 @@
 - [x] 2b.4 Make the log page's detail file list take the keyboard when it is clicked into, so the arrows stop going to the commit list above it.
 - [ ] 2b.5 Check the same for the other three trees: click a row, then press ↓, and say which trees did not already move.
 - [x] 2b.6 Staging took three passes: the async `reloadData`, then the fallback recorded at two of three call sites, then the real cause — `isRestoring` cleared synchronously while `NSTableView` posts its selection change a turn later, so the pane's own restore read as a click and deselected the other list. Written up in the design.
+- [x] 2b.8 And the case above has a case of its own: staging the only file in a folder empties the folder, so the row *above* the selection goes too and there is nothing to land on upwards. `TreeSelection.surviving(below:rowCount:path:)` answers the other direction, tried after above, with the reported shape as its test. Driven both ways.
 - [x] 2b.7 The redundant untracked listing: `refill` sends one per open directory per filesystem event and `fill` reloaded whatever came back. It compares against what the node already holds and returns when nothing changed — which is the flicker while staging.
 
 ## 3. The four trees, one at a time

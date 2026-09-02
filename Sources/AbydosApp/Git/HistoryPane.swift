@@ -797,7 +797,9 @@ final class HistoryPane: NSView, ScaleFollowing {
 			guard let self else { return }
 			let text = await GitHistory.diff(of: commit.hash, path: file.path, in: self.root)
 			guard self.selectedCommit?.hash == commit.hash else { return }
-			diffView.setDiff(text, staged: false, url: self.root.appendingPathComponent(file.path))
+			let prepared = await DiffView.prepareOffMain(text, url: self.root.appendingPathComponent(file.path))
+			guard self.selectedCommit?.hash == commit.hash else { return }
+			diffView.setDiff(prepared, staged: false)
 		}
 	}
 

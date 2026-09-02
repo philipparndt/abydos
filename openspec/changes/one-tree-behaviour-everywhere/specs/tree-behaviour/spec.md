@@ -50,3 +50,14 @@ Clicking a row, or opening a tree that is the pane's subject, SHALL make that tr
 #### Scenario: The tree says whether it has the keyboard
 - **WHEN** a tree holds the keyboard
 - **THEN** its selection is drawn in the strong colour, and the pane that lost it draws its own selection quietly
+
+### Requirement: A selection with nothing above it falls to the row below
+When every row above the selection has also gone, the tree SHALL select the nearest surviving row *below* it rather than leaving nothing selected. Above is tried first; below is the answer only when above has none.
+
+#### Scenario: The only file in its folder
+- **WHEN** the only file in a folder is staged, so the folder empties and goes with it
+- **THEN** the selection lands on the next row down — the row that follows what was staged — rather than nowhere
+
+#### Scenario: The last row in the list
+- **WHEN** the row that goes is the last one, so there is nothing below it
+- **THEN** the selection lands above it, which is what above was for

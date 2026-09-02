@@ -62,4 +62,30 @@ public enum TreeSelection {
 		}
 		return nil
 	}
+
+	/// Where the selection goes when nothing above it survives either.
+	///
+	/// **Above is the right answer until there is no above.** The row over the
+	/// selection is usually its sibling or its parent, and both are still
+	/// there after a stage. But a file that is the only thing in its folder
+	/// takes the folder with it:
+	///
+	///     .vscode            ← empties, so it goes too
+	///       launch.json      ← selected, and staged
+	///     CLAUDE.md          ← what is left, and where the selection belongs
+	///
+	/// `surviving(above:)` answers `.vscode`, which is not there to be selected
+	/// either, and walking up from it finds nothing. So the other direction is
+	/// asked next: the first row *after* everything that is going.
+	///
+	/// Not merged into one function, because the order matters and a caller
+	/// that could not see it would not know above is tried first.
+	public static func surviving(below doomed: Set<Int>, rowCount: Int, path: (Int) -> String?) -> String? {
+		guard let last = doomed.max() else { return nil }
+		for row in (last + 1)..<max(last + 1, rowCount) where !doomed.contains(row) {
+			if let found = path(row) { return found }
+		}
+		return nil
+	}
 }
+

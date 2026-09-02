@@ -180,4 +180,39 @@ struct TreeSelectionAfterDeleteTests {
 				== "a/b"
 		)
 	}
+
+	/// **The case where above is not enough**, as it was reported:
+	///
+	///     .vscode
+	///       launch.json  ← selected, and staged
+	///     CLAUDE.md      ← expected afterwards
+	///
+	/// Staging the only file in a folder empties the folder, so the row above
+	/// the selection goes as well. Nothing survives upwards and the answer is
+	/// the row below.
+	@Test func theOnlyFileInAFolderFallsToTheRowBelow() {
+		let rows = [".vscode", ".vscode/launch.json", "CLAUDE.md"]
+		let at: (Int) -> String? = { rows.indices.contains($0) ? rows[$0] : nil }
+		// Above answers the folder, which is about to stop existing too — the
+		// caller finds that out when it looks the path up and cannot.
+		#expect(TreeSelection.surviving(above: [1], path: at) == ".vscode")
+		#expect(TreeSelection.surviving(below: [1], rowCount: rows.count, path: at) == "CLAUDE.md")
+	}
+
+	/// The last row in the list has nothing below it, and above is then the
+	/// answer — which is what it was for.
+	@Test func theLastRowHasNothingBelowIt() {
+		let rows = ["a", "a/b", "a/c"]
+		let at: (Int) -> String? = { rows.indices.contains($0) ? rows[$0] : nil }
+		#expect(TreeSelection.surviving(below: [2], rowCount: rows.count, path: at) == nil)
+		#expect(TreeSelection.surviving(above: [2], path: at) == "a/b")
+	}
+
+	/// A run going out of the middle skips over itself downwards too.
+	@Test func aRunFallsPastAllOfItself() {
+		let rows = ["a", "b", "c", "d", "e"]
+		let at: (Int) -> String? = { rows.indices.contains($0) ? rows[$0] : nil }
+		#expect(TreeSelection.surviving(below: [1, 2, 3], rowCount: rows.count, path: at) == "e")
+	}
 }
+

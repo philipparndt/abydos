@@ -189,8 +189,8 @@ final class ChangesPane: NSView, ScaleFollowing {
 		/// new work you should see.
 		var collapsed: Set<String> = []
 		/// Where the selection goes when everything selected has been staged
-		/// away. See `rememberWhereTheSelectionGoes`.
-		var fallback: String?
+		/// away, in the order to try. See `rememberWhereTheSelectionGoes`.
+		var fallback: [String] = []
 		/// What an untracked directory turned out to hold, by its path.
 		///
 		/// Kept across a rebuild, which is what stops an open folder collapsing
@@ -265,9 +265,10 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// Guards against a refresh landing while a git command is still running and
 	/// showing a half-applied state.
 	private var isBusy = false
-	/// The diff render waiting out the double-click interval — see the
-	/// selection-change delegate for why it waits.
-	private var pendingDiff: DispatchWorkItem?
+	/// Which selection the diff on its way belongs to. Bumped by every
+	/// `showDiff`, and a render that comes back to a different number is for
+	/// a row nobody is looking at any more — see `showDiff`.
+	private var diffGeneration = 0
 
 	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
@@ -984,19 +985,22 @@ final class ChangesPane: NSView, ScaleFollowing {
 		// the next Return should act on something near what was just staged,
 		// and a pane that empties its own selection makes the keyboard useless
 		// exactly when it is being used.
-		guard !paths.isEmpty, let target = side.fallback else { return }
-		setFallback(nil, staged: staged)
-		var candidate: String? = target
-		while let path = candidate {
-			if let node = side.byPath[path] {
-				let row = outline.row(forItem: node)
-				if row >= 0 { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
-				return
+		guard !paths.isEmpty else { return }
+		for target in side.fallback {
+			var candidate: String? = target
+			while let path = candidate {
+				if let node = side.byPath[path] {
+					let row = outline.row(forItem: node)
+					if row >= 0 {
+						outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+						return
+					}
+				}
+				// The row above may have been staged in the same gesture, so
+				// its folder is gone too; the folder above that is still a row.
+				let parent = (path as NSString).deletingLastPathComponent
+				candidate = parent.isEmpty ? nil : parent
 			}
-			// The row above may have been staged in the same gesture, so its
-			// folder is gone too; the folder above that is still a row.
-			let parent = (path as NSString).deletingLastPathComponent
-			candidate = parent.isEmpty ? nil : parent
 		}
 	}
 
@@ -1008,13 +1012,20 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// is no sibling above" is the same movement, which is why one walk up the
 	/// visible rows gives both.
 	private func rememberWhereTheSelectionGoes(in outline: NSOutlineView, staged: Bool) {
-		setFallback(TreeSelection.surviving(above: Set(outline.selectedRowIndexes)) { row in
-			(outline.item(atRow: row) as? GitChangeNode)?.path
-		}, staged: staged)
+		let doomed = Set(outline.selectedRowIndexes)
+		let at: (Int) -> String? = { (outline.item(atRow: $0) as? GitChangeNode)?.path }
+		// **Above, then below.** Above is the right answer almost always — it
+		// is the sibling or the parent, and both survive a stage. It is not the
+		// answer when the file was the only one in its folder, because then the
+		// folder empties and goes too, and there is nothing above to land on.
+		setFallback([
+			TreeSelection.surviving(above: doomed, path: at),
+			TreeSelection.surviving(below: doomed, rowCount: outline.numberOfRows, path: at),
+		].compactMap { $0 }, staged: staged)
 	}
 
-	private func setFallback(_ path: String?, staged: Bool) {
-		if staged { stagedSide.fallback = path } else { unstagedSide.fallback = path }
+	private func setFallback(_ paths: [String], staged: Bool) {
+		if staged { stagedSide.fallback = paths } else { unstagedSide.fallback = paths }
 	}
 
 	/// The side an outline view belongs to.
@@ -1535,9 +1546,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// second click is a lot to have to undo, and the two trees in this window
 	/// answering the same gesture differently would be worse than either.
 	private func activate(row: Int, in outline: ChangesOutlineView) {
-		// The second click makes the first click's diff pointless; the stage
-		// must not queue behind rendering it.
-		pendingDiff?.cancel()
 		if row >= 0, let node = outline.item(atRow: row) as? GitChangeNode, node.isFolder {
 			if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
 			return
@@ -1563,10 +1571,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// forty in the same argument list. `unstage` is the same shape.
 	private func stageSelected() {
 		StallWatch.mark("stage") {
-			// Here as well as in `activate`: Return and the driver reach this
-			// without a click, and the diff of a row about to change sides is
-			// not worth rendering either way.
-			pendingDiff?.cancel()
 			let paths = GitChangeTree.reduce(selectedPaths(in: unstagedTable))
 			guard !paths.isEmpty else { return }
 			runAcrossOwners(paths, moving: .toStaged) { await GitEstateOperation.stage(paths: $0, in: $1) }
@@ -1575,7 +1579,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 
 	private func unstageSelected() {
 		StallWatch.mark("stage") {
-			pendingDiff?.cancel()
 			let paths = GitChangeTree.reduce(selectedPaths(in: stagedTable))
 			guard !paths.isEmpty else { return }
 			runAcrossOwners(paths, moving: .toUnstaged) { await GitEstateOperation.unstage(paths: $0, in: $1) }
@@ -2210,13 +2213,18 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// included — so the double-click shape can be driven from outside.
 	func selectForTesting(path: String, staged: Bool) {
 		let outline = staged ? stagedTable! : unstagedTable!
-		guard let node = side(for: outline).byPath[path] else {
-			print("CHANGES select: no row at \(path)")
-			return
-		}
-		let row = outline.row(forItem: node)
+		// **By row and not only by `byPath`.** The children of an untracked
+		// directory are put under their row when the listing comes back and are
+		// never added to `byPath`, which is built from what git reported — so
+		// the one shape the selection reports were about could not be driven at
+		// all. Walking the rows finds what is on screen, which is what a person
+		// clicking has.
+		let row = side(for: outline).byPath[path].map { outline.row(forItem: $0) }
+			?? (0..<outline.numberOfRows).first {
+				(outline.item(atRow: $0) as? GitChangeNode)?.path == path
+			} ?? -1
 		guard row >= 0 else {
-			print("CHANGES select: \(path) is not visible")
+			print("CHANGES select: no row at \(path)")
 			return
 		}
 		outline.selectRowIndexes([row], byExtendingSelection: false)
@@ -2228,8 +2236,12 @@ final class ChangesPane: NSView, ScaleFollowing {
 		let outline = staged ? stagedTable! : unstagedTable!
 		let side = self.side(for: outline)
 		let rows = TreeSelection.rows(for: paths) { path in
-			guard let node = side.byPath[path] else { return -1 }
-			return outline.row(forItem: node)
+			// The same reach as `selectForTesting`: an untracked directory's
+			// children are rows and are not in `byPath`.
+			side.byPath[path].map { outline.row(forItem: $0) }
+				?? (0..<outline.numberOfRows).first {
+					(outline.item(atRow: $0) as? GitChangeNode)?.path == path
+				} ?? -1
 		}
 		guard !rows.isEmpty else { return }
 		outline.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
@@ -2503,30 +2515,20 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// the whole difference between staging with a trip out to a tab per
 		// file and staging in one place.
 		//
-		// **Deferred past the double-click interval, and cancelled by the
-		// second click.** The render is inline on the main thread — a patch
-		// parse and two tree-sitter passes, 194 ms in the stall log — and the
-		// first click of a double-click used to start it, so the stage behind
-		// the second click queued up behind a diff nobody had begun to read.
-		pendingDiff?.cancel()
-		let work = DispatchWorkItem { [weak self] in
-			guard let self else { return }
-			// Said to a driven run, because the claim is about absence: a
-			// double-click that stages must leave no render line behind.
-			if DrivenRun.isActive {
-				print("DIFF-RENDER: \(change.path)")
-				fflush(stdout)
-			}
-			guard arrangement == .page, diffView != nil else {
-				onSelectChange?(change)
-				return
-			}
-			showDiff(of: change)
+		// **At once, not after the double-click interval.** This used to wait
+		// out `NSEvent.doubleClickInterval` so that the first click of a
+		// double-click would not start a render the second click's stage then
+		// queued behind — which cost half a second on every click and every
+		// arrow key. But a double-click is nearly always on the row that is
+		// already selected, and that changes no selection and reaches nothing
+		// here; and the render it guarded against no longer holds the main
+		// thread, because `showDiff` parses and colours off it. What is left
+		// to protect is nothing.
+		guard arrangement == .page, diffView != nil else {
+			onSelectChange?(change)
+			return
 		}
-		pendingDiff = work
-		DispatchQueue.main.asyncAfter(
-			deadline: .now() + NSEvent.doubleClickInterval, execute: work
-		)
+		showDiff(of: change)
 	}
 
 }
@@ -2554,6 +2556,14 @@ extension ChangesPane {
 
 	private func showDiff(of change: GitChange) {
 		guard let diffView else { return }
+		// **The newest ask wins.** Two awaits sit between the selection and
+		// the render — git, then the parse and colouring on a thread of its
+		// own — and arrowing through the tree starts one of these per row.
+		// A render that comes back to find the number has moved on belongs to
+		// a row that is no longer selected and is dropped, so the diff on
+		// screen is always the last row asked for and never the slowest one.
+		diffGeneration += 1
+		let generation = diffGeneration
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			// **In the repository that owns the path.** `git diff -- svc-2/…`
@@ -2569,10 +2579,11 @@ extension ChangesPane {
 				staged: change.isStaged,
 				in: owner
 			)
-			diffView.setDiff(
-				text, staged: change.isStaged,
-				url: self.root.appendingPathComponent(change.path)
-			)
+			guard generation == self.diffGeneration else { return }
+			let url = self.root.appendingPathComponent(change.path)
+			let prepared = await DiffView.prepareOffMain(text, url: url)
+			guard generation == self.diffGeneration else { return }
+			diffView.setDiff(prepared, staged: change.isStaged)
 			// **Re-bound on every selection, not once when the view was built.**
 			// The verbs are about *this* change and *this* diff text, and the
 			// one view shows every file in turn; a closure captured at build
@@ -2802,47 +2813,5 @@ private final class ChangeFolderRowView: NSView {
 			colour: Theme.current.sidebarText,
 			at: x, in: bounds, limit: edges.limit - Theme.current.scaled(2)
 		)
-	}
-}
-
-/// A text field with room around its text.
-///
-/// The commit subject draws its own background, and a field's text otherwise
-/// sits hard against the left edge of it.
-private final class InsetTextField: NSTextField {
-	override class var cellClass: AnyClass? {
-		get { InsetTextFieldCell.self }
-		set { super.cellClass = newValue }
-	}
-}
-
-private final class InsetTextFieldCell: NSTextFieldCell {
-	/// Inset from the edges, and sitting in the middle of them.
-	///
-	/// A field taller than its line — which this one is, to be comfortable to
-	/// click — draws the text against the top otherwise, and the placeholder
-	/// sits above the line everything else is on.
-	private func inset(_ rect: NSRect) -> NSRect {
-		let room = rect.insetBy(dx: 5, dy: 0)
-		let height = ceil(font?.boundingRectForFont.height ?? room.height)
-		guard height < room.height else { return room }
-		return NSRect(
-			x: room.minX,
-			y: room.minY + ((room.height - height) / 2).rounded(),
-			width: room.width,
-			height: height
-		)
-	}
-
-	override func drawingRect(forBounds rect: NSRect) -> NSRect {
-		super.drawingRect(forBounds: inset(rect))
-	}
-
-	override func edit(withFrame rect: NSRect, in view: NSView, editor: NSText, delegate: Any?, event: NSEvent?) {
-		super.edit(withFrame: inset(rect), in: view, editor: editor, delegate: delegate, event: event)
-	}
-
-	override func select(withFrame rect: NSRect, in view: NSView, editor: NSText, delegate: Any?, start: Int, length: Int) {
-		super.select(withFrame: inset(rect), in: view, editor: editor, delegate: delegate, start: start, length: length)
 	}
 }
