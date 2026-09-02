@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import AbydosKit
 
 /// A button in the app's own type, drawn rather than bezelled.
@@ -238,17 +239,48 @@ final class DrawnButton: NSButton, ScaleFollowing {
 			.font: Theme.current.uiFont(size - 1, weight: .semibold),
 			.foregroundColor: colour,
 		])
+		let font = Theme.current.uiFont(size - 1, weight: .semibold)
 		let text = number.size()
-		let pill = NSSize(width: ceil(text.width) + 8 * scale, height: ceil(text.height) + 1 * scale)
+		// **Sized and placed by the capitals, not the line.** Digits have no
+		// descenders, and a line box has room for one under them: centring
+		// the box put the digits high in the pill, and a pill as tall as the
+		// box stood a point over the word's capitals and a point under its
+		// baseline. The pill is the digits plus an even margin, and the
+		// baseline is set so the digits' middle is the pill's.
+		let margin = 3 * scale
+		let pill = NSSize(width: ceil(text.width) + 8 * scale, height: ceil(font.capHeight + margin * 2))
 		return NSImage(size: pill, flipped: false) { rect in
 			colour.withAlphaComponent(0.14).setFill()
 			NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
-			number.draw(at: NSPoint(
+			drawLine(number, baselineAt: NSPoint(
 				x: ((rect.width - text.width) / 2).rounded(),
-				y: ((rect.height - text.height) / 2).rounded()
-			))
+				y: ((rect.height - font.capHeight) / 2).rounded()
+			), flipped: false)
 			return true
 		}
+	}
+
+	/// Draws text with its baseline exactly where it is asked to.
+	///
+	/// `NSAttributedString.draw(at:)` places a line box and puts the baseline
+	/// where the typesetter rounds it, which came out a point above where the
+	/// font's descender said it would be — enough for a tag centred on the
+	/// arithmetic to sit visibly high. Core Text takes the baseline as given.
+	///
+	/// `flipped` says which way up the context is. A button is a flipped view,
+	/// and Core Text draws glyphs through the context's transform as it finds
+	/// it: on one machine the text matrix arrived already turned over and the
+	/// words came out upright, on another it arrived as the identity and every
+	/// word on the commit row drew mirrored. Set here, not assumed.
+	private static func drawLine(
+		_ text: NSAttributedString, baselineAt origin: NSPoint, flipped: Bool
+	) {
+		guard let context = NSGraphicsContext.current?.cgContext else { return }
+		context.saveGState()
+		context.textMatrix = flipped ? CGAffineTransform(scaleX: 1, y: -1) : .identity
+		context.textPosition = origin
+		CTLineDraw(CTLineCreateWithAttributedString(text), context)
+		context.restoreGState()
 	}
 
 	/// Between the words and the tag, and between the words and the spinner.
@@ -269,18 +301,22 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		let words = attributedTitle
 		let text = words.size()
 		var x = ((bounds.width - contentWidth) / 2).rounded()
-		let bottom = ((bounds.height - text.height) / 2).rounded()
-		words.draw(at: NSPoint(x: x, y: bottom))
+		// **The capitals centred, not the line box.** The box has the
+		// descender under it, so centring it puts a word with no descenders
+		// high; the baseline is set so the capitals' middle is the pill's,
+		// and the tag is centred on the same line.
+		let font = Theme.current.uiFont(fontSize)
+		let baseline = ((bounds.height - font.capHeight) / 2).rounded()
+		// Core Text takes the baseline in the context's own coordinates, and
+		// a button is a flipped view: from the top, where `draw(in:)` below
+		// is told which way up it is.
+		Self.drawLine(
+			words, baselineAt: NSPoint(x: x, y: isFlipped ? bounds.height - baseline : baseline),
+			flipped: isFlipped
+		)
 		x += ceil(text.width)
 		if let badge {
-			// **On the capitals' middle, not the line's.** The line box has
-			// the descender under it, so its middle sits above the middle
-			// of a word with no descenders — which is what put the tag a
-			// point or two high beside "Push". The baseline is the box's
-			// bottom plus the descender, and the middle is half a capital
-			// above that.
-			let font = Theme.current.uiFont(fontSize)
-			let middle = bottom - font.descender + font.capHeight / 2
+			let middle = baseline + font.capHeight / 2
 			x += gap
 			badge.draw(in: NSRect(
 				x: x, y: (middle - badge.size.height / 2).rounded(),
