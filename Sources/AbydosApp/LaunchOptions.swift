@@ -356,6 +356,11 @@ struct LaunchOptions {
 	var runningSessionsAt: [Double] = []
 	/// Click the pill, and say what came up: `--running-sessions-menu 6`.
 	var runningSessionsMenuAt: Double?
+	/// Open the same list the way ⇧⌘A does, over the window, and say what came
+	/// up and where it sits: `--running-sessions-palette 6`. More than one
+	/// time presses the key more than once, which is how "and again puts it
+	/// away" is asked: `--running-sessions-palette 4,6`.
+	var runningSessionsPaletteAt: [Double] = []
 	/// Toggle presentation mode while the window is up, as the menu does, so a
 	/// page can be read before and after: `--presentation-at 4`.
 	var presentationAt: [Double] = []
@@ -1219,6 +1224,9 @@ struct LaunchOptions {
 					.split(separator: ",").compactMap { Double($0) }
 			case "--running-sessions-menu":
 				options.runningSessionsMenuAt = next().flatMap(Double.init) ?? 6
+			case "--running-sessions-palette":
+				options.runningSessionsPaletteAt = (next() ?? "6")
+					.split(separator: ",").compactMap { Double($0) }
 			case "--running-sessions-filter": options.runningSessionsFilter = next()
 			case "--running-sessions-keys": options.runningSessionsKeys = next()
 			case "--zoom-gesture":

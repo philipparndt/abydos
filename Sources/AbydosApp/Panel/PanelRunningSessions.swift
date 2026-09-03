@@ -83,6 +83,16 @@ final class PanelRunningSessions {
 	private var clock: Timer?
 	/// The list under the pill, while it is open.
 	private var popover: RunningSessionsPopover?
+	/// The same list in a window of its own, while the key has it open.
+	private var palette: RunningSessionsPalette?
+	/// Whichever of the two is on screen. Both is not a state: opening either
+	/// closes the other, since two copies of one list is a bug that gets
+	/// reported as a duplicate.
+	private var openList: RunningSessionsHost? {
+		if let popover, popover.isShown { return popover }
+		if let palette, palette.isShown { return palette }
+		return nil
+	}
 
 	private var projectSlugs: [String] {
 		projectRoot().map(AgentSessions.slugs(of:)) ?? []
@@ -139,7 +149,7 @@ final class PanelRunningSessions {
 		RunningSessions.shared.prune(at: now)
 		let counts = counts(at: now)
 		for strip in strips() { strip.runningCounts = counts }
-		popover?.reload()
+		openList?.reload()
 		syncClock()
 	}
 
@@ -166,6 +176,7 @@ final class PanelRunningSessions {
 			self.popover = nil
 			return
 		}
+		palette?.close()
 		let popover = RunningSessionsPopover(
 			firstSlugs: { [weak self] in self?.projectSlugs ?? [] },
 			reach: { [weak self] session in self?.reachOf(session) ?? .elsewhere },
@@ -174,6 +185,36 @@ final class PanelRunningSessions {
 		self.popover = popover
 		// `.maxY` is the bottom edge of a flipped view, and the strip is one.
 		popover.show(relativeTo: rect, of: strip, preferredEdge: .maxY)
+	}
+
+	/// ⇧⌘A: the same list, centred over the window, with no pill to aim at and
+	/// no need for the panel to be open at all.
+	///
+	/// Pressing the key while it is up closes it, the way the pill's second
+	/// click does — one key, on and off.
+	func showPalette(over window: NSWindow?) {
+		if let palette, palette.isShown {
+			palette.close()
+			return
+		}
+		// Closed *and* let go of. A popover's `close` animates, so it is still
+		// `isShown` for a fifth of a second afterwards — long enough for the
+		// list to be on screen twice, which a driven run caught reporting
+		// "open in both". Without the animation it goes at once, and without
+		// the reference nothing can believe in it either.
+		if let popover {
+			popover.animates = false
+			popover.close()
+			self.popover = nil
+		}
+		let palette = self.palette ?? RunningSessionsPalette(
+			firstSlugs: { [weak self] in self?.projectSlugs ?? [] },
+			reach: { [weak self] session in self?.reachOf(session) ?? .elsewhere },
+			onChoose: { [weak self] session in self?.go(to: session) }
+		)
+		self.palette = palette
+		palette.show(over: window)
+		syncClock()
 	}
 
 	/// What a row does: the nearest terminal the app holds, and the resume
@@ -220,24 +261,43 @@ final class PanelRunningSessions {
 		guard let strip = strips().first, strip.sessionsPillFrameForTesting.width > 0
 		else { return "SESSIONS: no pill to click" }
 		show(from: strip.sessionsPillFrameForTesting, of: strip)
-		if let filter, let popover { popover.typeFilterForTesting(filter) }
-		let shown = popover?.isShown == true ? " (open)" : " (not open)"
+		if let filter { openList?.typeFilterForTesting(filter) }
+		return openReportForTesting()
+			+ (popover.map { " shortcut=\($0.shortcutForTesting())" } ?? "")
+	}
+
+	/// Opens the list the way ⇧⌘A does, and says the same things — plus where
+	/// it sits against the window, which is the claim the popover cannot make.
+	func openPaletteForTesting(over window: NSWindow?, filter: String? = nil) -> String {
+		showPalette(over: window)
+		if let filter { openList?.typeFilterForTesting(filter) }
+		return openReportForTesting()
+			+ (palette.map { " at=[\($0.placementForTesting(over: window))]" } ?? "")
+	}
+
+	private func openReportForTesting() -> String {
+		// Which host has it, and not merely that something does: the claim that
+		// opening one route closes the other cannot be read from "(open)".
+		let pill = popover?.isShown == true, key = palette?.isShown == true
+		let shown = pill && key
+			? " (open in both)"
+			: pill ? " (open under the pill)" : key ? " (open on the key)" : " (not open)"
 		return reportForTesting() + shown
-			+ (popover.map { " visible=[\($0.visibleRowsForTesting())]" } ?? "")
+			+ (openList.map { " visible=[\($0.visibleRowsForTesting())]" } ?? "")
 	}
 
 	/// Presses keys in the open list — `down+down+up+up` — and says where the
 	/// keyboard went and what is selected after each.
 	func pressForTesting(_ keys: String) -> String {
-		guard let popover, popover.isShown else { return "SESSIONS: no list open" }
+		guard let list = openList else { return "SESSIONS: no list open" }
 		return keys.split(separator: "+").map { key in
-			"\(key): " + popover.pressForTesting(String(key))
+			"\(key): " + list.pressForTesting(String(key))
 		}.joined(separator: " | ")
 	}
 
 	/// Clicks the first row shown, as ⏎ in the filter does.
 	func chooseFirstForTesting() -> String {
-		guard let popover, popover.isShown else { return "SESSIONS: no list open" }
-		return "SESSIONS chose: " + popover.chooseFirstForTesting()
+		guard let list = openList else { return "SESSIONS: no list open" }
+		return "SESSIONS chose: " + list.chooseFirstForTesting()
 	}
 }

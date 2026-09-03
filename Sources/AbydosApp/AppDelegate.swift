@@ -2063,6 +2063,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				fflush(stdout)
 			}
 		}
+		for at in options.runningSessionsPaletteAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("\(Int(at))s \(controller?.openRunningSessionsPaletteForTesting(filter: options.runningSessionsFilter) ?? "SESSIONS: no window")")
+				fflush(stdout)
+			}
+		}
 		if let how = options.zoomGesture {
 			DispatchQueue.main.asyncAfter(deadline: .now() + options.zoomGestureAt) {
 				controller?.exerciseZoomForTesting(how)
@@ -2077,7 +2083,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 		if let keys = options.runningSessionsKeys {
-			DispatchQueue.main.asyncAfter(deadline: .now() + (options.runningSessionsMenuAt ?? 6) + 0.6) {
+			let opened = options.runningSessionsMenuAt ?? options.runningSessionsPaletteAt.first ?? 6
+			DispatchQueue.main.asyncAfter(deadline: .now() + opened + 0.6) {
 				print("SESSIONS keys: \(controller?.pressInRunningSessionsForTesting(keys) ?? "no window")")
 				fflush(stdout)
 			}
@@ -3308,6 +3315,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		uncommittedItem.keyEquivalentModifierMask = [.command, .shift]
 		agentMenu.addItem(uncommittedItem)
+
+		agentMenu.addItem(.separator())
+		// The list of what is running everywhere, on a key: the pill on the
+		// terminal's title bar is the other way to it, and it needs the panel
+		// open and a small target aimed at.
+		let sessionsItem = NSMenuItem(
+			title: "Running Sessions",
+			action: #selector(MainWindowController.showRunningSessions(_:)),
+			keyEquivalent: "a"
+		)
+		sessionsItem.keyEquivalentModifierMask = [.command, .shift]
+		agentMenu.addItem(sessionsItem)
 
 		agentMenu.addItem(.separator())
 		let backlogItem = NSMenuItem(

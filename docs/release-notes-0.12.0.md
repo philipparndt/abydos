@@ -244,3 +244,31 @@ windows instead.
 
 `terminal` gains the requirement, and `tab-overflow` no longer says the strip
 has no keyboard route.
+
+## ⇧⌘A opens the session list
+
+The list of what is running everywhere had one way in: the pill on the terminal
+panel's title bar. That means opening the panel first, then aiming at a control
+seventy points wide, to ask a question — *is anything waiting for me?* — that is
+worth asking at any moment and does not otherwise involve a terminal.
+
+**⇧⌘A** now opens the same list, from `Agent ▸ Running Sessions`, with the panel
+closed and nothing to aim at. It comes up centred over the window, near the top,
+where every palette in every editor is. Centred over the *window*, not the
+screen: this app has more than one, often on more than one display, and a panel
+that appeared on the main display when the window was on the other would be
+answering somewhere nobody is looking.
+
+It is the same list, not a second one — one filter field, one set of rows, one
+set of keys. Type to narrow, ↓ into the rows, ⏎ to go, Escape to put it away,
+and a row does exactly what it does under the pill. Opening either route closes
+the other, so the list is never on screen twice.
+
+Opening it with nothing running is now a state anybody can reach, and it found
+a small fault of its own: the foot's two notes — how many sessions there are,
+and what clicking a row elsewhere copies — met in the middle and read as one
+sentence. The second is only about rows, so with no rows it is not drawn.
+
+The popover under the pill now says `⇧⌘A` in the corner of its filter row,
+dimmed, the way the titlebar capsule says `⇧⌘P`. Somebody who found the list by
+clicking is the one person who does not know there is a key for it.

@@ -155,6 +155,12 @@ extension MainWindowController {
 		bottomPanel.openRunningSessionsForTesting(filter: filter)
 	}
 
+	/// Opens the list the way ⇧⌘A does and says what came up, plus where it
+	/// sits against this window.
+	func openRunningSessionsPaletteForTesting(filter: String? = nil) -> String {
+		bottomPanel.openRunningSessionsPaletteForTesting(over: window, filter: filter)
+	}
+
 	/// The identity a panel tab gave its shell, for a driven session to name.
 	func terminalIdentityForTesting(_ index: Int) -> String? {
 		bottomPanel.terminalIdentityForTesting(index)

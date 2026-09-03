@@ -200,7 +200,7 @@ final class SymbolPalette: NSObject {
 			status.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
 		])
 
-		let window = SymbolPanel(
+		let window = PalettePanel(
 			contentRect: NSRect(x: 0, y: 0, width: 680, height: 420),
 			styleMask: [.titled, .fullSizeContentView],
 			backing: .buffered,
@@ -383,30 +383,6 @@ extension SymbolPalette: NSTableViewDataSource, NSTableViewDelegate {
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
 		guard symbols.indices.contains(row) else { return nil }
 		return SymbolRowView(symbol: symbols[row])
-	}
-}
-
-/// A panel that hands its key events to the palette first.
-private final class SymbolPanel: NSPanel {
-	var onKey: ((NSEvent) -> Bool)?
-	var onResignKey: (() -> Void)?
-
-	override var canBecomeKey: Bool { true }
-
-	override func keyDown(with event: NSEvent) {
-		guard onKey?(event) != true else { return }
-		super.keyDown(with: event)
-	}
-
-	/// Escape reaches here even when the search field has the keyboard, since
-	/// a field swallows it as "stop editing" rather than passing it on.
-	override func cancelOperation(_ sender: Any?) {
-		onResignKey?()
-	}
-
-	override func resignKey() {
-		super.resignKey()
-		onResignKey?()
 	}
 }
 

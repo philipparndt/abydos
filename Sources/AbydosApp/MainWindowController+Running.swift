@@ -30,6 +30,16 @@ extension MainWindowController {
 		pane.watch(expression)
 	}
 
+	/// Shows every Claude session running on the machine, centred over this
+	/// window — the pill's list, on ⇧⌘A.
+	///
+	/// The panel is left alone: the question "is anything waiting for me" is
+	/// worth asking without opening a terminal to ask it, which is the whole
+	/// reason the key exists beside the pill.
+	@objc func showRunningSessions(_ sender: Any?) {
+		bottomPanel.showRunningSessionsPalette(over: window)
+	}
+
 	/// Shows the backlog: the list and the board, over `.abydos/backlog`.
 	@objc func showBacklog(_ sender: Any?) {
 		setPanelVisible(true)

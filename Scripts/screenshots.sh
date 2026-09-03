@@ -124,6 +124,14 @@ shoot sessions --open "$GO" --file "$GO/main.go" --terminal --panel-height 420 \
 	--claude-running 33333333-3333-4333-8333-333333333333:done \
 	--running-sessions-menu 4 --delay 7
 
+# The same list on its key, ⇧⌘A: centred over the window, near the top, with no
+# pill to aim at and the panel closed. Also a window of its own, so also written
+# beside the picture as `sessions-key-child0.png`.
+shoot sessions-key --open "$GO" --file "$GO/main.go" --panel-height 0 \
+	--claude-running 11111111-1111-4111-8111-111111111111:working \
+	--claude-running 22222222-2222-4222-8222-222222222222:needs \
+	--running-sessions-palette 4 --delay 7
+
 # Java, because "a language is supported" is a claim about a build file as much
 # as about source: the outline over a POM comes from Maven's own structure.
 JAVA="$(prepare java/maven-service maven-service)"

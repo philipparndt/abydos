@@ -1378,9 +1378,17 @@ final class BottomPanel: NSView {
 	/// The register moved: a session appeared, ended or changed state
 	/// somewhere on the machine. `PanelRunningSessions` owns the rest.
 	func runningSessionsChanged() { runningSessions.changed() }
+	/// ⇧⌘A, which needs no pill and no open panel.
+	func showRunningSessionsPalette(over window: NSWindow?) {
+		runningSessions.showPalette(over: window)
+	}
+
 	func runningSessionsReportForTesting() -> String { runningSessions.reportForTesting() }
 	func openRunningSessionsForTesting(filter: String? = nil) -> String {
 		runningSessions.openForTesting(filter: filter)
+	}
+	func openRunningSessionsPaletteForTesting(over window: NSWindow?, filter: String? = nil) -> String {
+		runningSessions.openPaletteForTesting(over: window, filter: filter)
 	}
 	func chooseFirstRunningSessionForTesting() -> String { runningSessions.chooseFirstForTesting() }
 	func pressInRunningSessionsForTesting(_ keys: String) -> String { runningSessions.pressForTesting(keys) }

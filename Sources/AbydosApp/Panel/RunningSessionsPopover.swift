@@ -17,7 +17,7 @@ import AbydosKit
 /// popover's edge with no way to reach them. Now a row is a line, the rows
 /// scroll inside a bounded height, and a field at the top narrows them as it
 /// is typed into — the switcher's own shape, for the same reason.
-final class RunningSessionsPopover: NSPopover {
+final class RunningSessionsPopover: NSPopover, RunningSessionsHost {
 	private let controller: RunningSessionsController
 
 	init(
@@ -25,7 +25,12 @@ final class RunningSessionsPopover: NSPopover {
 		reach: @escaping (RunningSessions.Session) -> SessionReach,
 		onChoose: @escaping (RunningSessions.Session) -> Void
 	) {
-		controller = RunningSessionsController(firstSlugs: firstSlugs, reach: reach)
+		// The key is said here and nowhere else: somebody who found the list by
+		// clicking the pill is exactly the person who does not know there is a
+		// key for it, and the palette's own reader has just pressed it.
+		controller = RunningSessionsController(
+			firstSlugs: firstSlugs, reach: reach, shortcut: RunningSessionsPopover.shortcut
+		)
 		super.init()
 		controller.onChoose = { [weak self] session in
 			self?.close()
@@ -41,6 +46,10 @@ final class RunningSessionsPopover: NSPopover {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// What the menu item that opens the same list is bound to, drawn in the
+	/// corner of the filter row.
+	static let shortcut = "\u{21E7}\u{2318}A"
+
 	/// Reads the register again and resizes to what it holds. Called on every
 	/// move while the list is open, so a session finishing under the pointer
 	/// changes its row rather than going stale in it.
@@ -53,6 +62,7 @@ final class RunningSessionsPopover: NSPopover {
 	func visibleRowsForTesting() -> String { controller.visibleRowsForTesting() }
 	func chooseFirstForTesting() -> String { controller.chooseFirstForTesting() }
 	func pressForTesting(_ key: String) -> String { controller.pressForTesting(key) }
+	func shortcutForTesting() -> String { controller.shortcutForTesting() }
 }
 
 /// The filter field over the scrolling rows, and the keys the field answers.
@@ -63,8 +73,13 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 	var onEscape: (() -> Void)?
 
 	private let list: RunningSessionsListView
+	/// The key that opens this list, shown dimmed at the trailing edge of the
+	/// filter row — or nil where saying it would be telling somebody what they
+	/// just did.
+	private let shortcut: String?
 	private var field: ScaledSearchField!
 	private var scroll: NSScrollView!
+	private var shortcutLabel: NSTextField?
 	private var widthConstraint: NSLayoutConstraint?
 	private var heightConstraint: NSLayoutConstraint?
 
@@ -74,8 +89,10 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 
 	init(
 		firstSlugs: @escaping () -> [String],
-		reach: @escaping (RunningSessions.Session) -> SessionReach
+		reach: @escaping (RunningSessions.Session) -> SessionReach,
+		shortcut: String? = nil
 	) {
+		self.shortcut = shortcut
 		list = RunningSessionsListView(firstSlugs: firstSlugs, reach: reach)
 		super.init(nibName: nil, bundle: nil)
 		list.onChoose = { [weak self] session in self?.onChoose?(session) }
@@ -107,12 +124,40 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 
 		container.addSubview(field)
 		container.addSubview(scroll)
+
+		// The key in the corner, in the shape the titlebar capsule says ⇧⌘P in:
+		// dimmed, small, and out of the way of the sessions, which are what
+		// somebody opened this to read.
+		var fieldTrailing: NSLayoutConstraint?
+		if let shortcut {
+			let label = NSTextField(labelWithString: shortcut)
+			label.font = Theme.current.uiFont(10)
+			label.textColor = Theme.current.sidebarText.withAlphaComponent(0.45)
+			label.translatesAutoresizingMaskIntoConstraints = false
+			container.addSubview(label)
+			self.shortcutLabel = label
+			NSLayoutConstraint.activate([
+				label.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+				label.trailingAnchor.constraint(
+					equalTo: container.trailingAnchor, constant: -Theme.current.scaled(12)
+				),
+			])
+			fieldTrailing = field.trailingAnchor.constraint(
+				equalTo: label.leadingAnchor, constant: -Theme.current.scaled(8)
+			)
+		}
 		// The container's own size, held by constraints the reload updates: a
 		// popover sizes its window to the view's fitting size, and a scroll
 		// view has none, so without these the window shrank to the field's
 		// magnifier and nothing else.
 		let width = container.widthAnchor.constraint(equalToConstant: wantedSize.width)
 		let height = container.heightAnchor.constraint(equalToConstant: wantedSize.height)
+		// Just under required, because the palette's window pins this same view
+		// to its own frame: the two agree, since the window is sized from
+		// `wantedSize`, and a rounding apart from each other should bend rather
+		// than fill the log with a conflict nobody can act on.
+		width.priority = .init(999)
+		height.priority = .init(999)
 		widthConstraint = width
 		heightConstraint = height
 		let inset = Theme.current.scaled(10)
@@ -120,7 +165,8 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 			width, height,
 			field.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
 			field.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
-			field.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
+			fieldTrailing
+				?? field.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
 			scroll.topAnchor.constraint(equalTo: field.bottomAnchor, constant: Theme.current.scaled(6)),
 			scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -196,6 +242,8 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 	}
 
 	func visibleRowsForTesting() -> String { list.visibleRowsForTesting() }
+
+	func shortcutForTesting() -> String { shortcutLabel?.stringValue ?? "" }
 
 	/// Presses one key where the keyboard is, and says where it went.
 	func pressForTesting(_ key: String) -> String {
@@ -619,7 +667,13 @@ final class RunningSessionsListView: NSView {
 		let label = Self.text(words, Theme.current.uiFont(10), Theme.current.sidebarHeaderText)
 		let size = label.size()
 		label.draw(at: NSPoint(x: inset, y: frame.midY + Theme.current.scaled(2) - size.height / 2))
-		// What a click does, said once at the foot rather than on every row.
+		// What a click does, said once at the foot rather than on every row —
+		// and not at all when there is nothing to click. With no session
+		// running, the two halves met in the middle and read as one sentence:
+		// "No Claude session is running on this machine elsewhere copies the
+		// resume command". Only the key can reach that state, since the pill
+		// the popover hangs from is absent when nothing runs.
+		guard total > 0 else { return }
 		let hint = Self.text("elsewhere copies the resume command", Theme.current.uiFont(10), Theme.current.sidebarHeaderText)
 		let hintSize = hint.size()
 		hint.draw(at: NSPoint(x: frame.maxX - inset - hintSize.width, y: frame.midY + Theme.current.scaled(2) - hintSize.height / 2))
