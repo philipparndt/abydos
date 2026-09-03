@@ -133,6 +133,19 @@ nothing — and a stack view of no height does not clip, so its controls drew
 around the pane's top edge, into the strip. One rule now, and a header with
 nothing to say is hidden whole.
 
+## The session list answers the arrows
+
+The popup opened with the keyboard in its filter and there was no way out of the
+field but the mouse. ↓ now moves into the rows with the first selected, ↓ and ↑
+move between sessions and skip the group headers, ⏎ opens the selected one, and
+↑ from the top hands the keyboard back to the filter with the caret at the end
+of what was typed — so narrowing and choosing are one movement in each
+direction. Escape puts the list away from either place.
+
+A selected row is drawn in the palette's selection colour and a row under the
+pointer in the hover tint, because they answer two different questions: which
+row a key will act on, and where the mouse happens to be.
+
 ## The session list holds its order
 
 The rows jumped around. Three things ordered by something that keeps changing —

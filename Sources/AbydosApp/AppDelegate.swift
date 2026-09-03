@@ -2060,6 +2060,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				fflush(stdout)
 			}
 		}
+		if let keys = options.runningSessionsKeys {
+			DispatchQueue.main.asyncAfter(deadline: .now() + (options.runningSessionsMenuAt ?? 6) + 0.6) {
+				print("SESSIONS keys: \(controller?.pressInRunningSessionsForTesting(keys) ?? "no window")")
+				fflush(stdout)
+			}
+		}
 		if let at = options.runningSessionsChooseAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.chooseFirstRunningSessionForTesting() ?? "SESSIONS: no window")")

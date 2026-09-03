@@ -362,6 +362,8 @@ struct LaunchOptions {
 	var zoomGestureAt: Double = 4
 	/// Type this into the list's filter once it is open: `--running-sessions-filter screen`.
 	var runningSessionsFilter: String?
+	/// Keys to press in the open list: `--running-sessions-keys down+down+up+up`.
+	var runningSessionsKeys: String?
 	/// Choose the first row shown, as ⏎ in the filter does, and say which tab
 	/// the panel then has in front: `--running-sessions-choose 7`.
 	var runningSessionsChooseAt: Double?
@@ -1214,6 +1216,7 @@ struct LaunchOptions {
 			case "--running-sessions-menu":
 				options.runningSessionsMenuAt = next().flatMap(Double.init) ?? 6
 			case "--running-sessions-filter": options.runningSessionsFilter = next()
+			case "--running-sessions-keys": options.runningSessionsKeys = next()
 			case "--zoom-gesture":
 				let said = next() ?? "zoom"
 				let halves = said.split(separator: "@", maxSplits: 1)

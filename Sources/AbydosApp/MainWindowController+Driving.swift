@@ -167,6 +167,11 @@ extension MainWindowController {
 		bottomPanel.chooseFirstRunningSessionForTesting() + " | " + panelTabsForTesting()
 	}
 
+	/// Keys in the open running-sessions list, and where they went.
+	func pressInRunningSessionsForTesting(_ keys: String) -> String {
+		bottomPanel.pressInRunningSessionsForTesting(keys)
+	}
+
 	/// Presses one of a question's answers by its words.
 	func answerToastForTesting(_ title: String) -> Bool { toasts.answerForTesting(title) }
 

@@ -226,6 +226,15 @@ final class PanelRunningSessions {
 			+ (popover.map { " visible=[\($0.visibleRowsForTesting())]" } ?? "")
 	}
 
+	/// Presses keys in the open list — `down+down+up+up` — and says where the
+	/// keyboard went and what is selected after each.
+	func pressForTesting(_ keys: String) -> String {
+		guard let popover, popover.isShown else { return "SESSIONS: no list open" }
+		return keys.split(separator: "+").map { key in
+			"\(key): " + popover.pressForTesting(String(key))
+		}.joined(separator: " | ")
+	}
+
 	/// Clicks the first row shown, as ⏎ in the filter does.
 	func chooseFirstForTesting() -> String {
 		guard let popover, popover.isShown else { return "SESSIONS: no list open" }

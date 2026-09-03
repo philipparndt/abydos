@@ -1383,6 +1383,7 @@ final class BottomPanel: NSView {
 		runningSessions.openForTesting(filter: filter)
 	}
 	func chooseFirstRunningSessionForTesting() -> String { runningSessions.chooseFirstForTesting() }
+	func pressInRunningSessionsForTesting(_ keys: String) -> String { runningSessions.pressForTesting(keys) }
 	func terminalIdentityForTesting(_ index: Int) -> String? {
 		sessions.indices.contains(index) ? sessions[index].identity : nil
 	}

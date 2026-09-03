@@ -32,6 +32,7 @@ final class RunningSessionsPopover: NSPopover {
 			onChoose(session)
 		}
 		controller.onResize = { [weak self] size in self?.contentSize = size }
+		controller.onEscape = { [weak self] in self?.close() }
 		contentViewController = controller
 		behavior = .transient
 		appearance = NSAppearance(named: Theme.current.isLight ? .aqua : .darkAqua)
@@ -51,12 +52,15 @@ final class RunningSessionsPopover: NSPopover {
 	func typeFilterForTesting(_ text: String) { controller.typeFilterForTesting(text) }
 	func visibleRowsForTesting() -> String { controller.visibleRowsForTesting() }
 	func chooseFirstForTesting() -> String { controller.chooseFirstForTesting() }
+	func pressForTesting(_ key: String) -> String { controller.pressForTesting(key) }
 }
 
 /// The filter field over the scrolling rows, and the keys the field answers.
 final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 	var onChoose: ((RunningSessions.Session) -> Void)?
 	var onResize: ((NSSize) -> Void)?
+	/// Escape, from the field or the rows: the popover puts itself away.
+	var onEscape: (() -> Void)?
 
 	private let list: RunningSessionsListView
 	private var field: ScaledSearchField!
@@ -75,6 +79,8 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 		list = RunningSessionsListView(firstSlugs: firstSlugs, reach: reach)
 		super.init(nibName: nil, bundle: nil)
 		list.onChoose = { [weak self] session in self?.onChoose?(session) }
+		list.onLeaveTop = { [weak self] in self?.takeKeyboardBackToFilter() }
+		list.onEscape = { [weak self] in self?.onEscape?() }
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -156,11 +162,29 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 	}
 
 	/// ⏎ in the field chooses the first row still shown, so a filter typed
-	/// down to one session is one key from it.
+	/// down to one session is one key from it; ↓ hands the keyboard to the rows
+	/// with the first of them selected, which is the way out of the field.
 	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-		guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
-		if let first = list.firstVisibleSession { onChoose?(first) }
-		return true
+		switch selector {
+		case #selector(NSResponder.insertNewline(_:)):
+			if let first = list.firstVisibleSession { onChoose?(first) }
+			return true
+		case #selector(NSResponder.moveDown(_:)):
+			return list.selectFirst()
+		default:
+			return false
+		}
+	}
+
+	/// The rows handing the keyboard back, from ↑ off the top.
+	///
+	/// The caret goes to the end of what was typed rather than selecting it
+	/// all: somebody moving back up to the filter is adding a letter, and a
+	/// selected field would replace what they had narrowed to.
+	private func takeKeyboardBackToFilter() {
+		guard let window = view.window else { return }
+		window.makeFirstResponder(field)
+		field.currentEditor()?.selectedRange = NSRange(location: field.stringValue.count, length: 0)
 	}
 
 	// MARK: - For the harness
@@ -172,6 +196,18 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 	}
 
 	func visibleRowsForTesting() -> String { list.visibleRowsForTesting() }
+
+	/// Presses one key where the keyboard is, and says where it went.
+	func pressForTesting(_ key: String) -> String {
+		if view.window?.firstResponder === field, key == "down" {
+			_ = control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.moveDown(_:)))
+		} else if let arrow = TreeKeys.arrow(key) {
+			TreeKeys.press(arrow.code, arrow.scalar, in: view.window)
+		} else if key == "return" {
+			TreeKeys.press(36, "\r", in: view.window)
+		}
+		return list.keyboardReportForTesting + " filter=\(field.stringValue)"
+	}
 
 	func chooseFirstForTesting() -> String {
 		guard let first = list.firstVisibleSession else { return "nothing shown" }
@@ -205,6 +241,17 @@ final class RunningSessionsListView: NSView {
 
 	private var rows: [(row: Row, frame: NSRect)] = []
 	private var hovered: Int?
+	/// Which row the keyboard is on, as an index into `rows`.
+	///
+	/// Kept by the session's id across a reload rather than by index: the list
+	/// is rebuilt from the register on every event, and an index into a rebuilt
+	/// array is a different row. Nil until ↓ out of the filter puts it on the
+	/// first session.
+	private var selected: Int?
+	/// Told when ↑ walks off the top, so the field can take the keyboard back.
+	var onLeaveTop: (() -> Void)?
+	/// Told when Escape is pressed, so the popover can put itself away.
+	var onEscape: (() -> Void)?
 	private var now = Date()
 	private var trackingArea: NSTrackingArea?
 
@@ -251,6 +298,96 @@ final class RunningSessionsListView: NSView {
 		return nil
 	}
 
+	// MARK: - The selection and the keys
+
+	/// The session the keyboard is on, if any.
+	var selectedSession: RunningSessions.Session? {
+		guard let selected, rows.indices.contains(selected),
+		      case let .session(session, _) = rows[selected].row
+		else { return nil }
+		return session
+	}
+
+	private func firstSessionRow() -> Int? {
+		rows.indices.first { if case .session = rows[$0].row { return true } else { return false } }
+	}
+
+	private func index(ofSessionWithID id: String) -> Int? {
+		rows.indices.first {
+			guard case let .session(session, _) = rows[$0].row else { return false }
+			return session.id == id
+		}
+	}
+
+	/// Puts the selection on the first session and asks for the keyboard, which
+	/// is what ↓ in the filter means.
+	@discardableResult
+	func selectFirst() -> Bool {
+		guard let first = firstSessionRow() else { return false }
+		selected = first
+		window?.makeFirstResponder(self)
+		show(row: first)
+		return true
+	}
+
+	/// Moves the selection by one session, skipping the headers and the footer:
+	/// they are rows in the same array and the arrows must not land where ⏎ has
+	/// nothing to do.
+	///
+	/// - Returns: false when there is nowhere to go, which above the first row
+	///   means the filter takes the keyboard back.
+	@discardableResult
+	func moveSelection(by step: Int) -> Bool {
+		guard !rows.isEmpty else { return false }
+		guard let from = selected else { return selectFirst() }
+		var index = from + step
+		while rows.indices.contains(index) {
+			if case .session = rows[index].row {
+				selected = index
+				show(row: index)
+				return true
+			}
+			index += step
+		}
+		return false
+	}
+
+	private func show(row: Int) {
+		needsDisplay = true
+		guard rows.indices.contains(row) else { return }
+		scrollToVisible(rows[row].frame.insetBy(dx: 0, dy: -Theme.current.scaled(6)))
+	}
+
+	override var acceptsFirstResponder: Bool { true }
+
+	override func becomeFirstResponder() -> Bool {
+		if selected == nil { selected = firstSessionRow() }
+		needsDisplay = true
+		return super.becomeFirstResponder()
+	}
+
+	override func keyDown(with event: NSEvent) {
+		switch event.keyCode {
+		case 125: moveSelection(by: 1)
+		case 126:
+			// Off the top is back to the filter: narrowing and choosing are one
+			// movement in each direction.
+			if !moveSelection(by: -1) { onLeaveTop?() }
+		case 36, 76:
+			guard let session = selectedSession else { return }
+			onChoose?(session)
+		case 53: onEscape?()
+		default: super.keyDown(with: event)
+		}
+	}
+
+	/// Where the keyboard is and what it is on, for a driven run.
+	var keyboardReportForTesting: String {
+		let holder = window?.firstResponder === self ? "the rows" : TreeKeys.keyboardHolder(in: window)
+		let row = selectedSession.map { "\(Self.title(of: $0)) [\($0.id.prefix(4))]" } ?? "nothing"
+		return "keyboard=\(holder) selected=\(row)"
+	}
+
 	func reload() {
 		now = Date()
 		let groups = RunningSessions.shared.grouped(firstSlugs: firstSlugs(), at: now)
@@ -272,8 +409,14 @@ final class RunningSessionsListView: NSView {
 		}
 		let total = groups.reduce(0) { $0 + $1.sessions.count }
 		placed.append((.footer(shown: shown, total: total), NSRect(x: 0, y: y, width: width, height: footerHeight)))
+		let wasSelected = selectedSession?.id
 		rows = placed
 		if let hovered, hovered >= rows.count { self.hovered = nil }
+		// By id, because the array is new. A session that has gone leaves the
+		// selection on the first row rather than nowhere.
+		if let wasSelected {
+			selected = index(ofSessionWithID: wasSelected) ?? firstSessionRow()
+		}
 		setFrameSize(wantedSize)
 		needsDisplay = true
 		syncSpinner()
@@ -335,7 +478,10 @@ final class RunningSessionsListView: NSView {
 			switch entry.row {
 			case .header(let group): drawHeader(group, in: entry.frame, isFirst: index == 0)
 			case .session(let session, let reach):
-				drawSession(session, reach: reach, in: entry.frame, isHovered: index == hovered)
+				drawSession(
+					session, reach: reach, in: entry.frame,
+					isHovered: index == hovered, isSelected: index == selected
+				)
 			case .footer(let shown, let total): drawFooter(shown: shown, total: total, in: entry.frame)
 			}
 		}
@@ -371,10 +517,15 @@ final class RunningSessionsListView: NSView {
 	/// in the dim ink throughout, so it reads as out of reach before it is
 	/// clicked.
 	private func drawSession(
-		_ session: RunningSessions.Session, reach: SessionReach, in frame: NSRect, isHovered: Bool
+		_ session: RunningSessions.Session, reach: SessionReach, in frame: NSRect,
+		isHovered: Bool, isSelected: Bool
 	) {
-		if isHovered {
-			Theme.current.selectionBackgroundInactive.setFill()
+		// **Two questions, two answers.** The hover tint is a hint about the
+		// pointer; the selection is the row a key will act on, and it takes the
+		// palette's own selection colour. With the pointer resting on one row
+		// and the selection on another, the list has to say which is which.
+		if isSelected || isHovered {
+			(isSelected ? Theme.current.selectionBackground : Theme.current.selectionBackgroundInactive).setFill()
 			NSBezierPath(
 				roundedRect: frame.insetBy(dx: Theme.current.scaled(6), dy: Theme.current.scaled(1)),
 				xRadius: Theme.current.scaled(4), yRadius: Theme.current.scaled(4)
