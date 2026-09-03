@@ -1772,6 +1772,58 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let at = options.panelMaximizeAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.togglePanelMaximized(nil)
+				print("PANEL: maximized=\(controller?.isPanelMaximized == true)")
+				fflush(stdout)
+			}
+		}
+
+		if let restoring = options.restorePages {
+			DispatchQueue.main.asyncAfter(deadline: .now() + restoring.at) {
+				let before = controller?.isPanelMaximized == true
+				print("PAGES: " + (controller?.sidebarForTesting
+					.restorePagesForTesting(restoring.identifiers) ?? "no window"))
+				print("PAGES: maximized before=\(before)")
+				// The pages load git first, so the answer that matters is the
+				// one after that has had a moment to happen.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+					let tabs = controller?.editorForTesting.activeGroup?
+						.tabTitlesForTesting.joined(separator: ", ") ?? "no group"
+					print("PAGES: maximized after=\(controller?.isPanelMaximized == true) tabs=[\(tabs)]")
+					fflush(stdout)
+				}
+			}
+		}
+
+		if let click = options.clickTmuxTab {
+			DispatchQueue.main.asyncAfter(deadline: .now() + click.at) {
+				print(controller?.clickTmuxTabAndReportForTesting(click.index) ?? "TMUX TAB: no window")
+				fflush(stdout)
+				// A beat, because following the shell is a subprocess and a
+				// project switch is a load: whatever the click sets off has
+				// not finished when it returns.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+					print(controller?.tmuxTabSettledReportForTesting() ?? "  settled: no window")
+					fflush(stdout)
+				}
+			}
+		}
+
+		if let count = options.fillTmuxTabs {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				let panel = controller?.panelForTesting
+				print("TMUX \(panel?.seedMirrorWindowsForTesting(count) ?? "no panel")")
+				// And what choosing a hidden one does, which is the half of it
+				// a picture cannot show: the run moves the least that brings
+				// the window into view.
+				print("TMUX CHOSE: \(panel?.selectHiddenMirrorWindowForTesting(0) ?? "no panel")")
+				print("TMUX AFTER: \(panel?.mirrorOverflowReportForTesting ?? "no panel")")
+				fflush(stdout)
+			}
+		}
+
 		if let count = options.fillTerminalTabs {
 			// Spread out rather than in a loop: each one starts a shell, and
 			// twelve started in the same turn of the run loop is a burst the
@@ -2047,6 +2099,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		for at in options.toastReportsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.toastReportForTesting() ?? "TOASTS: no window")")
+				fflush(stdout)
+			}
+		}
+
+		if let count = options.seededWindows {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				print("SEEDED: \(controller?.panelForTesting.seedTmuxSessionsForTesting(count) ?? "no window")")
 				fflush(stdout)
 			}
 		}

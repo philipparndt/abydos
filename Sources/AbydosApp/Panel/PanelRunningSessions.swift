@@ -241,6 +241,30 @@ final class PanelRunningSessions {
 
 	// MARK: - For the harness
 
+	/// Seeds the register with badged tmux windows, as the mirror does.
+	///
+	/// **The rows most likely to be on screen, and the ones a driven run could
+	/// not make.** A seeded record is one the hook has never spoken for: the
+	/// mirror reads `@ai_status` off a tmux window and stands a record up for
+	/// it. Every session a run could put in the register before this was one
+	/// *with* an id — so the fault that every seeded record answers `id` with
+	/// the same empty string was invisible to every run, and visible on any
+	/// machine watching a tmux session with two badged windows in it.
+	func seedTmuxWindowsForTesting(_ count: Int, inSession session: String = "abydos") -> String {
+		let windows = (0..<count).map { index in
+			TmuxMirror.Window(
+				index: index,
+				name: "\(index):\(["build", "shell", "watch", "logs"][index % 4])",
+				isActive: index == 0,
+				aiStatus: index % 3 == 1 ? .needsInput : .working,
+				silentFor: 1,
+				directory: projectRoot()?.path ?? ""
+			)
+		}
+		seed(windows: windows, inTmuxSession: session)
+		return "seeded \(count) badged windows in \(session)"
+	}
+
 	/// What the pill says and what its list holds, each row with its reach.
 	func reportForTesting() -> String {
 		let now = Date()

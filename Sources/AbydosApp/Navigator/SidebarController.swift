@@ -971,8 +971,13 @@ final class SidebarController: NSObject {
 	/// gives: it can be left open, switched away from, and come back to.
 	/// - Parameter ref: a branch or tag to show the history of, or nil for the
 	///   branch that is checked out.
-	func showLogPage(scopedTo ref: String?) {
-		leaveTerminalFullScreen()
+	/// - Parameter asked: whether somebody asked for this page. Only then does
+	///   it give the editor the window back: while the terminal panel has the
+	///   whole window the editor is *hidden*, so a page opened into it could
+	///   not be seen — and a page being restored with a project asked for
+	///   nothing. See `reopen(page:)`, which is the other caller.
+	func showLogPage(scopedTo ref: String?, asked: Bool = true) {
+		if asked { leaveTerminalFullScreen() }
 		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return }
 
 		let page = (group.page(identifier: "log") as? HistoryPane)
@@ -1061,12 +1066,30 @@ final class SidebarController: NSObject {
 		}
 	}
 
+	/// **Nothing here asked for anything.** These pages are coming back with a
+	/// project, which happens by itself: a window following its terminal
+	/// switches project when the shell walks into another one, and switching a
+	/// tmux window is how a shell walks. Reported as the maximised terminal
+	/// being lost on a tab switch — and only for a project that had a log or a
+	/// commit page open, which is what pointed at these four calls.
+	/// Restores the pages a run names, so the path can be driven at all.
+	///
+	/// **A driven run never reads a real session** — `SessionStore.read`
+	/// refuses one, which is half of item 0522 — so the restore this is about
+	/// cannot happen by itself in a run. The pages come from the run instead
+	/// of from somebody's project, and everything after that is the app's own
+	/// code.
+	func restorePagesForTesting(_ identifiers: [String]) -> String {
+		reopen(pages: identifiers.map { ProjectSession.OpenPage(identifier: $0) })
+		return "restoring: " + identifiers.joined(separator: ", ")
+	}
+
 	private func reopen(page: ProjectSession.OpenPage) {
 		switch page.identifier {
 		case "commit":
-			showCommitPage(carrying: nil)
+			showCommitPage(carrying: nil, asked: false)
 		case "log":
-			showLogPage(scopedTo: page.showing["ref"])
+			showLogPage(scopedTo: page.showing["ref"], asked: false)
 			if let path = page.showing["path"] {
 				logPage?.offerScope(path: path)
 				logPage?.setScope(path: path)
@@ -1082,10 +1105,10 @@ final class SidebarController: NSObject {
 			Task { @MainActor [weak self] in
 				let entries = await GitStash.list(in: root)
 				guard let entry = entries.first(where: { $0.commit == commit }) else { return }
-				self?.showStashPage(entry)
+				self?.showStashPage(entry, asked: false)
 			}
 		case "estate":
-			showEstatePage()
+			showEstatePage(asked: false)
 		default:
 			// A page this version has no opener for — one a later version wrote
 			// down, or one whose owner is elsewhere in the app. Left closed
@@ -1103,8 +1126,13 @@ final class SidebarController: NSObject {
 	///
 	/// - Parameter carrying: what has been typed into the sidebar's summary, so
 	///   pressing `…` is promoting a message rather than starting a second one.
-	func showCommitPage(carrying summary: String?) {
-		leaveTerminalFullScreen()
+	/// - Parameter asked: whether somebody asked for this page. Only then does
+	///   it give the editor the window back: while the terminal panel has the
+	///   whole window the editor is *hidden*, so a page opened into it could
+	///   not be seen — and a page being restored with a project asked for
+	///   nothing. See `reopen(page:)`, which is the other caller.
+	func showCommitPage(carrying summary: String?, asked: Bool = true) {
+		if asked { leaveTerminalFullScreen() }
 		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return }
 
 		let page: ChangesPane
@@ -1132,10 +1160,13 @@ final class SidebarController: NSObject {
 			// **Offered only where git can do it**, as the editor's diff is:
 			// `stash push --staged` arrived in 2.35, and on an older one the
 			// item is absent rather than failing when pressed.
-			let asked = page
+			// Held rather than captured weakly: the check is one command and the
+			// page is the caller's. Named for what it is now that `asked` means
+			// "somebody asked for this page" in this function's signature.
+			let thePage = page
 			Task { @MainActor [weak self] in
-				guard await GitStash.canPushStaged(in: asked.repositoryRoot) else { return }
-				asked.onStashDiffSelection = { [weak self] change, diff, lines, owner in
+				guard await GitStash.canPushStaged(in: thePage.repositoryRoot) else { return }
+				thePage.onStashDiffSelection = { [weak self] change, diff, lines, owner in
 					self?.stashDiffSelection(
 						change: change, diff: diff, lines: lines, in: owner, from: .page
 					)
@@ -1166,8 +1197,8 @@ final class SidebarController: NSObject {
 	/// page rather than opening a tab per stash: `openPage` already keys by
 	/// identifier, and a row of near-identical tabs called `Stash` would be a
 	/// tab strip nobody can read.
-	func showStashPage(_ entry: GitStash.Entry) {
-		leaveTerminalFullScreen()
+	func showStashPage(_ entry: GitStash.Entry, asked: Bool = true) {
+		if asked { leaveTerminalFullScreen() }
 		guard let project = project(), project.git != nil, let group = editor.activeGroup else {
 			return
 		}
@@ -1191,8 +1222,8 @@ final class SidebarController: NSObject {
 	}
 
 	/// Every submodule in the estate, as a page — see `EstateOverviewPage`.
-	func showEstatePage() {
-		leaveTerminalFullScreen()
+	func showEstatePage(asked: Bool = true) {
+		if asked { leaveTerminalFullScreen() }
 		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return }
 
 		let page = (group.page(identifier: "estate") as? EstateOverviewPage)

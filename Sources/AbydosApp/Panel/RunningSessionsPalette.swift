@@ -63,6 +63,13 @@ final class RunningSessionsPalette: RunningSessionsHost {
 		guard let parent else { return }
 		let window = self.window ?? makeWindow()
 		self.window = window
+		// The window wears the theme itself, on every showing — see
+		// `PalettePanel`. What is left here is the ground the list is drawn on,
+		// which is set when the view is made and the view is made once.
+		controller.applyTheme()
+		// A fresh opening is where a fresh order is free; while it is open the
+		// order is held — see `RunningSessionsListView.placeOfSession`.
+		controller.freezeOrderAgain()
 		controller.reload()
 		place(window, over: parent)
 		parent.addChildWindow(window, ordered: .above)
@@ -71,6 +78,9 @@ final class RunningSessionsPalette: RunningSessionsHost {
 		// capture run — where taking it would take it from somebody's terminal.
 		if NSApp.isActive {
 			window.makeKeyAndOrderFront(nil)
+			// The window is kept between openings, so nothing about its
+			// appearing puts the caret back in the filter on the second one.
+			controller.focusFilter()
 		} else {
 			window.orderFront(nil)
 		}
@@ -92,7 +102,6 @@ final class RunningSessionsPalette: RunningSessionsHost {
 		window.titleVisibility = .hidden
 		window.titlebarAppearsTransparent = true
 		window.isMovableByWindowBackground = true
-		window.backgroundColor = Theme.current.sidebarBackground
 		window.contentViewController = controller
 		window.onResignKey = { [weak self] in self?.close() }
 		// The key that opened it, pressed again, puts it away — which the menu

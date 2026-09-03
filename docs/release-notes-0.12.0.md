@@ -272,3 +272,113 @@ sentence. The second is only about rows, so with no rows it is not drawn.
 The popover under the pill now says `⇧⌘A` in the corner of its filter row,
 dimmed, the way the titlebar capsule says `⇧⌘P`. Somebody who found the list by
 clicking is the one person who does not know there is a key for it.
+
+## tmux's windows say what does not fit
+
+The tabs along the bottom of the panel are tmux's windows, and with sixteen of
+them in a window that fits seven the list simply stopped at the edge. Reported:
+there should be a chevron listing the ones that do not fit, like the other tab
+bars have.
+
+It was meant to have one. The strip measures its run, counts what is hidden,
+reserves the chevron's room, answers a click on it and builds its menu — on
+every strip, tmux's included. Only the drawing sat behind a guard that asks
+whether the *panel's* own controls belong here, which they do not on tmux's
+strip or in a torn-off terminal window. So on those two the control was
+counted, reserved and clickable with nothing drawn to say so: a 34-point
+invisible target beside the last window.
+
+The chevron is now drawn on every strip — in tmux's green on tmux's bar, which
+it already knew how to do. Choosing a hidden window brings it into view, moving
+the run by the least that does so, and the ones now behind are counted with the
+ones ahead.
+
+`--tmux-tab-fill 16` fills that strip from a driven run, which nothing could do
+before: the mirror is only ever filled by a real `tmux list-windows`, and one of
+those does not arrive inside the seconds a driven run lasts. That is why this
+shipped.
+
+## The session list keeps its place
+
+Two reports from the first afternoon of ⇧⌘A. The selection jumped about while
+the list was open, and reopening the list restored the row it was left on while
+the caret went to the filter — a lit row and a live caret both claiming the next
+keystroke.
+
+The first cause was a lit row remembered as a *number*. The list is rebuilt on
+every hook event and once a second by the staleness clock, and a session
+appearing or ending renumbers every row after it, so the selection and the
+pointer's own highlight moved to whatever now sat at those numbers — with nobody
+touching a key and the pointer perfectly still. Nothing tells a view that the
+thing under a motionless pointer has changed, so it never corrected itself
+either. Both are now re-found on every rebuild: the selection by the session's
+own id, and dropped rather than left pointing at a stranger when its session
+ends; the hover from where the pointer actually is at that moment.
+
+**That was half of it, and the report came back twice.** The highlight now
+stayed on its own session, and it still moved about — because the rows do. The order is a
+good one, where a session is rather than when it spoke, but it is computed
+afresh from data that keeps arriving: a session learns its tmux window and
+leaves the windowless tail, a session in another project appears and its group
+takes its place by name, the mirror seeds a badged window and drops it a second
+later. So the order is now decided when the list opens and held while it is
+open; a session that starts meanwhile is added at the end, where it can be seen
+to have arrived, and reopening the list decides the order again.
+
+One more source of movement went with it: a row can change its *id* without
+going anywhere. The register seeds a record for a badged tmux window it has not
+heard from, keyed by the window; the moment that session announces itself the
+seeded record is dropped and the real one takes over. Held by id alone, that
+read as a row leaving the middle and another arriving at the end — at the exact
+moment a session starts working, which is when somebody is looking. A row's
+place now belongs to its tmux window as well as to the record speaking for it.
+
+And the list keeps a note. Whenever its rows change shape it writes one line to
+`~/Library/Logs/Abydos/sessions.log`, and nothing at all while they hold still.
+
+**That note found the actual cause, which none of the three readings had.** It
+wrote `rows  -> s s s s s s s s`: eight rows, every id empty. A record seeded
+from a tmux window's badge has no session id at all — `isSeeded` is *defined* as
+`id.isEmpty` — so everything that told rows apart by id could not tell eight
+badged windows apart. The order's final tie-break called every pair of them
+equal, and `sorted` is not stable, so they were free to swap on each of the
+rebuilds that happen every second. The remembered order remembered one place for
+all of them. And "which row is this session on" answered with the first of them,
+which is the selection hopping to the top.
+
+A row now has an identity: its tmux session and window while nothing has spoken
+for it, its session id once something has — which is exactly what the register
+already keys the record by. Six badged windows now come up in window order and
+stay in it, with the selection where it was put.
+
+Every session a driven run could put in the register had an id, so no run could
+ever have shown this. `--claude-seeded <count>` makes the idless kind.
+
+And the reopened list says where the keys are. A remembered selection is drawn
+as a ring rather than a filled band while the filter has the keyboard, and fills
+in when ↓ moves into the rows — an outline is a different shape rather than a
+different shade, so it cannot be taken for the pointer's hint, which is on
+screen at the same time. ⏎ in the filter now acts on the row that is lit, and on
+the first one only when none is. The filter takes the keyboard on every opening
+with what was typed last time selected, so the next letter replaces it.
+
+## A restored page does not take the terminal's window
+
+Reported: the maximised terminal is lost when switching tmux tabs — and, once
+narrowed down, only when the project being switched to has a log or commit view
+open.
+
+The chain explains the whole thing. Switching a tmux window moves the shell;
+while the window is following its terminal that switches project; a project
+switch restores what that project had open, pages included; and every page
+opener starts by handing the window back from a maximised terminal. So a
+project that remembers a log page took the terminal's window on arrival, with
+nobody having asked to look at anything.
+
+That rule is right for the gesture it was written for. While the terminal has
+the window the editor is *hidden*, not merely small, so a page somebody asks
+for has to take the window or it opens where it cannot be seen. A page being
+restored asked for nothing, and now takes nothing: the four openers know
+whether they were asked, and only then give the editor the window. Everything
+that opens a page on purpose — the sidebar's rows, the Git menu, the review
+page — is unchanged.

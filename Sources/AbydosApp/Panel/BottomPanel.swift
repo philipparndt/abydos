@@ -930,6 +930,9 @@ final class BottomPanel: NSView {
 		sessions.reveal = { [weak self] running in self?.reveal(running) ?? false }
 		return sessions
 	}()
+	/// Whether tmux's strip holds windows a driven run put there, which the
+	/// mirror must then not overwrite.
+	private var mirrorSeededForTesting = false
 	/// The session the tabs are currently showing, which is whatever the client
 	/// is attached to rather than whatever it was started with.
 	private var mirroredSession: String?
@@ -1251,6 +1254,53 @@ final class BottomPanel: NSView {
 		return "strip: \(before)\n  clicked \(index) -> showing \"\(showing)\""
 	}
 
+	/// Clicks one of tmux's own window tabs, as the pointer does — through the
+	/// strip's `onSelect`, so everything a real click sets off happens.
+	func clickTmuxTabForTesting(_ index: Int) -> String {
+		guard let strip = columnViews.first?.mirrorStrip else { return "no strip" }
+		guard strip.tabCount > index else { return "tmux strip has \(strip.tabCount) tabs" }
+		strip.pressSelectForTesting(index)
+		return "clicked tmux tab \(index) of \(strip.tabCount)"
+	}
+
+	/// Fills tmux's own strip with windows, without a tmux server.
+	///
+	/// **The only way to reach the fault from a driver.** The mirroring strip is
+	/// only ever filled by a real `tmux list-windows`, and a `--run` that starts
+	/// tmux does not reach the mirror in the seconds a driven run lasts — which
+	/// is how the strip came to be shipped counting hidden windows it never drew
+	/// a chevron for. The items are what the mirror makes: numbered, unclosable,
+	/// named the way tmux names them.
+	func seedMirrorWindowsForTesting(_ count: Int) -> String {
+		guard let column = columnViews.first else { return "no column" }
+		mirrorSeededForTesting = true
+		column.strip.isMirroringTmux = false
+		column.mirrorStrip.isMirroringTmux = true
+		column.mirrorStrip.mirroredSession = "abydos"
+		column.mirrorStrip.setItems(
+			(0..<count).map { index in
+				PanelTabItem(
+					title: "\(index):\(["build", "shell", "watch", "logs", "notes"][index % 5])",
+					hasExited: false, isTerminal: true, isClosable: false, tmuxIndex: index
+				)
+			},
+			activeIndex: 0
+		)
+		column.showsMirrorStrip = true
+		layoutSubtreeIfNeeded()
+		return "tmux strip: " + column.mirrorStrip.overflowReportForTesting
+	}
+
+	/// What tmux's strip is showing and what it is holding back, and choosing
+	/// one of the windows it had no room for.
+	var mirrorOverflowReportForTesting: String {
+		columnViews.first.map { "tmux strip: " + $0.mirrorStrip.overflowReportForTesting } ?? "no column"
+	}
+
+	func selectHiddenMirrorWindowForTesting(_ position: Int) -> String {
+		columnViews.first.map { $0.mirrorStrip.selectHiddenAndActivateForTesting(position) } ?? "no column"
+	}
+
 	/// Puts a tab that cannot be closed on tmux's strip, without a tmux server.
 	///
 	/// The tab that must *not* light up under the pointer is a tmux window, and
@@ -1383,6 +1433,9 @@ final class BottomPanel: NSView {
 		runningSessions.showPalette(over: window)
 	}
 
+	func seedTmuxSessionsForTesting(_ count: Int) -> String {
+		runningSessions.seedTmuxWindowsForTesting(count)
+	}
 	func runningSessionsReportForTesting() -> String { runningSessions.reportForTesting() }
 	func openRunningSessionsForTesting(filter: String? = nil) -> String {
 		runningSessions.openForTesting(filter: filter)
@@ -2858,6 +2911,12 @@ final class BottomPanel: NSView {
 				content.trailingAnchor.constraint(equalTo: columnsHost.trailingAnchor),
 			])
 		}
+
+		// A seeded tmux strip is left alone. The mirror re-reads tmux's window
+		// list several times a second and would put the one real window back
+		// over the sixteen a driven run seeded — which is what happened, and
+		// left a photograph of a strip with nothing to overflow.
+		guard !mirrorSeededForTesting else { return }
 
 		for (index, view) in columnViews.enumerated() {
 			let list = sessions(in: index)
@@ -4739,8 +4798,6 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 				in: addMenuFrame, symbol: "chevron.down", points: 9, tint: Theme.current.gitIgnored
 			)
 		}
-		guard showsPanelControls else { return }
-
 		// **Opaque, because tabs are allowed to run underneath.** The frames are
 		// laid out left to right at whatever width each name needs and nothing
 		// stops them reaching the trailing edge, while these controls are placed
@@ -4750,9 +4807,21 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		// (`drawPreviewControl`) and the answer is the same one: a tab's last few
 		// characters matter less than the controls staying readable and
 		// reachable.
-		drawControlsBackground()
+		if showsPanelControls { drawControlsBackground() }
+		// After the ground and before the panel's own controls, on every strip.
+		// Its own room is already reserved by `tabRoom`, so no tab reaches it
+		// and it needs no ground of its own.
 		drawOverflowButton()
+		guard showsPanelControls else { return }
+		drawTrailingPanelControls()
+	}
 
+	/// The hide, maximise, follow and tag controls: the panel's own, and only
+	/// where there is a panel. Split out so that the overflow chevron above
+	/// them is drawn on every strip — it was inside this guard, so tmux's
+	/// windows and a torn-off terminal's tabs were counted, hidden and
+	/// clickable with nothing drawn to say so.
+	private func drawTrailingPanelControls() {
 		drawGlyph(in: hideButtonFrame, symbol: "chevron.down")
 		drawGlyph(
 			in: maximizeButtonFrame,
@@ -4793,6 +4862,20 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		let index = hiddenTabs[position]
 		onSelect?(index)
 		return "chose tab \(index)"
+	}
+
+	/// Chooses a hidden tab and makes it the active one, which on a mirroring
+	/// strip is two halves: the click asks tmux, and the strip only learns the
+	/// answer when the mirror re-reads the window list and hands the items back
+	/// with a new active index. A seeded strip has no tmux to ask, so the
+	/// second half is done here — otherwise the run has no reason to move and
+	/// the instrument would report a fault that is its own.
+	func selectHiddenAndActivateForTesting(_ position: Int) -> String {
+		guard hiddenTabs.indices.contains(position) else { return "no hidden tab \(position)" }
+		let index = hiddenTabs[position]
+		let said = selectHiddenForTesting(position)
+		setItems(items, activeIndex: index)
+		return said
 	}
 
 	/// The tabs there was no room for, offered as a menu.

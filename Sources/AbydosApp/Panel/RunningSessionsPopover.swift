@@ -177,8 +177,30 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 
 	override func viewDidAppear() {
 		super.viewDidAppear()
-		// Typing filters: the field has the keyboard the moment the list is up.
-		view.window?.makeFirstResponder(field)
+		focusFilter()
+	}
+
+	/// The theme, again, on a controller that is kept between openings.
+	///
+	/// The container's ground is set when the view is made, and the palette's
+	/// view is made once for the life of the window.
+	func applyTheme() {
+		view.wantsLayer = true
+		view.layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
+		shortcutLabel?.textColor = Theme.current.sidebarText.withAlphaComponent(0.45)
+	}
+
+	/// Gives the filter the keyboard, with whatever is in it selected.
+	///
+	/// Called on every opening rather than only on the first: the palette keeps
+	/// its window and its controller between openings, so `viewDidAppear` is
+	/// not to be relied on for the second one. What was typed last time is
+	/// selected rather than cleared, so the next letter replaces it and ⌫ is
+	/// not needed to start again — a palette's own habit.
+	func focusFilter() {
+		guard let window = view.window else { return }
+		window.makeFirstResponder(field)
+		field.currentEditor()?.selectAll(nil)
 	}
 
 	/// The field's height, the gap, and the rows up to the ceiling.
@@ -213,7 +235,10 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
 		switch selector {
 		case #selector(NSResponder.insertNewline(_:)):
-			if let first = list.firstVisibleSession { onChoose?(first) }
+			// The row that is lit, and the first one when none is: with a
+			// selection restored from the last time the list was open, the
+			// highlight is a promise about what ⏎ does.
+			if let session = list.selectedSession ?? list.firstVisibleSession { onChoose?(session) }
 			return true
 		case #selector(NSResponder.moveDown(_:)):
 			return list.selectFirst()
@@ -243,6 +268,9 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 
 	func visibleRowsForTesting() -> String { list.visibleRowsForTesting() }
 
+	/// A fresh opening decides a fresh order; see `freezeOrderAgain`.
+	func freezeOrderAgain() { list.freezeOrderAgain() }
+
 	func shortcutForTesting() -> String { shortcutLabel?.stringValue ?? "" }
 
 	/// Presses one key where the keyboard is, and says where it went.
@@ -253,6 +281,12 @@ final class RunningSessionsController: NSViewController, NSSearchFieldDelegate {
 			TreeKeys.press(arrow.code, arrow.scalar, in: view.window)
 		} else if key == "return" {
 			TreeKeys.press(36, "\r", in: view.window)
+		} else if key == "wait" {
+			// A real second of the app's own life: the staleness clock ticks,
+			// a session scheduled to start arrives, and the list is rebuilt
+			// underneath whatever the keys just did. That rebuild is the thing
+			// being asked about, so it has to actually happen.
+			RunLoop.main.run(until: Date().addingTimeInterval(1.2))
 		}
 		return list.keyboardReportForTesting + " filter=\(field.stringValue)"
 	}
@@ -300,6 +334,40 @@ final class RunningSessionsListView: NSView {
 	var onLeaveTop: (() -> Void)?
 	/// Told when Escape is pressed, so the popover can put itself away.
 	var onEscape: (() -> Void)?
+	/// The order the list came up in, kept for as long as it is open: a
+	/// session's id to its place, and a project's slug to its.
+	///
+	/// **A list that reorders itself under a pointer cannot be used.** The
+	/// order is a good one — where a session is, never when it spoke — but it
+	/// is computed from data that arrives while somebody is reading: a session
+	/// learns its tmux window and moves out of the windowless tail, a session
+	/// in another project appears and its group takes its place by name, the
+	/// mirror seeds a badged window and drops it again. Each of those is a row
+	/// moving, and the highlight travels with its session, which is what the
+	/// report "the selection is still jumping around" describes.
+	///
+	/// So the order is decided once, when the list opens, and held. Whatever
+	/// arrives afterwards goes at the end, where it can be seen to have
+	/// arrived. Reopening the list computes it again — that is the moment a
+	/// fresh order costs nobody anything.
+	private var placeOfSession: [String: Int] = [:]
+	private var placeOfGroup: [String: Int] = [:]
+	/// The place a tmux window's row has, whichever record is speaking for it.
+	///
+	/// **A row can change its id without moving.** The register seeds a record
+	/// for a badged tmux window the hook has not spoken for yet, keyed by the
+	/// window; the moment that session announces itself, the seeded record is
+	/// dropped and the real one takes its place — a different id for the same
+	/// window, in the same project. Keyed by id alone, that reads as one row
+	/// leaving the middle and another arriving at the end, which is a row
+	/// jumping about at the exact moment a session starts working.
+	private var placeOfWindow: [String: Int] = [:]
+	private var nextPlace = 0
+	/// The last shape the rows had, so a change of order can be *logged* rather
+	/// than theorised about: this has now been reported three times, and each
+	/// answer was written from a reading of the code rather than from a record
+	/// of what actually moved. `~/Library/Logs/Abydos/sessions.log`.
+	private var lastShape: [String] = []
 	private var now = Date()
 	private var trackingArea: NSTrackingArea?
 
@@ -360,10 +428,10 @@ final class RunningSessionsListView: NSView {
 		rows.indices.first { if case .session = rows[$0].row { return true } else { return false } }
 	}
 
-	private func index(ofSessionWithID id: String) -> Int? {
+	private func index(ofSessionWith identity: String) -> Int? {
 		rows.indices.first {
 			guard case let .session(session, _) = rows[$0].row else { return false }
-			return session.id == id
+			return session.identity == identity
 		}
 	}
 
@@ -408,10 +476,24 @@ final class RunningSessionsListView: NSView {
 
 	override var acceptsFirstResponder: Bool { true }
 
+	/// Whether the arrows and ⏎ would land here rather than in the filter.
+	///
+	/// The selection is drawn brightly only then. Reopening the list restores
+	/// the row it was left on while the keyboard starts in the filter, and a
+	/// row lit as though a key would act on it — while the caret blinks
+	/// somewhere else — is the confusion that asked for this: a bright row and
+	/// a live caret both claiming the next keystroke.
+	private var rowsHaveTheKeyboard: Bool { window?.firstResponder === self }
+
 	override func becomeFirstResponder() -> Bool {
 		if selected == nil { selected = firstSessionRow() }
 		needsDisplay = true
 		return super.becomeFirstResponder()
+	}
+
+	override func resignFirstResponder() -> Bool {
+		needsDisplay = true
+		return super.resignFirstResponder()
 	}
 
 	override func keyDown(with event: NSEvent) {
@@ -432,13 +514,70 @@ final class RunningSessionsListView: NSView {
 	/// Where the keyboard is and what it is on, for a driven run.
 	var keyboardReportForTesting: String {
 		let holder = window?.firstResponder === self ? "the rows" : TreeKeys.keyboardHolder(in: window)
-		let row = selectedSession.map { "\(Self.title(of: $0)) [\($0.id.prefix(4))]" } ?? "nothing"
-		return "keyboard=\(holder) selected=\(row)"
+		let row = selectedSession.map { "\(Self.title(of: $0)) [\($0.identity.suffix(6))]" } ?? "nothing"
+		let under = hovered.flatMap { index -> String? in
+			guard rows.indices.contains(index), case let .session(session, _) = rows[index].row
+			else { return "row \(index)" }
+			return Self.title(of: session)
+		} ?? "nothing"
+		return "keyboard=\(holder) selected=\(row) hovered=\(under)"
+	}
+
+	/// Forgets the order that was being held, so the next reload decides a new
+	/// one. Called when the list is opened.
+	func freezeOrderAgain() {
+		placeOfSession.removeAll()
+		placeOfGroup.removeAll()
+		placeOfWindow.removeAll()
+		nextPlace = 0
+		lastShape.removeAll()
+	}
+
+	/// Where a session's row goes, decided once and remembered.
+	private func place(of session: RunningSessions.Session) -> Int {
+		let windowKey = session.tmuxSession.flatMap { name in
+			session.window.map { "\(name):\($0)" }
+		}
+		if let known = placeOfSession[session.identity] {
+			// Learnt where it is since it was first placed, so the window can
+			// hand the place on if this record is ever replaced.
+			if let windowKey, placeOfWindow[windowKey] == nil { placeOfWindow[windowKey] = known }
+			return known
+		}
+		if let windowKey, let inherited = placeOfWindow[windowKey] {
+			placeOfSession[session.identity] = inherited
+			return inherited
+		}
+		let place = nextPlace
+		nextPlace += 1
+		placeOfSession[session.identity] = place
+		if let windowKey { placeOfWindow[windowKey] = place }
+		return place
+	}
+
+	/// The register's order the first time, and the order already on screen
+	/// every time after it.
+	private func held(_ groups: [RunningSessions.Group]) -> [RunningSessions.Group] {
+		for group in groups where placeOfGroup[group.slug] == nil {
+			placeOfGroup[group.slug] = placeOfGroup.count
+		}
+		var held: [RunningSessions.Group] = []
+		for group in groups {
+			// Placed before sorting, in the register's own order, so that the
+			// first reading after the list opens is that order exactly.
+			let places = group.sessions.map { ($0, place(of: $0)) }
+			held.append(group.ordered(
+				places.sorted { ($0.1, $0.0.identity) < ($1.1, $1.0.identity) }.map(\.0)
+			))
+		}
+		return held.sorted {
+			(placeOfGroup[$0.slug] ?? 0, $0.slug) < (placeOfGroup[$1.slug] ?? 0, $1.slug)
+		}
 	}
 
 	func reload() {
 		now = Date()
-		let groups = RunningSessions.shared.grouped(firstSlugs: firstSlugs(), at: now)
+		let groups = held(RunningSessions.shared.grouped(firstSlugs: firstSlugs(), at: now))
 		let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
 		var placed: [(row: Row, frame: NSRect)] = []
 		var y = Theme.current.scaled(4)
@@ -457,17 +596,48 @@ final class RunningSessionsListView: NSView {
 		}
 		let total = groups.reduce(0) { $0 + $1.sessions.count }
 		placed.append((.footer(shown: shown, total: total), NSRect(x: 0, y: y, width: width, height: footerHeight)))
-		let wasSelected = selectedSession?.id
+		let wasSelected = selectedSession?.identity
 		rows = placed
-		if let hovered, hovered >= rows.count { self.hovered = nil }
-		// By id, because the array is new. A session that has gone leaves the
-		// selection on the first row rather than nowhere.
-		if let wasSelected {
-			selected = index(ofSessionWithID: wasSelected) ?? firstSessionRow()
-		}
+		// **Both highlights are re-found, never carried over as numbers.** A
+		// row's index means nothing across a rebuild: this list is rebuilt on
+		// every hook event and once a second by the staleness clock, and a
+		// session appearing or ending renumbers everything after it. Kept as
+		// numbers, the two lit rows moved to whatever now sat at those numbers
+		// — reported as the selection jumping about on its own.
+		//
+		// The selection is re-found by the session's id, and dropped when the
+		// row it was on is gone rather than left pointing at a stranger.
+		selected = wasSelected.flatMap { index(ofSessionWith: $0) ?? firstSessionRow() }
+		// The hover is re-found from where the pointer actually is. Nothing
+		// tells a view that the thing under a motionless pointer has changed,
+		// so `mouseMoved` never corrects this on its own.
+		hovered = rowUnderPointer()
 		setFrameSize(wantedSize)
 		needsDisplay = true
 		syncSpinner()
+		sayIfTheShapeChanged()
+	}
+
+	/// Writes a line whenever the rows are not what they were, and nothing at
+	/// all while they hold still.
+	///
+	/// The order was reported as unstable three times over, and each time the
+	/// cause was worked out by reading rather than observed: recency in the
+	/// sort, then indices kept across a rebuild, then the order being recomputed
+	/// from data that keeps arriving. A log costs nothing while the list is
+	/// shut, and turns the fourth report into evidence.
+	private func sayIfTheShapeChanged() {
+		guard window != nil else { return }
+		let shape = rows.compactMap { entry -> String? in
+			guard case let .session(session, _) = entry.row else { return nil }
+			return String(session.identity.suffix(6))
+		}
+		guard shape != lastShape else { return }
+		DiagnosticLog.write(
+			"rows \(lastShape.joined(separator: " ")) -> \(shape.joined(separator: " "))",
+			to: "sessions"
+		)
+		lastShape = shape
 	}
 
 	/// Turning while a row is working, stopped otherwise — the shape the tab
@@ -572,12 +742,28 @@ final class RunningSessionsListView: NSView {
 		// pointer; the selection is the row a key will act on, and it takes the
 		// palette's own selection colour. With the pointer resting on one row
 		// and the selection on another, the list has to say which is which.
+		//
+		// **And a third state: selected while the filter has the keyboard.** The
+		// list is reopened on the row it was left on, and a filled row there
+		// claims the next keystroke that the caret in the field is going to
+		// take. Drawn as a ring rather than a second fill: two fills a shade
+		// apart cannot be told from the hover tint — and the pointer resting on
+		// one row while another is remembered is the ordinary case, not a
+		// corner — while an outline says "remembered, and not where the keys
+		// are" in any palette, without a colour being invented for it.
 		if isSelected || isHovered {
-			(isSelected ? Theme.current.selectionBackground : Theme.current.selectionBackgroundInactive).setFill()
-			NSBezierPath(
+			let band = NSBezierPath(
 				roundedRect: frame.insetBy(dx: Theme.current.scaled(6), dy: Theme.current.scaled(1)),
 				xRadius: Theme.current.scaled(4), yRadius: Theme.current.scaled(4)
-			).fill()
+			)
+			if isSelected, !rowsHaveTheKeyboard {
+				Theme.current.selectionBackground.setStroke()
+				band.lineWidth = Theme.current.scaled(1.2)
+				band.stroke()
+			} else {
+				(isSelected ? Theme.current.selectionBackground : Theme.current.selectionBackgroundInactive).setFill()
+				band.fill()
+			}
 		}
 
 		let shown = session.shown(at: now)
@@ -794,6 +980,15 @@ final class RunningSessionsListView: NSView {
 		)
 		addTrackingArea(area)
 		trackingArea = area
+	}
+
+	/// Which session row the pointer is over right now, asked of the window
+	/// rather than of the last event: after a rebuild there has been no event.
+	private func rowUnderPointer() -> Int? {
+		guard let window, window.isVisible else { return nil }
+		let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+		guard bounds.contains(point) else { return nil }
+		return sessionRow(at: point)
 	}
 
 	private func sessionRow(at point: NSPoint) -> Int? {

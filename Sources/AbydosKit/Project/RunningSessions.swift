@@ -67,6 +67,24 @@ public struct RunningSessions: Equatable, Sendable {
 
 		public var isSeeded: Bool { id.isEmpty }
 
+		/// What names this row, whether or not the session has said its id.
+		///
+		/// **A seeded record has no id at all** — `isSeeded` *is* `id.isEmpty`
+		/// — so every one of them answered `id` with the same empty string.
+		/// Anything that told rows apart by id therefore could not tell eight
+		/// badged tmux windows apart: they collapsed to one sort key, so
+		/// `sorted` was free to shuffle them on every rebuild; they collapsed
+		/// to one remembered place, so holding the order held nothing; and
+		/// "which row is this session on" answered with the first of them. That
+		/// is the whole of the report that the list's selection jumps about,
+		/// through three earlier answers that each fixed something else.
+		///
+		/// The window is the identity while nothing has spoken for it, and it
+		/// is exactly what the register keys the record by.
+		public var identity: String {
+			isSeeded ? "@\(tmuxSession ?? ""):\(window ?? -1)" : id
+		}
+
 		/// What a pill or a row shows for a session, given the time.
 		///
 		/// The tabs' vocabulary and nothing more: a `working` that has been
@@ -133,6 +151,18 @@ public struct RunningSessions: Equatable, Sendable {
 		public let slug: String
 		public let cwd: String
 		public let sessions: [Session]
+
+		public init(slug: String, cwd: String, sessions: [Session]) {
+			self.slug = slug
+			self.cwd = cwd
+			self.sessions = sessions
+		}
+
+		/// The same group with its sessions in another order, for a list that
+		/// holds the order it came up in.
+		public func ordered(_ sessions: [Session]) -> Group {
+			Group(slug: slug, cwd: cwd, sessions: sessions)
+		}
 	}
 
 	/// How long a working session may say nothing before it is not believed.
@@ -355,8 +385,13 @@ public struct RunningSessions: Equatable, Sendable {
 				// **Every comparison ends here.** The records are a dictionary,
 				// whose walk order is arbitrary, and `sorted` is not stable —
 				// so any pair called equal was free to swap on a redraw with
-				// nothing having happened. An id is unique and never changes.
-				return a.id < b.id
+				// nothing having happened.
+				//
+				// `identity` rather than `id`, because a seeded record has no
+				// id: this line called every pair of badged windows equal, and
+				// therefore did nothing at all for the rows most likely to be
+				// on screen while a tmux session is being watched.
+				return a.identity < b.identity
 			}
 		}
 		func group(_ slug: String) -> Group? {

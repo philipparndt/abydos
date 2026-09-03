@@ -161,6 +161,52 @@ extension MainWindowController {
 		bottomPanel.openRunningSessionsPaletteForTesting(over: window, filter: filter)
 	}
 
+	/// Clicks a tmux window tab and says what the window did about it.
+	///
+	/// **Reported: switching tmux tabs takes the terminal out of full screen.**
+	/// Two states go by that name and the report does not say which, so both
+	/// are read either side of the click: the panel having the window to itself
+	/// (`isPanelMaximized`, which this app's own code calls terminal full
+	/// screen) and the window being in a macOS full-screen space. The project
+	/// too, since following the shell is the one thing a tab switch is known to
+	/// move, and the frame, which says whether anything resized at all.
+	///
+	/// The first of the two is reachable from here — `--panel-maximize` — and
+	/// stayed put across a click, in another project, with following on. The
+	/// second is not: macOS refuses `toggleFullScreen` to an app that is not
+	/// the active one, and a driven run never activates. So a run reads that
+	/// state and cannot yet create it.
+	func clickTmuxTabAndReportForTesting(_ index: Int) -> String {
+		func state(_ when: String) -> String {
+			let full = window?.styleMask.contains(.fullScreen) == true
+			let frame = window?.frame ?? .zero
+			return String(
+				format: "  %@: panelMaximized=%@ macFullScreen=%@ project=%@ frame=(%.0f×%.0f)",
+				when,
+				isPanelMaximized ? "yes" : "no",
+				full ? "yes" : "no",
+				project?.root.lastPathComponent ?? "none",
+				frame.width, frame.height
+			)
+		}
+		var said = ["TMUX TAB:", state("before")]
+		said.append("  " + bottomPanel.clickTmuxTabForTesting(index))
+		said.append(state("after"))
+		return said.joined(separator: "\n")
+	}
+
+	/// The same reading a beat later, since following the shell is two hops
+	/// through the run loop and a project switch is more.
+	func tmuxTabSettledReportForTesting() -> String {
+		let full = window?.styleMask.contains(.fullScreen) == true
+		return String(
+			format: "  settled: panelMaximized=%@ macFullScreen=%@ project=%@",
+			isPanelMaximized ? "yes" : "no",
+			full ? "yes" : "no",
+			project?.root.lastPathComponent ?? "none"
+		)
+	}
+
 	/// The identity a panel tab gave its shell, for a driven session to name.
 	func terminalIdentityForTesting(_ index: Int) -> String? {
 		bottomPanel.terminalIdentityForTesting(index)

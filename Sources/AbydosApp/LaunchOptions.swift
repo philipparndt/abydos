@@ -352,6 +352,10 @@ struct LaunchOptions {
 		var subagents = 0
 	}
 	var claudeRunning: [ClaudeRunning] = []
+	/// Seed this many badged tmux windows into the register, as the mirror
+	/// does: `--claude-seeded 6`. These are the records that carry no session
+	/// id, which is a state no other flag can produce.
+	var seededWindows: Int?
 	/// Say what the panel's pill counts and its list holds: `--running-sessions 6,9`.
 	var runningSessionsAt: [Double] = []
 	/// Click the pill, and say what came up: `--running-sessions-menu 6`.
@@ -775,6 +779,25 @@ struct LaunchOptions {
 	/// strip looks like was a thing somebody had to make by hand, twelve clicks
 	/// at a time, and therefore a thing screenshots never showed.
 	var fillTerminalTabs: Int?
+	/// Put this many windows on tmux's own strip and say what it does with
+	/// them: `--tmux-tab-fill 16`. The mirroring strip cannot otherwise be
+	/// filled without a tmux server the run would not live long enough to see.
+	var fillTmuxTabs: Int?
+	/// Click one of tmux's own window tabs and say what the window did about
+	/// it: `--click-tmux-tab 1@14`. Both meanings of "full screen" are read
+	/// either side of the click; see `clickTmuxTabAndReportForTesting`.
+	var clickTmuxTab: (index: Int, at: Double)?
+	/// Give the terminal the whole window at a stated moment:
+	/// `--panel-maximize 6`.
+	///
+	/// `--maximize-terminal` does it at half a second, which is before the
+	/// window controller exists on a cold run — so it silently did nothing, and
+	/// a run meaning to ask "does *this* take the terminal out of full screen"
+	/// was never in full screen to begin with.
+	var panelMaximizeAt: Double?
+	/// Restore these pages as a project switch would, and say what the panel
+	/// did about it: `--restore-pages log,commit@8`.
+	var restorePages: (identifiers: [String], at: Double)?
 	/// Close this many terminal tabs and say what the strip does next.
 	///
 	/// The reported gesture, and it needed a count: `--close-terminals` closes
@@ -1022,6 +1045,22 @@ struct LaunchOptions {
 					options.addTerminalTabAt = 3.0
 				}
 			case "--tab-fill":   options.fillTerminalTabs = next().flatMap(Int.init) ?? 12
+			case "--panel-maximize": options.panelMaximizeAt = next().flatMap(Double.init) ?? 6
+			case "--restore-pages":
+				let said = next() ?? "log@8"
+				let halves = said.split(separator: "@", maxSplits: 1)
+				options.restorePages = (
+					identifiers: halves[0].split(separator: ",").map(String.init),
+					at: halves.count > 1 ? (Double(halves[1]) ?? 8) : 8
+				)
+			case "--tmux-tab-fill": options.fillTmuxTabs = next().flatMap(Int.init) ?? 16
+			case "--click-tmux-tab":
+				let said = next() ?? "1@14"
+				let halves = said.split(separator: "@", maxSplits: 1)
+				options.clickTmuxTab = (
+					index: Int(halves[0]) ?? 1,
+					at: halves.count > 1 ? (Double(halves[1]) ?? 14) : 14
+				)
 			case "--tab-close":  options.closeTerminalTabs = next().flatMap(Int.init) ?? 5
 			case "--lsp-banner":  options.serverBanner = next() ?? "report"
 			case "--rerun":      options.rerun = next() ?? "selected"
@@ -1219,6 +1258,7 @@ struct LaunchOptions {
 				}
 				spec.id = said
 				options.claudeRunning.append(spec)
+			case "--claude-seeded": options.seededWindows = next().flatMap(Int.init) ?? 6
 			case "--running-sessions":
 				options.runningSessionsAt = (next() ?? "6")
 					.split(separator: ",").compactMap { Double($0) }
