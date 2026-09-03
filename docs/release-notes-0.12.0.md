@@ -133,6 +133,53 @@ nothing — and a stack view of no height does not clip, so its controls drew
 around the pane's top edge, into the strip. One rule now, and a header with
 nothing to say is hidden whole.
 
+## The session list turns while a session works
+
+The tmux tabs have turned a spinner for a working session since the badges were
+added: a still `⋯` says "something is happening here" no more convincingly than
+a full stop does. The running-sessions list drew that still `⋯` for the same
+state one panel up, so the pill counted a session as working while the row
+beside it looked asleep. Both now draw one shared arc, each on its own timer
+over its own rows, and each timer exists only while something is turning.
+
+## A picture diffs as a picture
+
+A changed screenshot, icon or exported diagram used to diff as one line: **No
+textual changes.** True, and useless. Wherever a diff is shown — the commit
+page, the log page, a pull request — a file the app already opens as a picture
+is now read from git as its two sides and drawn on the same checkerboard the
+editor uses, each side labelled with what it is and its pixel size.
+
+Three ways to look, on a switch above the pictures, and the choice is
+remembered. *Side by side* puts the two at one scale. *Slider* lays them over
+each other with a divider to drag. *Changes* dims the new picture and outlines
+the regions that differ from the old, with a count. The comparison is
+arithmetic in the kit, tested without a window: a channel threshold so a
+re-encode is not a change, differing pixels gathered into rectangles, and a
+plain refusal with a reason for two pictures of different sizes or one too
+large to compare. An added or deleted picture shows its one side and says so,
+and the two comparing modes step aside for it.
+
+## A pane keeps the app's environment
+
+A pane that named itself to its shell — the tab identity the running-sessions
+list reaches by — was starting that shell with *only* that variable: passing an
+environment replaced the app's rather than adding to it. A login shell rebuilds
+enough from the profile that panes still worked, which is why it took two
+screenshots to see. A prompt drew a user segment nobody had asked for, because
+the rule that hides it reads a variable that was no longer there. What is given
+is added now, and a test says so.
+
+## The pill believes a working session for longer
+
+A session that was working showed as silent after thirty seconds, and the pill
+read `0 · 0` over a list of sessions plainly at work. Thirty seconds is the
+tabs' rule and right for them: they go stale by any byte printed in the pane,
+and Claude prints a spinner while it works. The register's clock is the last
+hook event, and hook events bracket a tool call — a `make test` is ninety
+seconds with nothing in between. Ten minutes now, and an hour before a session
+is forgotten outright.
+
 ## Next Tab follows the keyboard
 
 ⌘⇧] and ⌘⇧[ used to move the editor's tabs wherever the keyboard was, so pressed

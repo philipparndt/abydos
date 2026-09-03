@@ -512,7 +512,21 @@ public final class PseudoTerminal {
 		app: String? = BundledCommands.appBundle,
 		inherited: [String: String] = ProcessInfo.processInfo.environment
 	) -> [String: String] {
-		var merged = given ?? inherited
+		// **What is given is added to the app's environment, not put in place
+		// of it.** This was `given ?? inherited`, so the first caller ever to
+		// pass a variable — the tab naming itself `ABYDOS_TERMINAL` — started
+		// its shell with that one variable and the few below: no `PATH`, no
+		// `HOME`, no `USER`, no `SSH_*`. A login shell rebuilds enough from the
+		// profile that the pane still worked, which is why it took two
+		// screenshots to see: a prompt drew a user segment nobody had asked for,
+		// because the prompt's own rule for hiding it reads a variable that was
+		// no longer there.
+		//
+		// Nobody ever wanted the other meaning. A pane is the app's environment
+		// plus whatever this particular pane is; every caller passing a
+		// dictionary is naming the second.
+		var merged = inherited
+		for (key, value) in given ?? [:] { merged[key] = value }
 		// Claim a capable terminal so tools enable colour and full-screen UI.
 		merged["TERM"] = merged["TERM"] ?? "xterm-256color"
 		merged["COLORTERM"] = merged["COLORTERM"] ?? "truecolor"

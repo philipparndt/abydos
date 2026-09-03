@@ -243,6 +243,20 @@ final class ChangesPane: NSView, ScaleFollowing {
 	private var subjectField: NSTextField!
 	/// The diff of the selected change, in `.page` only.
 	private var diffView: DiffView?
+	/// The text diff and the picture diff, and which is in the scroll view: a
+	/// changed picture diffs as two pictures rather than as one sentence.
+	///
+	/// **Built on the first ask that can build it, not lazily.** A `lazy var`
+	/// here cached the nil from the first ask, which arrives before the page is
+	/// arranged and the diff view is in a scroll view at all — and a cached nil
+	/// is a picture that diffs as prose for the life of the pane.
+	private var builtDiffDocuments: DiffDocuments?
+	private var diffDocuments: DiffDocuments? {
+		if let builtDiffDocuments { return builtDiffDocuments }
+		guard let diffView, let made = DiffDocuments(text: diffView) else { return nil }
+		builtDiffDocuments = made
+		return made
+	}
 	private var pageSplit: NSSplitView?
 	private var hasPlacedDivider = false
 	private var draftButton: DrawnButton?
@@ -2044,6 +2058,13 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// its row here rather than in a page that looks the same as before.
 	func select(path: String) { selectChangeForTesting(path) }
 
+	/// Switches the picture diff's mode, as the choice control does.
+	func choosePictureModeForTesting(_ index: Int) -> String {
+		guard let documents = diffDocuments, documents.showsPicture else { return "no picture showing" }
+		documents.picture.chooseForTesting(index)
+		return documents.picture.reportForTesting
+	}
+
 	func selectChangeForTesting(_ path: String) {
 		for table in [unstagedTable, stagedTable].compactMap({ $0 }) {
 			for row in 0..<table.numberOfRows {
@@ -2067,7 +2088,7 @@ final class ChangesPane: NSView, ScaleFollowing {
 			said.append("draft=absent")
 		}
 		said.append("history=\(historyButton?.isHidden == false ? "shown" : "hidden")")
-		said.append("diff=\(diffView?.reportForTesting ?? "none")")
+		said.append("diff=\(diffDocuments?.reportForTesting ?? diffView?.reportForTesting ?? "none")")
 		said.append(layoutReportForTesting())
 		return said.joined(separator: "\n")
 	}
@@ -2603,6 +2624,23 @@ extension ChangesPane {
 		// screen is always the last row asked for and never the slowest one.
 		diffGeneration += 1
 		let generation = diffGeneration
+
+		// A picture diffs as two pictures, not as "No textual changes."
+		if PictureDiffLoader.isPicture(change.path, in: root), let documents = diffDocuments {
+			Task { @MainActor [weak self] in
+				guard let self else { return }
+				let estate = self.submodules.estate
+				let owner = estate.repositoryRoot(containing: change.path)
+				let loaded = await PictureDiffLoader.load(
+					change, path: estate.relativePath(of: change.path), in: owner
+				)
+				guard generation == self.diffGeneration else { return }
+				documents.showPicture().show(old: loaded.old, new: loaded.new, outcome: loaded.outcome)
+			}
+			return
+		}
+		diffDocuments?.showText()
+
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			// **In the repository that owns the path.** `git diff -- svc-2/…`

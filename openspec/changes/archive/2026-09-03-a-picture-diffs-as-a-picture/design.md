@@ -117,3 +117,20 @@ of the pane keeps the divider where it was over the picture.
 - Whether *Changes* should also be offered as a blink — old and new alternated
   on a timer — which some reviewers prefer to boxes. Not in this change; the
   slider covers the same want more calmly.
+
+## What implementing it found
+
+**A `lazy var` cached a nil, and that is worth remembering.** `DiffDocuments`
+is built from `diffView.enclosingScrollView`, and the first ask arrives before
+the page is arranged — so a `lazy var` cached nil for the life of the pane and
+every picture diffed as prose. It is a computed property that builds on the
+first ask that can build it. The same trap in three panes, once each.
+
+**The bytes needed their own path, and it was smaller than expected.**
+`GitRepository.run` decodes stdout as UTF-8 and `ProcessPipes.drain` already
+returns `Data`; `runData` is that drain with the same environment guards.
+
+**The commit page's old side is the index, not `HEAD`.** For an unstaged
+change the index is what the working file is being compared against, and it is
+`HEAD` only when nothing of the file is staged — so the label says which it is
+rather than claiming `HEAD` for both.

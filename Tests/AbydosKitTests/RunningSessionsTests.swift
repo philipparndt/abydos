@@ -267,8 +267,10 @@ struct RunningSessionsTests {
 	@Test func aWorkingSessionThatFallsSilentIsCountedUnderNeither() {
 		var running = RunningSessions()
 		running.note(payload("PreToolUse", status: "working"), now: t0)
-		#expect(running.counts(at: t0.addingTimeInterval(29)) == .init(working: 1, needsInput: 0, total: 1))
-		let later = t0.addingTimeInterval(TmuxMirror.Window.staleAfter + 1)
+		// A tool call runs for minutes with no hook event either side of it, so
+		// the register believes a working session far longer than a tab does.
+		#expect(running.counts(at: t0.addingTimeInterval(120)) == .init(working: 1, needsInput: 0, total: 1))
+		let later = t0.addingTimeInterval(RunningSessions.silentAfter + 1)
 		#expect(running.counts(at: later) == .init(working: 0, needsInput: 0, total: 1))
 		#expect(running.session(id: "s-1")?.shown(at: later) == .unknown)
 		#expect(running.needsClock)

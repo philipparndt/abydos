@@ -81,6 +81,7 @@ public final class Settings {
 			Key.reviewRequestsIncludeTeams: true,
 			Key.diffShowsChrome: false,
 			Key.diffIsSideBySide: false,
+			Key.pictureDiffMode: 0,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
 			Key.uiScale: 1.0,
 			// Big enough to read from the back of a room, and light, because a
@@ -153,6 +154,7 @@ public final class Settings {
 		static let reviewShowsWholeFile = "reviewShowsWholeFile"
 		static let diffShowsChrome = "diffShowsChrome"
 		static let diffIsSideBySide = "diffIsSideBySide"
+		static let pictureDiffMode = "pictureDiffMode"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let agentPermissions = "agentPermissions"
@@ -837,6 +839,14 @@ public final class Settings {
 	public var diffIsSideBySide: Bool {
 		get { defaults.bool(forKey: Key.diffIsSideBySide) }
 		set { set(newValue, Key.diffIsSideBySide) }
+	}
+
+	/// How a changed picture is looked at in a diff: 0 side by side, 1 under a
+	/// slider, 2 as its changed regions. Remembered, so a person who reviews
+	/// screenshots by their regions opens on them.
+	public var pictureDiffMode: Int {
+		get { defaults.integer(forKey: Key.pictureDiffMode) }
+		set { set(newValue, Key.pictureDiffMode) }
 	}
 
 	/// Whether choosing another project opens a window or replaces this one.

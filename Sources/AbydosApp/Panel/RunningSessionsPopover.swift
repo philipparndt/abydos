@@ -208,6 +208,15 @@ final class RunningSessionsListView: NSView {
 	private var now = Date()
 	private var trackingArea: NSTrackingArea?
 
+	/// How far round the working rows' spinners are, and the timer that turns
+	/// them. Its own timer and not the panel's one-second clock: that one is
+	/// for believing a session, and a spinner wants twelve frames a second.
+	/// It exists only while a row is turning, and only the badges are redrawn —
+	/// redrawing a list of a dozen rows twelve times a second to turn three
+	/// little marks would be as silly here as it is on the strip.
+	private var spinnerPhase: CGFloat = 0
+	private var spinnerTimer: Timer?
+
 	override var isFlipped: Bool { true }
 
 	private var width: CGFloat { Theme.current.scaled(440) }
@@ -267,6 +276,44 @@ final class RunningSessionsListView: NSView {
 		if let hovered, hovered >= rows.count { self.hovered = nil }
 		setFrameSize(wantedSize)
 		needsDisplay = true
+		syncSpinner()
+	}
+
+	/// Turning while a row is working, stopped otherwise — the shape the tab
+	/// strip's own spinner keeps, for the same reason: an idle list is idle.
+	private func syncSpinner() {
+		let wanted = rows.contains { entry in
+			guard case let .session(session, _) = entry.row else { return false }
+			return session.shown(at: now) == .working
+		}
+		if wanted, spinnerTimer == nil {
+			spinnerTimer = Timer.scheduledTimer(withTimeInterval: Spinner.interval, repeats: true) { [weak self] _ in
+				MainActor.assumeIsolated {
+					guard let self else { return }
+					self.spinnerPhase += 1
+					// Only the badges: the rest of the row has not moved.
+					for entry in self.rows {
+						guard case let .session(session, _) = entry.row,
+						      session.shown(at: self.now) == .working
+						else { continue }
+						self.setNeedsDisplay(self.badgeRect(in: entry.frame))
+					}
+				}
+			}
+			// A popover's tracking mode is its own; the strip's spinner keeps
+			// turning through a menu for the same reason.
+			RunLoop.main.add(spinnerTimer!, forMode: .common)
+		} else if !wanted {
+			spinnerTimer?.invalidate()
+			spinnerTimer = nil
+		}
+	}
+
+	deinit { spinnerTimer?.invalidate() }
+
+	/// Where a row's badge is, which is all a spinner redraws.
+	private func badgeRect(in frame: NSRect) -> NSRect {
+		NSRect(x: inset, y: frame.midY - badgeSize / 2, width: badgeSize, height: badgeSize)
 	}
 
 	private static func matches(
@@ -335,7 +382,7 @@ final class RunningSessionsListView: NSView {
 		}
 
 		let shown = session.shown(at: now)
-		let badge = NSRect(x: inset, y: frame.midY - badgeSize / 2, width: badgeSize, height: badgeSize)
+		let badge = badgeRect(in: frame)
 		drawBadge(shown, in: badge, dimmed: !reach.isReachable)
 
 		// Dimmed text ink, not the header ink: in this theme the header ink is
@@ -385,12 +432,20 @@ final class RunningSessionsListView: NSView {
 		}
 		if let status {
 			let colour = dimmed ? Theme.current.sidebarHeaderText : PanelTabStrip.colour(for: status)
-			Theme.symbol(
-				PanelTabStrip.symbol(for: status),
-				size: 11 * Theme.current.scale,
-				color: colour,
-				weight: .semibold
-			)?.drawFitted(in: rect)
+			// A working session turns, as its tmux tab does. The still `⋯` the
+			// tabs replaced for this reason was drawn here too, so the pill
+			// counted a session as working while the row beside it looked
+			// asleep — reported 2026-09-03.
+			if status == .working {
+				Spinner.draw(in: rect, phase: spinnerPhase, colour: colour)
+			} else {
+				Theme.symbol(
+					PanelTabStrip.symbol(for: status),
+					size: 11 * Theme.current.scale,
+					color: colour,
+					weight: .semibold
+				)?.drawFitted(in: rect)
+			}
 		} else {
 			let ring = NSBezierPath(ovalIn: rect.insetBy(dx: Theme.current.scaled(2.5), dy: Theme.current.scaled(2.5)))
 			ring.lineWidth = Theme.current.scaled(1.2)

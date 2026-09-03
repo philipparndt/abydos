@@ -3,13 +3,13 @@
 4948 Sources/AbydosApp/Editor/EditorViewController.swift
 3606 Sources/AbydosApp/Editor/LanguageService.swift
 4508 Sources/AbydosApp/Git/BranchesPane.swift
-2856 Sources/AbydosApp/Git/ChangesPane.swift
-1612 Sources/AbydosApp/Git/HistoryPane.swift
+2894 Sources/AbydosApp/Git/ChangesPane.swift
+1514 Sources/AbydosApp/Git/HistoryPane.swift
 1498 Sources/AbydosApp/LaunchOptions.swift
 4239 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift
-1564 Sources/AbydosApp/Navigator/SidebarController.swift
+1568 Sources/AbydosApp/Navigator/SidebarController.swift
 2606 Sources/AbydosApp/Panel/BacklogPane.swift
-5550 Sources/AbydosApp/Panel/BottomPanel.swift
+5536 Sources/AbydosApp/Panel/BottomPanel.swift
 1542 Sources/AbydosApp/Panel/DebugPane.swift
 1079 Sources/AbydosApp/Panel/ResultChecklist.swift
 1076 Sources/AbydosApp/Settings/SettingsWindowController.swift
@@ -23,5 +23,5 @@
 1580 Sources/AbydosKit/Run/DevPod.swift
 1374 Sources/AbydosKit/Terminal/GhosttyTerminalEngine.swift
 1097 Sources/AbydosKit/Terminal/KittyGraphics.swift
-1146 Sources/AbydosKit/Terminal/PseudoTerminal.swift
+1160 Sources/AbydosKit/Terminal/PseudoTerminal.swift
 1657 Sources/AbydosKit/Terminal/TerminalEmulator.swift

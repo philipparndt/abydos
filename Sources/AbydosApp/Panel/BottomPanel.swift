@@ -4165,7 +4165,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	private func syncSpinner() {
 		let wanted = items.contains { $0.aiStatus == .working }
 		if wanted, spinnerTimer == nil {
-			spinnerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
+			spinnerTimer = Timer.scheduledTimer(withTimeInterval: Spinner.interval, repeats: true) { [weak self] _ in
 				guard let self else { return }
 				self.spinnerPhase += 1
 				// Only the badges: redrawing a whole strip twelve times a
@@ -5126,21 +5126,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	/// placed and torn down every time tmux's window list changes — which is
 	/// twice a second.
 	private func drawSpinner(in rect: NSRect, colour: NSColor? = nil) {
-		let radius = rect.width / 2 - Theme.current.scaled(1.5)
-		let centre = NSPoint(x: rect.midX, y: rect.midY)
-		let start = spinnerPhase * 30
-
-		let arc = NSBezierPath()
-		arc.appendArc(
-			withCenter: centre,
-			radius: radius,
-			startAngle: start,
-			endAngle: start + 280
-		)
-		arc.lineWidth = Theme.current.scaled(1.6)
-		arc.lineCapStyle = .round
-		(colour ?? Self.colour(for: .working)).setStroke()
-		arc.stroke()
+		Spinner.draw(in: rect, phase: spinnerPhase, colour: colour ?? Self.colour(for: .working))
 	}
 
 	/// cmanager's three states, in this app's alphabet.

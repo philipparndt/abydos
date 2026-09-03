@@ -76,7 +76,13 @@ public struct RunningSessions: Equatable, Sendable {
 		public func shown(at now: Date) -> Shown {
 			switch status {
 			case .working?:
-				return now.timeIntervalSince(lastEvent) > TmuxMirror.Window.staleAfter ? .unknown : .working
+				// **Two clocks, two bounds.** A seeded record's `lastEvent` is
+				// tmux's `window_activity` — the last byte printed in the pane —
+				// which is the very clock the tabs go stale by, so it keeps the
+				// tabs' thirty seconds. A record the hook fed is timed by its
+				// last event, and events bracket a tool call: see `silentAfter`.
+				let bound = isSeeded ? TmuxMirror.Window.staleAfter : RunningSessions.silentAfter
+				return now.timeIntervalSince(lastEvent) > bound ? .unknown : .working
 			case .needsInput?: return .needsInput
 			case .done?: return .done
 			case nil: return .unknown
@@ -122,15 +128,32 @@ public struct RunningSessions: Equatable, Sendable {
 		public let sessions: [Session]
 	}
 
+	/// How long a working session may say nothing before it is not believed.
+	///
+	/// **Not the tabs' thirty seconds, and the difference is what the clock is
+	/// measuring.** A tab goes stale by `window_activity` — any byte printed in
+	/// the pane — and Claude prints a spinner and a running total while it
+	/// works, so a working pane is never quiet for long. The register's clock
+	/// is the last *hook event*, and hook events bracket a tool call: a
+	/// `PreToolUse`, then the tool runs, then a `PostToolUse`. A `make test`
+	/// tool call is ninety seconds with nothing in between, and thinking before
+	/// a first tool use is longer still.
+	///
+	/// So the pill read `0 · 0` over a list of sessions marked *silent for 40 s*
+	/// while three of them were working — which is the report, 2026-09-03. Ten
+	/// minutes is longer than any single tool call this app runs and far
+	/// shorter than an abandoned session.
+	public static let silentAfter: TimeInterval = 600
+
 	/// How long a working session may say nothing before it is forgotten.
 	///
 	/// A session killed mid-turn — `kill -9`, a machine put to sleep with the
 	/// terminal gone when it wakes — sends no `SessionEnd`, and nothing else
-	/// ever removes it. Thirty seconds of silence makes it hollow; ten minutes
-	/// of it means nobody is coming back to answer for it. A session waiting
-	/// for input or finished is never forgotten this way: those are states a
+	/// ever removes it. Ten minutes of silence makes it hollow; an hour of it
+	/// means nobody is coming back to answer for it. A session waiting for
+	/// input or finished is never forgotten this way: those are states a
 	/// session stays in for as long as somebody likes.
-	public static let forgottenAfter: TimeInterval = 600
+	public static let forgottenAfter: TimeInterval = 3600
 
 	/// Every record, by the session's id — or, for a seeded record, by the tmux
 	/// window it stands for, so there can only be one per window.

@@ -37,6 +37,18 @@ final class PullRequestPage: NSView {
 	private var fileList: ChangedFileList!
 	private var diffView: DiffView!
 	private var diffScroll: NSScrollView!
+	/// The text diff and the picture diff, and which is in the scroll view: a
+	/// changed picture diffs as two pictures rather than as one sentence.
+	///
+	/// Built on the first ask that can build it: a `lazy var` cached the nil
+	/// from an ask made before the page was arranged.
+	private var builtDiffDocuments: DiffDocuments?
+	private var diffDocuments: DiffDocuments? {
+		if let builtDiffDocuments { return builtDiffDocuments }
+		guard diffView != nil, let made = DiffDocuments(text: diffView) else { return nil }
+		builtDiffDocuments = made
+		return made
+	}
 	private var arrangeControl: DrawnChoice!
 	private var wholeFileSwitch: DrawnCheckbox!
 	private var hideReadSwitch: DrawnCheckbox!
@@ -411,6 +423,20 @@ final class PullRequestPage: NSView {
 	}
 
 	private func show(file: GitCommitFile) {
+		// A picture diffs as two pictures: the base against the head, when both
+		// are fetched. A side that is not says so rather than pretending.
+		if PictureDiffLoader.isPicture(file.path, in: root), let documents = diffDocuments {
+			onFileShown?(file.path)
+			Task { @MainActor [weak self] in
+				guard let self else { return }
+				let loaded = await PictureDiffLoader.load(
+					file, base: self.request.baseRefName, head: self.head, in: self.root
+				)
+				documents.showPicture().show(old: loaded.old, new: loaded.new, outcome: loaded.outcome)
+			}
+			return
+		}
+		diffDocuments?.showText()
 		guard let diff = diffs[file.path] else {
 			diffView.setDiff("", staged: false)
 			return
@@ -614,7 +640,7 @@ final class PullRequestPage: NSView {
 			)
 			said += pending.comments.map { "  wrote on \($0.path) \($0.place) — \($0.body)" }
 		}
-		said.append("diff=\(diffView.reportForTesting)")
+		said.append("diff=\(diffDocuments?.reportForTesting ?? diffView.reportForTesting)")
 		said += diffView.commentsForTesting().map { "  " + $0 }
 		return said.joined(separator: "\n")
 	}

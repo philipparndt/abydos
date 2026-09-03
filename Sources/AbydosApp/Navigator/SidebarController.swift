@@ -1291,6 +1291,10 @@ final class SidebarController: NSObject {
 			case "who":    print("COMMIT-PAGE \(page.keyboardReportForTesting())")
 			case "keys":   print("COMMIT-PAGE keys: " + page.keysForTesting(argument))
 			case "select": page.selectChangeForTesting(argument)
+			// Which way a changed picture is being looked at: 0 side by side,
+			// 1 the slider, 2 the changed regions.
+			case "picture-mode":
+				print("COMMIT-PAGE picture: " + page.choosePictureModeForTesting(Int(argument) ?? 0))
 			case "type":   page.carrySummaryForTesting(argument)
 			case "chevron": page.toggleDescriptionForTesting()
 			case "return":  page.pressReturnInSummaryForTesting()

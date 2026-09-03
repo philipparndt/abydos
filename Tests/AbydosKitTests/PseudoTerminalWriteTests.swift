@@ -241,6 +241,21 @@ struct PseudoTerminalEnvironmentTests {
 		#expect(merged["PAGER"] == nil)
 	}
 
+	/// **A pane is the app's environment plus what the pane is.** Passing a
+	/// variable used to replace the whole environment, so the tab that names
+	/// itself to its shell gave that shell no `PATH` and no `HOME`; the prompt
+	/// then drew a user segment nobody had asked for, which is how it was
+	/// found. What is given is added.
+	@Test func whatIsGivenIsAddedToTheAppsEnvironment() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			["ABYDOS_TERMINAL": "a-tab"], bundled: nil,
+			inherited: ["PATH": "/usr/bin", "HOME": "/Users/x"]
+		)
+		#expect(merged["ABYDOS_TERMINAL"] == "a-tab")
+		#expect(merged["PATH"] == "/usr/bin")
+		#expect(merged["HOME"] == "/Users/x")
+	}
+
 	/// What somebody already has wins: this is claiming a capable terminal, not
 	/// overruling a choice.
 	@Test func leavesWhatIsAlreadySetAlone() {

@@ -118,6 +118,20 @@ final class HistoryPane: NSView, ScaleFollowing {
 	private var detailLabel: NSTextField!
 	/// The diff of the selected file, in `.page` only.
 	private var diffView: DiffView?
+	/// The text diff and the picture diff, and which is in the scroll view: a
+	/// changed picture diffs as two pictures rather than as one sentence.
+	///
+	/// **Built on the first ask that can build it, not lazily.** A `lazy var`
+	/// here cached the nil from the first ask, which arrives before the page is
+	/// arranged and the diff view is in a scroll view at all — and a cached nil
+	/// is a picture that diffs as prose for the life of the pane.
+	private var builtDiffDocuments: DiffDocuments?
+	private var diffDocuments: DiffDocuments? {
+		if let builtDiffDocuments { return builtDiffDocuments }
+		guard let diffView, let made = DiffDocuments(text: diffView) else { return nil }
+		builtDiffDocuments = made
+		return made
+	}
 	/// The page's splits, and whether their dividers have been put yet.
 	private var pageSplit: NSSplitView?
 	private var detailSplit: NSSplitView?
@@ -793,6 +807,17 @@ final class HistoryPane: NSView, ScaleFollowing {
 			onSelectFile?(commit, file)
 			return
 		}
+		// A picture diffs as two pictures: the parent's and the commit's.
+		if PictureDiffLoader.isPicture(file.path, in: root), let documents = diffDocuments {
+			Task { @MainActor [weak self] in
+				guard let self else { return }
+				let loaded = await PictureDiffLoader.load(file, at: commit.hash, in: self.root)
+				guard self.selectedCommit?.hash == commit.hash else { return }
+				documents.showPicture().show(old: loaded.old, new: loaded.new, outcome: loaded.outcome)
+			}
+			return
+		}
+		diffDocuments?.showText()
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			let text = await GitHistory.diff(of: commit.hash, path: file.path, in: self.root)
@@ -1194,7 +1219,7 @@ final class HistoryPane: NSView, ScaleFollowing {
 		}
 		said.append("files=\(files.count)")
 		said += files.prefix(6).map { "  \($0.path)" }
-		said.append("diff=\(diffView?.reportForTesting ?? "none")")
+		said.append("diff=\(diffDocuments?.reportForTesting ?? diffView?.reportForTesting ?? "none")")
 		return said.joined(separator: "\n")
 	}
 
