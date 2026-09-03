@@ -12,7 +12,11 @@
 ## 3. Finishing
 
 - [x] 3.1 Say it in the release notes.
-- [ ] 3.2 `make test` and `make warnings`, both clean, both by their exit codes.
+- [x] 3.2 `make test` and `make warnings`, both clean, both by their exit codes
+  — 4023 tests in 512 suites passed in 57.6 s at load 13 on 2026-09-03, with
+  the suite's two standing known issues, and both runs returned 0. The six
+  attempts that failed the evening before were load-bound give-up bounds, not
+  this change.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 gone and its account is `openspec/specs`, where the `running-sessions` delta in

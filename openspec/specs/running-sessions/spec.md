@@ -340,3 +340,120 @@ to the first row when that session has gone.
 - **WHEN** an event arrives and the list is rebuilt
 - **THEN** the same session is still selected
 
+### Requirement: The register counts a session's subagents
+
+The register SHALL keep, per running session, how many subagents it has out:
+raised by a `PreToolUse` whose tool is the one that spawns a subagent, lowered
+by a `SubagentStop`, never below nought, and set to nought when a turn ends.
+
+The reset is what keeps it honest. A `SubagentStop` can go missing — the app was
+not running, the subagent was killed — and a count that only rose would be
+wrong for the life of the session. A finished turn has no subagents running,
+whatever was missed in it.
+
+The tool's name SHALL be read from the event the hook was given rather than
+assumed. Where the name does not match, the count SHALL stay at nought, so a
+guess that is wrong reads as a session with no subagents rather than as a wrong
+number.
+
+#### Scenario: two sent off and one back
+
+- **GIVEN** a working session
+- **WHEN** it sends two `PreToolUse` events for the spawning tool and then one `SubagentStop`
+- **THEN** the register says it has one subagent out
+
+#### Scenario: a turn that ends
+
+- **GIVEN** a session with two subagents out
+- **WHEN** its turn ends
+- **THEN** the register says it has none
+
+#### Scenario: more back than went out
+
+- **GIVEN** a session with no subagents out
+- **WHEN** a `SubagentStop` arrives
+- **THEN** the count is nought and not below it
+
+#### Scenario: an ordinary tool use
+
+- **GIVEN** a working session
+- **WHEN** it sends a `PreToolUse` for reading a file
+- **THEN** the count is nought
+
+### Requirement: A row says how many subagents are out
+
+A row in the popover SHALL say how many subagents its session has out when it
+has any — beside what the session last said, in the same dimmed trailing text —
+and SHALL say nothing about them when it has none, because a count of nought is
+not news.
+
+#### Scenario: a session with subagents
+
+- **GIVEN** a session with two subagents out
+- **THEN** its row reads `2 subagents` after its last line
+
+#### Scenario: a session working alone
+
+- **GIVEN** a working session with no subagents
+- **THEN** its row says nothing about subagents
+
+### Requirement: A key opens the list of running sessions
+
+The application SHALL offer the list of running Claude sessions on a keyboard
+shortcut of ⇧⌘A, from a menu item in the Agent menu, whether or not the
+terminal panel that carries the sessions pill is open.
+
+#### Scenario: The key opens the list with the panel closed
+
+- **WHEN** the terminal panel is closed and ⇧⌘A is pressed
+- **THEN** the list of running sessions opens
+- **AND** it opens whether or not any session is running, so that the answer
+  "nothing is running" is one somebody can ask for
+- **AND** with nothing running the foot says so and says nothing else, since
+  the note about what a click copies has no row to be about
+
+#### Scenario: The list opens over the window that answered the key
+
+- **WHEN** the list is opened by the key
+- **THEN** it appears centred horizontally on the window whose menu answered
+  the key, near its top edge
+- **AND** it is a child of that window, so it follows it and stays above it
+
+#### Scenario: The key and the pill open the same list
+
+- **WHEN** the list is opened by the key rather than by the pill
+- **THEN** the filter field, the rows, the arrow keys, ⏎ and Escape behave as
+  they do in the popover
+- **AND** choosing a row does what choosing it in the popover does
+
+#### Scenario: One list at a time
+
+- **WHEN** the list is open by one route and is opened by the other
+- **THEN** the first is put away, so the list is never on screen twice
+
+#### Scenario: Escape and a click elsewhere put it away
+
+- **WHEN** the list opened by the key has the keyboard and Escape is pressed
+- **THEN** it closes and the keyboard returns to the window
+- **WHEN** another window is clicked while it is open
+- **THEN** it closes
+
+### Requirement: The popover says which key opens the list
+
+The popover MUST show the shortcut that opens the list, dimmed, at the trailing
+edge of its filter row, so that somebody who reached the list by clicking the
+pill can see the key that reaches it next time.
+
+#### Scenario: The shortcut is drawn beside the filter
+
+- **WHEN** the popover is open
+- **THEN** `⇧⌘A` is shown at the trailing edge of the row holding the filter
+  field
+- **AND** it is drawn in the dimmed colour used for text that is not the
+  content, so it does not compete with the sessions
+
+#### Scenario: The palette does not repeat the key
+
+- **WHEN** the list was opened by the key
+- **THEN** the shortcut is not shown, because it has just been used
+
