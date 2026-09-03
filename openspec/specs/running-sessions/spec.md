@@ -1,0 +1,225 @@
+# running-sessions Specification
+
+## Purpose
+TBD - created by archiving change the-panel-counts-the-running-sessions. Update Purpose after archive.
+## Requirements
+### Requirement: The register remembers what each running session last said
+
+The app SHALL keep, for every running session it has heard of, the status the
+hook last derived, the tmux session and window the hook ran in when it did,
+the last line the hook announced, and the time of the last event. A session is
+running from its `SessionStart`, or from the first event heard from it, until
+its `SessionEnd`.
+
+The register SHALL say whether an event moved the shown answer — a session
+appearing or ending, a status changing, a turn finishing — and SHALL say that
+nothing moved for a tool-use event from a session whose status it already had.
+The second half is what makes listening affordable: a working session sends a
+tool-use event dozens of times a minute.
+
+#### Scenario: a status change is a move
+
+- **WHEN** a session known to be working sends a `Notification` that wants an answer
+- **THEN** the register records it as needing input, and says the answer moved
+
+#### Scenario: a tool use from a known working session is not
+
+- **WHEN** a session known to be working sends a `PostToolUse` with status `working`
+- **THEN** the register keeps its record, and says nothing moved
+
+#### Scenario: the last line is kept
+
+- **WHEN** a session announces `zsh needs you` with a message naming the permission asked
+- **THEN** the register holds that line and that message against the session, with the time
+
+### Requirement: The pill counts the working and the waiting, and nothing else
+
+The terminal panel's title bar SHALL show, left of the tmux session tag, a pill
+with two counts: how many running sessions on the machine are working, in the
+tabs' working colour, and how many need input, in the tabs' needs colour. A
+finished session SHALL NOT be counted. A working session whose last event is
+older than the tabs' staleness bound SHALL be counted under neither.
+
+The pill SHALL NOT be drawn when the register holds no session. Where the strip
+is too narrow for the tmux tag to carry the session's name, the pill SHALL
+drop its digits and keep its dots.
+
+#### Scenario: three working, one waiting, one finished
+
+- **GIVEN** five running sessions: three working, one needing input, one done
+- **WHEN** the strip is drawn
+- **THEN** the pill reads a working count of 3 and a needs count of 1
+
+#### Scenario: a working session falls silent
+
+- **GIVEN** one working session whose last event was 31 seconds ago
+- **WHEN** the strip is redrawn
+- **THEN** the working count is 0, and the pill is still drawn because the session is still running
+
+#### Scenario: nothing running
+
+- **GIVEN** an empty register
+- **THEN** no pill is drawn
+
+#### Scenario: a narrow strip
+
+- **GIVEN** a strip under the width at which the tmux tag drops the session's name
+- **THEN** the pill shows its two dots without digits
+
+### Requirement: The pill redraws when the answer moves, and ticks only while something works
+
+The pill SHALL redraw when the register says an event moved the shown answer,
+and SHALL NOT redraw for an event that did not. While at least one session is
+working, the pill SHALL re-evaluate staleness once a second; when none is, no
+timer SHALL be running.
+
+#### Scenario: a burst of tool-use events
+
+- **GIVEN** a working session sending a tool-use event every two seconds
+- **WHEN** a minute passes
+- **THEN** the pill was not redrawn for any of them
+
+#### Scenario: the last working session finishes
+
+- **GIVEN** one working session and the staleness timer running
+- **WHEN** it sends `Stop` and the register records it as done
+- **THEN** the pill redraws once, and the timer is stopped
+
+### Requirement: The popover lists every running session, this project first
+
+Clicking the pill SHALL open a popover anchored to it listing every running
+session on the machine, grouped by project. The window's own project SHALL be
+the first group; the rest SHALL follow with the most recently heard first. A
+group SHALL be titled with the last component of the project's path and its
+parent, home-relative — not its slug.
+
+A row SHALL show the session's status badge; the tmux window's name and index
+when the hook could say them, otherwise the last announced line; the last
+announced line and its message beneath; and how long ago the last event was.
+An unknown session SHALL be drawn hollow and labelled by its silence.
+
+#### Scenario: two projects
+
+- **GIVEN** the window on `abydos`, a session working there, and a session needing input in `abydos-examples`
+- **WHEN** the pill is clicked
+- **THEN** the first group is `abydos` and the second `abydos-examples`, each with its row
+
+#### Scenario: a session outside tmux
+
+- **GIVEN** a session announced with no tmux place
+- **THEN** its row is titled by its last announced line, and carries no window number
+
+#### Scenario: a session that has gone quiet
+
+- **GIVEN** a working session silent for two minutes
+- **THEN** its row is drawn hollow, reads its last line, and says how long it has been silent
+
+### Requirement: A row takes you to the session, or hands you the way back to it
+
+Clicking a row whose tmux session is the one this window mirrors SHALL reveal
+that tmux window in the panel, as the toast's action does. Clicking any other
+row SHALL copy the session's resume command to the pasteboard and SHALL say so.
+
+#### Scenario: a row in the mirrored session
+
+- **GIVEN** the window mirroring tmux session `abydos` and a row for its window 2
+- **WHEN** the row is clicked
+- **THEN** the panel shows tmux window 2
+
+#### Scenario: a row elsewhere
+
+- **GIVEN** a row for a session in another tmux session, or none
+- **WHEN** the row is clicked
+- **THEN** `claude --resume <id>` is on the pasteboard, and a toast says it was copied
+
+### Requirement: The mirrored tmux session seeds what the hook has not yet said
+
+The mirror SHALL seed the register from the windows of the tmux session this
+window mirrors: a window whose `@ai_status` names a state, and whose session the
+register has not heard from, is given a record with that state and no session
+id, so that a session running before the app launched is counted and can be
+revealed. The record SHALL be replaced by the hook's own at the session's next
+event.
+
+A seeded record SHALL be filed under the directory the window's pane is in,
+which tmux reports as `pane_current_path` — not under the project this window
+is on. A tmux session is somebody's workspace and its windows sit in many
+projects; filing them all under one put `screencasts` in `~/dev/oss`.
+
+Nothing SHALL be seeded for sessions outside the mirrored tmux session; those
+appear at their next event.
+
+#### Scenario: a window in another project
+
+- **GIVEN** the window on `~/dev/oss/abydos`, mirroring a tmux session whose window 2 is badged `working` and whose pane is in `~/dev/vehub/screencasts`
+- **WHEN** the mirror reads the session's windows
+- **THEN** the seeded record is grouped under `screencasts` in `~/dev/vehub`, not under `abydos`
+
+#### Scenario: a session older than the app
+
+- **GIVEN** a tmux window whose `@ai_status` is `needs` and no record for it
+- **WHEN** the mirror reads the session's windows
+- **THEN** the pill's needs count includes it, and its row reveals the window
+
+#### Scenario: the hook catches up
+
+- **GIVEN** such a seeded record
+- **WHEN** the session's next hook event arrives with its id
+- **THEN** there is one record for it, the hook's, and the counts do not change
+
+### Requirement: A driven run can be told what to show
+
+A driven run SHALL accept `--claude-running <id>[@<seconds>][:<status>]`, more
+than once, to put records in the register without a hook, so the pill and the
+popover can be photographed and read. The status defaults to `working`. A
+driven run SHALL still subscribe to no hook, as the screenshots capability
+requires.
+
+#### Scenario: two states in one picture
+
+- **GIVEN** a driven run given `--claude-running a:working --claude-running b:needs`
+- **THEN** the pill reads 1 and 1, and the popover has two rows in the run's project
+
+#### Scenario: a session appearing while somebody watches
+
+- **GIVEN** a driven run given `--claude-running a@3`
+- **WHEN** three seconds pass
+- **THEN** the pill appears with a working count of 1
+
+### Requirement: A nudge does not wake a finished session
+
+The register SHALL leave a `done` record as it is when a `Notification` that is
+only Claude's idle nudge, or a `SubagentStop`, arrives for that session, SHALL
+report the event as no move, and SHALL NOT let it be announced in the corner. The
+register SHALL be able to say so before the event is recorded, so the corner can
+ask.
+
+This is the rule the hook already keeps for a session in tmux, where the window's
+own badge says `done`; outside tmux the hook has no memory, and the register is
+it. A nudge for a session that was working, or a notification that is a real
+question — a permission prompt, `agent_needs_input` — is unaffected.
+
+#### Scenario: the idle nudge a minute after an answer
+
+- **GIVEN** a session outside tmux whose record says `done`
+- **WHEN** a `Notification` of type `idle_prompt` arrives for it, with status `needs`
+- **THEN** the record still says `done`, the pill's counts do not move, and no toast is raised
+
+#### Scenario: a subagent finishing after the turn ended
+
+- **GIVEN** a session whose record says `done`
+- **WHEN** a `SubagentStop` arrives for it
+- **THEN** the record still says `done` and nothing is announced
+
+#### Scenario: a nudge for a session that was working
+
+- **GIVEN** a session whose record says `working`
+- **WHEN** a `Notification` of type `idle_prompt` arrives for it, with status `needs`
+- **THEN** the record says `needs`, and the row turns amber
+
+#### Scenario: a real question after a finished turn
+
+- **GIVEN** a session whose record says `done`
+- **WHEN** a `Notification` of type `permission_prompt` arrives for it, with status `needs`
+- **THEN** the record says `needs`
+

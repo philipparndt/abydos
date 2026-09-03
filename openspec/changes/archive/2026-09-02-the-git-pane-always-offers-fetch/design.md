@@ -85,3 +85,12 @@ overlapping.
 0.10.0, it re-read only what the watcher already re-reads, and the verb stays on
 the context menu. Worth saying in the release notes rather than treating as
 silent.
+
+## What archiving it found
+
+**The removal was never in the spec.** The delta carried a `REMOVED` block for
+"the repository row offers a local re-read", and `git-remote-traffic` has no
+such requirement — the proposal said as much: "no existing requirement states
+that re-reading is a control of its own". The archive refused the removal of a
+requirement that was not there, and the block is dropped. What the glyph did
+and what took its place is recorded above and in the 0.11.0 notes.

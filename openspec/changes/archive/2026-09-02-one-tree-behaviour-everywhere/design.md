@@ -177,6 +177,47 @@ variables, the breakpoint list, the pull-request list and the value popup stay
 on `ThemedRowView`. That is a boundary with a reason, written at both classes,
 rather than a job half done.
 
+## What the sweep found, 2026-09-02
+
+**The branches tree had written the first half for itself.** `rebuildRows`
+remembered every selected key across `reloadData()` and put back whichever it
+found — and a key that had gone, a branch just deleted or filtered away, left
+nothing selected and nothing said. It is on `TreeSelectionKeeper` now, by key
+rather than by path, since a ref is not a file. Four more bare `reloadData()`
+calls — on push, on publish, while deleting, on a theme change — dropped the
+selection outright and go through the same keeper.
+
+**The pull-request file tree is the log page's file tree.** Both are
+`ChangedFileList`, so one extraction covers the fourth tree and the log page.
+It restored by path across a rebuild and not across the line counts landing a
+moment later, which is the commit page's `--numstat` fault one pane over; and it
+had no fallback for a path that had gone, so ticking off the selected file with
+the done ones hidden left nothing selected. Both on the keeper.
+
+**One instrument for the click-then-arrow claim.** `TreeKeys` clicks a row and
+presses an arrow the way a person does, for all four trees. The log page's own
+instrument had posted screen-coordinate clicks through the system event tap,
+which go to whichever window is frontmost — in a driven run, the terminal the
+run was started from — and it hung a run. The shared one queues the release on
+the app's own event queue and hands the window the press, activates the app
+first because a press on a window that is not key is swallowed as an activating
+click, and says which view was under the point. Three trees reported the
+keyboard in a `TerminalView` before that last part, which read as the trees
+failing when the instrument was.
+
+**2b.5, answered: every tree takes the keyboard on a click.** Driven on the
+same day — changes tree, project tree, branches tree, the file list on the log
+page: click a row, the tree has the keyboard, ↓ moves the selection, ← folds a
+folder and → opens it with the selection kept, and a rebuild keeps it. None of
+the four needed what the log page's list was given; that list keeps its explicit
+`makeFirstResponder`, since the reason it once needed one was never isolated.
+
+**4.1, the outlines left alone.** Four outlines are not on the keeper: the
+settings window's list, the debugger's variables, the structure pane and the
+variable popup. None rebuilds on a filesystem event, none has had a report, and
+each would need its own idea of a path. The sweep is of the four trees people
+use all day, and says so.
+
 ## Open Questions
 
 Both of the original questions are answered above: the identity is the path, and

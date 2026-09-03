@@ -6,11 +6,12 @@ TBD - created by archiving change a-tab-that-does-not-fit-is-still-reachable. Up
 ### Requirement: Every open tab is reachable however many there are
 
 A tab strip SHALL offer a way to select any tab it holds, whatever the width of
-the window. Today both strips lay tabs out left to right with no bound and
-neither takes a `scrollWheel`, so a tab past the trailing edge can be reached
-only by widening the window or closing the tabs in front of it — and for the
-panel's strip there is not even a keyboard route, since ⌘] and ⌘[ move between
-editor tabs.
+the window. Both strips lay tabs out left to right with no bound and neither
+takes a `scrollWheel`, so a tab past the trailing edge could once be reached
+only by widening the window or closing the tabs in front of it. The panel's
+strip had no keyboard route either until ⌘⇧] and ⌘⇧[ learnt to follow the
+keyboard, which the terminal capability describes; the control below is still
+the way to a tab whose name cannot be seen.
 
 Where a strip holds more tabs than it can show, it SHALL carry a control at its
 trailing end that lists the ones that are not fully visible and selects the one

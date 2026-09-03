@@ -9,7 +9,7 @@
 
 ## 3. Finishing
 
-- [ ] 3.1 `make test` and `make warnings`, both clean, both by their exit codes.
+- [x] 3.1 `make test` and `make warnings`, both clean, both by their exit codes. Green on the reporter's machine, 2026-09-02: 4004 tests in 511 suites passed after 81.4 s with 2 known issues, exit 0. Every run here the same afternoon was red on one load-bound give-up test at loads of 16 to 56 over 14 cores.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 gone and its account is `openspec/specs`.

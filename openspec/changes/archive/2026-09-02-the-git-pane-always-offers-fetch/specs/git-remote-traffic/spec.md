@@ -15,8 +15,3 @@ The git pane SHALL offer a control that fetches from the remote, titled with the
 - **WHEN** the repository has no remote
 - **THEN** no `Fetch` control is drawn, because there is nowhere to fetch from, and re-reading the repository remains on the row's context menu
 
-## REMOVED Requirements
-
-### Requirement: The repository row offers a local re-read
-**Reason**: The glyph that offered it already fetched where there was a remote, and re-read only what the pane's own filesystem watcher re-reads on every event. A control meaning two different things depending on state is why it was unreadable.
-**Migration**: Re-reading the repository is on the repository row's context menu.

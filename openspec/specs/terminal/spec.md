@@ -882,13 +882,17 @@ The panel's controls SHALL be drawn on an opaque ground, so that a tab running
 under them is hidden rather than showing through.
 
 The tabs of a strip are laid out from its leading edge at whatever width each
-name needs, and the controls — the session tag, follow, maximise, hide — are
-placed backwards from its trailing edge. With enough tabs open the two meet:
-with a dozen terminals open the session tag was a translucent pill with a tab's
-name legible underneath it and the glyphs overlapping the names either side.
-This is the editor tab bar's own settled answer to the same collision — a tab's
-last few characters matter less than the controls staying readable and
-reachable.
+name needs, and the controls — the running-sessions pill, the session tag,
+follow, maximise, hide — are placed backwards from its trailing edge. With
+enough tabs open the two meet: with a dozen terminals open the session tag was a
+translucent pill with a tab's name legible underneath it and the glyphs
+overlapping the names either side. This is the editor tab bar's own settled
+answer to the same collision — a tab's last few characters matter less than the
+controls staying readable and reachable.
+
+The running-sessions pill is the leftmost of the controls and so the first the
+tabs meet. It SHALL take no room when it is not drawn, so a panel with no
+running session gives the tabs what the pill would have had.
 
 A tab hidden this way SHALL still be reachable, which is the other half and is
 covered by the tab-overflow capability.
@@ -899,6 +903,20 @@ covered by the tab-overflow capability.
 - **WHEN** it is drawn
 - **THEN** the controls are legible against their own ground
 - **AND** no tab name is drawn through them
+
+#### Scenario: a strip with more tabs than room and sessions running
+
+- **GIVEN** a panel strip whose tabs reach the trailing edge
+- **AND** a running session on the machine, so the pill is drawn
+- **WHEN** it is drawn
+- **THEN** the pill's counts are legible against their own ground
+- **AND** the tab that reached it is hidden under it, not drawn through it
+
+#### Scenario: nothing running
+
+- **GIVEN** no running session on the machine
+- **WHEN** the strip is laid out
+- **THEN** no room is reserved for the pill, and the tabs run to the session tag
 
 ### Requirement: A pane says which engine drew it
 
@@ -941,4 +959,140 @@ discovering it in a launch flag.
 - **WHEN** a pane is opened
 - **THEN** the fallback is said once
 - **AND** the pane says our own emulator drew it
+
+### Requirement: A pane claims a capable terminal and does not disable the pager
+
+The environment a pane is started with SHALL claim a capable terminal — `TERM`,
+`COLORTERM` and `LANG` — and SHALL NOT set `PAGER`.
+
+A program's behaviour when its output is long is the program's own: `git log`
+opens `less` with git's `LESS=FRX`, which quits by itself when the output fits a
+screen, and `man` and the rest behave as they do in every other terminal.
+
+`PAGER` was set to `cat` here, to stop a pager hanging a pane waiting for a
+keypress. That was true of a terminal that could not run a full-screen program;
+this one runs `vim`, `htop`, `claude`'s own full-screen UI and tmux, and a pager
+is that same class of program. The old default was also invisible where it hurt:
+nothing on screen said `PAGER` had been chosen for you, so `git log` printing
+everything read as this terminal being broken — which is how it was reported.
+
+An environment given to a pane explicitly, and a `PAGER` in it, SHALL be left
+alone: claiming a capable terminal is not overruling a choice. A `PAGER` the app
+inherits from whatever launched it is such a choice and SHALL reach the pane
+too.
+
+A tmux server that is already running SHALL have this app's own `PAGER=cat`
+taken out of its global environment at launch, and only that value. tmux hands
+its global environment to every window it makes for the rest of the server's
+life — weeks — so a server first started by a pane of this app goes on handing
+out `cat` after the line that set it is gone. Anything other than `cat` is
+somebody's own choice and is left.
+
+#### Scenario: git log in a pane
+
+- **GIVEN** a repository with more history than fits a screen
+- **WHEN** `git log` is run in a pane
+- **THEN** a pager is showing, and `q` leaves it with the prompt back
+
+#### Scenario: a server that was started with the old value
+
+- **GIVEN** a running tmux server whose global environment holds `PAGER=cat`
+- **WHEN** the app launches
+- **THEN** that variable is unset in the server, and a pane on it pages
+
+#### Scenario: a pager somebody chose
+
+- **GIVEN** an environment carrying `PAGER`
+- **WHEN** a pane is started with it
+- **THEN** that value is what the pane has
+
+### Requirement: The panel keeps the height it was given
+
+The terminal panel SHALL keep its height when the window's width changes, and
+SHALL be left at the height it was asked for when it is rounded down to whole
+terminal rows.
+
+Rounding to whole rows SHALL be a fixed point: applying it once SHALL leave
+nothing more to round. A `NSSplitView` gives its second subview
+`total − position − dividerThickness`, so a divider position computed without
+the thickness leaves the panel a point short of what was wanted, the terminal's
+usable height a point short of whole rows, and a remainder of nearly a whole row
+for the next pass to take off again. Widening a window posts one resize
+notification after another, and the panel lost a row to each of them until it
+reached its floor.
+
+A resize in which the split's height did not change SHALL NOT move the divider.
+
+#### Scenario: widening the window
+
+- **GIVEN** a panel at some height
+- **WHEN** the window is made wider without changing its height
+- **THEN** the panel still has that height
+
+#### Scenario: rounding to whole rows settles
+
+- **GIVEN** a panel whose terminal has part of a row left over
+- **WHEN** the rounding is applied
+- **THEN** the panel is the height that was asked for, and asking again says
+  there is nothing to round
+
+### Requirement: Next Tab and Previous Tab follow the keyboard
+
+*Next Tab* (⌘⇧]) and *Previous Tab* (⌘⇧[) SHALL, while the keyboard is in the
+panel, select the neighbouring tab on the strip of the column being typed in,
+wrapping at either end, and SHALL give that tab the keyboard as a click on it
+does. While the keyboard is in the editor they SHALL act on the editor's tabs, as
+they always have.
+
+Where tmux's windows have a strip of their own along the bottom, the top strip's
+tabs — the `tmux` tab and the panel's own terminals and panes — are what the keys
+move between, and tmux's windows keep tmux's own keys; a top strip holding a
+single tab over such a strip SHALL cycle the windows instead, since those are
+the tabs on show. Where tmux's windows share the one strip, they are among the
+tabs the keys move between.
+
+#### Scenario: from a terminal to the tmux tab and back
+
+- **GIVEN** a panel strip holding `tmux`, `Local`, `Local`, with the keyboard in the second `Local`
+- **WHEN** ⌘⇧] is pressed
+- **THEN** the `tmux` tab is in front and has the keyboard
+- **WHEN** ⌘⇧[ is pressed
+- **THEN** the second `Local` is in front again
+
+#### Scenario: the editor keeps its keys
+
+- **GIVEN** the same panel, with the keyboard in the editor
+- **WHEN** ⌘⇧] is pressed
+- **THEN** the editor's next tab is in front and the panel's strip is unchanged
+
+#### Scenario: only the tmux tab over its own strip
+
+- **GIVEN** a top strip holding only `tmux`, with tmux's windows on a strip below it
+- **WHEN** ⌘⇧] is pressed with the keyboard in the terminal
+- **THEN** the next tmux window is selected
+
+### Requirement: A glyph that reaches past its cell is drawn whole
+
+The pane SHALL draw a glyph that reaches past its cell whole, under either
+renderer, whatever the cell after it holds; and a cell's background colour SHALL
+stop at the cell's own edge.
+
+A glyph may be wider than its cell: a descender or an accent by a little, a
+symbol from a fallback font by nearly a cell — swift-testing's pass and fail
+marks are 13.7 points wide at a 13-point size against a 7.8-point cell. Counting
+it two columns would misplace everything after it, which tmux and Ghostty do not
+do; so it spills, and what it spills into must not be painted over it
+afterwards.
+
+#### Scenario: swift-testing's marks
+
+- **GIVEN** a pane drawn by the GPU renderer showing `􀟈  Test one`
+- **WHEN** the drawable is captured
+- **THEN** the diamond is whole, both halves, with the two spaces after it
+
+#### Scenario: a coloured cell beside a plain one
+
+- **GIVEN** a cell with a coloured background whose glyph leans into the plain cell to its right
+- **WHEN** the pane is drawn
+- **THEN** the colour ends at the cell's edge and the glyph's overhang shows the plain cell's colour around it
 

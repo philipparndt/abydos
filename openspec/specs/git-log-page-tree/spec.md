@@ -3,9 +3,7 @@
 ## Purpose
 
 How a commit's changed files are arranged on the log page: as the flat list it has always been, or as the folder tree the sidebar has grouped them into since it was written — a choice that is remembered, keeps the selection across it, and opens whole to `*`.
-
 ## Requirements
-
 ### Requirement: The log page arranges a commit's files by folder or as a list
 
 The log page's changes view SHALL offer both a flat list of the files a commit
@@ -87,3 +85,15 @@ whatever row the selection is on, and SHALL keep the selection.
 - **GIVEN** the flat arrangement, which has no folders
 - **WHEN** `*` is pressed
 - **THEN** nothing happens and nothing is lost
+
+### Requirement: A folded merge draws none of its branch's lanes
+When a merge is folded, the graph SHALL be laid out over the rows that are drawn, so that no lane belonging to a hidden commit appears. No line SHALL be drawn that has no visible commit to start from.
+
+#### Scenario: Folding a merge with a branch under it
+- **WHEN** a merge is folded on the log page
+- **THEN** the lanes of the branch it brought in are gone from every row below, and every line still drawn begins at a commit that is on screen
+
+#### Scenario: Unfolding puts it back
+- **WHEN** the same merge is unfolded again
+- **THEN** the graph is the one that was there before it was folded
+

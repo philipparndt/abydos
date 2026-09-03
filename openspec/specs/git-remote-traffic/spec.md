@@ -3,9 +3,7 @@
 ## Purpose
 
 Fetch, pull, the pull dialog, and where its defaults come from — the app's own setting, or the repository's own config when it has one.
-
 ## Requirements
-
 ### Requirement: Work can be brought down as well as sent
 
 The app SHALL be able to fetch and to pull, from the control that says how far
@@ -92,3 +90,19 @@ and silence would make pull look broken rather than unauthenticated.
 - **GIVEN** a remote needing a credential that is not configured
 - **WHEN** a pull is run
 - **THEN** the failure says a credential was wanted, rather than reporting nothing
+
+### Requirement: Fetching is one press away in every state
+The git pane SHALL offer a control that fetches from the remote, titled with the word `Fetch`, whenever the repository has a remote — whatever the branch's state relative to its upstream. The control SHALL NOT be a glyph whose meaning is carried only by a tooltip.
+
+#### Scenario: A branch that is ahead
+- **WHEN** the branch is ahead of its upstream, so the row's own verb reads `Push`
+- **THEN** a control titled `Fetch` is on the row as well, and pressing it fetches
+
+#### Scenario: A branch that is level
+- **WHEN** the branch is level with its upstream, so the row's verb also reads `Fetch`
+- **THEN** the `Fetch` control is still shown, because it is always shown, and either target fetches
+
+#### Scenario: No remote
+- **WHEN** the repository has no remote
+- **THEN** no `Fetch` control is drawn, because there is nowhere to fetch from, and re-reading the repository remains on the row's context menu
+

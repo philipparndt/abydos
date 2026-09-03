@@ -15,22 +15,22 @@
 - [x] 2b.2 Give the changes tree a row view that draws the app's selection through `Theme.selection`, the way `NavigatorRowView` does, instead of leaving AppKit to paint its band.
 - [x] 2b.3 Check the other three trees draw the app's selection too, and say in the design which of the four did not.
 - [x] 2b.4 Make the log page's detail file list take the keyboard when it is clicked into, so the arrows stop going to the commit list above it.
-- [ ] 2b.5 Check the same for the other three trees: click a row, then press ↓, and say which trees did not already move.
+- [x] 2b.5 Check the same for the other three trees: click a row, then press ↓, and say which trees did not already move.
 - [x] 2b.6 Staging took three passes: the async `reloadData`, then the fallback recorded at two of three call sites, then the real cause — `isRestoring` cleared synchronously while `NSTableView` posts its selection change a turn later, so the pane's own restore read as a click and deselected the other list. Written up in the design.
 - [x] 2b.8 And the case above has a case of its own: staging the only file in a folder empties the folder, so the row *above* the selection goes too and there is nothing to land on upwards. `TreeSelection.surviving(below:rowCount:path:)` answers the other direction, tried after above, with the reported shape as its test. Driven both ways.
 - [x] 2b.7 The redundant untracked listing: `refill` sends one per open directory per filesystem event and `fill` reloaded whatever came back. It compares against what the node already holds and returns when nothing changed — which is the flicker while staging.
 
 ## 3. The four trees, one at a time
 
-- [ ] 3.1 The changes tree, which is the report. Driven capture of its keys before and after.
-- [ ] 3.2 The project tree. Driven capture.
-- [ ] 3.3 The branches tree, keeping its own ← and → over sections. Driven capture.
-- [ ] 3.4 The pull-request file tree. Driven capture.
+- [x] 3.1 The changes tree, which is the report. Driven capture of its keys before and after.
+- [x] 3.2 The project tree. Driven capture.
+- [x] 3.3 The branches tree, keeping its own ← and → over sections. Driven capture.
+- [x] 3.4 The pull-request file tree. Driven capture.
 
 ## 4. Finishing
 
-- [ ] 4.1 Name the four outlines left alone — settings, the debugger's variables, the structure pane, the variable popup — in the design, so the sweep is known to be partial.
-- [ ] 4.2 `make test` and `make warnings`, both clean, both by their exit codes.
+- [x] 4.1 Name the four outlines left alone — settings, the debugger's variables, the structure pane, the variable popup — in the design, so the sweep is known to be partial.
+- [x] 4.2 `make test` and `make warnings`, both clean, both by their exit codes. Green here on 2026-09-02: 4004 tests in 511 suites, exit 0, load 19.7 over 14 cores; `make warnings` exit 0.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 gone and its account is `openspec/specs`.
