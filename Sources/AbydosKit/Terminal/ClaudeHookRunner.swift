@@ -152,6 +152,9 @@ public enum ClaudeHookRunner {
 			payload["terminal"] = terminal
 		}
 		if let message = ClaudeHook.detail(for: event) { payload["message"] = message }
+		// Which tool, so the app can tell the one that spawns a subagent from
+		// every other and count how many a session has out.
+		if let tool = event.toolName, !tool.isEmpty { payload["tool"] = tool }
 		// Nothing announced for a nudge about a turn that already finished: the
 		// tab said ✓ a second ago and nobody needs telling twice.
 		if ClaudeHook.isWorthAnnouncing(event, whenWindowSays: place?.status),

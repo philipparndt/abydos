@@ -51,6 +51,13 @@ public struct RunningSessions: Equatable, Sendable {
 		/// The identity of the app's tab the hook ran in, when it ran in one of
 		/// ours outside tmux — the tab's `ABYDOS_TERMINAL`.
 		public var terminal: String?
+		/// How many subagents this session has out.
+		///
+		/// Up on a `PreToolUse` for the tool that spawns one, down on a
+		/// `SubagentStop`, and back to nought when a turn ends — the reset is
+		/// what keeps it honest, since a `SubagentStop` can go missing and a
+		/// count that only rose would be wrong for the rest of the session.
+		public var subagents = 0
 		/// The last line the hook announced, and the message behind it.
 		public var line: String?
 		public var message: String?
@@ -225,6 +232,19 @@ public struct RunningSessions: Equatable, Sendable {
 		// as it was, exactly as the hook leaves tmux's own option alone.
 		let status = TmuxMirror.AIStatus(rawValue: payload["status"] ?? "")
 		if let status { record.status = status }
+
+		// Subagents, from the two ends. A finished turn has none running,
+		// whatever was missed inside it.
+		switch payload["event"] {
+		case "PreToolUse" where payload["tool"] == ClaudeHook.subagentTool:
+			record.subagents += 1
+		case "SubagentStop":
+			record.subagents = max(0, record.subagents - 1)
+		case "Stop" where status == .done:
+			record.subagents = 0
+		default:
+			break
+		}
 		if let session = payload["tmuxSession"], !session.isEmpty {
 			record.tmuxSession = session
 			record.window = payload["window"].flatMap(Int.init)

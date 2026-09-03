@@ -29,6 +29,13 @@ public enum ClaudeHook {
 		/// A `Stop` that is only a pause: Claude carries on afterwards, so it
 		/// is not the end of a turn and must not read as one.
 		public let isIntermediateStop: Bool
+		/// Which tool the event is about, on the events that name one.
+		///
+		/// Read rather than assumed: the one use for it is telling the tool that
+		/// spawns a subagent from every other, and that name is Claude Code's to
+		/// choose. A name that stops matching leaves the count at nought, which
+		/// is what a session with no subagents reads as.
+		public let toolName: String?
 
 		public init(
 			name: String,
@@ -36,7 +43,8 @@ public enum ClaudeHook {
 			cwd: String = "",
 			message: String? = nil,
 			notificationType: String? = nil,
-			isIntermediateStop: Bool = false
+			isIntermediateStop: Bool = false,
+			toolName: String? = nil
 		) {
 			self.name = name
 			self.sessionID = sessionID
@@ -44,6 +52,7 @@ public enum ClaudeHook {
 			self.message = message
 			self.notificationType = notificationType
 			self.isIntermediateStop = isIntermediateStop
+			self.toolName = toolName
 		}
 	}
 
@@ -59,7 +68,8 @@ public enum ClaudeHook {
 			cwd: object["cwd"] as? String ?? "",
 			message: object["message"] as? String,
 			notificationType: object["notification_type"] as? String,
-			isIntermediateStop: object["stop_hook_active"] as? Bool ?? false
+			isIntermediateStop: object["stop_hook_active"] as? Bool ?? false,
+			toolName: object["tool_name"] as? String
 		)
 	}
 
@@ -186,6 +196,15 @@ public enum ClaudeHook {
 		else { return nil }
 		return message
 	}
+
+	/// The tool Claude Code spawns a subagent with.
+	///
+	/// One string, compared against what the event carries. If Claude Code ever
+	/// names it otherwise, nothing here breaks: the comparison stops matching,
+	/// the count of subagents stays at nought, and a row says nothing about them
+	/// — which is what it says for a session that has none. That is the safe
+	/// direction for a guess about somebody else's program to be wrong in.
+	public static let subagentTool = "Task"
 
 	/// The name of the notification the hook posts and the app listens for.
 	///

@@ -347,6 +347,9 @@ struct LaunchOptions {
 		/// run can put a session in a tab the way the hook's `terminal` does:
 		/// `<id>@5:working:tab2`. Nil for a session in no tab of ours.
 		var tab: Int?
+		/// How many subagents it has out: `<id>:working:sub2`, sent as the tool
+		/// uses that spawn them so the register counts them its own way.
+		var subagents = 0
 	}
 	var claudeRunning: [ClaudeRunning] = []
 	/// Say what the panel's pill counts and its list holds: `--running-sessions 6,9`.
@@ -1199,8 +1202,9 @@ struct LaunchOptions {
 					// `:<status>[:tab<n>]`
 					let rest = said[said.index(after: colon)...].split(separator: ":").map(String.init)
 					spec.status = rest.first ?? "working"
-					if rest.count > 1, rest[1].hasPrefix("tab") {
-						spec.tab = Int(rest[1].dropFirst("tab".count))
+					for part in rest.dropFirst() {
+						if part.hasPrefix("tab") { spec.tab = Int(part.dropFirst("tab".count)) }
+						if part.hasPrefix("sub") { spec.subagents = Int(part.dropFirst("sub".count)) ?? 0 }
 					}
 					said = String(said[..<colon])
 				}

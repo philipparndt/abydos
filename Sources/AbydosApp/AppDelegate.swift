@@ -347,10 +347,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// subscribing on a run like this one.
 		if let path = options.projectPath {
 			for spec in options.claudeRunning where spec.after <= 0 {
+				let cwd = URL(fileURLWithPath: path, isDirectory: true).path
 				RunningSessions.shared.note([
-					"event": "SessionStart", "session": spec.id, "status": spec.status,
-					"cwd": URL(fileURLWithPath: path, isDirectory: true).path,
+					"event": "SessionStart", "session": spec.id, "status": spec.status, "cwd": cwd,
 				])
+				for _ in 0..<spec.subagents {
+					RunningSessions.shared.note([
+						"event": "PreToolUse", "session": spec.id, "status": "working",
+						"cwd": cwd, "tool": ClaudeHook.subagentTool,
+					])
+				}
 			}
 		}
 
@@ -1168,6 +1174,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 					// shell — what the hook sends for a session outside tmux.
 					if let tab = spec.tab, let identity = controller?.terminalIdentityForTesting(tab) {
 						payload["terminal"] = identity
+					}
+						// The tool uses that spawn them, so the register counts them
+					// the way it counts a real session's.
+					defer {
+						for _ in 0..<spec.subagents {
+							RunningSessions.shared.note([
+								"event": "PreToolUse", "session": spec.id, "status": "working",
+								"cwd": cwd, "tool": ClaudeHook.subagentTool,
+							])
+						}
 					}
 					guard let moved = RunningSessions.shared.note(payload) else { return }
 					if moved.sessionsChanged { controller?.claudeSessionsChanged(slug: moved.slug) }

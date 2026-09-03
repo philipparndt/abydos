@@ -133,6 +133,22 @@ nothing — and a stack view of no height does not clip, so its controls drew
 around the pane's top edge, into the strip. One rule now, and a header with
 nothing to say is hidden whole.
 
+## A row says how many subagents are out
+
+A session that has sent work off to subagents looked exactly like one working
+alone. Claude Code says so in its own status line; the list that exists to
+answer "what is happening where" did not. A row now reads `2 subagents` beside
+what the session last said, and says nothing when there are none, because a
+count of nought is not news. Typing `subagent` into the filter finds them.
+
+The hook already told us when one finished; it now also sends the tool's name,
+so the register can count from both ends — up on the tool use that spawns one,
+down when one hands its work back, and back to nought when the turn ends. That
+last part is what keeps it honest: a missed event would otherwise leave a count
+that only rises. The tool's name is read from the event rather than assumed, so
+if Claude Code renames it the count stays at nought and the row says nothing,
+which is the safe direction for a guess about somebody else's program.
+
 ## The session list answers the arrows
 
 The popup opened with the keyboard in its filter and there was no way out of the

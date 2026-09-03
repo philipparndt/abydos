@@ -190,6 +190,75 @@ struct RunningSessionsTests {
 		#expect(running.session(id: "l")?.tmuxSession == nil)
 	}
 
+	// MARK: - How many subagents are out
+
+	private func toolUse(_ tool: String, session: String = "s-1") -> [String: String] {
+		var payload = self.payload("PreToolUse", session: session, status: "working")
+		payload["tool"] = tool
+		return payload
+	}
+
+	/// Two sent off and one back is one out. The count comes from both ends,
+	/// because "how many have finished" is not the question.
+	@Test func twoSentOffAndOneBackIsOneOut() {
+		var running = RunningSessions()
+		running.note(payload("SessionStart"))
+		running.note(toolUse(ClaudeHook.subagentTool))
+		running.note(toolUse(ClaudeHook.subagentTool))
+		#expect(running.session(id: "s-1")?.subagents == 2)
+		running.note(payload("SubagentStop", status: "working"))
+		#expect(running.session(id: "s-1")?.subagents == 1)
+	}
+
+	/// **The reset is what keeps it honest.** A `SubagentStop` can go missing —
+	/// the app was not running, the subagent was killed — and a count that only
+	/// rose would be wrong for the rest of the session.
+	@Test func aFinishedTurnHasNoSubagents() {
+		var running = RunningSessions()
+		running.note(payload("SessionStart"))
+		running.note(toolUse(ClaudeHook.subagentTool))
+		running.note(toolUse(ClaudeHook.subagentTool))
+		running.note(payload("Stop", status: "done"))
+		#expect(running.session(id: "s-1")?.subagents == 0)
+	}
+
+	@Test func moreBackThanWentOutIsNotBelowNought() {
+		var running = RunningSessions()
+		running.note(payload("SessionStart"))
+		running.note(payload("SubagentStop", status: "working"))
+		#expect(running.session(id: "s-1")?.subagents == 0)
+	}
+
+	/// Every other tool use counts for nothing, or every working session would
+	/// claim subagents.
+	@Test func anOrdinaryToolUseIsNotASubagent() {
+		var running = RunningSessions()
+		running.note(payload("SessionStart"))
+		running.note(toolUse("Read"))
+		running.note(toolUse("Bash"))
+		#expect(running.session(id: "s-1")?.subagents == 0)
+	}
+
+	/// The name is Claude Code's to choose, so a guess that stops matching
+	/// leaves the count at nought — which reads as a session with no
+	/// subagents rather than as a wrong number.
+	@Test func aToolNameThatDoesNotMatchLeavesTheCountAtNought() {
+		var running = RunningSessions()
+		running.note(payload("SessionStart"))
+		running.note(toolUse("SomethingClaudeRenamedIt"))
+		#expect(running.session(id: "s-1")?.subagents == 0)
+	}
+
+	/// And the hook reads the name from the event rather than being told it.
+	@Test func theHookReadsTheToolFromItsEvent() throws {
+		let json = Data("""
+		{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/x","tool_name":"Task"}
+		""".utf8)
+		let event = try #require(ClaudeHook.parse(json))
+		#expect(event.toolName == "Task")
+		#expect(ClaudeHook.parse(Data(#"{"hook_event_name":"Stop"}"#.utf8))?.toolName == nil)
+	}
+
 	@Test func anEndForASessionNobodyKnewIsNotNews() {
 		var running = RunningSessions()
 		#expect(running.note(payload("SessionEnd")) == nil)

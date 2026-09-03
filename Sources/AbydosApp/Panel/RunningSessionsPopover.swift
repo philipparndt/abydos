@@ -665,6 +665,11 @@ final class RunningSessionsListView: NSView {
 				? "was working · silent for \(age(of: session, at: now))"
 				: "has said nothing yet")
 		}
+		// Beside the state, so the fuller sentence the driven report and the
+		// filter read carries it too — typing `subagent` then finds them.
+		if session.subagents > 0 {
+			pieces.append(session.subagents == 1 ? "1 subagent" : "\(session.subagents) subagents")
+		}
 		// The line is the title already when there is no window to be one.
 		if session.window != nil, let line = session.line, !line.isEmpty { pieces.append(line) }
 		if let message = session.message, !message.isEmpty, message != session.line { pieces.append(message) }
@@ -675,6 +680,11 @@ final class RunningSessionsListView: NSView {
 	/// word the badge already says, unless the state is all there is.
 	static func trailing(of session: RunningSessions.Session, at now: Date) -> String {
 		var pieces: [String] = []
+		// A session that has sent work off looks exactly like one working alone
+		// without this. Nought is not drawn: a count of none is not news.
+		if session.subagents > 0 {
+			pieces.append(session.subagents == 1 ? "1 subagent" : "\(session.subagents) subagents")
+		}
 		if session.shown(at: now) == .unknown {
 			pieces.append(session.status == .working
 				? "silent for \(age(of: session, at: now))"
