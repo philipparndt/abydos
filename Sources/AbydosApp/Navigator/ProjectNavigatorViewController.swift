@@ -3009,6 +3009,23 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// disk, so `ls:` says nothing about it, and a screenshot proves it is drawn
 	/// without saying what it says. Each row is `depth·name — subtitle`, which
 	/// is exactly what somebody reads off the pane.
+	/// A real click on a row, through the window server, and who then has the
+	/// keyboard — the half of the tree-behaviour claim `pressKeyForTesting`
+	/// cannot ask, since it puts the keyboard in the tree itself first.
+	func clickRowForTesting(_ row: Int) -> String {
+		TreeKeys.click(row: row, in: outlineView)
+			+ " keyboard=\(TreeKeys.keyboardHolder(in: view.window))"
+			+ " selected=\(selectedPathsForTesting().joined(separator: "+"))"
+	}
+
+	/// The selection by the project-relative paths it is remembered by.
+	func selectedPathsForTesting() -> [String] {
+		selectedPaths().map { path in
+			guard let root = project?.root.path, path.hasPrefix(root) else { return path }
+			return String(path.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+		}
+	}
+
 	func rowsForTesting() -> [String] {
 		(0..<outlineView.numberOfRows).map { row in
 			let item = outlineView.item(atRow: row)

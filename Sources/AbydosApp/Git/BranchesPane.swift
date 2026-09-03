@@ -1057,15 +1057,6 @@ final class BranchesPane: NSView {
 		// to the window. Remembered by key rather than by row, because a
 		// rebuild moves every row.
 		let hadFocus = window?.firstResponder === tableView
-		// **Every selected row, not the first.** This kept one key, so a rebuild
-		// — which happens on every filesystem event — quietly cut a selection of
-		// five branches down to one. Nobody notices until a menu that said
-		// "Delete 5 Branches…" says "Delete…" a moment later, which is the
-		// shrinking-selection fault `TreeSelection` exists for elsewhere in this
-		// app.
-		let selectedKeys = tableView.selectedRowIndexes.compactMap {
-			(tableView.item(atRow: $0) as? GitNode)?.key
-		}
 
 		// **The flag covers the selection too, and that is the whole of it.**
 		// Putting the selection back is a selection change as far as AppKit is
@@ -1074,20 +1065,40 @@ final class BranchesPane: NSView {
 		// every filesystem event — opened an editor tab, which changed the
 		// window, which refreshed the pane.
 		isRestoring = true
-		tableView.reloadData()
-		restoreExpansion(roots)
-
-		let rows = selectedKeys.compactMap { key -> Int? in
-			guard let again = node(forKey: key) else { return nil }
-			let row = tableView.row(forItem: again)
-			return row >= 0 ? row : nil
-		}
-		if !rows.isEmpty {
-			tableView.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+		reloadKeepingSelection {
+			tableView.reloadData()
+			restoreExpansion(roots)
 		}
 		isRestoring = false
 
 		if hadFocus { window?.makeFirstResponder(tableView) }
+	}
+
+	/// Reloads the tree with its selection held across the reload, by key.
+	///
+	/// **Every selected row, not the first.** This pane once kept one key, so
+	/// a rebuild — which happens on every filesystem event — quietly cut a
+	/// selection of five branches down to one, and nobody noticed until a menu
+	/// that said "Delete 5 Branches…" said "Delete…" a moment later. Then it
+	/// kept every key and put back whichever it found, and a branch that had
+	/// just been deleted or filtered away left nothing selected and nothing
+	/// said. `TreeSelectionKeeper` is the same behaviour the changes tree and
+	/// the project tree have, with the half this pane lacked: a key that has
+	/// gone lands the selection on the nearest surviving row and says so.
+	///
+	/// A key rather than a path, because a ref is not a file: `branch:main`,
+	/// `section:Stashes`, `stashfile:<commit>:<path>` — whatever names the row
+	/// so that it can be found again after every row has moved.
+	private func reloadKeepingSelection(_ reload: () -> Void) {
+		TreeSelectionKeeper.keepingSelection(
+			in: tableView,
+			path: { [weak self] row in (self?.tableView.item(atRow: row) as? GitNode)?.key },
+			row: { [weak self] key in
+				guard let self, let node = self.node(forKey: key) else { return -1 }
+				return self.tableView.row(forItem: node)
+			},
+			during: reload
+		)
 	}
 
 	/// Opens everything nobody has shut.
@@ -1571,7 +1582,9 @@ final class BranchesPane: NSView {
 	/// say when it works or when it does not.
 	private func send(_ name: String, setUpstream: Bool, naming branch: String?) {
 		pushingBranch = name
-		tableView.reloadData()
+		// A bare `reloadData()` drops the selection: pressing push on a branch
+		// left nothing selected, so ⌘⏎ a moment later had no row to act on.
+		reloadKeepingSelection { tableView.reloadData() }
 
 		Task { @MainActor in
 			defer {
@@ -1735,7 +1748,7 @@ final class BranchesPane: NSView {
 			return
 		}
 		pushingBranch = branch.name
-		tableView.reloadData()
+		reloadKeepingSelection { tableView.reloadData() }
 		PullRequestFlow.publishThenOpen(
 			branch, on: forge, into: defaultBranch, in: root
 		) { [weak self] in
@@ -2110,6 +2123,41 @@ final class BranchesPane: NSView {
 
 	/// The outline itself, so a driven run can put the keyboard in it.
 	var tableViewForTesting: NSView { tableView }
+
+	/// Clicks and arrows on the tree, and what was selected after each, for
+	/// the claim that one tree behaviour holds here as it does in the other
+	/// three: a click gives the tree the keyboard, an arrow then moves the
+	/// selection, and ← and → over a section fold and open it.
+	///
+	/// Steps joined with `+`: `click<row>`, `down`, `up`, `left`, `right`,
+	/// `who`, `selected`. The selection is reported by key, which is what a
+	/// row is remembered by across a rebuild.
+	func keysForTesting(_ steps: String) -> String {
+		var said: [String] = []
+		func selection() -> String {
+			let keys = tableView.selectedRowIndexes.compactMap {
+				(tableView.item(atRow: $0) as? GitNode)?.key
+			}
+			return keys.isEmpty ? "nothing" : keys.joined(separator: "+")
+		}
+		for step in steps.split(separator: "+").map(String.init) {
+			if step.hasPrefix("click") {
+				let row = Int(step.dropFirst("click".count)) ?? 0
+				said.append(TreeKeys.click(row: row, in: tableView)
+					+ " keyboard=\(TreeKeys.keyboardHolder(in: window)) \(selection())")
+			} else if let arrow = TreeKeys.arrow(step) {
+				TreeKeys.press(arrow.code, arrow.scalar, in: window)
+				said.append("\(step) \(selection())")
+			} else if step == "who" {
+				said.append("keyboard=\(TreeKeys.keyboardHolder(in: window))")
+			} else if step == "selected" {
+				said.append("selected=\(selection())")
+			} else {
+				said.append("unknown step \(step)")
+			}
+		}
+		return said.joined(separator: " | ")
+	}
 
 	/// Whether the filter is open, and what is in it.
 	func filterStateForTesting() -> String {
@@ -3054,7 +3102,7 @@ final class BranchesPane: NSView {
 		made.onDeleting = { [weak self] names in
 			guard let self else { return }
 			self.deletingBranches = names
-			self.tableView.reloadData()
+			self.reloadKeepingSelection { self.tableView.reloadData() }
 		}
 		made.onFinished = { [weak self] in
 			self?.deletingRemote = nil
@@ -3144,7 +3192,9 @@ final class BranchesPane: NSView {
 	func applyThemeChange() {
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		filterStrip?.applyThemeChange()
-		tableView.reloadData()
+		// The palette moved, the rows did not: a theme change used to be the
+		// one way to lose the selection without touching the repository.
+		reloadKeepingSelection { tableView.reloadData() }
 	}
 }
 

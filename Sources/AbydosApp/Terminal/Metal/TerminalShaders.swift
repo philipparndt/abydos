@@ -50,6 +50,11 @@ enum TerminalShaders {
 		// every cell on screen again in order to move it; both are now this one
 		// number.
 		float2 scroll;
+		// Which of the two passes over the cells this is: 0 paints every
+		// cell's background inside its own rectangle, 1 paints every glyph
+		// over all of them. In one pass the next cell's background landed on
+		// the part of a glyph that reached past its cell.
+		float pass;
 	};
 
 	struct Varying {
@@ -58,6 +63,10 @@ enum TerminalShaders {
 		// Where this pixel falls inside the glyph, 0 to 1. Outside that range
 		// the pixel belongs to the cell but not to the glyph.
 		float2 withinGlyph;
+		// And inside the cell's own rectangle, for the background pass to
+		// stop at the cell's edge.
+		float2 withinCell;
+		float pass;
 		float4 foreground;
 		float4 background;
 		float hasGlyph;
@@ -107,6 +116,12 @@ enum TerminalShaders {
 			? max(cell.origin + cell.size, cell.glyphOrigin + cell.glyphSize)
 			: cell.origin + cell.size;
 		float2 pixel = mix(origin, far, corner);
+		// Where this pixel is inside the cell's own rectangle, so the
+		// background pass can stop at the cell's edge: the quad reaches as far
+		// as the glyph does, and a coloured cell must not colour the neighbour
+		// its glyph leans into. Taken before the wobble, so the fill moves with
+		// the quad rather than sliding inside it.
+		float2 withinCell = (pixel - cell.origin) / max(cell.size, float2(1.0));
 
 		// A tracking error: rows slip sideways by an amount that varies down
 		// the screen and crawls upward, the way a worn tape does. Cheap here —
@@ -125,6 +140,8 @@ enum TerminalShaders {
 		out.foreground = cell.foreground;
 		out.background = cell.background;
 		out.hasGlyph = hasGlyph;
+		out.withinCell = withinCell;
+		out.pass = uniforms.pass;
 		out.isColour = cell.isColour;
 		out.bell = uniforms.bell;
 		out.uvShift = cell.uvSize.x * 0.22 * uniforms.bell;
@@ -151,10 +168,50 @@ enum TerminalShaders {
 		bool insideGlyph = all(in.withinGlyph >= 0.0) && all(in.withinGlyph <= 1.0);
 		bool hasGlyph = in.hasGlyph > 0 && insideGlyph;
 
-		if (hasGlyph && in.isColour > 0) {
+		// **Two passes, because the cells are drawn in order.** A glyph may
+		// reach past its cell — a descender, an accent, or a symbol nearly two
+		// cells wide from a fallback font — and in a single pass the next
+		// cell's opaque background was painted after it and over it, which cut
+		// every such glyph off at the cell's edge. swift-testing's pass and
+		// fail marks came out as their left halves. So the first pass paints
+		// backgrounds only, each inside its own cell, and the second paints
+		// every glyph's box over all of them: the cell's own background under
+		// the ink, so a coloured cell's colour follows its glyph wherever the
+		// glyph reaches — a black diamond on yellow stays a black diamond on
+		// yellow into the next cell, rather than turning black on black there
+		// — and the glyph's coverage over it.
+		bool insideCell = all(in.withinCell >= 0.0) && all(in.withinCell <= 1.0);
+		if (in.pass < 0.5) {
+			return insideCell ? in.background : float4(0.0);
+		}
+		// The box the glyph pass paints the background into: the full height
+		// of the row, across the cell and as far sideways as the glyph reaches.
+		// The glyph's own box is only as tall as its ink, and painting that
+		// alone left dark strips above and below the overhang of a wide symbol
+		// on a coloured cell. A descender below the row gets ink and no box.
+		// A cell with no glyph has nothing to say in this pass — and must say
+		// nothing: letting it paint its own rectangle here put the neighbour's
+		// background back over the overhang, which was the fault being fixed.
+		if (in.hasGlyph == 0.0) { return float4(0.0); }
+		// Inside the cell the first pass has painted the background already —
+		// and the underline or strikethrough over it, which painting the cell
+		// again here buried. So inside the cell this pass adds ink alone, and
+		// only the overhang, the part of the row beyond the cell that the
+		// glyph reaches, gets the cell's colour under the ink.
+		bool inRow = in.withinCell.y >= 0.0 && in.withinCell.y <= 1.0;
+		bool acrossGlyph = in.withinGlyph.x >= 0.0 && in.withinGlyph.x <= 1.0;
+		bool inOverhang = inRow && acrossGlyph && !insideCell;
+		if (!hasGlyph) {
+			return inOverhang ? in.background : float4(0.0);
+		}
+
+		if (in.isColour > 0) {
 			// An emoji brings its colours with it, already multiplied by its
-			// own alpha, and sits on top of whatever the cell is painted.
+			// own alpha. Inside the cell it is divided back out for the
+			// pipeline's straight-alpha blend, so it sits on what is there; in
+			// an overhang it sits on the cell's colour.
 			float4 glyph = colourAtlas.sample(atlasSampler, in.uv);
+			if (!inOverhang) { return float4(glyph.rgb / max(glyph.a, 0.0001), glyph.a); }
 			float3 blended = glyph.rgb + in.background.rgb * (1.0 - glyph.a);
 			return float4(blended, max(in.background.a, glyph.a));
 		}
@@ -164,7 +221,7 @@ enum TerminalShaders {
 		// the coverage rather than on a finished image — each channel gets its
 		// own idea of where the ink is, which is what the lens error actually
 		// looks like, and it costs two extra samples instead of a second pass.
-		if (hasGlyph && in.bell > 0.0) {
+		if (in.bell > 0.0) {
 			// Each channel reads the glyph from a slightly different place, and
 			// reads nothing where that lands outside the glyph — which is what
 			// makes the letter separate into red and blue ghosts rather than
@@ -197,6 +254,12 @@ enum TerminalShaders {
 		// a faded foreground, and ignoring that here made it identical to
 		// ordinary text — which is how an editor's greyed-out suggestion came
 		// out as bright as what had been typed.
+		// The cell's background under the ink across the whole glyph box, so
+		// the colour follows the glyph past the cell's edge. Over a picture the
+		// background is transparent and only the ink is painted.
+		// Ink alone everywhere but the overhang: inside the cell over what the
+		// first pass painted, below the row for a descender.
+		if (!inOverhang) { return float4(in.foreground.rgb, coverage * in.foreground.a); }
 		float4 colour = mix(in.background, in.foreground, coverage * in.foreground.a);
 		return float4(colour.rgb, max(in.background.a, coverage * in.foreground.a));
 	}

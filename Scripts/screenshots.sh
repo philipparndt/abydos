@@ -22,7 +22,8 @@
 # working on the machine into a picture of the tree: a capture reads no
 # transcript times and never hears the hook, so a shot that wants a session
 # running in it asks with `--claude-running <id>`, or `<id>@<seconds>` to have
-# it start while the window is open.
+# it start while the window is open, or `<id>:<status>` to say what it is doing
+# — and more than once, for a pill with a session in each state.
 #
 #   make screenshots                      # all of them
 #   make screenshots SHOT=debugger        # one
@@ -111,6 +112,17 @@ shoot terminal --open "$GO" --file "$GO/main.go" --terminal --panel-height 420 \
 	--run "tmux new-window -n build -c '$GO'" \
 	--send-bytes 'go build -v -o /dev/null ./... && go vet ./... && echo "  build ok"\r' \
 	--delay 16
+
+# The pill on the terminal's title bar counting every Claude session on the
+# machine, and the list under it. A capture hears no hook, so the sessions are
+# put in the register by hand, one in each state. The list is a popover, which
+# is a window of its own and so is written beside the picture as
+# `sessions-child0.png` rather than into it.
+shoot sessions --open "$GO" --file "$GO/main.go" --terminal --panel-height 420 \
+	--claude-running 11111111-1111-4111-8111-111111111111:working \
+	--claude-running 22222222-2222-4222-8222-222222222222:needs \
+	--claude-running 33333333-3333-4333-8333-333333333333:done \
+	--running-sessions-menu 4 --delay 7
 
 # Java, because "a language is supported" is a claim about a build file as much
 # as about source: the outline over a POM comes from Maven's own structure.

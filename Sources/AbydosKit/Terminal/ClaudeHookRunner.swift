@@ -129,10 +129,27 @@ public enum ClaudeHookRunner {
 			"cwd": event.cwd,
 			"status": ClaudeHook.status(after: event, whenWindowSays: place?.status)?.rawValue ?? "",
 		]
+		// The type as well as the verdict: outside tmux there is no window to
+		// say `done`, so the verdict above takes an idle nudge for a question.
+		// The app has the memory this process lacks, and this is the field it
+		// needs to apply the same rule.
+		if let type = event.notificationType, !type.isEmpty {
+			payload["notificationType"] = type
+		}
 		if let place {
 			payload["tmuxSession"] = place.session
 			payload["window"] = String(place.windowIndex)
 			payload["windowName"] = place.windowName
+			// The pane by its own id, `%7`: global to the server and kept when
+			// the window is renumbered, which is what a row selects by.
+			payload["pane"] = place.pane
+		} else if let terminal = ProcessInfo.processInfo.environment["ABYDOS_TERMINAL"],
+		          !terminal.isEmpty {
+			// Which of the app's tabs this pane is, from the name the tab gave
+			// its shell. Outside tmux only: inside, the variable is whatever
+			// the tmux server inherited from the tab that started it, and the
+			// tmux place above is the truth.
+			payload["terminal"] = terminal
 		}
 		if let message = ClaudeHook.detail(for: event) { payload["message"] = message }
 		// Nothing announced for a nudge about a turn that already finished: the

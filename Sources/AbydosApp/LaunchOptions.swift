@@ -194,6 +194,9 @@ struct LaunchOptions {
 	var debugSteps = false
 	/// Press ⌘T in the editor and again in the terminal, and report both.
 	var terminalTabKey = false
+	/// Press ⌘⇧] and ⌘⇧[ with the keyboard in the panel, then in the editor,
+	/// and say what the panel's strip showed each time.
+	var nextTabInPanel = false
 	/// Type a block with returns in it and print what came out.
 	var typeBlock = false
 	/// Put a condition on the breakpoint before starting, and say where it stopped.
@@ -326,15 +329,38 @@ struct LaunchOptions {
 	/// session's row, and a tree captured without one looks exactly like a tree
 	/// that cannot draw one. That is the failure 0451 records for the toast
 	/// corner, and it was found by leaving a way to look.
-	var claudeRunning: String?
-	/// How long to wait before saying it: `--claude-running <id>@4`.
+	///
+	/// `--claude-running <id>[@<seconds>][:<status>]`, and more than once, so a
+	/// picture of the panel's pill can hold a session in each state.
 	///
 	/// **Two moments, because they are two different claims.** At zero the
 	/// session was already running when the project opened, which is the read on
 	/// the open path. After a delay it starts while somebody is watching, which
 	/// is the redraw — and that half cannot be driven any other way, since
 	/// `ClaudeWatch` never subscribes on a driven run.
-	var claudeRunningAfter: TimeInterval = 0
+	struct ClaudeRunning: Equatable {
+		var id: String
+		var after: TimeInterval = 0
+		/// `working`, `needs` or `done`, as the hook would say it.
+		var status = "working"
+		/// Which of the panel's tabs the session is in, by index, so a driven
+		/// run can put a session in a tab the way the hook's `terminal` does:
+		/// `<id>@5:working:tab2`. Nil for a session in no tab of ours.
+		var tab: Int?
+	}
+	var claudeRunning: [ClaudeRunning] = []
+	/// Say what the panel's pill counts and its list holds: `--running-sessions 6,9`.
+	var runningSessionsAt: [Double] = []
+	/// Click the pill, and say what came up: `--running-sessions-menu 6`.
+	var runningSessionsMenuAt: Double?
+	/// Toggle presentation mode while the window is up, as the menu does, so a
+	/// page can be read before and after: `--presentation-at 4`.
+	var presentationAt: [Double] = []
+	/// Type this into the list's filter once it is open: `--running-sessions-filter screen`.
+	var runningSessionsFilter: String?
+	/// Choose the first row shown, as ⏎ in the filter does, and say which tab
+	/// the panel then has in front: `--running-sessions-choose 7`.
+	var runningSessionsChooseAt: Double?
 	/// Press play, as if from the titlebar.
 	var launchRun = false
 	/// Press the debug button beside it.
@@ -407,6 +433,9 @@ struct LaunchOptions {
 	var reportsTerminalDirectory = false
 	/// Print the terminal's geometry, for the clipped-bottom-row bug.
 	var reportsTerminalGeometry = false
+	/// Where the backlog pane's header is against the strip, at these seconds:
+	/// `--backlog-geometry 3,5,7`.
+	var backlogGeometryAt: [Double] = []
 	/// Turn blame on for the file that was opened.
 	var showsBlame = false
 	/// Resize the window part-way through, for layout that only settles once.
@@ -1042,6 +1071,8 @@ struct LaunchOptions {
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true
+			case "--backlog-geometry":
+				options.backlogGeometryAt = (next() ?? "3").split(separator: ",").compactMap { Double($0) }
 			case "--blame": options.showsBlame = true
 			case "--resize": options.resizeWidth = next().flatMap(Double.init)
 			case "--switch-appearance": options.switchAppearance = next()
@@ -1098,6 +1129,7 @@ struct LaunchOptions {
 			case "--undo-tree":  options.undoTree = true
 			case "--debug-steps": options.debugSteps = true
 			case "--terminal-tab-key": options.terminalTabKey = true
+			case "--next-tab-in-panel": options.nextTabInPanel = true
 			case "--type-block": options.typeBlock = true
 			case "--bp-condition": options.breakpointCondition = next()
 			case "--bp-edit": options.editBreakpointLine = next().flatMap(Int.init)
@@ -1153,10 +1185,35 @@ struct LaunchOptions {
 			case "--close-panel": options.closePanel = true
 			case "--toast":      options.showToast = true
 			case "--claude-running":
-				let said = next() ?? "0000dead-beef-4000-8000-000000000000"
-				let halves = said.split(separator: "@", maxSplits: 1)
-				options.claudeRunning = String(halves[0])
-				options.claudeRunningAfter = halves.count > 1 ? (Double(halves[1]) ?? 0) : 0
+				// `<id>[@<seconds>][:<status>]`: the id is a UUID and holds
+				// neither character, so each is taken off the end in turn.
+				var said = next() ?? "0000dead-beef-4000-8000-000000000000"
+				var spec = ClaudeRunning(id: said)
+				if let colon = said.firstIndex(of: ":") {
+					// `:<status>[:tab<n>]`
+					let rest = said[said.index(after: colon)...].split(separator: ":").map(String.init)
+					spec.status = rest.first ?? "working"
+					if rest.count > 1, rest[1].hasPrefix("tab") {
+						spec.tab = Int(rest[1].dropFirst("tab".count))
+					}
+					said = String(said[..<colon])
+				}
+				if let at = said.firstIndex(of: "@") {
+					spec.after = Double(said[said.index(after: at)...]) ?? 0
+					said = String(said[..<at])
+				}
+				spec.id = said
+				options.claudeRunning.append(spec)
+			case "--running-sessions":
+				options.runningSessionsAt = (next() ?? "6")
+					.split(separator: ",").compactMap { Double($0) }
+			case "--running-sessions-menu":
+				options.runningSessionsMenuAt = next().flatMap(Double.init) ?? 6
+			case "--running-sessions-filter": options.runningSessionsFilter = next()
+			case "--presentation-at":
+				options.presentationAt = (next() ?? "4").split(separator: ",").compactMap { Double($0) }
+			case "--running-sessions-choose":
+				options.runningSessionsChooseAt = next().flatMap(Double.init) ?? 7
 			case "--launch-run":    options.launchRun = true
 			case "--launch-debug":  options.launchDebug = true
 			case "--launch-profile": options.launchProfile = true

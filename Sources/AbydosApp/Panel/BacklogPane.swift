@@ -565,6 +565,10 @@ final class BacklogPane: NSView {
 	/// By the column's name rather than by a `BacklogState`, because the two
 	/// records no longer share a vocabulary and a driver asking for "ready" means
 	/// whichever record is showing.
+	/// Where the header is in the pane, for the panel to measure against its
+	/// strip.
+	var headerFrameForTesting: NSRect { header.frame }
+
 	func dragReportForTesting(column key: String) -> String {
 		guard let column = columns.first(where: { $0.key == key }) else {
 			return "no column called \(key) in this record"
@@ -610,7 +614,18 @@ final class BacklogPane: NSView {
 		summaryLabel.textColor = Theme.current.gitIgnored
 		startButton.font = Theme.current.uiFont(11)
 		newButton.font = Theme.current.uiFont(11)
-		headerHeight.constant = hasBacklog ? Theme.current.scaled(34) : 0
+		// **The same rule as `showContent`, and that is the whole of the fix.**
+		// This read `hasBacklog` while `showContent` read `hasSomething`, so a
+		// project kept in `openspec/changes` alone — which this one became on
+		// 2026-09-01 — had a header on opening and a zero-height header after
+		// the first zoom, theme or presentation change while the pane was up.
+		// A stack view of height nought does not clip: its `List` / `Board`
+		// control and its `Refresh` drew around the pane's top edge, half over
+		// the strip above, which was reported as the pane sitting under the
+		// tabs "sometimes". The ordering the design suspected was never the
+		// cause; two predicates for one height were.
+		headerHeight.constant = hasSomething ? Theme.current.scaled(34) : 0
+		header.isHidden = !hasSomething
 		listView.applySettings()
 		boardView.applySettings()
 		absentView.applySettings()

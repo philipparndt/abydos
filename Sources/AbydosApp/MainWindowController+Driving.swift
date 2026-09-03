@@ -147,6 +147,26 @@ extension MainWindowController {
 	/// What the corner is saying, for the harness.
 	func toastReportForTesting() -> String { toasts.reportForTesting() }
 
+	/// What the panel's pill counts, and what its list holds.
+	func runningSessionsReportForTesting() -> String { bottomPanel.runningSessionsReportForTesting() }
+
+	/// Clicks the pill, as a person would, and says what came up.
+	func openRunningSessionsForTesting(filter: String? = nil) -> String {
+		bottomPanel.openRunningSessionsForTesting(filter: filter)
+	}
+
+	/// The identity a panel tab gave its shell, for a driven session to name.
+	func terminalIdentityForTesting(_ index: Int) -> String? {
+		bottomPanel.terminalIdentityForTesting(index)
+	}
+
+	/// Chooses the first row the list shows, as ⏎ in its filter does, and says
+	/// which tab the panel then has in front — the claim that a row reaches a
+	/// tab whatever tab was in front before.
+	func chooseFirstRunningSessionForTesting() -> String {
+		bottomPanel.chooseFirstRunningSessionForTesting() + " | " + panelTabsForTesting()
+	}
+
 	/// Presses one of a question's answers by its words.
 	func answerToastForTesting(_ title: String) -> Bool { toasts.answerForTesting(title) }
 

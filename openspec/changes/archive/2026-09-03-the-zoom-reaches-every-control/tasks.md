@@ -17,26 +17,26 @@
 
 - [x] 3.1 Move the search field and the scope control onto the library.
 - [x] 3.2 Re-take the commit table's and the file table's row heights on a scale change, from `CommitRowMetrics`, and re-lay-out the rows rather than leaving the height read at build time.
-- [ ] 3.3 Driven: capture the log page at 1.0 and at 2.0 and show the whole of the short hash inside the row at both, which is the report.
+- [x] 3.3 Driven: capture the log page at 1.0 and at 2.0 and show the whole of the short hash inside the row at both, which is the report. Captured 2026-09-03 at 1.0 and 2.0 on a scratch repository: `47b6c54`, `d8b8537`, `6f0520d` each whole inside its row at both.
 
 ## 4. The commit page
 
 - [x] 4.1 Move `Stage`, `Unstage`, the `…` verb, `Draft`, `Commit`, `Push`, the message-history control and the `Amend` checkbox onto the library.
 - [x] 4.2 Move the description chevron onto the library's glyph button.
 - [x] 4.3 Read `PanelRowSnap` before writing anything for the detail area, and settle the design's open question: either the existing machinery covers this split or it does not. Recompute the division on a scale change, by whichever answer that is.
-- [ ] 4.4 Driven: toggle presentation mode with the commit page open and show the detail area at the working size afterwards.
+- [x] 4.4 Driven: toggle presentation mode with the commit page open and show the detail area at the working size afterwards. Driven 2026-09-03 with `--presentation-at 4,8`: message area 74 pt at 1.0, 100 pt presenting at 1.5, 74 pt again after — re-divided, not remembered.
 
 ## 5. The pull-request pages
 
 - [x] 5.1 Move the review page's header — the review and check-out verbs, the two switches, the view-mode control — onto the library.
 - [x] 5.2 Move the list's scope control and the glyph beside it onto the library.
-- [ ] 5.3 Driven: capture both at two scales.
+- [ ] 5.3 Driven: capture both at two scales. Not capturable on this machine, 2026-09-03: `gh` is signed in only to the corporate GitHub and the repository's forge is github.com, so the pages have nothing to draw. Wants a machine with `gh auth` for github.com.
 
 ## 6. The project tree's palette
 
 - [x] 6.1 Re-apply the outline view's background and the container's colour in `ProjectNavigatorViewController.applySettings()`, beside the row height and the indentation that are already re-applied there.
 - [x] 6.2 Give the navigator's container the `colourSource` closure its sibling containers in `MainWindowController+Layout` already have.
-- [ ] 6.3 Driven: switch the palette with the tree showing and capture it, which is the screenshot that was reported — one pane, half light and half dark.
+- [x] 6.3 Driven: switch the palette with the tree showing and capture it, which is the screenshot that was reported — one pane, half light and half dark. Captured 2026-09-03: `--appearance-walk abydos-light` with the tree expanded, the whole pane light.
 
 ## 6b. What running it found
 
@@ -52,7 +52,7 @@
 
 - [x] 7.1 Note in the design what was found out about why `ThemeSwap` did not reach the outline view, or that it was not chased and why.
 - [x] 7.2 Check `Scripts/file-size-allowed.txt` for any file this pushed over its aim.
-- [ ] 7.3 `make test` and `make warnings`, both clean, both by their exit codes.
+- [x] 7.3 `make test` and `make warnings`, both clean, both by their exit codes. Green here on 2026-09-03: 4005 tests in 511 suites, exit 0, load 23.0 over 14 cores; `make warnings` exit 0.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 gone and its account is `openspec/specs`, where the five delta specs in this

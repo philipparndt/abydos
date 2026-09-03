@@ -494,7 +494,13 @@ public enum AgentSessions {
 	/// app is already there and a paste with somebody else's path in it is a
 	/// paste to edit.
 	public static func resumeCommand(for session: AgentSession) -> String {
-		"claude --resume \(session.id)"
+		resumeCommand(forID: session.id)
+	}
+
+	/// The same, for a session known only by its id — one the hook has
+	/// announced and nobody has a directory for yet.
+	public static func resumeCommand(forID id: String) -> String {
+		"claude --resume \(id)"
 	}
 
 	/// The first thing that was asked of a session, from the head of its

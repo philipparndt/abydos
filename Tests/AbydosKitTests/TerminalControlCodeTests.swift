@@ -199,9 +199,9 @@ struct TerminalKeyProtocolTests {
 struct TmuxMirrorTests {
 	@Test func readsIndexNameAndWhichIsActive() {
 		let windows = TmuxMirror.parse("""
-		0;0;zsh;;0;shell
-		1;1;nvim;;0;editing
-		2;0;go;;0;build
+		0;0;zsh;;0;/Users/x/shell;shell
+		1;1;nvim;;0;/Users/x/editing;editing
+		2;0;go;;0;/Users/x/build;build
 		""")
 
 		#expect(windows.count == 3)
@@ -215,14 +215,14 @@ struct TmuxMirrorTests {
 	/// The name is whatever is left of the line, because a window can be called
 	/// anything — semicolons included.
 	@Test func aNameCanContainTheSeparator() {
-		let windows = TmuxMirror.parse("3;1;zsh;;0;one; two; three")
+		let windows = TmuxMirror.parse("3;1;zsh;;0;/Users/x;one; two; three")
 		#expect(windows.first?.name == "one; two; three")
 	}
 
 	/// tmux numbers windows as it likes: a session with 1, 4 and 9 in it is
 	/// ordinary, and the position on the strip is not the number.
 	@Test func indexesAreNotPositions() {
-		let windows = TmuxMirror.parse("1;0;zsh;;0;a\n4;0;zsh;;0;b\n9;1;zsh;;0;c")
+		let windows = TmuxMirror.parse("1;0;zsh;;0;/x;a\n4;0;zsh;;0;/x;b\n9;1;zsh;;0;/x;c")
 		#expect(windows.map(\.index) == [1, 4, 9])
 		#expect(windows.last?.isActive == true)
 	}

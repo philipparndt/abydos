@@ -32,6 +32,9 @@ private struct Uniforms {
 	var bellTime: Float = 0
 	/// Where the visible window is in the document the cells were built in.
 	var scroll: SIMD2<Float> = .zero
+	/// Which pass over the cells: 0 paints backgrounds, 1 paints glyphs. See
+	/// the fragment shader for why there are two.
+	var pass: Float = 0
 }
 
 /// Draws the terminal grid on the GPU.
@@ -903,12 +906,21 @@ final class TerminalMetalRenderer {
 		if !instances.isEmpty {
 			encoder.setRenderPipelineState(pipeline)
 			encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
-			encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
 			encoder.setFragmentTexture(atlas.coverageTexture, index: 0)
 			encoder.setFragmentTexture(atlas.colourTexture, index: 1)
-			encoder.drawPrimitives(
-				type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count
-			)
+			// The same instances twice: every background, then every glyph.
+			// One pass drew the cells in order, so the next cell's background
+			// landed on the part of a glyph that reached past its own cell —
+			// a symbol from a fallback font nearly two cells wide lost its
+			// right half, every time. Two draws of one buffer cost less than
+			// the single fill they replace did on the CoreGraphics path.
+			for pass: Float in [0, 1] {
+				uniforms.pass = pass
+				encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+				encoder.drawPrimitives(
+					type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count
+				)
+			}
 		}
 
 		encodeImages(imagesAbove, into: encoder, uniforms: &uniforms)

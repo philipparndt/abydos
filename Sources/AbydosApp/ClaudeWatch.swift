@@ -18,6 +18,11 @@ final class ClaudeWatch {
 	/// is the only name a hook event carries a project by.
 	var sessionsChanged: (String) -> Void = { _ in }
 
+	/// What to do when the counts on the panel's pill moved, which is more
+	/// often than the sessions of a project change: a session going from
+	/// started to working is one working more and nothing new in the tree.
+	var runningChanged: () -> Void = {}
+
 	private var observer: (any NSObjectProtocol)?
 
 	/// Whether news from elsewhere on the machine belongs in this run.
@@ -83,8 +88,16 @@ final class ClaudeWatch {
 		// a session now exists was being dropped one line further down. The
 		// register takes every event; only some of them ask for a redraw, and
 		// `note` is what decides which.
-		if let slug = RunningSessions.shared.note(payload) {
-			sessionsChanged(slug)
+		// A nudge about a turn that already finished, or a subagent handing back
+		// after it: the register keeps its `done`, and the corner says nothing.
+		// The hook drops these itself for a tmux window, whose badge it can
+		// read; for a session in one of the panel's own tabs, this is the
+		// memory it has not got.
+		if RunningSessions.shared.disregards(payload) { return }
+
+		if let moved = RunningSessions.shared.note(payload) {
+			if moved.sessionsChanged { sessionsChanged(moved.slug) }
+			runningChanged()
 		}
 
 		guard let line = payload["announce"], !line.isEmpty else { return }

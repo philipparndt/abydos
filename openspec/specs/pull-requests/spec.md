@@ -3,9 +3,7 @@
 ## Purpose
 
 Reviewing a pull request where the code is: the list of what waits on the reader, the page a pull request opens as, ticks that remember what was read and die when it changes, and the worktree checkout that lets the change be read in place.
-
 ## Requirements
-
 ### Requirement: GitHub is reached through `gh`, and never through a credential this program holds
 
 Every request to a forge SHALL be made by running the GitHub CLI, and this
@@ -245,3 +243,18 @@ is the worst outcome available, because the author is waiting on it.
 - **GIVEN** a review written while the network is down
 - **WHEN** it is submitted
 - **THEN** it says it did not send, and what was written is still there
+
+### Requirement: The review page's header controls follow the zoom
+The pull-request review page's header controls — the review and check-out verbs, the read and whole-file switches, and the view-mode control — SHALL take their size from the zoom in force and SHALL change size when it changes.
+
+#### Scenario: Reviewing at a large zoom
+- **WHEN** the zoom is raised with a pull request open
+- **THEN** every control in the header grows with the title and the file list beside them
+
+### Requirement: The pull-request list's controls follow the zoom
+The pull-request list's scope control and the glyph beside it SHALL take their size from the zoom in force and SHALL change size when it changes.
+
+#### Scenario: The list at a large zoom
+- **WHEN** the zoom is raised with the pull-request list showing
+- **THEN** `Only me` / `My teams too` and the glyph beside them are at the new size, and the rows and the controls read as one pane
+

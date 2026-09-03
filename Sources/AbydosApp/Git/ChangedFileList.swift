@@ -141,8 +141,32 @@ final class ChangedFileList: NSView {
 	func setLineCounts(_ counts: [String: GitLineCount]) {
 		lineCounts = counts
 		for row in roots { row.applyLineCounts(counts) }
-		outline.reloadData()
-		expandEveryFolder()
+		// The counts land a moment after the files, and a bare `reloadData()`
+		// here took the selection with them — the same fault the commit page
+		// had from its own `--numstat`, one pane over.
+		keepingSelection {
+			outline.reloadData()
+			expandEveryFolder()
+		}
+	}
+
+	/// Runs a reload with the selection held across it, by path.
+	///
+	/// The behaviour the commit page's trees, the branches tree and the project
+	/// tree share: take the paths, do the work, put them back, and where a path
+	/// has gone — a file ticked off and hidden, a set of files replaced — land
+	/// on the nearest surviving row and say so. This list had the first half
+	/// written for itself in `rebuildMarked` and none of the second.
+	private func keepingSelection(during work: () -> Void) {
+		TreeSelectionKeeper.keepingSelection(
+			in: outline,
+			path: { [weak self] row in (self?.outline.item(atRow: row) as? GitChangeNode)?.path },
+			row: { [weak self] path in
+				guard let self, let node = Self.find(path: path, in: self.roots) else { return -1 }
+				return self.outline.row(forItem: node)
+			},
+			during: work
+		)
 	}
 
 	/// Builds the rows for the file list from what git answered.
@@ -151,19 +175,21 @@ final class ChangedFileList: NSView {
 	}
 
 	private func rebuildMarked() {
-		let previous = selectedPath
 		// Hidden rather than removed: `files` is still what git answered, so
 		// turning the switch back off brings them back without asking again.
 		let showing = hidesDone ? files.filter { !ticks.isDone($0.path) } : files
-		roots = Self.rows(for: showing, byFolder: arrangesByFolder)
-		for row in roots { row.applyLineCounts(lineCounts) }
-		countRead()
-		outline.reloadData()
-		expandEveryFolder(keepingSelection: false)
 		// By path, because the two arrangements put the same file at different
 		// depths and different indices — so a row number means a *different*
-		// file after a change of arrangement, which looks like it worked.
-		if let previous { select(path: previous) }
+		// file after a change of arrangement, which looks like it worked. And
+		// with the keeper's fallback: ticking off the selected file with the
+		// done ones hidden used to leave nothing selected and nothing said.
+		keepingSelection {
+			roots = Self.rows(for: showing, byFolder: arrangesByFolder)
+			for row in roots { row.applyLineCounts(lineCounts) }
+			countRead()
+			outline.reloadData()
+			expandEveryFolder(keepingSelection: false)
+		}
 	}
 
 	/// Takes a new row height and re-lays-out the rows it already has.
@@ -325,7 +351,7 @@ final class ChangedFileList: NSView {
 	/// rows a tick changes.
 	private func reloadRow(of path: String) {
 		guard let node = Self.find(path: path, in: roots) else {
-			outline.reloadData()
+			keepingSelection { outline.reloadData() }
 			return
 		}
 		var rows = IndexSet()
@@ -336,7 +362,7 @@ final class ChangedFileList: NSView {
 			item = parent(of: current, in: roots)
 		}
 		guard !rows.isEmpty else {
-			outline.reloadData()
+			keepingSelection { outline.reloadData() }
 			return
 		}
 		outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
@@ -616,30 +642,14 @@ final class ChangedFileList: NSView {
 		for step in steps.split(separator: "+").map(String.init) {
 			switch step {
 			case let step where step.hasPrefix("click"):
+				// Through our own window, never the system event tap: the
+				// first instrument posted screen-coordinate clicks that went to
+				// whichever window was frontmost, and hung a run. `TreeKeys`
+				// queues the release and hands the window the press, which is
+				// what a table's tracking loop needs — see there.
 				let row = Int(step.dropFirst("click".count)) ?? 0
-				guard row < outline.numberOfRows else { said.append("click\(row) no such row"); break }
-				// Posted through the window server rather than handed to the
-				// view. A table's `mouseDown` runs a tracking loop waiting for
-				// the release, so a synthesised press on its own selects
-				// nothing — which a first version of this did, and it read as
-				// the click being broken when the instrument was.
-				let rect = outline.rect(ofRow: row)
-				let inWindow = outline.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
-				guard let screen = outline.window?.convertPoint(toScreen: inWindow) else { break }
-				let flipped = CGPoint(
-					x: screen.x,
-					y: (NSScreen.screens.first?.frame.height ?? 0) - screen.y
-				)
-				NSApp.activate(ignoringOtherApps: true)
-				for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-					CGEvent(
-						mouseEventSource: nil, mouseType: type,
-						mouseCursorPosition: flipped, mouseButton: .left
-					)?.post(tap: .cghidEventTap)
-				}
-				// The loop above returns before AppKit has delivered them.
-				RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-				said.append("click\(row) keyboard=\(who()) selected=\(selection())")
+				said.append(TreeKeys.click(row: row, in: outline)
+					+ " keyboard=\(who()) selected=\(selection())")
 			case "down":  key(125, UnicodeScalar(0xF701)!); said.append("down selected=\(selection())")
 			case "up":    key(126, UnicodeScalar(0xF700)!); said.append("up selected=\(selection())")
 			case "left":  key(123, UnicodeScalar(0xF702)!); said.append("left selected=\(selection())")

@@ -11,20 +11,31 @@ struct TmuxClaudeStatusTests {
 
 	@Test func aWindowCarriesWhatItsSessionIsDoing() {
 		let windows = TmuxMirror.parse("""
-		0;1;node;working;\(stamp);ideai
-		1;0;zsh;needs;\(stamp);docscanner
-		2;0;node;done;\(stamp);pulse
-		3;0;zsh;;\(stamp);plain shell
+		0;1;node;working;\(stamp);/Users/x/dev/ideai;ideai
+		1;0;zsh;needs;\(stamp);/Users/x/dev/docscanner;docscanner
+		2;0;node;done;\(stamp);/Users/x/dev/pulse;pulse
+		3;0;zsh;;\(stamp);/Users/x/dev/plain shell;plain shell
 		""", now: Self.now)
 
 		#expect(windows.map(\.aiStatus) == [.working, .needsInput, .done, nil])
 		#expect(windows.map(\.name) == ["ideai", "docscanner", "pulse", "plain shell"])
+		// And where each pane is, which is what a record seeded from a badge is
+		// filed under: a tmux session's windows sit in many projects.
+		#expect(windows.map(\.directory) == [
+			"/Users/x/dev/ideai", "/Users/x/dev/docscanner", "/Users/x/dev/pulse", "/Users/x/dev/plain shell",
+		])
+	}
+
+	/// The shape before the pane's path was asked for is one field short, and
+	/// is not guessed at either: its name would be taken for a path.
+	@Test func theOlderShapeWithoutAPathIsNotGuessedAt() {
+		#expect(TmuxMirror.parse("0;1;node;working;\(stamp);ideai", now: Self.now).isEmpty)
 	}
 
 	/// A name with a semicolon in it still arrives whole: the status field is
 	/// counted before the name, not after it.
 	@Test func theNameIsStillEverythingThatIsLeft() {
-		let windows = TmuxMirror.parse("0;1;node;working;\(stamp);fix; then ship", now: Self.now)
+		let windows = TmuxMirror.parse("0;1;node;working;\(stamp);/Users/x/dev/ship;fix; then ship", now: Self.now)
 		#expect(windows.first?.name == "fix; then ship")
 		#expect(windows.first?.aiStatus == .working)
 	}
@@ -32,7 +43,7 @@ struct TmuxClaudeStatusTests {
 	/// Without cmanager the option is unset and every window reads the same as
 	/// it always did.
 	@Test func noStatusIsNotAFailureToParse() {
-		let windows = TmuxMirror.parse("0;1;zsh;;\(stamp);zsh\n1;0;vim;;\(stamp);notes", now: Self.now)
+		let windows = TmuxMirror.parse("0;1;zsh;;\(stamp);/Users/x;zsh\n1;0;vim;;\(stamp);/Users/x/notes;notes", now: Self.now)
 		#expect(windows.count == 2)
 		#expect(windows.allSatisfy { $0.aiStatus == nil })
 	}
@@ -53,10 +64,10 @@ struct TmuxClaudeStatusTests {
 	@Test func aWorkingWindowThatHasGoneQuietIsNotBelieved() {
 		let quiet = String(Int(Self.now.timeIntervalSince1970) - 120)
 		let windows = TmuxMirror.parse("""
-		0;1;node;working;\(quiet);stale
-		1;0;node;working;\(stamp);really working
-		2;0;node;needs;\(quiet);waiting for me
-		3;0;node;done;\(quiet);finished ages ago
+		0;1;node;working;\(quiet);/Users/x/stale;stale
+		1;0;node;working;\(stamp);/Users/x/dev/really working;really working
+		2;0;node;needs;\(quiet);/Users/x/waiting;waiting for me
+		3;0;node;done;\(quiet);/Users/x/finished;finished ages ago
 		""", now: Self.now)
 
 		#expect(windows[0].shownStatus == nil, "silent for two minutes")
@@ -70,7 +81,7 @@ struct TmuxClaudeStatusTests {
 	/// Anything cmanager has not written — a value from a newer version, or
 	/// somebody else's use of the same option — is not guessed at.
 	@Test func anUnknownValueIsNoStatus() {
-		#expect(TmuxMirror.parse("0;1;node;thinking;\(stamp);ideai", now: Self.now)
+		#expect(TmuxMirror.parse("0;1;node;thinking;\(stamp);/Users/x/ideai;ideai", now: Self.now)
 			.first?.aiStatus == nil)
 	}
 }
@@ -100,7 +111,7 @@ struct TmuxWindowCopyTests {
 /// Remembering which window somebody was in.
 struct TmuxWindowIdentityTests {
 	@Test func theWindowIdIsReadWhenItIsThere() throws {
-		let windows = TmuxMirror.parse("@7;2;1;zsh;;0;editing\n@9;3;0;vim;;0;notes")
+		let windows = TmuxMirror.parse("@7;2;1;zsh;;0;/Users/x;editing\n@9;3;0;vim;;0;/Users/x;notes")
 		#expect(windows.count == 2)
 		#expect(windows.first?.windowID == "@7")
 		#expect(windows.first?.index == 2)
@@ -110,7 +121,7 @@ struct TmuxWindowIdentityTests {
 
 	/// A line without one is the older shape, and still reads.
 	@Test func aLineWithoutAnIdStillReads() {
-		let windows = TmuxMirror.parse("2;1;zsh;;0;editing")
+		let windows = TmuxMirror.parse("2;1;zsh;;0;/Users/x;editing")
 		#expect(windows.first?.index == 2)
 		#expect(windows.first?.name == "editing")
 		#expect(windows.first?.windowID == "")
@@ -120,17 +131,17 @@ struct TmuxWindowIdentityTests {
 	/// rather than by counting fields — which is how the first attempt at this
 	/// dropped every window whose name had one in it.
 	@Test func aNameWithSeparatorsSurvivesEitherShape() {
-		let withID = TmuxMirror.parse("@4;1;1;zsh;;0;one; two; three")
+		let withID = TmuxMirror.parse("@4;1;1;zsh;;0;/Users/x;one; two; three")
 		#expect(withID.first?.windowID == "@4")
 		#expect(withID.first?.name == "one; two; three")
 
-		let without = TmuxMirror.parse("1;1;zsh;;0;one; two; three")
+		let without = TmuxMirror.parse("1;1;zsh;;0;/Users/x;one; two; three")
 		#expect(without.first?.name == "one; two; three")
 	}
 
 	/// And a name that merely starts with an at sign is a name, not an id.
 	@Test func aNameBeginningWithAnAtSignIsNotAnId() {
-		let windows = TmuxMirror.parse("1;1;zsh;;0;@home")
+		let windows = TmuxMirror.parse("1;1;zsh;;0;/Users/x;@home")
 		#expect(windows.first?.name == "@home")
 		#expect(windows.first?.windowID == "")
 	}

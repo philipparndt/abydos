@@ -43,6 +43,14 @@ public enum TmuxMirror {
 		/// was killed mid-turn. A window that claims to be working and has
 		/// printed nothing for half a minute is not working.
 		public let silentFor: TimeInterval
+		/// Where its active pane is — `pane_current_path`.
+		///
+		/// A tmux session is somebody's workspace, and its windows sit in many
+		/// projects: one here held nine windows across three parent
+		/// directories. A record seeded from a window's badge is filed under
+		/// this, not under the project the panel happens to be on, which is
+		/// how `screencasts` came to be listed under `~/dev/oss`.
+		public let directory: String
 
 		public var id: Int { index }
 
@@ -53,7 +61,8 @@ public enum TmuxMirror {
 			isActive: Bool,
 			command: String = "",
 			aiStatus: AIStatus? = nil,
-			silentFor: TimeInterval = 0
+			silentFor: TimeInterval = 0,
+			directory: String = ""
 		) {
 			self.index = index
 			self.windowID = windowID
@@ -62,6 +71,7 @@ public enum TmuxMirror {
 			self.command = command
 			self.aiStatus = aiStatus
 			self.silentFor = silentFor
+			self.directory = directory
 		}
 
 		/// What the tab should actually show.
@@ -80,7 +90,11 @@ public enum TmuxMirror {
 		/// Claude prints a spinner and its running total while it works, so a
 		/// working pane is never quiet for long; a person reading a permission
 		/// prompt is quiet for as long as they like.
-		static let staleAfter: TimeInterval = 30
+		///
+		/// The one bound, shared: `RunningSessions` applies it to the hook's
+		/// clock for the pill, so a session is hollow on the pill exactly when
+		/// its tab has stopped spinning.
+		public static let staleAfter: TimeInterval = 30
 	}
 
 	/// Which session the client on this terminal is looking at.
@@ -227,7 +241,7 @@ public enum TmuxMirror {
 		// underscore, and a name with a semicolon in it is rarer than one with
 		// a space. The name comes last so what is left of the line is all of it.
 		let format = "#{window_id};#{window_index};#{?window_active,1,0};#{pane_current_command}"
-			+ ";#{@ai_status};#{window_activity};#{window_name}"
+			+ ";#{@ai_status};#{window_activity};#{pane_current_path};#{window_name}"
 		let result = await run(tmux, ["list-windows", "-t", "=\(session)", "-F", format])
 		guard let result, result.exitCode == 0 else { return [] }
 		return parse(result.output)
@@ -241,12 +255,14 @@ public enum TmuxMirror {
 	static func parse(_ output: String, now: Date = Date()) -> [Window] {
 		var windows: [Window] = []
 		for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-			// Exactly the six the format asks for, and no shorter form
+			// Exactly the seven the format asks for, and no shorter form
 			// accepted: a window called "one; two" would otherwise be
 			// indistinguishable from a line carrying fewer fields, and the
 			// name — which can hold anything — has to stay whole. tmux prints
 			// an empty field for an option that is not set, so a window with
-			// no Claude session in it still arrives as six.
+			// no Claude session in it still arrives as seven. The pane's path
+			// comes before the name for the same reason the rest does: a path
+			// holds no semicolon a shell would tolerate, a name might.
 			// tmux's own window id comes first, and is taken off before the
 			// rest is split — not by asking for one more field. A window name
 			// can hold a semicolon, so the number of fields is not a thing to
@@ -259,17 +275,18 @@ public enum TmuxMirror {
 				windowID = String(rest[..<separator])
 				rest = rest[rest.index(after: separator)...]
 			}
-			let fields = rest.split(separator: ";", maxSplits: 5, omittingEmptySubsequences: false)
-			guard fields.count == 6, let index = Int(fields[0]) else { continue }
+			let fields = rest.split(separator: ";", maxSplits: 6, omittingEmptySubsequences: false)
+			guard fields.count == 7, let index = Int(fields[0]) else { continue }
 			let activity = Double(fields[4]) ?? 0
 			windows.append(Window(
 				index: index,
 				windowID: windowID,
-				name: String(fields[5]),
+				name: String(fields[6]),
 				isActive: fields[1] == "1",
 				command: String(fields[2]),
 				aiStatus: AIStatus(rawValue: String(fields[3])),
-				silentFor: activity > 0 ? max(0, now.timeIntervalSince1970 - activity) : 0
+				silentFor: activity > 0 ? max(0, now.timeIntervalSince1970 - activity) : 0,
+				directory: String(fields[5])
 			))
 		}
 		return windows
@@ -279,6 +296,16 @@ public enum TmuxMirror {
 
 	public static func select(window index: Int, inSession session: String) async {
 		await command(["select-window", "-t", "\(session):\(index)"])
+	}
+
+	/// Selects a pane by its own id, `%7`, which names it wherever its window has
+	/// been moved to; tmux brings the window it is in forward as well.
+	///
+	/// - Returns: whether tmux still had the pane.
+	public static func select(pane: String) async -> Bool {
+		guard pane.hasPrefix("%") else { return false }
+		guard await succeeds(["select-window", "-t", pane]) else { return false }
+		return await succeeds(["select-pane", "-t", pane])
 	}
 
 	/// Goes back to a window by tmux's own name for it.

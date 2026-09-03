@@ -342,6 +342,9 @@ final class SidebarController: NSObject {
 			case "cmdf":
 				print("BRANCHES find taken by: \(SidebarController.sendFind(in: pane.window))")
 			case "focus-tree": pane.window?.makeFirstResponder(pane.tableViewForTesting)
+			// Clicks and arrows, with the selection read after each — the
+			// tree-behaviour claim, asked of this tree as of the other three.
+			case "keys": print("BRANCHES keys: " + pane.keysForTesting(argument))
 			// Several branches at once, and what the menu would then offer and
 			// copy. `+` between the names, as the other multi-row steps use.
 			// A row index selects that row; names select those branches. One

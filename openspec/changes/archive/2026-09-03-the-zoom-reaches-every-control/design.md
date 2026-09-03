@@ -221,3 +221,26 @@ rather than as part of this.
 - Why `ThemeSwap.apply` does not reach `NavigatorOutlineView.backgroundColor`
   when it walks the window's content view and has an `NSTableView` case that
   should match. Not chased here; see above.
+
+## What the captures found, 2026-09-03
+
+**The hash fits at both zooms**, which was the report, and the row is derived
+rather than the constant it was. **At 2.0 the ref tags on a commit run into the
+author column**: `feature/beta` on the initial commit overlaps `probe`. The tags
+are laid out from the left and the author from the right at widths that meet
+at 2.0 in a pane this wide; not this change's fault and not fixed here, but
+seen in its capture and worth a change of its own.
+
+**The pull-request pages were not captured.** `gh` on this machine is signed in
+to the corporate GitHub only and the repository's forge is github.com, so the
+list and the page have nothing to show. The header controls moved onto the
+library in 5.1 and 5.2 and the claim is the same as the log page's; the capture
+wants a machine signed in to the right forge.
+
+**The detail area is re-divided, and the panel is not.** Toggling presentation
+mode on and off with the commit page open: the message area is 74 points at
+1.0, 100 while presenting at 1.5, and 74 again afterwards, which is the claim.
+The page's whole pane, though, came back 100 points shorter — 326 against 426 —
+so something below it remembers a height in points across a change of scale and
+hands it back scaled. Most likely the terminal panel's height. Not this change's
+control, and a report of its own.

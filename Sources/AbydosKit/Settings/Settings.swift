@@ -112,7 +112,11 @@ public final class Settings {
 			// `dark` meant the blue scheme's dark and still has to — so moving it
 			// would repaint people who did choose, by reinterpreting what they
 			// chose rather than by changing what a fresh installation gets.
-			Key.appearance: Appearance.name(family: "abydos", mode: .system),
+			// **Blue, again.** A fresh installation got `abydos` for a while;
+			// every current user chose blue over it, and a default nobody keeps
+			// is a first-run chore. Asked for on 2026-09-02. What a stored value
+			// means is untouched, as the paragraph above insists.
+			Key.appearance: Appearance.name(family: "blue", mode: .system),
 			Key.followsTerminalProject: false,
 			// **Off.** Following into a folder in no working copy is a
 			// different thing from following between projects: every directory

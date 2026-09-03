@@ -130,6 +130,14 @@ final class ChangesPane: NSView, ScaleFollowing {
 		}
 		for step in steps.split(separator: "+").map(String.init) {
 			switch step {
+			// A real click, through the window server, on the list with rows:
+			// the question is whether the click gives the tree the keyboard so
+			// the arrow after it moves the selection, and only a real click can
+			// ask it. `TreeKeys` is the same instrument the other trees use.
+			case let step where step.hasPrefix("click"):
+				let row = Int(step.dropFirst("click".count)) ?? 0
+				said.append(TreeKeys.click(row: row, in: listWithRows())
+					+ " keyboard=\(TreeKeys.keyboardHolder(in: window)) \(selection())")
 			case "down":  key(125, UnicodeScalar(0xF701)!); said.append("down \(selection())")
 			case "up":    key(126, UnicodeScalar(0xF700)!); said.append("up \(selection())")
 			case "left":  key(123, UnicodeScalar(0xF702)!); said.append("left \(selection())")

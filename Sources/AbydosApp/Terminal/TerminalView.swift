@@ -289,6 +289,12 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	private var pendingLaunch: (URL?, (executable: String, arguments: [String])?)?
+
+	/// What the pane's process is told about the pane, on top of what every
+	/// shell in this app is told: the tab's identity as `ABYDOS_TERMINAL`, so a
+	/// hook running in it can say which tab it is in. Set before the launch;
+	/// the process starts once the pane has a size.
+	var launchEnvironment: [String: String] = [:]
 	/// False for a view that only displays output; there is nothing to type at.
 	private var runsProcess = true
 
@@ -393,17 +399,20 @@ final class TerminalView: NSView, NSTextInputClient {
 			}
 
 			self.recomputeGridSize()
+			let environment = self.launchEnvironment.isEmpty ? nil : self.launchEnvironment
 			if let command = launch.1 {
 				self.pty.start(
 					executable: command.executable,
 					arguments: command.arguments,
 					workingDirectory: launch.0,
+					environment: environment,
 					rows: self.emulator.metrics.rows,
 					columns: self.emulator.metrics.columns
 				)
 			} else {
 				self.pty.startLoginShell(
 					workingDirectory: launch.0,
+					environment: environment,
 					rows: self.emulator.metrics.rows,
 					columns: self.emulator.metrics.columns
 				)

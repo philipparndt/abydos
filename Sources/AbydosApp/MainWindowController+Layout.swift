@@ -59,6 +59,26 @@ extension MainWindowController {
 		navigator.claudeSessionsChanged(slug: slug)
 	}
 
+	/// The counts on the panel's pill moved, which happens more often than the
+	/// tree's rows change: a session starting to work is one of these and not
+	/// one of those.
+	func runningSessionsChanged() {
+		bottomPanel.runningSessionsChanged()
+	}
+
+	/// The tabs this window's panel holds, so a row in any window can say a
+	/// session is in one of the app's tabs.
+	var terminalIdentities: Set<String> { bottomPanel.terminalIdentities }
+
+	/// Brings this window and one of its tabs forward, for a row clicked in
+	/// another window. False when the tab is not here.
+	func revealTerminalTab(identity: String) -> Bool {
+		guard bottomPanel.revealTab(identity: identity) else { return false }
+		window?.makeKeyAndOrderFront(nil)
+		NSApp.activate(ignoringOtherApps: true)
+		return true
+	}
+
 	func revealTmuxWindow(_ index: Int) {
 		window?.makeKeyAndOrderFront(nil)
 		NSApp.activate(ignoringOtherApps: true)
@@ -243,6 +263,7 @@ extension MainWindowController {
 		// what changes it afterwards.
 		bottomPanel.isFollowingProject = followsTerminal
 		bottomPanel.onToggleFollowProject = { [weak self] in self?.toggleFollowTerminal() }
+		bottomPanel.projectRoot = { [weak self] in self?.project?.root }
 		bottomPanel.onWorkingDirectoryChanged = { [weak self] directory in
 			self?.terminalDirectoryChanged(to: directory)
 		}
@@ -833,9 +854,22 @@ extension MainWindowController {
 		editor.toggleMarkdownPreview()
 	}
 
-	@objc func selectNextTab(_ sender: Any?) { editor.selectNextTab(offset: 1) }
+	/// ⌘⇧] and ⌘⇧[: the tabs in front of whoever is typing.
+	///
+	/// These went to the editor wherever the keyboard was, so pressed in a
+	/// terminal they changed the file behind the panel and the panel's own strip
+	/// — the `tmux` tab, the `Local` terminals — had no keyboard route at all.
+	@objc func selectNextTab(_ sender: Any?) { selectTab(offset: 1) }
 
-	@objc func selectPreviousTab(_ sender: Any?) { editor.selectNextTab(offset: -1) }
+	@objc func selectPreviousTab(_ sender: Any?) { selectTab(offset: -1) }
+
+	private func selectTab(offset: Int) {
+		if isTerminalFocused {
+			bottomPanel.selectNeighbouringTab(offset: offset)
+		} else {
+			editor.selectNextTab(offset: offset)
+		}
+	}
 
 	/// Expands the first level of the tree, used by capture runs and after
 	/// opening a project so the navigator is not just a single root row.

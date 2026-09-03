@@ -521,6 +521,7 @@ final class BottomPanel: NSView {
 		strip.onMirrorTagClicked = { [weak self] rect in
 			self?.showSessionMenu(from: rect, in: column)
 		}
+		runningSessions.attach(strip)
 		strip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
 		strip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
 		strip.isFollowingProject = isFollowingProject
@@ -689,6 +690,24 @@ final class BottomPanel: NSView {
 			strip.height, strip.minY,
 			column.mirrorStrip.isHidden ? 0 : mirror.height, mirror.minY,
 			isMaximized ? "yes" : "no"
+		)
+	}
+
+	/// Where the backlog pane's header is against the strip, in the panel's own
+	/// coordinates — a measurement, because the report was a screenshot with
+	/// `List` under `tmux` and the word *sometimes* in it.
+	func backlogGeometryForTesting() -> String {
+		guard let column = columnViews.first else { return "no columns" }
+		let strip = column.convert(column.strip.frame, to: self)
+		guard let showing = activeByColumn[0], case let .backlog(pane) = showing.kind else {
+			return "backlog not showing; " + stripGeometryForTesting()
+		}
+		let header = pane.convert(pane.headerFrameForTesting, to: self)
+		let body = pane.convert(pane.bounds, to: self)
+		return String(
+			format: "strip=%.1f–%.1f pane=%.1f–%.1f header=%.1f–%.1f below-strip-by=%.1f",
+			strip.minY, strip.maxY, body.minY, body.maxY, header.minY, header.maxY,
+			header.minY - strip.maxY
 		)
 	}
 
@@ -896,6 +915,21 @@ final class BottomPanel: NSView {
 	/// terminals.
 	private var tmuxWindows: [TmuxMirror.Window] = []
 	private var tmuxPoll: Timer?
+
+	/// The project this window is on, so the pill's list can open on it and a
+	/// record seeded from a mirrored tmux window can be filed under it.
+	var projectRoot: () -> URL? = { nil }
+	/// The pill on the strips, the clock behind it and the list under it.
+	private lazy var runningSessions: PanelRunningSessions = {
+		let sessions = PanelRunningSessions()
+		sessions.strips = { [weak self] in self?.columnViews.map(\.strip) ?? [] }
+		sessions.projectRoot = { [weak self] in self?.projectRoot() }
+		sessions.reach = { [weak self] running, appTerminals in
+			self?.reach(of: running, appTerminals: appTerminals) ?? .elsewhere
+		}
+		sessions.reveal = { [weak self] running in self?.reveal(running) ?? false }
+		return sessions
+	}()
 	/// The session the tabs are currently showing, which is whatever the client
 	/// is attached to rather than whatever it was started with.
 	private var mirroredSession: String?
@@ -1109,6 +1143,7 @@ final class BottomPanel: NSView {
 				// falling through would mirror it again a moment later and the
 				// tabs would come back for a terminal that is not in it. What
 				// ends this is a client appearing on this tty again.
+				self.runningSessions.forgetSeeded(inTmuxSession: self.mirroredSession)
 				self.mirroredSession = nil
 				if !self.tmuxWindows.isEmpty {
 					self.tmuxWindows = []
@@ -1118,12 +1153,16 @@ final class BottomPanel: NSView {
 			}
 			if attached != nil { self.hasAttachedOnce = true }
 			if session != self.mirroredSession {
+				self.runningSessions.forgetSeeded(inTmuxSession: self.mirroredSession)
 				self.mirroredSession = session
 				self.tmuxWindows = []
 			}
 			await self.applyStatusBarWish(to: session)
 
 			let windows = await TmuxMirror.windows(inSession: session)
+			// The badges tmux already carries stand in for sessions the hook
+			// has not spoken for in this process.
+			self.runningSessions.seed(windows: windows, inTmuxSession: session)
 			// Nothing at all usually means tmux is still starting, and the
 			// strip keeps what it had rather than blinking empty — but not
 			// when the terminal itself has exited. Then the session really is
@@ -1323,6 +1362,121 @@ final class BottomPanel: NSView {
 	/// has something to say is already the one being looked at.
 	var activeTmuxWindow: Int? { tmuxWindows.first { $0.isActive }?.index }
 
+	/// ⌘⇧] and ⌘⇧[ with the keyboard in the panel: the neighbouring tab on the
+	/// strip of the column being typed in. A top strip holding a single tab
+	/// over tmux's own strip has no neighbour, and the windows below are the
+	/// tabs somebody means.
+	func selectNeighbouringTab(offset: Int) {
+		guard columnViews.indices.contains(focusedColumn) else { return }
+		let column = columnViews[focusedColumn]
+		let strip = column.strip.tabCount > 1 || column.mirrorStrip.tabCount == 0
+			? column.strip
+			: column.mirrorStrip
+		strip.selectNeighbour(offset: offset)
+	}
+
+	/// The register moved: a session appeared, ended or changed state
+	/// somewhere on the machine. `PanelRunningSessions` owns the rest.
+	func runningSessionsChanged() { runningSessions.changed() }
+	func runningSessionsReportForTesting() -> String { runningSessions.reportForTesting() }
+	func openRunningSessionsForTesting(filter: String? = nil) -> String {
+		runningSessions.openForTesting(filter: filter)
+	}
+	func chooseFirstRunningSessionForTesting() -> String { runningSessions.chooseFirstForTesting() }
+	func terminalIdentityForTesting(_ index: Int) -> String? {
+		sessions.indices.contains(index) ? sessions[index].identity : nil
+	}
+
+	/// The tab tells its shell which tab it is, as `ABYDOS_TERMINAL`, so a
+	/// hook running in the pane can say so and a row in the running-sessions
+	/// list can bring the tab forward. Set as `TERM_PROGRAM` is — deliberately,
+	/// not inherited — since the inherited value would name the tab the app
+	/// itself was launched from.
+	private func nameTab(_ session: Session, of pane: TerminalPane) {
+		pane.terminalView.launchEnvironment["ABYDOS_TERMINAL"] = session.identity
+	}
+
+	/// The identities of the tabs this panel holds, for the app to say which
+	/// running sessions are in one of its windows.
+	var terminalIdentities: Set<String> { Set(sessions.map(\.identity)) }
+
+	/// Brings one of this panel's tabs to the front by identity, for a row
+	/// clicked in another window. False when the tab is not here.
+	func revealTab(identity: String) -> Bool {
+		guard let session = sessions.first(where: { $0.identity == identity }) else { return false }
+		activate(session, focus: true)
+		return true
+	}
+
+	/// Where a running session is, as far as this panel can act on it.
+	///
+	/// The list draws from this and the click acts on it, so what a row says
+	/// and what it does cannot drift: *here* is a tab of this panel, *another
+	/// window* is a tab the app holds elsewhere, *tmux* is a place any panel
+	/// can reach by switching or attaching a client, and *elsewhere* is a
+	/// session in some other program's terminal — the one case where the
+	/// resume command is the only honest offer.
+	func reach(of running: RunningSessions.Session, appTerminals: Set<String>) -> SessionReach {
+		if let terminal = running.terminal {
+			if sessions.contains(where: { $0.identity == terminal }) { return .here }
+			if appTerminals.contains(terminal) { return .anotherWindow }
+		}
+		if let tmux = running.tmuxSession {
+			return mirroredTmuxSession == tmux ? .tmuxHere : .tmuxSession(tmux)
+		}
+		return .elsewhere
+	}
+
+	/// Brings the tab a running session is in to the front, when this panel
+	/// holds it or can reach it through tmux; false when it cannot.
+	///
+	/// **Without the `tmux` tab having to be in front**, which was the report:
+	/// the toast's `revealTmuxWindow` only ever selected a window of the
+	/// mirrored session, and every other session copied a command.
+	func reveal(_ running: RunningSessions.Session) -> Bool {
+		if let terminal = running.terminal,
+		   let session = sessions.first(where: { $0.identity == terminal }) {
+			activate(session, focus: true)
+			return true
+		}
+		guard let tmux = running.tmuxSession else { return false }
+
+		// The window and the pane, by the pane's own id where the hook gave
+		// one — it survives the window being renumbered — and by index else.
+		let select = { @MainActor [weak self] in
+			if let pane = running.pane, await TmuxMirror.select(pane: pane) {
+			} else if let index = running.window {
+				await TmuxMirror.select(window: index, inSession: tmux)
+			}
+			self?.refreshTmuxWindows()
+		}
+
+		if mirroredTmuxSession == tmux {
+			if let index = running.window { markMirroredWindowActive(index) }
+			if let terminal = mirroredTerminal { activate(terminal, focus: true) }
+			Task { await select() }
+			return true
+		}
+		if mirrorsTmux, let tty = tmuxClientTTY, mirroredTerminal?.hasExited != true {
+			// Another session on the same server: the client this panel has
+			// is switched to it, as the tag's menu does.
+			if let terminal = mirroredTerminal { activate(terminal, focus: true) }
+			Task {
+				await TmuxMirror.switchClient(onTTY: tty, to: tmux)
+				await select()
+			}
+			return true
+		}
+		// No `tmux` tab, or a dead one: attach one to the session, then select
+		// once the client is up.
+		reattachTmux(to: tmux)
+		Task {
+			try? await Task.sleep(nanoseconds: 600_000_000)
+			await select()
+		}
+		return true
+	}
+
 	/// Brings a tmux window to the front, the way clicking its tab does.
 	///
 	/// For a toast about a session that wants an answer: the whole value of the
@@ -1391,11 +1545,13 @@ final class BottomPanel: NSView {
 		tmuxWindows = tmuxWindows.map {
 			TmuxMirror.Window(
 				index: $0.index,
+				windowID: $0.windowID,
 				name: $0.name,
 				isActive: $0.index == index,
 				command: $0.command,
 				aiStatus: $0.aiStatus,
-				silentFor: $0.silentFor
+				silentFor: $0.silentFor,
+				directory: $0.directory
 			)
 		}
 		rebuildColumns()
@@ -1761,6 +1917,7 @@ final class BottomPanel: NSView {
 		// about what the tab is, and made the panel's one fixed tab look like a
 		// different tab everywhere.
 		let session = Session(title: attaches ? "tmux" : title, kind: .terminal(pane))
+		nameTab(session, of: pane)
 		if attaches { attachedTerminalID = ObjectIdentifier(session) }
 		session.directory = directory
 		wire(session)
@@ -1841,6 +1998,7 @@ final class BottomPanel: NSView {
 			command: (executable: executable, arguments: arguments)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
+		nameTab(session, of: pane)
 		session.isRun = true
 		session.runKey = key
 		// The panel's own root, not the parameter: a configuration's working
@@ -3655,6 +3813,25 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 
 	private var mirrorTagFrame: NSRect = .zero
 
+	/// Every running Claude Code session on the machine, as the two numbers
+	/// `SessionsPill` draws beside the tag. Nil when there is none, and then
+	/// there is no pill and the tabs have the room: a grey `0 · 0` would be
+	/// furniture, for the reason the git pane draws no `Fetch` without a remote.
+	var runningCounts: RunningSessions.Counts? {
+		didSet {
+			guard runningCounts != oldValue else { return }
+			recomputeLayout()
+			needsDisplay = true
+		}
+	}
+
+	private var sessionsPillFrame: NSRect = .zero
+	/// Where the pill is, for a driven run that wants to click it.
+	var sessionsPillFrameForTesting: NSRect { sessionsPillFrame }
+
+	/// The pill was clicked, with where it is so the list can hang off it.
+	var onSessionsPillClicked: ((NSRect) -> Void)?
+
 	/// Whether the keyboard is in the panel this strip belongs to.
 	///
 	/// The whole panel, not one terminal: a split has two of them and one tab
@@ -3884,6 +4061,22 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		return "panel \(isMirroringTmux ? "(tmux)" : "      ")"
 			+ " \"\(item?.title ?? "-")\" closable=\(item?.isClosable ?? true)"
 			+ " -> tab=\(hoveredIndex.map(String.init) ?? "none") close=\(hoveredClose)"
+	}
+
+	/// How many tabs the strip holds, for deciding which strip the keys mean.
+	var tabCount: Int { items.count }
+
+	/// Selects the tab `offset` places from the active one, wrapping, exactly as
+	/// a click on it would — through the same `onSelect`, so a tmux window, a
+	/// terminal and a debugger are each selected the way they already are.
+	///
+	/// For ⌘⇧] and ⌘⇧[ while the keyboard is in the panel, which used to move
+	/// the editor's tabs behind it.
+	func selectNeighbour(offset: Int) {
+		guard !items.isEmpty else { return }
+		let count = items.count
+		let current = activeIndex ?? 0
+		onSelect?(((current + offset) % count + count) % count)
 	}
 
 	func setItems(_ items: [PanelTabItem], activeIndex: Int?) {
@@ -4143,7 +4336,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 
 	/// Where the panel's own controls begin, which is where the tabs must stop.
 	private var trailingControlsLeadingEdge: CGFloat {
-		let leading = [mirrorTagFrame, followButtonFrame, maximizeButtonFrame, hideButtonFrame]
+		let leading = [sessionsPillFrame, mirrorTagFrame, followButtonFrame, maximizeButtonFrame, hideButtonFrame]
 			.filter { $0.width > 0 }
 			.map(\.minX)
 			.min()
@@ -4159,6 +4352,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			maximizeButtonFrame = .zero
 			followButtonFrame = .zero
 			mirrorTagFrame = .zero
+			sessionsPillFrame = .zero
 			return
 		}
 
@@ -4183,20 +4377,38 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			height: bounds.height
 		)
 
-		guard let session = mirroredSession else {
+		let height = Theme.current.scaled(16)
+		if let session = mirroredSession {
+			let label = mirrorTagText(for: session)
+			let width = label.size().width + Theme.current.scaled(12) + mirrorChevronWidth
+			mirrorTagFrame = NSRect(
+				x: followButtonFrame.minX - Theme.current.scaled(8) - width,
+				y: (bounds.height - height) / 2,
+				width: width,
+				height: height
+			)
+		} else {
 			mirrorTagFrame = .zero
+		}
+
+		// The pill is the leftmost control, so it is the first thing the tabs
+		// meet — and when there is nothing running it is not there at all, and
+		// the tabs have what it would have taken.
+		guard let counts = runningCounts else {
+			sessionsPillFrame = .zero
 			return
 		}
-		let label = mirrorTagText(for: session)
-		let width = label.size().width + Theme.current.scaled(12) + mirrorChevronWidth
-		let height = Theme.current.scaled(16)
-		mirrorTagFrame = NSRect(
-			x: followButtonFrame.minX - Theme.current.scaled(8) - width,
+		let anchor = mirrorTagFrame.width > 0 ? mirrorTagFrame.minX : followButtonFrame.minX
+		let width = SessionsPill.width(for: counts, showsDigits: sessionsPillShowsDigits)
+		sessionsPillFrame = NSRect(
+			x: anchor - Theme.current.scaled(8) - width,
 			y: (bounds.height - height) / 2,
 			width: width,
 			height: height
 		)
 	}
+
+	private var sessionsPillShowsDigits: Bool { SessionsPill.showsDigits(inStripOfWidth: bounds.width) }
 
 	/// `tmux · session`, or just `tmux` when the name would crowd the strip.
 	private func mirrorTagText(for session: String) -> NSAttributedString {
@@ -4308,6 +4520,10 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		}
 		if hideButtonFrame.contains(point) { onHide?(); return }
 		if maximizeButtonFrame.contains(point) { onToggleMaximize?(); return }
+		if sessionsPillFrame.width > 0, sessionsPillFrame.contains(point) {
+			onSessionsPillClicked?(sessionsPillFrame)
+			return
+		}
 		if mirroredSession != nil, mirrorTagFrame.contains(point) {
 			onMirrorTagClicked?(mirrorTagFrame)
 			return
@@ -4544,6 +4760,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		)
 
 		drawMirrorTag()
+		drawSessionsPill()
 	}
 
 	/// What the strip is showing and what it is holding back.
@@ -4655,7 +4872,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	/// showing through. Faded in over its first few points, or the tab it cuts
 	/// off ends against a hard vertical edge that reads as a tab of its own.
 	private func drawControlsBackground() {
-		let leftmost = [mirrorTagFrame, followButtonFrame, maximizeButtonFrame, hideButtonFrame]
+		let leftmost = [sessionsPillFrame, mirrorTagFrame, followButtonFrame, maximizeButtonFrame, hideButtonFrame]
 			.filter { $0.width > 0 }
 			.map(\.minX)
 			.min()
@@ -4727,6 +4944,11 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		chevron.lineJoinStyle = .round
 		Theme.current.gitModified.setStroke()
 		chevron.stroke()
+	}
+
+	private func drawSessionsPill() {
+		guard let counts = runningCounts, sessionsPillFrame.width > 0 else { return }
+		SessionsPill.draw(counts, in: sessionsPillFrame, showsDigits: sessionsPillShowsDigits)
 	}
 
 	private func draw(item: PanelTabItem, in rect: NSRect, isActive: Bool, isHovered: Bool) {

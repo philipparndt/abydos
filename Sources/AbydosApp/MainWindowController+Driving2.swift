@@ -164,6 +164,15 @@ extension MainWindowController {
 
 			switch step {
 			case "focus": navigator.focusTree()
+			// A real click on a row and who has the keyboard after it, then the
+			// selection by path — the tree-behaviour claim asked of this tree
+			// the way it is asked of the other three.
+			case let step where step.hasPrefix("click"):
+				print("TREE \(navigator.clickRowForTesting(Int(step.dropFirst("click".count)) ?? 0))")
+				continue
+			case "selected":
+				print("TREE selected: \(navigator.selectedPathsForTesting().joined(separator: " | "))")
+				continue
 			// What a right-click over the selection offers, submenus included.
 			case "menu":
 				print("TREE menu: \(navigator.contextMenuTitlesForTesting().joined(separator: " | "))")
@@ -684,6 +693,24 @@ extension MainWindowController {
 	/// Whether the terminal panel is showing, what is in it, and what the pane in
 	/// front last said — for 0444's part 4, whose whole claim is about a pane that
 	/// appears without being asked for and must not be asked for again to be seen.
+	/// ⌘⇧] and ⌘⇧[ with the keyboard in the panel, then in the editor, for
+	/// `--next-tab-in-panel`. The strip is read after each press, with its
+	/// active tab starred, so the report says where the keys went.
+	func exerciseNextTabForTesting() {
+		bottomPanel.selectAndFocusTabForTesting(0)
+		let inPanel = isTerminalFocused
+		let before = bottomPanel.tabsForTesting
+		selectNextTab(nil)
+		let forward = bottomPanel.tabsForTesting
+		selectPreviousTab(nil)
+		let back = bottomPanel.tabsForTesting
+		editor.focusForTesting()
+		let inEditor = !isTerminalFocused
+		selectNextTab(nil)
+		print("NEXTTAB: panel focused=\(inPanel) before=[\(before)] next=[\(forward)] previous=[\(back)]")
+		print("NEXTTAB: editor focused=\(inEditor) panel=[\(bottomPanel.tabsForTesting)]")
+	}
+
 	func panelTabsForTesting(tail: Int = 0) -> String {
 		var said = "PANEL: visible=\(isPanelVisible) \(bottomPanel.tabsForTesting)"
 		if tail > 0 { said += "\n  last: " + bottomPanel.activeTerminalTailForTesting(lines: tail) }

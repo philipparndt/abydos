@@ -181,13 +181,14 @@ struct AppearanceSettingsTests {
 /// What a fresh installation is painted with.
 ///
 /// Two questions that look like one: what somebody who has never chosen gets,
-/// and what a value stored before schemes were files means. The first changed to
-/// the Abydos scheme; the second must not, or choosing `dark` years ago would
-/// silently come to mean a different palette.
+/// and what a value stored before schemes were files means. The first went to
+/// the Abydos scheme for a while and is blue again, every current user having
+/// chosen blue over it; the second must not move, or choosing `dark` years ago
+/// would silently come to mean a different palette.
 struct FreshInstallationAppearanceTests {
-	@Test func aFreshInstallationIsAbydos() {
+	@Test func aFreshInstallationIsBlue() {
 		let settings = Settings(defaults: TestDefaults.make())
-		#expect(settings.themeFamily == "abydos")
+		#expect(settings.themeFamily == "blue")
 		#expect(settings.appearanceMode == "system")
 	}
 

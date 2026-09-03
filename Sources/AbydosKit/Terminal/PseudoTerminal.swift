@@ -649,7 +649,9 @@ public final class PseudoTerminal {
 
 	/// Launches the user's login shell, which is what a terminal pane wants.
 	@discardableResult
-	public func startLoginShell(workingDirectory: URL?, rows: Int, columns: Int) -> Bool {
+	public func startLoginShell(
+		workingDirectory: URL?, environment: [String: String]? = nil, rows: Int, columns: Int
+	) -> Bool {
 		let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
 		// `-l` so the usual profile is sourced and PATH matches a normal terminal;
 		// without it, tools installed via Homebrew are frequently missing.
@@ -657,6 +659,7 @@ public final class PseudoTerminal {
 			executable: shell,
 			arguments: ["-l"],
 			workingDirectory: workingDirectory,
+			environment: environment,
 			rows: rows,
 			columns: columns
 		)

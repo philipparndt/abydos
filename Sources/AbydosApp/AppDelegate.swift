@@ -203,8 +203,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller.claudeSessionsChanged(slug: slug)
 			}
 		}
+		// And the pill on every panel, which counts the whole machine and so
+		// is the same in every window.
+		watch.runningChanged = { [weak self] in
+			for controller in self?.windowControllers ?? [] {
+				controller.runningSessionsChanged()
+			}
+		}
 		watch.start()
 		claudeWatch = watch
+
+		// What the app holds, over every window, for a row in one window that
+		// names a tab in another: the register is the machine's, the reach is
+		// the app's.
+		PanelRunningSessions.app = .init(
+			terminals: { [weak self] in
+				Set((self?.windowControllers ?? []).flatMap(\.terminalIdentities))
+			},
+			reveal: { [weak self] identity in
+				(self?.windowControllers ?? []).contains { $0.revealTerminalTab(identity: identity) }
+			}
+		)
 
 		// What a previous run left running. An app that was killed outright
 		// removes nothing on the way out, so the next one to start does it: every
@@ -326,12 +345,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// later instead, through the same call the hook's notification makes —
 		// which is the only way to drive the redraw, `ClaudeWatch` never
 		// subscribing on a run like this one.
-		if let id = options.claudeRunning, let path = options.projectPath,
-		   options.claudeRunningAfter <= 0 {
-			RunningSessions.shared.note([
-				"event": "SessionStart", "session": id,
-				"cwd": URL(fileURLWithPath: path, isDirectory: true).path,
-			])
+		if let path = options.projectPath {
+			for spec in options.claudeRunning where spec.after <= 0 {
+				RunningSessions.shared.note([
+					"event": "SessionStart", "session": spec.id, "status": spec.status,
+					"cwd": URL(fileURLWithPath: path, isDirectory: true).path,
+				])
+			}
 		}
 
 		let controller: MainWindowController?
@@ -675,6 +695,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if options.terminalTabKey {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.exerciseTerminalTabKeyForTesting()
+			}
+		}
+		if options.nextTabInPanel {
+			// After `--tab-fill` has finished filling: it starts at three
+			// seconds and spaces its tabs a quarter of a second apart.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+				controller?.exerciseNextTabForTesting()
 			}
 		}
 
@@ -1130,14 +1157,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
-		if let id = options.claudeRunning, let path = options.projectPath,
-		   options.claudeRunningAfter > 0 {
+		if let path = options.projectPath {
 			let cwd = URL(fileURLWithPath: path, isDirectory: true).path
-			DispatchQueue.main.asyncAfter(deadline: .now() + options.claudeRunningAfter) {
-				guard let slug = RunningSessions.shared.note([
-					"event": "SessionStart", "session": id, "cwd": cwd,
-				]) else { return }
-				controller?.claudeSessionsChanged(slug: slug)
+			for spec in options.claudeRunning where spec.after > 0 {
+				DispatchQueue.main.asyncAfter(deadline: .now() + spec.after) {
+					var payload = [
+						"event": "SessionStart", "session": spec.id, "status": spec.status, "cwd": cwd,
+					]
+					// In one of the panel's tabs, by the identity the tab gave its
+					// shell — what the hook sends for a session outside tmux.
+					if let tab = spec.tab, let identity = controller?.terminalIdentityForTesting(tab) {
+						payload["terminal"] = identity
+					}
+					guard let moved = RunningSessions.shared.note(payload) else { return }
+					if moved.sessionsChanged { controller?.claudeSessionsChanged(slug: moved.slug) }
+					controller?.runningSessionsChanged()
+				}
 			}
 		}
 
@@ -1915,6 +1950,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		for at in options.backlogGeometryAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("BACKLOG-GEOM \(Int(at))s: \(controller?.panelForTesting.backlogGeometryForTesting() ?? "no window")")
+				fflush(stdout)
+			}
+		}
+
 		if options.reportsTerminalGeometry {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
@@ -1989,6 +2031,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		for at in options.toastReportsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.toastReportForTesting() ?? "TOASTS: no window")")
+				fflush(stdout)
+			}
+		}
+
+		for at in options.runningSessionsAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("\(Int(at))s \(controller?.runningSessionsReportForTesting() ?? "SESSIONS: no window")")
+				fflush(stdout)
+			}
+		}
+		if let at = options.runningSessionsMenuAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("\(Int(at))s \(controller?.openRunningSessionsForTesting(filter: options.runningSessionsFilter) ?? "SESSIONS: no window")")
+				fflush(stdout)
+			}
+		}
+		for at in options.presentationAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.togglePresentationMode(nil)
+				print("\(Int(at))s PRESENTATION toggled: scale=\(Settings.shared.activeScale)")
+				fflush(stdout)
+			}
+		}
+		if let at = options.runningSessionsChooseAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("\(Int(at))s \(controller?.chooseFirstRunningSessionForTesting() ?? "SESSIONS: no window")")
 				fflush(stdout)
 			}
 		}
