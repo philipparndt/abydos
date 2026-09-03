@@ -313,16 +313,30 @@ public struct RunningSessions: Equatable, Sendable {
 		var bySlug: [String: [Session]] = [:]
 		for record in records.values { bySlug[record.slug, default: []].append(record) }
 
+		// **By where a session is, never by when it spoke.** This ordered the
+		// windowless rows by their last event and the groups after the first by
+		// their most recent one — and the list is rebuilt on every hook event
+		// *and* once a second by the staleness clock, so both moved dozens of
+		// times a minute while anything was working. A row that moves while
+		// somebody is reaching for it cannot be clicked, which is the report.
+		//
+		// A tmux session's name and a window's index are things a session keeps
+		// for its whole life, and are what a person reads the row by.
 		func ordered(_ sessions: [Session]) -> [Session] {
 			sessions.sorted { a, b in
 				switch (a.window, b.window) {
 				case let (x?, y?):
 					if a.tmuxSession != b.tmuxSession { return (a.tmuxSession ?? "") < (b.tmuxSession ?? "") }
-					return x < y
+					if x != y { return x < y }
 				case (_?, nil): return true
 				case (nil, _?): return false
-				case (nil, nil): return a.lastEvent > b.lastEvent
+				case (nil, nil): break
 				}
+				// **Every comparison ends here.** The records are a dictionary,
+				// whose walk order is arbitrary, and `sorted` is not stable —
+				// so any pair called equal was free to swap on a redraw with
+				// nothing having happened. An id is unique and never changes.
+				return a.id < b.id
 			}
 		}
 		func group(_ slug: String) -> Group? {
@@ -330,12 +344,18 @@ public struct RunningSessions: Equatable, Sendable {
 			return Group(slug: slug, cwd: first.cwd, sessions: ordered(sessions))
 		}
 
+		// The name is the last component of the path, which is what the group's
+		// header shows, so the list reads in the order it is written. The slug
+		// breaks the tie, since two projects can share a last component.
+		func name(of slug: String) -> String {
+			(bySlug[slug]?.first?.cwd).map { ($0 as NSString).lastPathComponent } ?? slug
+		}
 		let leading = firstSlugs.compactMap(group)
 		let rest = bySlug.keys
 			.filter { !firstSlugs.contains($0) }
 			.sorted { a, b in
-				let latest = { (slug: String) in bySlug[slug]!.map(\.lastEvent).max() ?? .distantPast }
-				return latest(a) > latest(b)
+				let (left, right) = (name(of: a), name(of: b))
+				return left == right ? a < b : left < right
 			}
 			.compactMap(group)
 		return leading + rest

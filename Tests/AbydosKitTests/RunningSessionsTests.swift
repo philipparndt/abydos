@@ -312,10 +312,10 @@ struct RunningSessionsTests {
 
 	// MARK: - The popover
 
-	/// The window's own project first, then the others most recently heard
-	/// first; within a project, tmux's windows in tmux's order and then the
-	/// sessions outside tmux, newest first.
-	@Test func theListOpensOnThisProjectAndOrdersTheRestByRecency() {
+	/// The window's own project first, then the others by name; within a
+	/// project, tmux's windows in tmux's order and then the sessions outside
+	/// tmux. Never by when a session last spoke — see `anEventMovesNothing`.
+	@Test func theListOpensOnThisProjectAndOrdersTheRestByName() {
 		var running = RunningSessions()
 		running.note(payload("PreToolUse", session: "old", cwd: "/Users/x/dev/older", status: "working"), now: t0)
 		running.note(payload("PreToolUse", session: "w2", status: "working", tmux: ("abydos", 2, "screencasts")), now: t0.addingTimeInterval(1))
@@ -327,6 +327,52 @@ struct RunningSessionsTests {
 		#expect(groups.map(\.slug) == ["-Users-x-dev-probe", "-Users-x-dev-newer", "-Users-x-dev-older"])
 		#expect(groups[0].cwd == "/Users/x/dev/probe")
 		#expect(groups[0].sessions.map(\.id) == ["w1", "w2", "loose"])
+	}
+
+	/// **A row keeps its place for as long as its session exists.** The list is
+	/// rebuilt on every hook event and once a second by the staleness clock, so
+	/// an order that depends on time moves under the pointer — which is what was
+	/// reported: the rows jumping around.
+	@Test func anEventMovesNothing() {
+		var running = RunningSessions()
+		running.note(payload("PreToolUse", session: "w5", status: "working", tmux: ("abydos", 5, "five")), now: t0)
+		running.note(payload("PreToolUse", session: "w1", status: "working", tmux: ("abydos", 1, "one")), now: t0)
+		running.note(payload("PreToolUse", session: "w3", status: "working", tmux: ("abydos", 3, "three")), now: t0)
+		running.note(payload("PreToolUse", session: "loose", status: "working"), now: t0)
+		running.note(payload("PreToolUse", session: "z", cwd: "/Users/x/dev/zebra", status: "working"), now: t0)
+		running.note(payload("PreToolUse", session: "a", cwd: "/Users/x/dev/apple", status: "working"), now: t0)
+
+		func shape(_ at: Date) -> String {
+			running.grouped(firstSlugs: slugs, at: at).map { group in
+				group.slug + "=" + group.sessions.map(\.id).joined(separator: ",")
+			}.joined(separator: " | ")
+		}
+
+		// The window's own project first; the rest by name — apple before
+		// zebra — and never by which spoke last.
+		let before = shape(t0)
+		#expect(before == "-Users-x-dev-probe=w1,w3,w5,loose"
+			+ " | -Users-x-dev-apple=a | -Users-x-dev-zebra=z")
+
+		// The last group's session speaks, then a windowless row in the first
+		// group speaks. Under the old order the first moved a whole group to the
+		// top and the second swapped two rows; both are the report.
+		running.note(payload("PostToolUse", session: "z", cwd: "/Users/x/dev/zebra", status: "working"), now: t0.addingTimeInterval(10))
+		running.note(payload("PostToolUse", session: "loose", status: "working"), now: t0.addingTimeInterval(20))
+		#expect(shape(t0.addingTimeInterval(30)) == before, "an event moves nothing")
+	}
+
+	/// Repeated asks give one answer: a dictionary's walk order and an unstable
+	/// sort cannot show through, because every comparison ends in the id.
+	@Test func theOrderIsTheSameEveryTimeItIsAsked() {
+		var running = RunningSessions()
+		for id in ["e", "c", "a", "d", "b"] {
+			running.note(payload("PreToolUse", session: id, status: "working"), now: t0)
+		}
+		let answers = Set((0..<20).map { _ in
+			running.grouped(firstSlugs: slugs, at: t0).flatMap { $0.sessions.map(\.id) }.joined()
+		})
+		#expect(answers == ["abcde"])
 	}
 
 	@Test func aProjectWithNoSessionIsNotAGroup() {

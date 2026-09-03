@@ -133,6 +133,24 @@ nothing — and a stack view of no height does not clip, so its controls drew
 around the pane's top edge, into the strip. One rule now, and a header with
 nothing to say is hidden whole.
 
+## The session list holds its order
+
+The rows jumped around. Three things ordered by something that keeps changing —
+the groups after the first by their most recent event, the rows without a tmux
+window by theirs, and ties by nothing at all, so a dictionary's walk order
+showed through an unstable sort. The list is rebuilt on every hook event and
+once a second by the staleness clock, so all three moved dozens of times a
+minute while anything was working, and a row that moves while you are reaching
+for it cannot be clicked.
+
+Order now follows where a session is, never when it last spoke: the window's own
+project first, the rest by name, and within a project the tmux session's name,
+the window's index, then the sessions in no window. Every comparison ends in the
+session's own id, so nothing can be called equal and swap on a redraw. Recency
+was a deliberate decision when the list was written and it was the wrong one: a
+sensible order for a list read once, a hostile one for a list that redraws while
+somebody reaches for it.
+
 ## The session list turns while a session works
 
 The tmux tabs have turned a spinner for a working session since the badges were
