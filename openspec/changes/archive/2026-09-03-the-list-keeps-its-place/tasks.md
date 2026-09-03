@@ -68,4 +68,5 @@
   `ydos:0 ydos:1 ydos:2 ydos:3 -> ydos:0 ydos:1 ydos:2 ydos:3 000000` — it
   landed at the end, nothing above it moved, and the selection stayed on
   `ydos:1`.
-- [ ] 4.4 `make test` and `make warnings`, both clean by their exit codes.
+- [x] 4.4 `make test` and `make warnings`, both clean by their exit codes.
+  4023 tests in 512 suites, exit 0, at load 25 over 14 cores on 2026-09-03; `make warnings` exit 0. Two wall-clock classifications were replaced to get there — see `a-deadline-is-named-not-timed`.

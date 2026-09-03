@@ -9,7 +9,11 @@ import Foundation
 /// they hold a copy of every open document, and every edit has to be told to
 /// them in order, or their answers quietly stop matching the file.
 public final class LSPClient: @unchecked Sendable {
-	public enum ClientError: Error, LocalizedError {
+	/// `Equatable`, so a test can say *which* of these it expected rather than
+	/// telling them apart by how long the wait took. The three cases are the
+	/// three mechanisms, and naming one is a classification that no machine
+	/// load can spoil.
+	public enum ClientError: Error, LocalizedError, Equatable {
 		case notRunning
 		case failed(code: Int, message: String)
 		case timedOut(String)
@@ -658,11 +662,21 @@ public final class LSPClient: @unchecked Sendable {
 	}
 
 	/// What the server says about the call the caret is inside.
-	public func signatureHelp(uri: String, position: LSPPosition) async throws -> LSPSignatureHelp? {
+	///
+	/// - Parameter timeout: how long the answer gets. The default is a
+	///   keystroke's worth, because this is asked as somebody types the `(` and
+	///   an answer that arrives after they have finished typing the arguments
+	///   is not an answer. A *test* asks the same question for its content and
+	///   should wait as long as the machine needs — `Patience.seconds` — since
+	///   sourcekit-lsp answering a first request while the suite is running is
+	///   the machine's business and not the claim under test.
+	public func signatureHelp(
+		uri: String, position: LSPPosition, timeout: TimeInterval = 10
+	) async throws -> LSPSignatureHelp? {
 		let result = try await request("textDocument/signatureHelp", [
 			"textDocument": ["uri": uri],
 			"position": position.json,
-		])
+		], timeout: timeout)
 		return LSPSignatureHelp(json: result)
 	}
 

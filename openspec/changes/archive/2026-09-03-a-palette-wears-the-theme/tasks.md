@@ -11,4 +11,5 @@
   rows are one palette in the picture.
 - [x] 2.2 The same run on the dark theme, so the fix is not a light constant
   written in.
-- [ ] 2.3 `make test` and `make warnings`, both clean by their exit codes.
+- [x] 2.3 `make test` and `make warnings`, both clean by their exit codes.
+  4023 tests in 512 suites, exit 0, at load 25 over 14 cores on 2026-09-03; `make warnings` exit 0. Two wall-clock classifications were replaced to get there — see `a-deadline-is-named-not-timed`.

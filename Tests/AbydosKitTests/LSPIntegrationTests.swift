@@ -166,9 +166,16 @@ struct LSPIntegrationTests {
 		// 19, it answers. Which is also where the caret is when somebody has
 		// just typed the `(` that woke the request, so the editor asks at the
 		// right place by construction rather than by luck.
+		// **As long as this machine needs, not as long as a keystroke gets.**
+		// The claim here is *what* the server says about the parameter; that it
+		// says it inside a typist's ten seconds is a claim about the machine,
+		// and inside a full suite the machine loses it — measured timing out at
+		// load 24 over 14 cores, three runs out of four. `Patience` exists for
+		// this exact sentence: "a language server to answer".
 		let help = try await client.signatureHelp(
 			uri: file.absoluteString,
-			position: LSPPosition(line: 1, character: 19)
+			position: LSPPosition(line: 1, character: 19),
+			timeout: Patience.seconds
 		)
 
 		let active = try #require(help?.active)

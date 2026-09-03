@@ -382,3 +382,32 @@ restored asked for nothing, and now takes nothing: the four openers know
 whether they were asked, and only then give the editor the window. Everything
 that opens a page on purpose — the sidebar's rows, the Git menu, the review
 page — is unchanged.
+
+## A deadline is named, not timed
+
+Three tests kept `make test` red while the code under them worked, and all
+three made the same mistake from two directions: they used *how long* a
+mechanism took to say *which* mechanism it was, and the suite's own parallelism
+decides how long anything takes.
+
+Two of them were already guarded for load and went red anyway — the guard reads
+a one-minute load average and is asked before the wait, so the suite's own
+parallelism arrives after it has answered. What the run prints now, having
+stopped asserting it, is the argument: a one-second deadline firing at 25.0 s
+and at 41.7 s, at load 29 and 31 over 14 cores. No midpoint between one second
+and two minutes survives that, and both deadlines were working perfectly.
+
+A classification now names its mechanism. The LSP test expects
+`.timedOut("textDocument/hover")` exactly — `.notRunning` is checked before the
+request is sent and `.failed` carries a reply a sleeping server cannot send —
+and the runtime test keeps the reason it already had, `did not answer`, which is
+the deadline's own words. Both print their duration with the load beside it
+instead of betting on it.
+
+And a test asking a language server for *content* now waits as long as the
+machine needs rather than inheriting a typist's ten seconds: `signatureHelp`
+takes its own timeout, ten seconds by default for the app, and the test passes
+`Patience.seconds` — the number whose own documentation names "a language
+server to answer".
+
+`make test` returns 0 at load 25 over 14 cores.

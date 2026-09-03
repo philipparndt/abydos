@@ -559,19 +559,27 @@ struct LSPShutdownTests {
 		)
 
 		let began = Date()
-		await #expect(throws: LSPClient.ClientError.self) {
+		// **The error names the mechanism, so the clock is not needed to.**
+		// This asked for any `ClientError` and then read the elapsed time to
+		// say which one it was — a wall-clock classification, guarded for load
+		// and still red at 35, 37 and 40 seconds against a 30-second midpoint,
+		// because the guard reads a one-minute load average and the suite's own
+		// parallelism arrives after it is asked. `mayClassify` says as much
+		// about its own lag.
+		//
+		// `.timedOut("textDocument/hover")` is the deadline and nothing else
+		// is: `.notRunning` is checked before the request is sent and
+		// `.failed` carries a reply, which a server told to `sleep 120` cannot
+		// send. So the classification is exact at any load, and the time it
+		// took goes to the log with the load beside it, which is where a
+		// measurement belongs.
+		await #expect(throws: LSPClient.ClientError.timedOut("textDocument/hover")) {
 			_ = try await client.request("textDocument/hover", nil, timeout: 1)
 		}
-		// The throw above is the claim; this says which mechanism threw. Guarded
-		// for load, because a machine with nothing left to give can miss any
-		// deadline — this went red at 27 runnable threads a core with the
-		// client working exactly as it should.
-		if Stopwatch.mayClassify("LSP", "what ended the wait") {
-			#expect(
-				Date().timeIntervalSince(began) < 30,
-				"the deadline, not the server, ended the wait"
-			)
-		}
+		print(String(
+			format: "LSP: the deadline ended the wait after %.1f s (asked for 1). %@",
+			Date().timeIntervalSince(began), MachineLoad.said
+		))
 	}
 }
 

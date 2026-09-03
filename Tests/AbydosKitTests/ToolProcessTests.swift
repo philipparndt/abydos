@@ -268,20 +268,23 @@ struct SilentRuntimeTests {
 			Issue.record("expected a failure, got \(first)")
 			return
 		}
+		// **"did not answer" is the deadline's own words**, and the program
+		// told to `sleep 120` has none: it never answers, so no other path
+		// produces this reason. That is the classification, complete, with no
+		// clock in it.
 		#expect(reason.contains("did not answer"))
+		// A lower bound is safe at any load — load only ever makes it later.
 		#expect(waited >= 1)
-		// A classification rather than a performance claim: this separates a
-		// one-second deadline from the program's own `sleep 120`, so sixty is a
-		// midpoint with a factor of sixty of headroom on both sides. A bound of
-		// ten seconds *was* a guess and failed at 12.3 on a loaded machine
-		// while the deadline was working perfectly, which is 0435 exactly.
-		//
-		// Even a classification needs the load guard: at 27 runnable threads a
-		// core this went red with the deadline working. `mayClassify` is that
-		// guard without `make timing`'s, since there is nothing here to measure.
-		if Stopwatch.mayClassify("DEADLINE", "what ended the inspect") {
-			#expect(waited < 60, "the deadline, not the program's `sleep 120`, ended it")
-		}
+		// The upper bound is gone. It was a midpoint of sixty seconds between
+		// a one-second deadline and a two-minute sleep, guarded for load, and
+		// it still went red at 97 seconds inside a full suite with the deadline
+		// working perfectly — the guard reads a one-minute load average, and
+		// the suite's own parallelism arrives after it has been asked. The
+		// number is said instead, with the load beside it.
+		print(String(
+			format: "DEADLINE: the inspect gave up after %.1f s (asked for 1). %@",
+			waited, MachineLoad.said
+		))
 
 		// And the second asker is told the same thing without waiting again.
 		// This is the whole point: every pane and every server asks, and each

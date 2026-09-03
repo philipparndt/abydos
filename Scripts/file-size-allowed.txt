@@ -16,7 +16,7 @@
 3684 Sources/AbydosApp/Terminal/TerminalView.swift
 1928 Sources/AbydosApp/Titlebar/ProjectSwitcherPopover.swift
 1555 Sources/AbydosKit/Debug/DebugSession.swift
-1189 Sources/AbydosKit/LSP/LSPClient.swift
+1203 Sources/AbydosKit/LSP/LSPClient.swift
 1562 Sources/AbydosKit/LSP/LanguageServers.swift
 1021 Sources/AbydosKit/Preview/DiagramExport.swift
 2843 Sources/AbydosKit/Project/ExternalDependencies.swift
