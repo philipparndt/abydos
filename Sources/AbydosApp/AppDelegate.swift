@@ -2047,6 +2047,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				fflush(stdout)
 			}
 		}
+		if let how = options.zoomGesture {
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.zoomGestureAt) {
+				controller?.exerciseZoomForTesting(how)
+			}
+		}
+
 		for at in options.presentationAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				controller?.togglePresentationMode(nil)

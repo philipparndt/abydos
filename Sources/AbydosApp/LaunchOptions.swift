@@ -356,6 +356,10 @@ struct LaunchOptions {
 	/// Toggle presentation mode while the window is up, as the menu does, so a
 	/// page can be read before and after: `--presentation-at 4`.
 	var presentationAt: [Double] = []
+	/// Zoom the window and say what its frame did: `--zoom-gesture click@4` or
+	/// `--zoom-gesture zoom@4`.
+	var zoomGesture: String?
+	var zoomGestureAt: Double = 4
 	/// Type this into the list's filter once it is open: `--running-sessions-filter screen`.
 	var runningSessionsFilter: String?
 	/// Choose the first row shown, as ⏎ in the filter does, and say which tab
@@ -1210,6 +1214,11 @@ struct LaunchOptions {
 			case "--running-sessions-menu":
 				options.runningSessionsMenuAt = next().flatMap(Double.init) ?? 6
 			case "--running-sessions-filter": options.runningSessionsFilter = next()
+			case "--zoom-gesture":
+				let said = next() ?? "zoom"
+				let halves = said.split(separator: "@", maxSplits: 1)
+				options.zoomGesture = String(halves[0])
+				if halves.count > 1 { options.zoomGestureAt = Double(halves[1]) ?? 4 }
 			case "--presentation-at":
 				options.presentationAt = (next() ?? "4").split(separator: ",").compactMap { Double($0) }
 			case "--running-sessions-choose":

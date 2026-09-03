@@ -89,3 +89,45 @@ and does not claim the report closed.
 - Which of the three mechanisms it is. Unanswered, and the first task.
 - Whether torn-off terminal windows share it. Asked once the main window's
   answer is known.
+
+## What the instrument found, 2026-09-03
+
+**The app's zoom is correct, and the springback was not reproduced.** Five
+states, both gestures, both displays: a fresh window, a window restored from
+the frame the real app has remembered (`349 979 1280 820 0 0 1920 1050`, whose
+top is off a 1050-tall screen and is therefore constrained on restore), a
+window sized first, the panel maximised, and the toggle twice. Every one zoomed
+to the display's visible frame and stayed there; every un-zoom returned the
+window to the size it had and stayed there.
+
+So of the three mechanisms the design listed: the veto is ruled out by reading
+(nothing in this app sets the main window's frame outside the driven helpers),
+AppKit's own toggle is ruled out by measurement (it toggles cleanly from a
+restored frame, from a set frame, and on either display), and a standard frame
+too close to the current one is ruled out by the numbers (1280×820 against
+1920×985).
+
+**Stating the standard frame made it worse, and that is the finding.** Task 2.1
+was implemented — `windowWillUseStandardFrame` returning the visible frame of
+the window's own screen — and with it in place a zoomed window could no longer
+be un-zoomed: the un-zoom happened and the window returned to the zoomed frame
+a beat later. It was reported from the outside within minutes of the build
+existing. It is reverted. The lesson is the one the change was written around:
+AppKit's guess here was already the visible frame, so the "fix" replaced a
+correct answer with the same answer *and* took over a decision AppKit uses to
+compute `isZoomed`, which is what the un-zoom depends on.
+
+**And the instrument told the same lie first.** `doubleClickTitleBar` began by
+queueing the release and then sending the press, which is what `TreeKeys` must
+do for a table's tracking loop. A title bar runs no such loop, so the release
+arrived on a later turn with no press in front of it and AppKit read an up
+carrying `clickCount: 2` as a double-click of its own — every gesture zoomed
+twice, and an un-zoom sprang back. That is *exactly* the reported symptom,
+produced entirely by the measuring apparatus, and it is why the API path is
+driven beside the click: the two disagreeing is what caught it.
+
+**Where that leaves the report.** Unreproduced, and this change is not closed.
+What is known now: it is not the frame arithmetic, not a veto, and not the zoom
+target. What is untried: a window that has lived through display changes, sleep
+or a full-screen space — the state the reporter's window had and a fresh process
+cannot have. The next person has the instrument.
