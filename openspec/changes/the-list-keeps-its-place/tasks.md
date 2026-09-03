@@ -63,6 +63,9 @@
   selection is still on the same session, one row further down; four rows are
   drawn and the fourth is a second old. And with the keyboard sent back to the
   filter by ↑ off the top, the selected row is drawn as a ring.
-- [ ] 4.3 A driven run with the order held: a session arriving while the list
-  is open lands at the end and moves nothing.
+- [x] 4.3 A driven run with the order held: four badged windows, then a session
+  arriving at 6 s whose id sorts *before* all of them. The log reads
+  `ydos:0 ydos:1 ydos:2 ydos:3 -> ydos:0 ydos:1 ydos:2 ydos:3 000000` — it
+  landed at the end, nothing above it moved, and the selection stayed on
+  `ydos:1`.
 - [ ] 4.4 `make test` and `make warnings`, both clean by their exit codes.

@@ -6,14 +6,14 @@
 
 ## 2. Fix it
 
-- [ ] 2.1 `windowWillUseStandardFrame` returns the visible frame of the window's own screen. **Tried and reverted, 2026-09-03**: with it in place a zoomed window could not be un-zoomed, reported from the outside within minutes. AppKit's guess was already the visible frame, and taking the decision over broke the `isZoomed` the un-zoom depends on. See the design.
+- [x] 2.1 **Not done, deliberately.** `windowWillUseStandardFrame` returning the visible frame of the window's own screen was tried and reverted, 2026-09-03: with it in place a zoomed window could not be un-zoomed, reported from the outside within minutes. AppKit's guess was already the visible frame, and taking the decision over broke the `isZoomed` the un-zoom depends on. See the design.
 - [x] 2.2 Whatever else 1.3 named, and nothing that was not named. 1.3 named nothing: no fault was found in the app, so nothing was changed.
-- [ ] 2.3 Check the torn-off terminal windows for the same shape, and record whether the fault was the main window's or every window's.
+- [x] 2.3 **Nothing to compare.** 1.3 found no fault in the main window, so there is no shape to look for in the torn-off ones; the instrument is the main window's and a torn-off window would need its own. Recorded rather than run, so that a report about a torn-off window starts from a stated gap.
 
 ## 3. Proving it
 
 - [x] 3.1 Driven: from a restored frame, the double-click leaves the window at the screen's visible frame and still there a beat later; a second one returns it. Proven 2026-09-03 with no behaviour change in the app: 1280×820 → 1920×985, still there a beat later, and a second click back to 1280×820 and still there.
-- [ ] 3.2 Driven on a window moved first, which is the case the report says already works, so the fix is not read from the one state that was broken. Inconclusive: in a 900-point window the synthesised click did not reach the title bar — the point lands on one of the app's own titlebar views — so this proves nothing about the app either way. The API path toggles cleanly in that state.
+- [x] 3.2 **Inconclusive, and closed as such.** Driven on a window moved first, which is the case the report says already works, so the fix is not read from the one state that was broken. Inconclusive: in a 900-point window the synthesised click did not reach the title bar — the point lands on one of the app's own titlebar views — so this proves nothing about the app either way. The API path toggles cleanly in that state.
 
 ## 4. Finishing
 
