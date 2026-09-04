@@ -44,6 +44,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What each project had open, so going back to one looks as it was left.
 	var sessions = ProjectSessions()
 
+	/// Where a commit draft waits for the project it was asked for.
+	///
+	/// Beside `sessions` and keyed the same way, because it is the same kind of
+	/// thing: something about a project that has to outlive the view that asked
+	/// for it. A draft used to be written straight into the pane's fields, and
+	/// a project switch either dropped it or put one project's words into
+	/// another project's session.
+	let drafts = DraftInbox()
+
 	/// The message the project being opened was left composing, held until
 	/// something exists to put it in.
 	///
@@ -126,6 +135,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bar.gitCommandRoot = { [weak self] in self?.gitCommandRoot }
 		bar.rememberedMessage = { [weak self] in self?.rememberedMessage }
 		bar.rememberedFolds = { [weak self] in self?.rememberedFolds ?? [:] }
+		bar.holdDraft = { [weak self] root, draft in self?.drafts.hold(draft, for: root) }
+		bar.heldDraft = { [weak self] root in self?.drafts.peek(for: root) }
+		bar.discardDraft = { [weak self] root in self?.drafts.discard(for: root) }
 		// Restoring these two, not opening them fresh: both refuse to take the
 		// window from a maximised terminal on this path, since nobody asked.
 		bar.openLaunchConfigurationsPage = { [weak self] in

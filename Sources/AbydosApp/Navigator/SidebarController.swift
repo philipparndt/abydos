@@ -35,6 +35,11 @@ final class SidebarController: NSObject {
 	/// and folds pushed at whatever pane existed a second earlier go into the
 	/// bin with it. Keyed `refs`, `changes.unstaged`, `changes.staged`.
 	var rememberedFolds: () -> [String: ProjectSession.TreeFolds] = { [:] }
+	/// The window's draft inbox: where a finished draft is kept until the
+	/// project it was asked for has a pane to put it in.
+	var holdDraft: (URL, ClaudeDraft.Draft) -> Void = { _, _ in }
+	var heldDraft: (URL) -> ClaudeDraft.Draft? = { _ in nil }
+	var discardDraft: (URL) -> Void = { _ in }
 	/// The two pages this controller does not own but a session names: the
 	/// launch configurations belong to the run coordinator and the settings to
 	/// the window. Closures for the reason every other cross-controller verb
@@ -896,9 +901,14 @@ final class SidebarController: NSObject {
 			// pane exists: a message put into the pane standing before the
 			// repository was read went into the bin with it, which is the loss
 			// the code that rebuilds this tool already records having caused.
+			wireDrafts(of: pane)
 			if let message = rememberedMessage() { pane.restore(message: message) }
 			// And what was folded, for the same reason and at the same moment.
 			pane.folds = rememberedFolds()
+			// A draft may have come back while this project was away, or while
+			// this pane was being rebuilt — which happens when the branch read
+			// lands, seconds after a window opens.
+			pane.applyHeldDraft()
 			view = pane
 		case .branches:
 			// Nothing to show until the project's repository has been read,
@@ -1206,7 +1216,13 @@ final class SidebarController: NSObject {
 		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return }
 
 		let page: ChangesPane
-		if let existing = group.page(identifier: "commit") as? ChangesPane {
+		let wanted = gitCommandRoot() ?? project.root
+		if let existing = group.page(identifier: "commit") as? ChangesPane,
+		   existing.repositoryRoot.standardizedFileURL == wanted.standardizedFileURL {
+			// **Its root is checked, which it was not.** A page is reused by
+			// identifier, so a commit page left over from another project was
+			// handed this project's remembered message and this project's
+			// draft — the report's fault by a second door.
 			page = existing
 		} else {
 			page = ChangesPane(root: gitCommandRoot() ?? project.root, layout: .page)
@@ -1254,11 +1270,33 @@ final class SidebarController: NSObject {
 		DispatchQueue.main.async { [weak page] in page?.focusList() }
 
 		if let summary, !summary.isEmpty { page.carrySummaryForTesting(summary) }
+		wireDrafts(of: page)
 		// A page reopened by a session is where the message was being written
 		// if `…` had been pressed, so it is offered here too — into empty
 		// fields only, so promoting a summary from the sidebar still wins.
 		if let message = rememberedMessage() { page.restore(message: message) }
+		page.applyHeldDraft()
 		page.refresh()
+	}
+
+	/// Asks whichever panes exist to take what the inbox holds for them.
+	///
+	/// What a late answer does: the pane that asked applies it if it is still
+	/// the pane for that project, and any other pane declines.
+	func applyHeldDraftsForTesting() {
+		changesPane?.applyHeldDraft()
+		commitPage?.applyHeldDraft()
+	}
+
+	/// Gives a pane the inbox, both ways.
+	///
+	/// One function for both construction sites, because a pane that can hand a
+	/// draft in and not ask for one is a pane that loses drafts silently —
+	/// which is the fault this is fixing, in a new place.
+	private func wireDrafts(of pane: ChangesPane) {
+		pane.onDraft = { [weak self] root, draft in self?.holdDraft(root, draft) }
+		pane.heldDraft = { [weak self] root in self?.heldDraft(root) }
+		pane.onDraftTaken = { [weak self] root in self?.discardDraft(root) }
 	}
 
 	/// One stash, as a page — see `StashPage`.
@@ -1397,6 +1435,18 @@ final class SidebarController: NSObject {
 			case "picture-mode":
 				print("COMMIT-PAGE picture: " + page.choosePictureModeForTesting(Int(argument) ?? 0))
 			case "type":   page.carrySummaryForTesting(argument)
+			// The draft, in the three moves a person has: press it, have an
+			// answer arrive, and read what the button became.
+			case "draft":  page.pressDraftForTesting()
+			case "deliver":
+				// `deliver:summary|description`, standing in for `claude`.
+				let halves = argument.split(separator: "|", maxSplits: 1).map(String.init)
+				page.deliverDraftForTesting(
+					summary: halves.first ?? "feat: a drafted summary",
+					description: halves.count > 1 ? halves[1] : "The why, drafted."
+				)
+			case "draft-report":
+				print("COMMIT-PAGE draft: " + page.draftReportForTesting)
 			case "chevron": page.toggleDescriptionForTesting()
 			case "return":  page.pressReturnInSummaryForTesting()
 			// The commit message history: `history` prints the menu's entries,

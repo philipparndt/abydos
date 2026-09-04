@@ -1045,4 +1045,24 @@ extension MainWindowController {
 	}
 
 	func showBranchMenuForTesting() { showBranchMenu() }
+
+	/// Hands the window's inbox a draft for a named project, as a late answer
+	/// from `claude` does, and says where it went.
+	///
+	/// The pane on screen is asked to apply it afterwards, which is what
+	/// happens in earnest: a pane whose own root does not match declines and
+	/// the draft stays in the inbox for the project that asked.
+	func deliverDraftForTesting(root path: String) -> String {
+		let root = URL(fileURLWithPath: path)
+		drafts.hold(
+			ClaudeDraft.Draft(
+				summary: "feat: drafted for \(root.lastPathComponent)",
+				description: "Belongs to \(root.lastPathComponent)."
+			),
+			for: root
+		)
+		sidebar.applyHeldDraftsForTesting()
+		return "held for \(root.lastPathComponent); "
+			+ "window is on \(project?.root.lastPathComponent ?? "none")"
+	}
 }

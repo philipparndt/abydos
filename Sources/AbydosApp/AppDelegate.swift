@@ -2561,6 +2561,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let delivering = options.deliverDraft {
+			DispatchQueue.main.asyncAfter(deadline: .now() + delivering.at) {
+				print("DRAFT: " + (controller?
+					.deliverDraftForTesting(root: delivering.root) ?? "no window"))
+				fflush(stdout)
+			}
+		}
+
 		if let said = options.settingsSays {
 			print("SAYS: \(SettingsSections.says(said))")
 			fflush(stdout)

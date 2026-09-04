@@ -492,3 +492,47 @@ One thing is left open. What a browser's *Copy Image* puts on the board beside
 the pixels was not measured — that copy has to be made by hand in somebody's
 browser — so text-first is the rule until the table says otherwise: if a
 browser puts the image's address on the board as text, ⌘V pastes the address.
+
+## A draft finds its project, and is offered rather than thrown away
+
+Reported: "as soon as the project is switched to continue the work on something
+else in the mean time, the commit comment is not written back to the right
+project. The user is forced to stay on that page. Also when there is already a
+commit comment there, the draft result is just thrown away. Would be better to
+have the option to use this then."
+
+A draft takes a while, and its answer had nowhere to land but the pane that
+asked for it — a view that is neither long-lived nor tied to a project. The
+sidebar's changes pane is rebuilt whenever the tool is; a project switch closes
+the commit page's tab and rebuilds the sidebar only once the new project's
+branch read finishes. So a draft that came back after a switch was lost one of
+two ways: the pane had gone and the answer was dropped without a word, or the
+pane still on screen was the *old* project's, took the draft, and the next
+session save wrote one project's words into another project's file.
+
+A finished draft now goes to an inbox keyed by repository root, kept beside the
+per-project sessions the window already holds. A pane applies what is waiting
+only when the draft's root is its **own** — not the window's current project,
+which is already the new one while the old pane is still on screen, and that gap
+is exactly where the fault lived. Coming back to the project picks it up, from
+either the sidebar or the commit page. Nothing is written into another project's
+message.
+
+And a draft arriving onto a message with words in it is offered instead of
+discarded. Both fields empty: filled, as before. Either field with text: the
+draft is held, the button turns red and reads **Use draft instead**, and
+pressing it replaces both fields — whole, the way choosing from the history
+already does. Typing on leaves the offer standing; committing clears it.
+
+That fixes a quieter fault in the same place: the two guards were independent, so
+a typed subject over an empty body took the draft's *description* and dropped
+its summary — a message nobody wrote.
+
+The button has three states now — *Draft*, *Drafting…* with the spinner Push has
+always had, and *Use draft instead* in red — driven by one enum rather than by
+comparing its own label. That comparison was why a relabelled button quietly
+stopped having its availability and tooltip refreshed, and why two of the three
+failure paths left it disabled saying "Drafting…" for ever.
+
+A commit page left over from another project is no longer reused for this one:
+it was being handed this project's remembered message and this project's draft.

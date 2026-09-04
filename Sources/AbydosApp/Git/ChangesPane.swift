@@ -36,6 +36,22 @@ final class ChangesPane: NSView, ScaleFollowing {
 	var onOpenPage: ((String) -> Void)?
 	/// Something was staged, unstaged or committed.
 	var onWorkingCopyChanged: (() -> Void)?
+	/// Where a finished draft goes: the window's inbox, keyed by this pane's
+	/// own root.
+	///
+	/// Not into the fields from inside the task. A pane is neither long-lived
+	/// nor tied to a project — it is rebuilt whenever the sidebar tool is, and
+	/// a project switch closes the commit page and leaves the *old* project's
+	/// sidebar pane on screen until the new project's branch read finishes. So
+	/// the answer goes somewhere that outlives the view and knows which
+	/// project it is about.
+	var onDraft: ((URL, ClaudeDraft.Draft) -> Void)?
+	/// What is waiting for this pane's root, asked when the pane is built and
+	/// whenever a remembered message is put back.
+	var heldDraft: ((URL) -> ClaudeDraft.Draft?)?
+	/// Throws away what is waiting, because the message it was offered against
+	/// has been committed.
+	var onDraftTaken: ((URL) -> Void)?
 
 	/// Lines were selected in the page's own diff and something is to be done
 	/// with them. Only in `.page`: the sidebar hands its diff to a tab, and the
@@ -290,6 +306,63 @@ final class ChangesPane: NSView, ScaleFollowing {
 	private var pageSplit: NSSplitView?
 	private var hasPlacedDivider = false
 	private var draftButton: DrawnButton?
+
+	/// Which of the draft button's three states it is in.
+	///
+	/// **An enum rather than the label it used to be read from.**
+	/// `updateCommitButton` asked `draft.title == "Draft"` to decide whether it
+	/// was looking at the idle button — so relabelling it fell out of that
+	/// branch and quietly stopped refreshing its availability and its tooltip.
+	/// A third label would have made three ways to be wrong.
+	enum DraftState: Equatable {
+		/// Nothing out, nothing held.
+		case idle
+		/// The `claude` process is running.
+		case drafting
+		/// An answer came back onto a message with words in it, and is being
+		/// offered rather than written over them.
+		case offering
+	}
+
+	private var draftState: DraftState = .idle {
+		didSet {
+			guard draftState != oldValue else { return }
+			applyDraftState()
+		}
+	}
+
+	/// The label, the spinner, the colour and whether it can be pressed — from
+	/// one switch, so the four cannot disagree.
+	private func applyDraftState() {
+		guard let button = draftButton else { return }
+		switch draftState {
+		case .idle:
+			button.setLabel("Draft")
+			button.isWorking = false
+			button.tint = nil
+			button.isEnabled = ClaudeDraft.isAvailable
+			button.toolTip = ClaudeDraft.isAvailable
+				? "Write a summary and description from what is staged"
+				: "The claude command was not found"
+		case .drafting:
+			button.setLabel("Drafting…")
+			// The spinner `DrawnButton` has had since Push used it, and this
+			// button never did: a disabled button with a changed word says
+			// "broken" as readily as "working".
+			button.isWorking = true
+			button.tint = nil
+			button.isEnabled = false
+			button.toolTip = "Asking claude for a summary and description"
+		case .offering:
+			button.setLabel("Use draft instead")
+			button.isWorking = false
+			// The palette's own red, which every scheme defines; no new key.
+			button.tint = Theme.current.gitConflict
+			button.isEnabled = true
+			button.toolTip = "A draft came back while this message had words in it. "
+				+ "Press to replace both fields with it."
+		}
+	}
 	private var historyButton: DrawnButton?
 	private var bodyView: NSTextView!
 	/// Opens the description, which the page starts with put away.
@@ -1226,16 +1299,11 @@ final class ChangesPane: NSView, ScaleFollowing {
 		// messages to offer.
 		historyButton?.isHidden = !canAmend
 
-		// Re-checked on every refresh, so installing `claude` enables the
-		// draft without a restart. Not while a draft is out — that disable is
-		// the in-flight state, and the title says so.
-		if let draft = draftButton, draft.title == "Draft" {
-			let available = ClaudeDraft.isAvailable
-			draft.isEnabled = available
-			draft.toolTip = available
-				? "Write a summary and description from what is staged"
-				: "The claude command was not found"
-		}
+		// Re-checked on every refresh, so installing `claude` enables the draft
+		// without a restart. Only while idle: drafting and offering own the
+		// button's word, colour and availability, and this used to fight them
+		// by reading the label to find out which state it was in.
+		if draftState == .idle { applyDraftState() }
 
 		// Amend can commit nothing new — rewording the last commit is a normal
 		// thing to want — so it is the one case where an empty index is allowed.
@@ -1783,14 +1851,30 @@ final class ChangesPane: NSView, ScaleFollowing {
 			setDescription(showing: true)
 		}
 		updateCommitButton()
+		// A draft may have come back while this project was away. Asked after
+		// the remembered message is in, so a draft meeting restored words
+		// becomes an offer rather than writing over them.
+		applyHeldDraft()
 	}
 
 	/// **A draft, and never a commit.** Nothing is staged, nothing is
 	/// committed, both fields stay editable, and `Commit` is not disabled while
 	/// this is thinking — a slow answer must not become a blocked one.
 	@objc private func draftMessage() {
-		guard let button = draftButton else { return }
+		guard draftButton != nil else { return }
 		let root = self.root
+
+		// **Taking an offer comes before the consent question**, and getting
+		// that order wrong made the offer unpressable: nothing is sent when an
+		// answer already in hand is written into the fields, but the guard
+		// below asked to send anyway and opened the consent sheet instead.
+		// Driven, and that is how it was caught.
+		//
+		// The button *is* the offer, so there is no second control to find.
+		if draftState == .offering {
+			takeHeldDraft()
+			return
+		}
 
 		// **Said once, before it happens.** The staged diff leaves this machine
 		// when this button is pressed, and that is not something to find out
@@ -1801,44 +1885,93 @@ final class ChangesPane: NSView, ScaleFollowing {
 			return
 		}
 
-		button.isEnabled = false
-		button.setLabel("Drafting…")
+		draftState = .drafting
+		let hand = onDraft
 
 		Task { @MainActor [weak self] in
 			let answer = await ClaudeDraft.draft(
 				in: root, conventional: Settings.shared.conventionalCommitDrafts
 			)
-			button.isEnabled = true
-			button.setLabel("Draft")
 
 			switch answer {
 			case let .success(draft):
-				// Put in rather than typed over: somebody who started writing
-				// while it was thinking has not lost it — the draft goes where
-				// the field is empty and is offered where it is not.
-				guard let self else { return }
-				if self.subjectField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty {
-					self.subjectField.stringValue = draft.summary
-				}
-				if self.bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
-					self.bodyView.string = draft.description
-				}
-				// The one moment the description fills without anybody typing in
-				// it, and so the one moment the collapsed default would hide work
-				// that has just been done. A draft that wrote three paragraphs
-				// behind a chevron would read as a draft that failed.
-				if !self.bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
-					self.setDescription(showing: true)
-				}
-				self.updateCommitButton()
+				// **Handed over, not written in.** `guard let self` used to
+				// stand here: a pane released by a project switch dropped the
+				// answer without a word, and a pane still on screen for the
+				// project somebody just left took it and had it written into
+				// the *new* project's session at the next save. The inbox is
+				// keyed by the root this was asked for, and outlives both.
+				hand?(root, draft)
+				// And applied here only if this pane is still the one that
+				// asked — which the inbox decides, not this closure.
+				self?.applyHeldDraft()
 			case .failure(.nothingStaged):
+				self?.draftState = .idle
 				Toast.post("Nothing is staged", detail: "There is no commit to describe yet.")
 			case .failure(.notInstalled):
+				self?.draftState = .idle
 				Toast.post("claude is not on the PATH")
 			case let .failure(.said(what)):
+				self?.draftState = .idle
 				Toast.post("The draft did not come back", detail: what)
 			}
 		}
+	}
+
+	/// Takes whatever the inbox is holding for this pane's project, if this
+	/// pane is one that should have it.
+	///
+	/// **The pane's own root decides, not the window's project.** The window is
+	/// already on B while A's pane is still on screen — that gap is where the
+	/// report lives — and a pane's root is the one thing about it that is true
+	/// from the moment it is built.
+	///
+	/// Empty fields are filled; fields with words in them make an offer. The
+	/// draft stays in the inbox until it is taken, so a pane rebuilt in between
+	/// finds it again.
+	func applyHeldDraft() {
+		guard window != nil, let draft = heldDraft?(root) else { return }
+
+		let hasSubject = !subjectField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
+		let hasBody = !bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty
+		guard !hasSubject, !hasBody else {
+			// **Whole or nothing.** Filling whichever field was empty is what
+			// this used to half-do, and it made messages nobody wrote: a typed
+			// subject with an empty body took the draft's description and lost
+			// its summary.
+			draftState = .offering
+			return
+		}
+
+		onDraftTaken?(root)
+		fill(subject: draft.summary, body: draft.description)
+		// The one moment the description fills without anybody typing in it,
+		// and so the one moment the collapsed default would hide work that has
+		// just been done. A draft that wrote three paragraphs behind a chevron
+		// would read as a draft that failed.
+		if !bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
+			setDescription(showing: true)
+		}
+		draftState = .idle
+	}
+
+	/// Replaces both fields with what is being offered, which is what pressing
+	/// *Use draft instead* means.
+	///
+	/// Both, and not the empty one: replacing is the semantics choosing from
+	/// the history already has, and a draft merged into typed words is a third
+	/// message nobody wrote.
+	private func takeHeldDraft() {
+		guard let draft = heldDraft?(root) else {
+			draftState = .idle
+			return
+		}
+		onDraftTaken?(root)
+		fill(subject: draft.summary, body: draft.description)
+		if !bodyView.string.trimmingCharacters(in: .whitespaces).isEmpty {
+			setDescription(showing: true)
+		}
+		draftState = .idle
 	}
 
 	/// Says what drafting will do, once per project, before it does it.
@@ -1896,6 +2029,13 @@ final class ChangesPane: NSView, ScaleFollowing {
 			subjectField.stringValue = ""
 			bodyView.string = ""
 			amendCheckbox.state = .off
+			// The offer went with the message it was offered against: a draft
+			// describing a commit that has just been made is not a draft for
+			// the next one.
+			if draftState == .offering {
+				onDraftTaken?(root)
+				draftState = .idle
+			}
 			refresh()
 			onWorkingCopyChanged?()
 		}
@@ -2060,6 +2200,41 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// What the two trees are showing, as lines, for driving the pane from the
 	/// command line. Indented by depth, with a folder's tally after its name.
 	/// Puts a summary in, as `…` does when it carries one across.
+	/// Presses the draft button, whatever state it is in.
+	///
+	/// The one gesture, so that a run pressing it while an answer is held is
+	/// pressing what somebody would press: the button *is* the offer.
+	func pressDraftForTesting() {
+		draftMessage()
+	}
+
+	/// Hands this pane a draft as though `claude` had just answered — the same
+	/// door the real answer comes through.
+	///
+	/// **Because `claude` cannot be relied on inside a run.** It may not be
+	/// installed, it costs money and time, and what is under test here is where
+	/// the answer *goes* rather than what it says. The inbox and the pane's own
+	/// root decide that, and both are exercised exactly as they are in earnest.
+	func deliverDraftForTesting(summary: String, description: String) {
+		onDraft?(root, ClaudeDraft.Draft(summary: summary, description: description))
+		applyHeldDraft()
+	}
+
+	/// What the draft button is, and what the fields hold, in one line.
+	var draftReportForTesting: String {
+		let state: String
+		switch draftState {
+		case .idle:     state = "idle"
+		case .drafting: state = "drafting"
+		case .offering: state = "offering"
+		}
+		return "draft=\(state) label=\(draftButton?.title ?? "absent")"
+			+ " tint=\(draftButton?.tint == nil ? "none" : "red")"
+			+ " summary=[\(subjectField.stringValue)]"
+			+ " body=[\(bodyView.string.replacingOccurrences(of: "\n", with: "⏎"))]"
+			+ " held=\(heldDraft?(root) == nil ? "nothing" : "a draft")"
+	}
+
 	func carrySummaryForTesting(_ text: String) {
 		subjectField.stringValue = text
 		updateCommitButton()
@@ -2113,7 +2288,16 @@ final class ChangesPane: NSView, ScaleFollowing {
 		said.append("summary=\(subjectField.stringValue)")
 		said.append("body=\(bodyView.string.isEmpty ? "empty" : "\(bodyView.string.count) characters")")
 		if let draft = draftButton {
-			said.append("draft=\(draft.isEnabled ? "offered" : "disabled")")
+			// The state by name, and the label beside it: "offered" used to
+			// mean "the button is enabled", which is true of a button that is
+			// holding a draft and of one that has never been pressed.
+			let state: String
+			switch draftState {
+			case .idle:     state = draft.isEnabled ? "idle" : "unavailable"
+			case .drafting: state = "drafting"
+			case .offering: state = "offering"
+			}
+			said.append("draft=\(state) label=\(draft.title)")
 		} else {
 			said.append("draft=absent")
 		}

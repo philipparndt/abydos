@@ -216,7 +216,22 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		didSet { applyTheme() }
 	}
 
+	/// A colour this one button is, over what its prominence would give it.
+	///
+	/// **Prominence says how loud a button is; this says what colour it is.**
+	/// The draft button turns red while it is holding an answer somebody has
+	/// not taken, and an offering button is still a quiet one — so a fourth
+	/// `Prominence` would have been the wrong axis. Nil for every button but
+	/// that one.
+	var tint: NSColor? {
+		didSet {
+			guard tint != oldValue else { return }
+			applyTheme()
+		}
+	}
+
 	private var textColour: NSColor {
+		if let tint { return tint }
 		switch prominence {
 		case .normal, .quiet: return Theme.current.sidebarHeaderText
 		case .prominent: return Theme.current.editorBackground
@@ -225,6 +240,11 @@ final class DrawnButton: NSButton, ScaleFollowing {
 
 	private var fillColour: NSColor {
 		if isLit { return Theme.current.selection(.row, hasKeyboard: true) }
+		// The tint colours the words and washes the ground, rather than filling
+		// it: a solid red button in a row of quiet ones reads as a warning
+		// about the row, and what is being said is "there is something here to
+		// take".
+		if let tint { return tint.withAlphaComponent(0.14) }
 		switch prominence {
 		case .normal: return Theme.current.editorBackground
 		case .prominent: return Theme.current.caret

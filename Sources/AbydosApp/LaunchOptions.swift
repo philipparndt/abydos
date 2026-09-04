@@ -706,6 +706,15 @@ struct LaunchOptions {
 	/// and by part of its title: `--settings-says "Terminal/status bar"`.
 	/// A help text is a claim, and this is how one is read back from a build.
 	var settingsSays: String?
+	/// Put a draft into the window's inbox for a named project at a stated
+	/// moment: `--deliver-draft /path/to/project@9`.
+	///
+	/// **The report's own shape.** A draft asked for in one project answers
+	/// while the window is showing another, and the page cannot deliver that to
+	/// itself — the page on screen belongs to the other project. This arrives
+	/// from outside, for the root it was asked about, exactly as a late
+	/// `claude` does.
+	var deliverDraft: (root: String, at: Double)?
 	/// Which settings section to fold away, as its triangle does.
 	var settingsFold: String?
 	/// Arrow keys to press in the settings sidebar, comma separated: `left`,
@@ -982,6 +991,15 @@ struct LaunchOptions {
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true
 			case "--subproject": options.subproject = next()
+			case "--deliver-draft":
+				let said = next() ?? ""
+				let halves = said.split(separator: "@", maxSplits: 1)
+				if let root = halves.first {
+					options.deliverDraft = (
+						root: String(root),
+						at: halves.count > 1 ? (Double(halves[1]) ?? 9) : 9
+					)
+				}
 			case "--settings-says": options.settingsSays = next()
 			case "--settings-section": options.settingsSection = next()
 			case "--settings-fold": options.settingsFold = next()
