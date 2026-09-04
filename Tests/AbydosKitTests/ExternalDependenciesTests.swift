@@ -1880,14 +1880,22 @@ struct ExternalDependenciesTests {
 			to: root.appendingPathComponent("gradle/dependency-locks/runtimeClasspath.lockfile"))
 
 		let set = ExternalDependencies.read(root: root, kind: .gradle)
-		#expect(set.contents == .packages([
-			ExternalDependency(
-				name: "guava", version: "31.1-jre", origin: "com.google.guava", localPath: nil
-			),
-			ExternalDependency(
-				name: "slf4j-api", version: "1.7.36", origin: "org.slf4j", localPath: nil
-			),
-		]))
+		// **Field by field, as the newer lock file's test already does**, and
+		// not a whole-struct comparison against `artefact: nil`. The reader
+		// resolves an artefact from the machine's own Gradle cache when the jar
+		// happens to be in it, so what this asserted was a property of the
+		// developer's `~/.gradle`: on this machine `slf4j-api/1.7.36` is cached
+		// and `guava/31.1-jre` is not, so one of the two came back with a jar
+		// path and the equality failed in 22 milliseconds. What the test is
+		// about is that both configurations' files are read and merged.
+		guard case let .packages(packages) = set.contents else {
+			Issue.record("expected packages, got \(set.contents)")
+			return
+		}
+		#expect(packages.map(\.name) == ["guava", "slf4j-api"])
+		#expect(packages.map(\.version) == ["31.1-jre", "1.7.36"])
+		#expect(packages.map(\.origin) == ["com.google.guava", "org.slf4j"])
+		#expect(packages.allSatisfy { $0.localPath == nil })
 	}
 
 	/// **The trap the pre-read named: `dependencies { }` is also what
