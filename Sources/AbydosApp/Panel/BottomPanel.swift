@@ -3740,7 +3740,6 @@ extension PanelTabStrip: NSViewToolTipOwner {
 		_ view: NSView, stringForToolTip tag: NSView.ToolTipTag,
 		point: NSPoint, userData: UnsafeMutableRawPointer?
 	) -> String {
-		if let control = trailingControl(at: point) { return words(for: control) }
 		for (index, item) in items.enumerated() where framesForToolTips.indices.contains(index) {
 			if framesForToolTips[index].contains(point), let note = item.engineNote { return note }
 		}
@@ -3948,6 +3947,9 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 
 	override func viewDidMoveToWindow() {
 		super.viewDidMoveToWindow()
+		// A strip torn out of its window leaves no tip hanging over the one it
+		// left.
+		if window == nil { StyledTip.shared.hide() }
 		// Nothing tells a view when the first responder moves elsewhere, and the
 		// line under the active tab is what says where it went.
 		NotificationCenter.default.removeObserver(self, name: .keyboardFocusChanged, object: nil)
@@ -4001,39 +4003,71 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	/// Written here rather than beside each drawing call so that the whole set
 	/// can be read at once — a tooltip is the only place several of these are
 	/// ever explained, and they should sound like one another.
-	private func words(for control: TrailingControl) -> String {
+	private func words(for control: TrailingControl) -> StyledTip.Tip {
 		switch control {
 		case .sessions:
 			let counts = runningCounts
-			return "Claude sessions on this machine — \(counts?.working ?? 0) working, "
-				+ "\(counts?.needsInput ?? 0) waiting for you.\n"
-				+ "Grey counts the ones getting on with it; amber the ones that have asked "
-				+ "a question. A session that has finished is in neither.\n"
-				+ "Click for the list, or press ⇧⌘A."
+			return StyledTip.Tip(
+				title: "\(counts?.working ?? 0) working, "
+					+ "\(counts?.needsInput ?? 0) waiting for you",
+				detail: "Claude sessions on this machine. Grey counts the ones getting on "
+					+ "with it; amber the ones that have asked a question. A session that has "
+					+ "finished is in neither. Click for the list.",
+				shortcut: "⇧⌘A"
+			)
 		case .mirrorTag:
-			return "These tabs are the windows of tmux session “\(mirroredSession ?? "")”.\n"
-				+ "Click to attach this terminal to another session."
+			return StyledTip.Tip(
+				title: "tmux session “\(mirroredSession ?? "")”",
+				detail: "These tabs are its windows. Click to attach this terminal to "
+					+ "another session."
+			)
 		case .follow:
 			return isFollowingProject
-				? "Following the terminal: walk the shell into another project and the window "
-					+ "opens it. On — click to stop (⌃⌘F)."
-				: "Follow the terminal: the window opens whatever project the shell walks "
-					+ "into. Off — click to start (⌃⌘F)."
+				? StyledTip.Tip(
+					title: "Following the terminal",
+					detail: "Walk the shell into another project and the window opens it. "
+						+ "Click to stop.",
+					shortcut: "⌃⌘F"
+				)
+				: StyledTip.Tip(
+					title: "Follow the terminal",
+					detail: "The window opens whatever project the shell walks into. "
+						+ "Click to start.",
+					shortcut: "⌃⌘F"
+				)
 		case .maximize:
 			return isMaximized
-				? "Give the editor its share of the window back (⇧⌘J)."
-				: "Give the terminal the whole window (⇧⌘J)."
+				? StyledTip.Tip(title: "Give the editor its share back", shortcut: "⇧⌘J")
+				: StyledTip.Tip(title: "Give the terminal the whole window", shortcut: "⇧⌘J")
 		case .hide:
-			return "Hide the panel (⌘J)."
+			return StyledTip.Tip(title: "Hide the panel", shortcut: "⌘J")
 		case .overflow:
-			return "\(hiddenTabs.count) that do not fit. Click to choose one."
+			return StyledTip.Tip(
+				title: hiddenTabs.count == 1 ? "1 that does not fit" : "\(hiddenTabs.count) that do not fit",
+				detail: "Click to choose one."
+			)
 		case .add:
-			return isMirroringTmux ? "New tmux window." : "New terminal (⇧⌘T)."
+			return isMirroringTmux
+				? StyledTip.Tip(title: "New tmux window")
+				: StyledTip.Tip(title: "New terminal", shortcut: "⇧⌘T")
 		case .addMenu:
-			return "The other kinds of terminal."
+			return StyledTip.Tip(title: "The other kinds of terminal")
 		}
 	}
 
+	/// Where a control is, for putting a tip under it.
+	private func frame(of control: TrailingControl) -> NSRect {
+		switch control {
+		case .sessions:  return sessionsPillFrame
+		case .mirrorTag: return mirrorTagFrame
+		case .follow:    return followButtonFrame
+		case .maximize:  return maximizeButtonFrame
+		case .hide:      return hideButtonFrame
+		case .overflow:  return overflowButtonFrame
+		case .add:       return addButtonFrame
+		case .addMenu:   return addMenuFrame
+		}
+	}
 	/// Which tab the run of drawn tabs starts at.
 	///
 	/// **Not a scroll position.** It changes for one reason — the active tab
@@ -4238,20 +4272,11 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			"add": .add, "add-menu": .addMenu,
 		]
 		guard let control = named[name] else { return "no control called \(name)" }
-		let frames: [TrailingControl: NSRect] = [
-			.sessions: sessionsPillFrame, .mirrorTag: mirrorTagFrame,
-			.follow: followButtonFrame, .maximize: maximizeButtonFrame,
-			.hide: hideButtonFrame, .overflow: overflowButtonFrame,
-			.add: addButtonFrame, .addMenu: addMenuFrame,
-		]
-		guard let frame = frames[control], frame.width > 0 else {
-			return "\(name): not on this strip"
-		}
+		let frame = frame(of: control)
+		guard frame.width > 0 else { return "\(name): not on this strip" }
 		updateHover(at: NSPoint(x: frame.midX, y: frame.midY))
 		let lit = hoveredControl == control ? "lit" : "NOT LIT"
-		return "\(name): \(lit)\n    " + words(for: control).replacingOccurrences(
-			of: "\n", with: "\n    "
-		)
+		return "\(name): \(lit) " + words(for: control).reportForTesting
 	}
 
 	/// How many tabs the strip holds, for deciding which strip the keys mean.
@@ -4299,16 +4324,9 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			_ = note
 			addToolTip(frames[index], owner: self, userData: nil)
 		}
-		// And the controls beside them, which say what they are for — the pill
-		// most of all, being two dots and two figures that nothing else on
-		// screen explains.
-		for frame in [
-			sessionsPillFrame, mirrorTagFrame, followButtonFrame,
-			maximizeButtonFrame, hideButtonFrame, overflowButtonFrame,
-			addButtonFrame, addMenuFrame,
-		] where frame.width > 0 {
-			addToolTip(frame, owner: self, userData: nil)
-		}
+		// **No system tooltip for the trailing controls.** They have a drawn
+		// one — `StyledTip`, shown from the hover — and registering both would
+		// be two tips for one control, at two delays, in two styles.
 	}
 
 	/// Which tabs are marked and what they would say, for a driver to print.
@@ -4715,6 +4733,14 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			hoveredControl = control
 			needsDisplay = true
 		}
+		// The tip follows the hover rather than a tooltip rect, so it is asked
+		// on every move and drops itself the moment the pointer is on a tab or
+		// on nothing.
+		if let control {
+			StyledTip.shared.show(words(for: control), from: frame(of: control), of: self)
+		} else {
+			StyledTip.shared.hide()
+		}
 	}
 
 	override func mouseExited(with event: NSEvent) {
@@ -4725,12 +4751,16 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		hoveredIndex = nil
 		hoveredClose = false
 		hoveredControl = nil
+		StyledTip.shared.hide()
 		needsDisplay = true
 	}
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 		pressedIndex = nil
+		// Anything pressed puts the tip away: it explains a control somebody
+		// has stopped reading about and started using.
+		StyledTip.shared.hide()
 
 		switch addControl(at: point) {
 		case .plus?: onAdd?(); return

@@ -359,7 +359,11 @@ struct LaunchOptions {
 	/// Put the pointer on one of the terminal strip's trailing controls and say
 	/// what it is and what it tells somebody: `--hover-control sessions`, and
 	/// `tag`, `follow`, `maximize`, `hide`, `overflow`, `add`, `add-menu`.
-	var hoverControl: String?
+	///
+	/// A comma takes several in turn, spaced far enough apart to be separate
+	/// hovers: one run can then say what all eight tell somebody, and the last
+	/// one named is the one a capture at the end finds resting on screen.
+	var hoverControls: [String] = []
 	/// Say what the panel's pill counts and its list holds: `--running-sessions 6,9`.
 	var runningSessionsAt: [Double] = []
 	/// Click the pill, and say what came up: `--running-sessions-menu 6`.
@@ -1286,7 +1290,8 @@ struct LaunchOptions {
 				spec.id = said
 				options.claudeRunning.append(spec)
 			case "--claude-seeded": options.seededWindows = next().flatMap(Int.init) ?? 6
-			case "--hover-control": options.hoverControl = next()
+			case "--hover-control":
+				options.hoverControls += (next() ?? "").split(separator: ",").map(String.init)
 			case "--running-sessions":
 				options.runningSessionsAt = (next() ?? "6")
 					.split(separator: ",").compactMap { Double($0) }

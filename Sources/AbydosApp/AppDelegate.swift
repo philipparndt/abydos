@@ -2103,8 +2103,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
-		if let name = options.hoverControl {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+		// Far enough apart that the tip's own half-second wait elapses on each,
+		// so a capture at the end photographs the last one resting rather than
+		// catching the timer mid-flight.
+		for (index, name) in options.hoverControls.enumerated() {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.5 + Double(index) * 0.8) {
 				print("HOVER: " + (controller?.panelForTesting
 					.hoverStripControlForTesting(name) ?? "no window"))
 				fflush(stdout)
