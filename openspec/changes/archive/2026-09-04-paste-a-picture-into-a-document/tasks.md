@@ -20,5 +20,5 @@
 
 ## 4. Finishing
 
-- [x] 4.1 Said in `docs/release-notes-0.13.0.md`, beside the tree's paste.
+- [x] 4.1 Said in `docs/release-notes-0.12.0.md`, beside the tree's paste.
 - [x] 4.2 Green on 2026-09-04 by their exit codes: `make test` 4038 tests in 514 suites, exit 0, load 25.4 over 10 cores; `make warnings` exit 0 after `Scripts/file-size-allowed.txt` was raised for `CodeView.swift` (4513 → 4585, the picture paste and its validation, which need the view's private caret and selection) and `EditorViewController.swift` (4948 → 4976, the driven step, which needs `codeViewToDrive`).

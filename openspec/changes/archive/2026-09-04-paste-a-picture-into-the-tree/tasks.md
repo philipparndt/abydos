@@ -24,5 +24,5 @@
 
 ## 5. Finishing
 
-- [x] 5.1 Said in `docs/release-notes-0.13.0.md`, the first section of the next release.
+- [x] 5.1 Said in `docs/release-notes-0.12.0.md`, the first section of the next release.
 - [x] 5.2 Green on 2026-09-03 by their exit codes: `make test` 4031 tests in 513 suites, exit 0, load 27.9 over 10 cores; `make warnings` exit 0 after the navigator's recorded length in `Scripts/file-size-allowed.txt` was raised from 4239 to 4364 for the picture paste, its name field and the driven step — state the paste needs (`rootNode`, `pendingReveal`, `beginEditing`, `remember`) is the controller's own and private, so a file of its own would have widened all of it.
