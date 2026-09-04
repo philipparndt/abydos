@@ -56,6 +56,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The pages the project being opened was left with, for the same reason:
 	/// every page opener refuses while the project's git is unread.
 	var rememberedPages: [ProjectSession.OpenPage] = []
+	/// What each of the project's trees was folded into, held for the same
+	/// reason and taken by each pane as it is built.
+	var rememberedFolds: [String: ProjectSession.TreeFolds] = [:]
+	/// Which sidebar tool the project was left showing, shown once the tool can
+	/// be built — a git tool cannot be, for a folder in no working copy.
+	var rememberedTool: String?
 	/// Whether the window follows the terminal's working directory.
 	/// Whether this window follows the terminal into another project.
 	///
@@ -119,6 +125,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bar.hostWindow = { [weak self] in self?.window }
 		bar.gitCommandRoot = { [weak self] in self?.gitCommandRoot }
 		bar.rememberedMessage = { [weak self] in self?.rememberedMessage }
+		bar.rememberedFolds = { [weak self] in self?.rememberedFolds ?? [:] }
+		// Restoring these two, not opening them fresh: both refuse to take the
+		// window from a maximised terminal on this path, since nobody asked.
+		bar.openLaunchConfigurationsPage = { [weak self] in
+			self?.run.showLaunchConfigurations()
+		}
+		bar.openSettingsPage = { [weak self] in self?.showSettingsPage(nil) }
 		bar.relativePathOfActiveFile = { [weak self] in self?.relativePathOfActiveFile() }
 		bar.symbols = { [weak self] query, scope in
 			await self?.serverActions.symbols(matching: query, scope: scope) ?? []

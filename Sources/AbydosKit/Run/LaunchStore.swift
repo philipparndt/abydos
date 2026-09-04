@@ -221,7 +221,8 @@ public enum SessionStore {
 				return ProjectSession.OpenTerminal(
 					name: name,
 					directory: entry["directory"] as? String,
-					isRenamed: entry["renamed"] as? Bool ?? false
+					isRenamed: entry["renamed"] as? Bool ?? false,
+					isInFront: entry["front"] as? Bool ?? false
 				)
 			}
 
@@ -241,9 +242,28 @@ public enum SessionStore {
 			reviewCheckouts: (object["reviewCheckouts"] as? [String: Any] ?? [:])
 				.compactMapValues { $0 as? Int },
 			composedMessage: readComposedMessage(object["message"]),
-			pages: readPages(object["pages"])
+			pages: readPages(object["pages"]),
+			folds: readFolds(object["folds"]),
+			sidebarTool: object["tool"] as? String
 		)
 		return session.isEmpty ? nil : session
+	}
+
+	/// What each tree was folded into, as the file has it.
+	///
+	/// Absent, or written by a version that did not know about it, reads as
+	/// nothing folded — and the panes then arrive the way they always did,
+	/// which is the whole reason this could be added at all.
+	private static func readFolds(_ raw: Any?) -> [String: ProjectSession.TreeFolds] {
+		guard let object = raw as? [String: Any] else { return [:] }
+		return object.compactMapValues { value -> ProjectSession.TreeFolds? in
+			guard let entry = value as? [String: Any] else { return nil }
+			let folds = ProjectSession.TreeFolds(
+				shut: entry["shut"] as? [String] ?? [],
+				opened: entry["opened"] as? [String] ?? []
+			)
+			return folds.isEmpty ? nil : folds
+		}
 	}
 
 	/// The commit message a session file claims, if there is anything to it.
@@ -431,9 +451,21 @@ public enum SessionStore {
 				var entry: [String: Any] = ["name": terminal.name]
 				if let directory = terminal.directory { entry["directory"] = directory }
 				if terminal.isRenamed { entry["renamed"] = true }
+				if terminal.isInFront { entry["front"] = true }
 				return entry
 			}
 		}
+
+		// Each half only where there is one, as the message is written: a tree
+		// somebody has shut nothing in says so by being absent.
+		let folds = session.folds.compactMapValues { tree -> [String: Any]? in
+			var entry: [String: Any] = [:]
+			if !tree.shut.isEmpty { entry["shut"] = tree.shut }
+			if !tree.opened.isEmpty { entry["opened"] = tree.opened }
+			return entry.isEmpty ? nil : entry
+		}
+		if !folds.isEmpty { object["folds"] = folds }
+		if let tool = session.sidebarTool { object["tool"] = tool }
 
 		let data = try JSONSerialization.data(
 			withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

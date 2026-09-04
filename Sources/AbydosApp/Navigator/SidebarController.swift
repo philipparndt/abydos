@@ -30,6 +30,17 @@ final class SidebarController: NSObject {
 	/// rebuilt when the repository finishes reading, and a push would go with
 	/// the pane it landed in.
 	var rememberedMessage: () -> ProjectSession.ComposedMessage? = { nil }
+	/// What each tree was folded into, asked for at the same moment and for the
+	/// same reason: this tool is rebuilt when the repository finishes reading,
+	/// and folds pushed at whatever pane existed a second earlier go into the
+	/// bin with it. Keyed `refs`, `changes.unstaged`, `changes.staged`.
+	var rememberedFolds: () -> [String: ProjectSession.TreeFolds] = { [:] }
+	/// The two pages this controller does not own but a session names: the
+	/// launch configurations belong to the run coordinator and the settings to
+	/// the window. Closures for the reason every other cross-controller verb
+	/// here is one — the sidebar knows the session, not the page.
+	var openLaunchConfigurationsPage: () -> Void = {}
+	var openSettingsPage: () -> Void = {}
 	var gitCommandRoot: () -> URL? = { nil }
 	var relativePathOfActiveFile: () -> String? = { nil }
 	var symbols: (String, SymbolPalette.Scope) async -> [LSPSymbol] = { _, _ in [] }
@@ -115,7 +126,11 @@ final class SidebarController: NSObject {
 	/// of it and a report that said only which buttons were lit could not tell a
 	/// closed panel from a bug.
 	func railReportForTesting() -> String {
-		"panel=\(isPanelVisible() ? "open" : "closed") " + toolStrip.reportForTesting()
+		// The tool in front is named too. The rail's own buttons do not cover
+		// every sidebar tool — there is no branches button — so a run asking
+		// "did the tool come back" could not read the answer anywhere.
+		"panel=\(isPanelVisible() ? "open" : "closed") tool=\(currentSidebarTool.stored) "
+			+ toolStrip.reportForTesting()
 	}
 
 	/// Draws the sidebar's pane into a file, whatever the window is doing.
@@ -789,6 +804,24 @@ final class SidebarController: NSObject {
 	/// A tool asked for before the project it needs had been read.
 	private var pendingSidebarTool: SidebarToolKind?
 
+	/// Shows the tool a project was left on, if it named one.
+	///
+	/// **It does not open a sidebar somebody closed.** Whether the sidebar is
+	/// showing is the split view's autosave, per machine: somebody who closed
+	/// it closed it for the window and not for the project, and a restore that
+	/// opened it would be the session arguing with the layout. This only
+	/// decides *which* tool is behind that, whether or not it is on screen.
+	///
+	/// A name this version does not know, or a git tool in a folder that is no
+	/// working copy, falls back to the project tree — which is where a window
+	/// starts anyway, so the fallback is doing nothing. `install(tool:)` waits
+	/// for a repository that is still being read and gives up quietly on one
+	/// that never arrives, which is the whole of that.
+	func showRemembered(tool stored: String?) {
+		guard let tool = SidebarToolKind.named(stored), tool != currentSidebarTool else { return }
+		install(tool: tool)
+	}
+
 	func install(tool: SidebarToolKind, force: Bool = false) {
 		guard force || currentSidebarTool != tool || primaryToolView == nil else { return }
 
@@ -864,6 +897,8 @@ final class SidebarController: NSObject {
 			// repository was read went into the bin with it, which is the loss
 			// the code that rebuilds this tool already records having caused.
 			if let message = rememberedMessage() { pane.restore(message: message) }
+			// And what was folded, for the same reason and at the same moment.
+			pane.folds = rememberedFolds()
 			view = pane
 		case .branches:
 			// Nothing to show until the project's repository has been read,
@@ -900,6 +935,10 @@ final class SidebarController: NSObject {
 				self?.stashPage?.refresh()
 			}
 			branchesPane = pane
+			// The working copy shut, `origin` and `Tags` opened — whatever was
+			// arranged here last time, taken as the pane is built. This is the
+			// row the report was about.
+			if let refs = rememberedFolds()["refs"] { pane.folds = refs }
 			view = pane
 		case .history:
 			// Nothing to show until the project's repository has been read,
@@ -1033,6 +1072,28 @@ final class SidebarController: NSObject {
 	/// Read off the editor's own tabs rather than the weak handles here: a page
 	/// this controller never opened — a pull request review, the settings page —
 	/// is still a page the window had.
+	/// What the trees are folded into now, for the session.
+	///
+	/// Asked of the panes that exist: a tool nobody has opened in this sitting
+	/// has no pane, and what was read out of the session for it is handed back
+	/// unchanged rather than being replaced with nothing. Otherwise opening a
+	/// project and never touching the git tool would erase the folds in it.
+	func foldsToRemember(carrying stored: [String: ProjectSession.TreeFolds])
+		-> [String: ProjectSession.TreeFolds] {
+		var folds = stored
+		if let branchesPane { folds["refs"] = branchesPane.foldsWorthKeeping }
+		if let changesPane {
+			let sides = changesPane.folds
+			folds["changes.unstaged"] = sides["changes.unstaged"]
+			folds["changes.staged"] = sides["changes.staged"]
+		}
+		folds["tree"] = navigator.folds
+		return folds.compactMapValues { $0.isEmpty ? nil : $0 }
+	}
+
+	/// Which tool is in front, by the name the session keeps it under.
+	var toolToRemember: String { currentSidebarTool.stored }
+
 	func openPagesToRemember() -> [ProjectSession.OpenPage] {
 		editor.openPageIdentifiers().map { identifier in
 			switch identifier {
@@ -1109,6 +1170,15 @@ final class SidebarController: NSObject {
 			}
 		case "estate":
 			showEstatePage(asked: false)
+		case "launch":
+			// **Written into every session file and read by nothing.** The
+			// `sessions` capability already requires "the pages whose identity
+			// is their identifier alone" to come back, and these two were
+			// captured, stored and dropped on the way in — a requirement that
+			// existed and was unmet rather than a new one.
+			openLaunchConfigurationsPage()
+		case "settings":
+			openSettingsPage()
 		default:
 			// A page this version has no opener for — one a later version wrote
 			// down, or one whose owner is elsewhere in the app. Left closed

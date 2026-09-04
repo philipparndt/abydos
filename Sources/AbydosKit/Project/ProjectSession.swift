@@ -66,11 +66,79 @@ public struct ProjectSession: Equatable, Sendable {
 		/// Whether the person named this one, in which case the shell's own
 		/// title must not take the name back.
 		public var isRenamed: Bool
+		/// Whether this was the one in front.
+		///
+		/// Four terminals came back and the first was showing, whichever had
+		/// been in front — the names and the directories travelled and the
+		/// choice between them did not. Here rather than as an index on the
+		/// session, for the reason the tmux window is an id: the list is
+		/// rebuilt, and one that fails to start shifts every index after it.
+		public var isInFront: Bool
 
-		public init(name: String, directory: String? = nil, isRenamed: Bool = false) {
+		public init(
+			name: String, directory: String? = nil,
+			isRenamed: Bool = false, isInFront: Bool = false
+		) {
 			self.name = name
 			self.directory = directory
 			self.isRenamed = isRenamed
+			self.isInFront = isInFront
+		}
+	}
+
+	/// What somebody folded and unfolded in one tree.
+	///
+	/// **Two lists and not one, because the trees do not agree about what an
+	/// absent key means.** A refs tree arrives open and records what was *shut*
+	/// — `working` is shut on arrival and the rest is not — while `origin` and
+	/// `Tags` arrive shut and record what was *opened*, since unrolled they are
+	/// the bulk of the pane. The changes tree wants to arrive open for the same
+	/// reason the refs tree does, and its untracked directories are positive
+	/// again because opening one costs a git call. Merged into a single list of
+	/// "expanded things", every one of those rules would have to be guessed at
+	/// from the key.
+	public struct TreeFolds: Equatable, Sendable {
+		/// Keys somebody shut that would otherwise be open.
+		public var shut: [String]
+		/// Keys somebody opened that would otherwise be shut.
+		public var opened: [String]
+
+		public init(shut: [String] = [], opened: [String] = []) {
+			self.shut = shut
+			self.opened = opened
+		}
+
+		public var isEmpty: Bool { shut.isEmpty && opened.isEmpty }
+
+		/// At most this many keys per tree, nearest the root first.
+		///
+		/// A tree somebody has walked deep into holds thousands of unfolded
+		/// folders, and this file is read on every project switch. A fold near
+		/// the root is the shape somebody arranged; one twelve levels down is
+		/// where they happened to end up. Ruled out: no bound, which is how a
+		/// `.abydos` file becomes a megabyte of directory names.
+		public static let cap = 500
+
+		/// The same folds, bounded, shallowest first.
+		///
+		/// Depth is counted in separators, which is what every key here is made
+		/// of — `folder:a/b`, `section:origin`, a path relative to the project.
+		/// Sorted after trimming so the file does not churn on a set's order.
+		public var bounded: TreeFolds {
+			TreeFolds(shut: Self.bound(shut), opened: Self.bound(opened))
+		}
+
+		private static func bound(_ keys: [String]) -> [String] {
+			guard keys.count > cap else { return keys.sorted() }
+			return keys
+				.sorted { left, right in
+					let depths = (
+						left.filter { $0 == "/" }.count, right.filter { $0 == "/" }.count
+					)
+					return depths.0 == depths.1 ? left < right : depths.0 < depths.1
+				}
+				.prefix(cap)
+				.sorted()
 		}
 	}
 
@@ -188,6 +256,20 @@ public struct ProjectSession: Equatable, Sendable {
 	public var composedMessage: ComposedMessage?
 	/// The pages that were open, in the order they were in.
 	public var pages: [OpenPage]
+	/// What was folded and unfolded in each tree, by the tree's own name —
+	/// `refs`, `changes.unstaged`, `changes.staged`, `tree`.
+	///
+	/// Additive: absent from every session written before it existed, which
+	/// reads as nothing having been folded, and the panes then arrive the way
+	/// they always did. That is what makes this safe to add: the arrival
+	/// defaults live in the panes and are not copied here.
+	public var folds: [String: TreeFolds]
+	/// Which sidebar tool was in front, by its own name.
+	///
+	/// A window that lived in the git tool came back on the file tree, every
+	/// time. Nil for a session written before this existed, and for one where
+	/// nothing was chosen.
+	public var sidebarTool: String?
 
 	public init(
 		files: [OpenFile] = [],
@@ -202,8 +284,14 @@ public struct ProjectSession: Equatable, Sendable {
 		reviewTicks: [String: [String: String]] = [:],
 		reviewCheckouts: [String: Int] = [:],
 		composedMessage: ComposedMessage? = nil,
-		pages: [OpenPage] = []
+		pages: [OpenPage] = [],
+		folds: [String: TreeFolds] = [:],
+		sidebarTool: String? = nil
 	) {
+		// Bounded here rather than at each caller: there are two places a
+		// session is captured and both would have to remember.
+		self.folds = folds.compactMapValues { $0.isEmpty ? nil : $0.bounded }
+		self.sidebarTool = sidebarTool
 		self.xcodeDestinations = xcodeDestinations
 		self.breakpoints = breakpoints
 		self.reviewTicks = reviewTicks
@@ -219,6 +307,11 @@ public struct ProjectSession: Equatable, Sendable {
 		self.selectedConfiguration = selectedConfiguration
 	}
 
+	/// **The folds and the tool are not counted.** A session holding nothing
+	/// but the shape of an empty pane is an empty session: the file is removed
+	/// rather than written, which is what keeps a `.abydos` from appearing
+	/// beside a project somebody only looked at. Nothing is lost by it — with
+	/// no files and no terminals there is no arrangement to come back to.
 	public var isEmpty: Bool {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
@@ -237,6 +330,10 @@ public struct ProjectSession: Equatable, Sendable {
 	/// going to stop at, and there is nothing here to run. So do the commit
 	/// message and the git pages: a folder in no working copy has nothing to
 	/// commit and no history to page through.
+	/// The folds, the tool and the terminal in front go with the rest. Every
+	/// folder in no working copy shares one session file, so a fold keyed by a
+	/// path relative to one of them names nothing in the next — and a folder
+	/// has no git tool to have been in front of.
 	public var filesOnly: ProjectSession {
 		ProjectSession(files: files, activePath: activePath, isPanelVisible: isPanelVisible)
 	}

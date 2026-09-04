@@ -248,6 +248,14 @@ final class ProjectNavigatorViewController: NSViewController {
 		if let url { reveal(url: url) }
 	}
 
+	/// The folds this project was left with, handed in by whoever opens it.
+	///
+	/// Taken here rather than applied from outside afterwards, because
+	/// `load(project:)` expands the root *alone* and anything applied before it
+	/// is undone. Nil for a project with nothing recorded, and then the tree
+	/// arrives exactly as it always did.
+	var foldsToRestore: ProjectSession.TreeFolds?
+
 	func load(project: Project) {
 		self.project = project
 		let root = FileNode(url: project.root, isDirectory: true)
@@ -263,6 +271,13 @@ final class ProjectNavigatorViewController: NSViewController {
 
 		outlineView.reloadData()
 		outlineView.expandItem(root)
+		// And whatever was unrolled last time, over the root that has just been
+		// opened. After the reload, because `restore(expandedPaths:)` walks the
+		// rows the reload made.
+		if let foldsToRestore {
+			self.foldsToRestore = nil
+			folds = foldsToRestore
+		}
 		// The first of 0428's two launch numbers that is not about the window:
 		// the root has been listed and its rows exist, so there is something to
 		// click. Colour has not arrived — that is `git status` below, and on a
@@ -1086,6 +1101,41 @@ final class ProjectNavigatorViewController: NSViewController {
 	private func restoreExpansion() {
 		guard let rootNode else { return }
 		outlineView.expandItem(rootNode)
+	}
+
+	/// What is unfolded here, for the project's session.
+	///
+	/// **Positive, and relative to the project.** A tree arrives with the root
+	/// alone open, so what is worth writing down is what somebody unrolled. The
+	/// file paths go relative to the project root, because the session file
+	/// sits inside the project: a checkout that is moved, or the same checkout
+	/// opened through a worktree, is the same tree with the same folders. The
+	/// `dep:` and `session:` identities are not paths and travel as they are.
+	///
+	/// The root itself is not written: it is expanded by `restoreExpansion`
+	/// whatever the session says, and a key for it would be a line in every
+	/// file saying what always happens.
+	var folds: ProjectSession.TreeFolds {
+		get {
+			guard let root = project?.root.standardizedFileURL.path else {
+				return ProjectSession.TreeFolds()
+			}
+			let opened = expandedPaths().compactMap { path -> String? in
+				guard path.hasPrefix("/") else { return path }
+				guard path != root else { return nil }
+				guard path.hasPrefix(root + "/") else { return nil }
+				return String(path.dropFirst(root.count + 1))
+			}
+			return ProjectSession.TreeFolds(opened: opened.sorted())
+		}
+		set {
+			guard let root = project?.root.standardizedFileURL.path else { return }
+			restore(expandedPaths: Set(newValue.opened.map { key in
+				key.hasPrefix("dep:") || key.hasPrefix("session:")
+					? key
+					: root + "/" + key
+			}))
+		}
 	}
 
 	private func restore(expandedPaths paths: Set<String>) {

@@ -1,8 +1,20 @@
 import AppKit
 
 /// Which tool window the sidebar is showing.
-enum SidebarToolKind {
+enum SidebarToolKind: String, CaseIterable {
 	case project, changes, branches, structure, scratches, history, pullRequests
+
+	/// The name written into a project's session, and read back from one.
+	///
+	/// A name and not an ordinal: a case added in the middle would silently
+	/// re-point every session file written before it. An unknown name reads as
+	/// nothing, which falls back to the project tree — the same answer a
+	/// remembered tool that cannot be built gets.
+	var stored: String { rawValue }
+
+	static func named(_ stored: String?) -> SidebarToolKind? {
+		stored.flatMap(SidebarToolKind.init(rawValue:))
+	}
 }
 
 /// A pane that docks under the editor and has a button on the rail.

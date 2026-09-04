@@ -1128,6 +1128,64 @@ final class BranchesPane: NSView {
 		}
 	}
 
+	/// What somebody folded and unfolded here, for the project's session.
+	///
+	/// **Both sets, unmerged.** `collapsedKeys` is the negative way round —
+	/// open unless shut — and `openedKeys` the positive one, for the two
+	/// sections that are somebody else's account of things. One list of
+	/// "expanded keys" would have to carry which rule each key was under.
+	var folds: ProjectSession.TreeFolds {
+		get {
+			ProjectSession.TreeFolds(
+				shut: Array(collapsedKeys), opened: Array(openedKeys)
+			)
+		}
+		set {
+			// Replacing rather than merging: what is written down is the whole
+			// of what somebody arranged, and a key that has since stopped
+			// naming a row simply finds nothing in `restoreExpansion`.
+			collapsedKeys = Set(newValue.shut)
+			openedKeys = Set(newValue.opened)
+		}
+	}
+
+	/// What the tree looks like *now*, for the session.
+	///
+	/// **Asked of the rows and not of the two sets**, which was the first
+	/// answer and is wrong: the sets say what somebody has decided, and the
+	/// outline holds the rest. A section nobody has touched is shut because a
+	/// freshly built row is not expanded, not because it is in `collapsedKeys`
+	/// — so a capture from the sets came back with everything not explicitly
+	/// shut *open*, and a round trip left the tree more unrolled than somebody
+	/// left it. Driven, and that is how it was caught.
+	///
+	/// The two answers here are exactly the two `restoreExpansion` asks, so
+	/// what is written down reproduces the screen rather than approximating it:
+	/// a row the outline has collapsed is shut, and a row that starts shut and
+	/// is open was opened.
+	///
+	/// A key that names no row is dropped by construction — this walks the
+	/// rows. Nothing is written while the tree is empty, since "no rows" then
+	/// means the repository has not been read rather than that a fold has gone.
+	var foldsWorthKeeping: ProjectSession.TreeFolds {
+		guard !roots.isEmpty else { return folds }
+		var shut: [String] = []
+		var opened: [String] = []
+
+		func walk(_ nodes: [GitNode]) {
+			for node in nodes where !node.children.isEmpty {
+				if tableView.isItemExpanded(node) {
+					if sectionsThatStartShut.contains(node.key) { opened.append(node.key) }
+				} else {
+					shut.append(node.key)
+				}
+				walk(node.children)
+			}
+		}
+		walk(roots)
+		return ProjectSession.TreeFolds(shut: shut.sorted(), opened: opened.sorted())
+	}
+
 	/// Finds a node again after a rebuild has replaced every object.
 	private func node(forKey key: String) -> GitNode? {
 		var stack = roots

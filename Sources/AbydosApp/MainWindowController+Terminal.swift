@@ -401,6 +401,10 @@ extension MainWindowController {
 			// they had open: the two things a switch used to take with it.
 			session.composedMessage = sidebar.composedMessage
 			session.pages = sidebar.openPagesToRemember()
+			// The shape the panes were arranged into, carrying what was read
+			// for a tool nobody opened in this sitting.
+			session.folds = sidebar.foldsToRemember(carrying: rememberedFolds)
+			session.sidebarTool = sidebar.toolToRemember
 			// The in-memory store is keyed by root, which is the wrong key for a
 			// folder: they share one session, so a folder's goes straight to the
 			// file every folder reads.
@@ -433,6 +437,10 @@ extension MainWindowController {
 		// and a message pushed at the pane standing here would go with it.
 		rememberedMessage = previous?.composedMessage
 		rememberedPages = previous?.pages ?? []
+		rememberedFolds = previous?.folds ?? [:]
+		rememberedTool = previous?.sidebarTool
+		navigator.foldsToRestore = previous?.folds["tree"]
+		sidebar.showRemembered(tool: previous?.sidebarTool)
 
 		if let previous {
 			editor.restore(previous)
@@ -491,6 +499,8 @@ extension MainWindowController {
 		session.reviewCheckouts = sidebar.pullRequests.checkoutsToRemember()
 		session.composedMessage = sidebar.composedMessage
 		session.pages = sidebar.openPagesToRemember()
+		session.folds = sidebar.foldsToRemember(carrying: rememberedFolds)
+		session.sidebarTool = sidebar.toolToRemember
 		try? SessionStore.write(session, in: project.sessionRoot)
 	}
 

@@ -216,6 +216,36 @@ final class ChangesPane: NSView, ScaleFollowing {
 	private var unstagedSide = Side()
 	private var stagedSide = Side()
 
+	/// What somebody folded and unfolded on each side, for the session.
+	///
+	/// Two sides and two sets each: `collapsed` is negative because a changes
+	/// tree wants to arrive open, and `opened` is positive because an untracked
+	/// directory costs a git call to unroll. Keyed `changes.unstaged` and
+	/// `changes.staged`, since the two lists are arranged separately and a
+	/// folder shut above is not a folder shut below.
+	var folds: [String: ProjectSession.TreeFolds] {
+		get {
+			[
+				"changes.unstaged": .init(
+					shut: unstagedSide.collapsed.sorted(), opened: unstagedSide.opened.sorted()
+				),
+				"changes.staged": .init(
+					shut: stagedSide.collapsed.sorted(), opened: stagedSide.opened.sorted()
+				),
+			].filter { !$0.value.isEmpty }
+		}
+		set {
+			if let unstaged = newValue["changes.unstaged"] {
+				unstagedSide.collapsed = Set(unstaged.shut)
+				unstagedSide.opened = Set(unstaged.opened)
+			}
+			if let staged = newValue["changes.staged"] {
+				stagedSide.collapsed = Set(staged.shut)
+				stagedSide.opened = Set(staged.opened)
+			}
+		}
+	}
+
 	/// Set while the pane is putting expansion or selection back after a
 	/// rebuild, so that its own work is not mistaken for somebody's.
 	private var isRestoring = false

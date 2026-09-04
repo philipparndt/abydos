@@ -253,6 +253,17 @@ extension MainWindowController {
 			// property. `switchProject` sets the same two.
 			rememberedMessage = remembered.composedMessage
 			rememberedPages = remembered.pages
+			rememberedFolds = remembered.folds
+			rememberedTool = remembered.sidebarTool
+			// The tree is not rebuilt the way the git panes are, so it takes
+			// its folds through `load(project:)` — which expands the root alone
+			// and would undo anything applied before it.
+			navigator.foldsToRestore = remembered.folds["tree"]
+			// And the tool this project was left on. `install` waits for a
+			// repository still being read and gives up quietly on one that
+			// never arrives, so a folder in no working copy simply stays on
+			// the tree.
+			sidebar.showRemembered(tool: remembered.sidebarTool)
 			if isOpening { sidebar.reopen(pages: remembered.pages) }
 		}
 

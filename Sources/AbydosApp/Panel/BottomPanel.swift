@@ -3533,13 +3533,25 @@ final class BottomPanel: NSView {
 			return ProjectSession.OpenTerminal(
 				name: session.displayTitle,
 				directory: session.directory?.path,
-				isRenamed: session.isRenamed
+				isRenamed: session.isRenamed,
+				// Which of them was showing. Four came back and the first was
+				// in front, whichever had been.
+				isInFront: session === activeSession
 			)
 		}
 	}
 
 	/// Opens the terminals a project had, with fresh shells in the same places.
 	func restoreTerminals(_ terminals: [ProjectSession.OpenTerminal]) {
+		// The session made for the entry that was in front, kept as it is made.
+		//
+		// **Not found by name afterwards, and not by index either.** Three
+		// terminals are all called `Local` until somebody renames one, so a
+		// name finds the first of them — driven, and it brought back the first
+		// where the third had been. An index is the other trap: a terminal
+		// that fails to start makes no session and shifts every one after it.
+		// Holding the object as it is created is neither.
+		var wasInFront: Session?
 		for terminal in terminals {
 			let directory = terminal.directory.map { URL(fileURLWithPath: $0) } ?? workingDirectory
 			// Not focused: this happens while a project is opening, and the
@@ -3547,6 +3559,7 @@ final class BottomPanel: NSView {
 			guard let pane = newTerminal(rootedAt: directory, title: terminal.name, focus: false)
 			else { continue }
 			guard let session = sessions.last, session.terminal === pane else { continue }
+			if terminal.isInFront { wasInFront = session }
 			session.isRenamed = terminal.isRenamed
 			// The one that attached to tmux keeps the name it was just given —
 			// `tmux` — unless the stored name was one somebody typed. What it
@@ -3555,6 +3568,12 @@ final class BottomPanel: NSView {
 			session.displayTitle = terminal.name
 		}
 		refreshTabs()
+
+		// Not focused, for the reason the restore above is not: this runs while
+		// a project is opening, and the keyboard belongs to whatever somebody
+		// opened it for. Nothing to do where the entry that was in front made
+		// no session — the panel then shows what it shows today.
+		if let wasInFront { activate(wasInFront, focus: false) }
 	}
 
 	/// tmux's own id for the window being shown, when one is.
