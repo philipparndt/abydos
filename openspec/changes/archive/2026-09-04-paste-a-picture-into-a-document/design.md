@@ -4,7 +4,11 @@
 through `insertTextAtCaret`, which is one `TextDocument.replace` and so one
 undo entry. The view knows its document's `url` and `languageId`. The Markdown
 preview is `MarkdownRenderer.render(_:baseURL:)` with the document's folder as
-the base, so a relative reference resolves the moment it is typed.
+the base. **Corrected during implementation:** the base resolved links only.
+Foundation's parser leaves `![alt](path)` as its alt text carrying `imageURL`,
+and the renderer made attachments for diagrams alone, so no picture had ever
+been drawn in the preview; this change makes image runs into the diagram's
+attachment cell, which is what the preview requirement turned out to need.
 
 `paste-a-picture-into-the-tree` put the pasteboard reading in AbydosKit —
 `FilePasteboard.hasPicture` asks the board's types, `picture` returns PNG

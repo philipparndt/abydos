@@ -125,6 +125,21 @@ enum MarkdownRenderer {
 				continue
 			}
 
+			// A picture, where the parser left only its words. Foundation turns
+			// `![alt](path)` into the alt text carrying `imageURL` and draws
+			// nothing, so a document's screenshots were sentences in the preview
+			// — found when a picture pasted into a document rendered as its own
+			// description. The same cell a diagram sits in, so a screenshot wider
+			// than the pane shrinks to it. A picture that is not on disk stays as
+			// its words, which is what a broken reference should look like.
+			if let imageURL = run.imageURL, let image = Self.picture(at: imageURL) {
+				if previousBlockID != nil { output.append(NSAttributedString(string: "\n")) }
+				previousBlockID = blockID
+				output.append(picture(image, paper: .clear))
+				index += 1
+				continue
+			}
+
 			index += 1
 			let text = String(parsed[run.range].characters)
 
@@ -358,6 +373,23 @@ enum MarkdownRenderer {
 		case .none:
 			return aside("Drawing this diagram…")
 		}
+	}
+
+	/// A picture on disk, decoded once per version of the file.
+	///
+	/// The preview is rendered again on every edit, and decoding a 5k screenshot
+	/// on each keystroke would be the cost of typing next to it. Keyed by path
+	/// and the file's modification date, so a picture re-taken under the same
+	/// name is read again and one that has not changed is not.
+	private static var pictures: [String: (modified: Date?, image: NSImage)] = [:]
+
+	private static func picture(at url: URL) -> NSImage? {
+		guard url.isFileURL else { return nil }
+		let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+		if let cached = pictures[url.path], cached.modified == modified { return cached.image }
+		guard let image = NSImage(contentsOf: url) else { return nil }
+		pictures[url.path] = (modified, image)
+		return image
 	}
 
 	/// The drawing itself, as one attachment on a line of its own.

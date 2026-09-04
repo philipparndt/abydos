@@ -607,6 +607,12 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.lineTextForTesting(line) ?? "no file"
 	}
 
+	/// ⌘V over a picture into the active group's document, from a board of the
+	/// run's own.
+	func pastePictureForTesting(_ picture: URL) {
+		(activeGroup ?? groups.first)?.pastePictureForTesting(picture)
+	}
+
 	var fileHistoryReportForTesting: String {
 		(activeGroup ?? groups.first)?.fileHistoryReportForTesting ?? "no file"
 	}

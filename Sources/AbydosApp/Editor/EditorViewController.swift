@@ -1863,6 +1863,34 @@ final class EditorViewController: NSViewController {
 	/// the key doing nothing is in the text. `textTailForTesting` answers the
 	/// same question for the *end* of a file, and a driver pressing a deleting
 	/// key in the middle of one has to name the line.
+	/// ⌘V over a picture in the open document, from a board of the run's own,
+	/// so the general clipboard is left alone. Says what was written and what
+	/// the caret's line now reads, which is the whole of the claim.
+	func pastePictureForTesting(_ picture: URL) {
+		guard let codeView = codeViewToDrive("paste-picture") else {
+			print("EDITOR paste-picture: nothing to drive")
+			return
+		}
+		view.window?.makeFirstResponder(codeView)
+		let board = NSPasteboard(name: NSPasteboard.Name("abydos.driven.paste-picture.\(UUID().uuidString)"))
+		defer { board.releaseGlobally() }
+		board.clearContents()
+		board.setData(
+			(try? Data(contentsOf: picture)) ?? Data(),
+			forType: picture.pathExtension.lowercased() == "tiff" ? .tiff : .png
+		)
+		let started = Date()
+		codeView.paste(from: board)
+		let took = Date().timeIntervalSince(started)
+		let written = codeView.lastPastedPictureForTesting.map { file -> String in
+			let folder = activeTab?.url.deletingLastPathComponent().path ?? ""
+			return file.path.replacingOccurrences(of: folder + "/", with: "")
+		} ?? "nothing"
+		print("EDITOR paste-picture: \(written)" + String(format: " in %.3f s", took)
+			+ " line=\(codeView.caretLine) text=\(lineTextForTesting(codeView.caretLine))"
+			+ " \(codeView.caretReportForTesting)")
+	}
+
 	func lineTextForTesting(_ line: Int) -> String {
 		guard let document = activeTab?.document else { return "no file" }
 		guard line >= 0, line < document.rope.lineCount else { return "no line \(line)" }

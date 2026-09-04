@@ -9,7 +9,7 @@ import AbydosKit
 /// ever handed to the syntax query. Scrolling a 200 MB file therefore costs the
 /// same as scrolling a small one, because the work is proportional to the window,
 /// not the file.
-final class CodeView: NSView, NSTextInputClient {
+final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	// MARK: - Model
 
 	private(set) var document: TextDocument?
@@ -4349,6 +4349,18 @@ final class CodeView: NSView, NSTextInputClient {
 		return super.responds(to: selector)
 	}
 
+	/// Paste greys itself out over a board with nothing this view can paste:
+	/// text, or a picture in a document whose language has a syntax for one.
+	/// Asked of the board's types, since a menu validates every time it opens.
+	/// Every other item this view answers stays enabled, which is what it was
+	/// before this method existed.
+	func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+		guard item.action == #selector(paste(_:)) else { return true }
+		let board = NSPasteboard.general
+		if board.availableType(from: [.string]) != nil { return true }
+		return FilePasteboard.hasPicture(on: board) && PictureReference.hasSyntax(document?.languageId)
+	}
+
 	@objc override func selectAll(_ sender: Any?) {
 		selectAllText()
 	}
@@ -4376,9 +4388,69 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	@objc func paste(_ sender: Any?) {
-		guard let text = NSPasteboard.general.string(forType: .string) else { return }
-		insertTextAtCaret(text)
+		paste(from: .general)
 	}
+
+	/// The board's text, as always — or, when it has none, its picture: a file
+	/// in `images` beside the document and a reference to it at the caret.
+	///
+	/// Text first, because this is a text editor and ⌘V over text has always
+	/// pasted the text. The picture path is taken only when there is no string
+	/// at all, and only in a document whose language has a syntax for a
+	/// picture; pixels into a Swift file do nothing, as they always did, since
+	/// a file written into the source tree that nothing references is a stray
+	/// screenshot in the repository.
+	///
+	/// The file is written first and the reference inserted second, as one
+	/// replace: ⌘Z here takes the reference back and leaves the file, which is
+	/// in the tree, where the tree's own ⌘Z removes it. Two stacks, and focus
+	/// decides which — a text undo must never delete a file.
+	func paste(from board: NSPasteboard) {
+		if let text = board.string(forType: .string) {
+			insertTextAtCaret(text)
+			return
+		}
+		guard let document, FilePasteboard.hasPicture(on: board) else { return }
+		guard let reference = PictureReference.make(
+			for: document.url, language: document.languageId,
+			isTaken: { FileManager.default.fileExists(atPath: $0.path) }
+		) else { return }
+		guard let png = FilePasteboard.picture(on: board) else {
+			Toast.post("Cannot paste that picture", detail: "The clipboard's picture could not be read.")
+			return
+		}
+		do {
+			try FileManager.default.createDirectory(
+				at: reference.folder, withIntermediateDirectories: true
+			)
+			try png.write(to: reference.file, options: .withoutOverwriting)
+		} catch {
+			// Nothing inserted: a reference to a file that is not there is
+			// worse than no paste.
+			Toast.post("Cannot paste that picture", detail: error.localizedDescription)
+			return
+		}
+		let selection = selectedUTF16Range()
+		let range = selection.isEmpty ? caret..<caret : selection
+		document.replace(utf16Range: range, with: reference.text, caretBefore: range.lowerBound)
+		// Inside the empty description rather than after the reference, so the
+		// next thing typed is the alt text.
+		afterEdit(caret: range.lowerBound + reference.caretOffset)
+		lastPastedPictureForTesting = reference.file
+		// A scratch has a folder — the scratch directory — so the paste works,
+		// but a scratch saved elsewhere later carries a reference that no
+		// longer resolves. Said now rather than discovered then.
+		if ScratchFiles.isScratch(document.url) {
+			Toast.post(
+				"Pasted beside the scratch",
+				detail: "The picture is in the scratch folder; saving the scratch elsewhere leaves it behind.",
+				kind: .information
+			)
+		}
+	}
+
+	/// Where the last picture paste wrote its file, for the driven run's report.
+	private(set) var lastPastedPictureForTesting: URL?
 
 	// MARK: - Folding commands
 

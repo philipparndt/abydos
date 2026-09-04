@@ -367,6 +367,23 @@ extension MainWindowController {
 				// `paste-picture:<png>` — ⌘V over a picture, from a board the run
 				// makes for itself so the general clipboard is left alone. The path
 				// is the project's when relative, the machine's when absolute.
+				// `line:<n>` — what a line of the open document reads, for the
+				// claims a caret report cannot make: that a reference went in, or
+				// that ⌘Z took it out again.
+				if step.hasPrefix("line:") {
+					let n = Int(step.dropFirst("line:".count)) ?? 0
+					print("EDITOR line \(n): \(editor.lineTextForTesting(n))")
+					continue
+				}
+				// `paste-picture-editor:<png>` — the same board, into the document
+				// the editor is showing rather than into the tree.
+				if step.hasPrefix("paste-picture-editor:") {
+					let body = String(step.dropFirst("paste-picture-editor:".count))
+					let picture = body.hasPrefix("/") ? URL(fileURLWithPath: body)
+						: (project?.root ?? URL(fileURLWithPath: ".")).appendingPathComponent(body)
+					editor.pastePictureForTesting(picture)
+					continue
+				}
 				if step.hasPrefix("paste-picture:") {
 					let body = String(step.dropFirst("paste-picture:".count))
 					let picture = body.hasPrefix("/") ? URL(fileURLWithPath: body)
