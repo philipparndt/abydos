@@ -612,8 +612,11 @@ final class SettingsPaneController: NSViewController {
 					.toggle(
 						title: "Hide tmux's own status bar",
 						help: "Those tabs already show this session's windows, so tmux's bar is the "
-							+ "same list twice. Set on the session as it is attached — nothing is "
-							+ "written to ~/.tmux.conf, and other sessions keep their bar.",
+							+ "same list twice. It sets `status off` on this project's session — not "
+							+ "on the server, and nothing is written to ~/.tmux.conf — so other "
+							+ "sessions keep their bar. This one loses it in every terminal attached "
+							+ "to it, Abydos or not, and keeps it off after Abydos quits until this "
+							+ "is turned back on.",
 						get: { TmuxSettings.wantsStatusBarHidden },
 						set: { TmuxSettings.wantsStatusBarHidden = $0 },
 						isEnabled: { TmuxSettings.tabsAreTmuxWindows }
@@ -996,6 +999,54 @@ enum SettingsSections {
 	/// Every page in the order they are shown, each with how deep it sits.
 	static var flattened: [(section: Section, depth: Int)] {
 		all.flatMap { [($0, 0)] + $0.children.map { child in (child, 1) } }
+	}
+
+	/// Reads back what a row *says*, found by page and by part of its title.
+	///
+	/// **Because a help text is a claim, and claims are what get reported.**
+	/// "Hide tmux's own status bar" said nothing else was harmed and the
+	/// session being used lost its status line — true clause by clause, wrong
+	/// in what it left somebody believing, and unreachable from any run: every
+	/// verb here sets values or photographs the page, and a sentence below the
+	/// fold is in neither. This prints the words, so the next report about what
+	/// a setting claims can be answered against the build rather than against
+	/// the source somebody happens to be reading.
+	static func says(_ said: String) -> String {
+		let halves = said.split(separator: "/", maxSplits: 1).map(String.init)
+		guard halves.count == 2 else { return "cannot read \(said) — expected Page/Row" }
+		guard let section = flattened.first(where: { $0.section.title == halves[0] })?.section
+		else { return "no settings page called \(halves[0])" }
+
+		let found = words(in: section.rows(), matching: halves[1])
+		guard !found.isEmpty else { return "no row matching \(halves[1]) on \(halves[0])" }
+		return found.map {
+			"\(halves[0]) ▸ \($0.title)\n    \($0.help ?? "(no help)")"
+		}.joined(separator: "\n")
+	}
+
+	/// The title and help of every row whose title contains `needle`, walking
+	/// into groups, which is where half the tmux rows live.
+	private static func words(
+		in rows: [SettingsPaneController.Row], matching needle: String
+	) -> [(title: String, help: String?)] {
+		rows.flatMap { row -> [(title: String, help: String?)] in
+			switch row {
+			case let .toggle(title, help, _, _, _),
+			     let .slider(title, help, _, _, _, _, _),
+			     let .stepper(title, help, _, _, _),
+			     let .text(title, help, _, _),
+			     let .choice(title, help, _, _, _),
+			     let .choiceWithActions(title, help, _, _, _, _):
+				return title.localizedCaseInsensitiveContains(needle) ? [(title, help)] : []
+			case let .button(title, label, _):
+				return title.localizedCaseInsensitiveContains(needle) ? [(title, label)] : []
+			case let .group(title, help, rows):
+				let inside = words(in: rows, matching: needle)
+				return title.localizedCaseInsensitiveContains(needle)
+					? [(title, help)] + inside
+					: inside
+			}
+		}
 	}
 
 	/// Sets one row's value, found by page and title, and says what it did.

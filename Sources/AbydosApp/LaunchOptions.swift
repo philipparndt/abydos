@@ -698,6 +698,10 @@ struct LaunchOptions {
 	var subproject: String?
 	/// Which settings section to show.
 	var settingsSection: String?
+	/// Print what a settings row says — its title and its help — found by page
+	/// and by part of its title: `--settings-says "Terminal/status bar"`.
+	/// A help text is a claim, and this is how one is read back from a build.
+	var settingsSays: String?
 	/// Which settings section to fold away, as its triangle does.
 	var settingsFold: String?
 	/// Arrow keys to press in the settings sidebar, comma separated: `left`,
@@ -974,6 +978,7 @@ struct LaunchOptions {
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true
 			case "--subproject": options.subproject = next()
+			case "--settings-says": options.settingsSays = next()
 			case "--settings-section": options.settingsSection = next()
 			case "--settings-fold": options.settingsFold = next()
 			case "--settings-keys": options.settingsKeys = next()

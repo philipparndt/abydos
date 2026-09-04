@@ -2546,6 +2546,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let said = options.settingsSays {
+			print("SAYS: \(SettingsSections.says(said))")
+			fflush(stdout)
+		}
+
 		if options.openSettings {
 			controller?.settingsSectionForTesting = options.settingsSection
 			controller?.settingsFoldForTesting = options.settingsFold

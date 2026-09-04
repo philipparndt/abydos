@@ -41,10 +41,20 @@ enum TmuxSettings {
 
 	/// Tells the sessions this app is attached to.
 	///
-	/// A session option rather than a line in somebody's config: nothing is
-	/// written to `~/.tmux.conf`, every other session keeps its bar, and so
-	/// does every other terminal attached to one of those. It applies the
-	/// moment it is set, and the panels do it again whenever they attach.
+	/// **A session option, and a session is not a window.** Nothing is written
+	/// to `~/.tmux.conf` and no other session is touched — but the session this
+	/// is set on loses its bar for *every* client attached to it, which
+	/// includes a terminal outside this app then and later, and it stays off
+	/// when this app quits. Only turning the switch back on puts it back, with
+	/// `-u`, or the tmux server restarting and taking every session option with
+	/// it.
+	///
+	/// Said plainly here because the words that were here before — "other
+	/// sessions keep their bar" — are true and were read as "this does not
+	/// reach my tmux elsewhere", which it does.
+	///
+	/// It applies the moment it is set, and the panels do it again whenever
+	/// they attach.
 	static func apply(announcing: Bool) {
 		NotificationCenter.default.post(name: .abydosSettingsChanged, object: nil)
 		guard announcing else { return }
@@ -52,8 +62,12 @@ enum TmuxSettings {
 			shouldHideStatusBar
 				? "tmux's status bar is off in this project's session"
 				: "tmux's status bar is back",
-			detail: "A session option, set as it is attached — nothing was written to "
-				+ "~/.tmux.conf, and other sessions keep their bar.",
+			detail: shouldHideStatusBar
+				? "A session option on this project's session: every terminal attached to it "
+					+ "loses the bar, and it stays off until this is turned back on. Nothing was "
+					+ "written to ~/.tmux.conf, and other sessions keep theirs."
+				: "Back to whatever this session's own config says. Nothing was written to "
+					+ "~/.tmux.conf.",
 			kind: .information
 		)
 	}

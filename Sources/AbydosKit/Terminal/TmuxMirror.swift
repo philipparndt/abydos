@@ -397,10 +397,14 @@ public enum TmuxMirror {
 	/// Hides — or gives back — tmux's own status bar, for one session only.
 	///
 	/// A session option, set at runtime: nothing is written to anybody's
-	/// `.tmux.conf`, every other session on the server keeps its bar, and so
-	/// does every other terminal attached to those. Worth having because in the
-	/// mirrored mode this app draws the same window list as tabs, and two rows
-	/// of the same thing is one row too many.
+	/// `.tmux.conf`, and every other session on the server keeps its bar.
+	///
+	/// **The named session loses it everywhere, though**, which is the half
+	/// worth saying: a session option belongs to the session and not to this
+	/// app's client, so a terminal attached to the same session anywhere else
+	/// draws no bar either, then or later, and the option outlives this app.
+	/// Worth having because in the mirrored mode this app draws the same window
+	/// list as tabs, and two rows of the same thing is one row too many.
 	/// Returns whether tmux accepted it. It does not, quietly, when the session
 	/// is not there yet — which at startup is most of the time, since the poll
 	/// that asks is running before the session it asks about exists. A caller
