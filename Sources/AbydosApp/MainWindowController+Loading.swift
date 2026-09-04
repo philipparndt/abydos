@@ -429,6 +429,19 @@ extension MainWindowController {
 		// draw rather than here.
 		TerminalPalette.invalidate()
 
+		// Following, but only when *this* preference moved. Every setting posts
+		// the same notification, so adopting the stored value on each of them
+		// would undo a window's own choice whenever anything else changed —
+		// and the per-window switch is deliberate. Changed, it wins: somebody
+		// who ticks it in Settings, or turns it on in another window, has said
+		// what they want more recently than this window did.
+		let following = Settings.shared.followsTerminalProject
+		if following != lastKnownFollowSetting {
+			lastKnownFollowSetting = following
+			followsTerminal = following
+			bottomPanel.isFollowingProject = following
+		}
+
 		editor.applySettings()
 		navigator.applySettings()
 		toolStrip.applySettings()

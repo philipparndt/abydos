@@ -246,9 +246,18 @@ extension MainWindowController {
 		}
 	}
 
-	/// Turns following on or off.
+	/// Turns following on or off, here and for the next window and the next
+	/// launch.
+	///
+	/// **The setting is written, not only this window's copy.** It was not, and
+	/// the two ways of turning following on disagreed: the checkbox in Settings
+	/// persisted and this control — the one on the panel, beside the terminal
+	/// it is about — did not. So it came back off every time, which is what was
+	/// reported as a new version losing it.
 	@objc func toggleFollowTerminal(_ sender: Any? = nil) {
 		followsTerminal.toggle()
+		Settings.shared.followsTerminalProject = followsTerminal
+		lastKnownFollowSetting = followsTerminal
 		bottomPanel.isFollowingProject = followsTerminal
 		guard followsTerminal else { return }
 		// Catch up straight away rather than waiting for the shell to move.

@@ -62,7 +62,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Starts from the setting and is a per-window switch afterwards: one
 	/// window following a terminal about while another stays where it was put
 	/// is a reasonable way to work.
+	///
+	/// **The switch on the panel writes the setting too**, which it did not:
+	/// it flipped this and stopped, so turning following on with the control
+	/// people actually use was forgotten at quit and every window came back
+	/// with it off. Reported as the link setting always being disabled after
+	/// installing a new version, which is every restart.
 	var followsTerminal = Settings.shared.followsTerminalProject
+
+	/// What the stored setting said when this window last looked at it.
+	///
+	/// So that "the preference changed" can be told from "some other
+	/// preference changed": `.abydosSettingsChanged` is posted for every
+	/// setting there is, and a window that re-read this on each of them would
+	/// undo its own per-window choice the next time somebody moved a font
+	/// slider.
+	var lastKnownFollowSetting = Settings.shared.followsTerminalProject
 
 	/// True for a window made by dragging a tab out of another one.
 	///

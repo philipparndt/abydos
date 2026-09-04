@@ -356,6 +356,10 @@ struct LaunchOptions {
 	/// does: `--claude-seeded 6`. These are the records that carry no session
 	/// id, which is a state no other flag can produce.
 	var seededWindows: Int?
+	/// Put the pointer on one of the terminal strip's trailing controls and say
+	/// what it is and what it tells somebody: `--hover-control sessions`, and
+	/// `tag`, `follow`, `maximize`, `hide`, `overflow`, `add`, `add-menu`.
+	var hoverControl: String?
 	/// Say what the panel's pill counts and its list holds: `--running-sessions 6,9`.
 	var runningSessionsAt: [Double] = []
 	/// Click the pill, and say what came up: `--running-sessions-menu 6`.
@@ -1264,6 +1268,7 @@ struct LaunchOptions {
 				spec.id = said
 				options.claudeRunning.append(spec)
 			case "--claude-seeded": options.seededWindows = next().flatMap(Int.init) ?? 6
+			case "--hover-control": options.hoverControl = next()
 			case "--running-sessions":
 				options.runningSessionsAt = (next() ?? "6")
 					.split(separator: ",").compactMap { Double($0) }

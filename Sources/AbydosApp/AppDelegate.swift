@@ -2103,6 +2103,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let name = options.hoverControl {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+				print("HOVER: " + (controller?.panelForTesting
+					.hoverStripControlForTesting(name) ?? "no window"))
+				fflush(stdout)
+			}
+		}
+
 		if let count = options.seededWindows {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				print("SEEDED: \(controller?.panelForTesting.seedTmuxSessionsForTesting(count) ?? "no window")")
@@ -2296,6 +2304,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if options.followTerminal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
 				controller?.toggleFollowTerminal(nil)
+				// **What the switch left behind, not only what it did.** It
+				// used to flip the window and write nothing, so following came
+				// back off at every launch — and no run could see that, because
+				// a run only ever asked the window it had just told.
+				print("FOLLOW: window=\(controller?.followsTerminal == true)"
+					+ " stored=\(Settings.shared.followsTerminalProject)")
+				fflush(stdout)
 			}
 		}
 
