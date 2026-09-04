@@ -922,6 +922,22 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// makes one thing hands in a list of one and is unchanged.
 	private var pendingReveal: [URL] = []
 
+	/// The rows a trash has taken and the disk has not yet.
+	///
+	/// `DoomedRows` holds the rule and its tests; this is the tree's copy, asked
+	/// by the one walk every row goes through and cleared by the trash's
+	/// completion.
+	private var doomedRows = DoomedRows()
+
+	/// How long the trash took to answer, and what the machine was doing while
+	/// it did.
+	///
+	/// The number this change exists to make invisible: it is still spent, and a
+	/// driven run reads it here so that "the row goes at once" is a claim about
+	/// the row and not about a fast trash. A duration with no load beside it
+	/// cannot be argued with afterwards, so both are one sentence.
+	private(set) var trashTimeForTesting = "nothing has been trashed"
+
 	/// Re-reads every directory the tree has loaded.
 	///
 	/// Called when the window comes forward, since the watcher is not the only
@@ -2330,8 +2346,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Worked out before anything goes, because afterwards there is no row to
 		// count back from.
 		let successor = rowSurviving(above: doomed)
-		trash(doomed.sorted().compactMap { outlineView.item(atRow: $0) as? FileNode })
+		// Set *before* the trash rather than after, because the reload that takes
+		// the rows away now happens inside it: `restoreSelectionOrReveal` reads
+		// this, and a survivor named afterwards would be a row waiting for the
+		// watcher's reload to arrive and put the selection somewhere.
 		if let successor { pendingReveal = [successor] }
+		trash(doomed.sorted().compactMap { outlineView.item(atRow: $0) as? FileNode })
 	}
 
 	/// Where the selection goes once these rows have gone. `TreeSelection` has
@@ -2350,8 +2370,34 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// already takes an array, and moving three files to the trash stops being
 	/// three gestures.
 	private func trash(_ nodes: [FileNode]) {
-		let urls = nodes.filter { $0 !== rootNode }.map(\.url)
-		guard !urls.isEmpty else { return }
+		let asked = nodes.filter { $0 !== rootNode }.map(\.url)
+		guard !asked.isEmpty else { return }
+		// A row whose file has already left is not sent to the trash.
+		//
+		// This is the error that was reported: the row stayed until the watcher
+		// noticed, somebody pressed ⌘⌫ again, the dead URL went to `recycle`, and
+		// the toast said *Could not move that to the trash* over a file that was
+		// already in it. With the rows going at once it should not arise from
+		// impatience any more, but a file deleted in a terminal is the same stale
+		// row — and a refresh was always the honest reply to that key, never a
+		// complaint.
+		let urls = asked.filter { FileManager.default.fileExists(atPath: $0.path) }
+		guard !urls.isEmpty else {
+			reread(parentsOf: asked)
+			return
+		}
+
+		// The rows go now, before the trash is asked.
+		//
+		// `recycle` is a cross-process round trip of hundreds of milliseconds,
+		// and the row used to wait for the watcher to notice the file had left
+		// its directory — which for a folder nobody had expanded never happened
+		// at all. Marked here and cleared in the completion, so the tree is drawn
+		// without them for exactly as long as the trash is working.
+		doomedRows.mark(urls)
+		redrawRows()
+
+		let askedAt = Date()
 		// Trash rather than delete: recoverable, and no confirmation needed.
 		//
 		// The dictionary `recycle` answers with is original URL to the place in
@@ -2367,12 +2413,54 @@ final class ProjectNavigatorViewController: NSViewController {
 		// three are still undoable.
 		NSWorkspace.shared.recycle(urls) { [weak self] moved, error in
 			DispatchQueue.main.async {
+				guard let self else { return }
+				self.trashTimeForTesting = String(
+					format: "%d file(s) in %.0f ms, %@",
+					urls.count, Date().timeIntervalSince(askedAt) * 1000, LaunchClock.loadSaid
+				)
+				// Every row is un-marked, the moved and the refused alike. The set
+				// says only "not drawn"; what became of each file is on the disk
+				// by now, and the re-read below is what asks it. So a refused
+				// file's row comes back beside the toast saying why, and a moved
+				// one's does not come back because it is not in its folder any
+				// more.
+				self.doomedRows.clear(urls)
+				// The parents rather than the watcher.
+				//
+				// A trashed folder arrives from FSEvents as a must-scan event on
+				// the folder itself, and the handler re-reads only directories the
+				// tree has listed — so a collapsed folder's row stayed until
+				// something else changed its parent. Re-reading here does not
+				// depend on the watcher noticing anything.
+				self.reread(parentsOf: urls)
 				if let error {
 					Toast.post("Could not move that to the trash", detail: error.localizedDescription)
 				}
-				self?.remember(FileUndo.trashed(moved))
+				// From the trash's own answer, as it has been since 0442: the
+				// dictionary is the only place the trash location of each file
+				// exists. The row leaving early changes when it is *drawn*, not
+				// when this is known.
+				self.remember(FileUndo.trashed(moved))
 			}
 		}
+	}
+
+	/// Re-reads the folders these files were in and draws the tree again.
+	private func reread(parentsOf urls: [URL]) {
+		for folder in DoomedRows.parents(of: urls) {
+			rootNode?.loadedNode(for: folder)?.reloadPreservingIdentity()
+		}
+		redrawRows()
+	}
+
+	/// Draws the tree again, keeping what was open and where the selection was —
+	/// or landing it on a row somebody is waiting for.
+	private func redrawRows() {
+		let expanded = expandedPaths()
+		let selected = selectedPaths()
+		outlineView.reloadData()
+		restore(expandedPaths: expanded)
+		restoreSelectionOrReveal(paths: selected)
 	}
 
 	// MARK: - Moving and copying
@@ -3557,7 +3645,13 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	/// directly, which is what stops the outline and the four hand-written walks
 	/// disagreeing about which rows exist.
 	private func rows(under node: FileNode) -> [FileNode] {
-		compactsPackages ? node.compactedChildren : node.children
+		let rows = compactsPackages ? node.compactedChildren : node.children
+		// A row sent to the trash is not drawn while the trash is working. Here
+		// rather than at each of the walks, which is the whole reason this
+		// function exists — and free when nothing is doomed, which is almost
+		// always.
+		guard !doomedRows.isEmpty else { return rows }
+		return rows.filter { !doomedRows.hides($0.url) }
 	}
 
 	/// What a row is called: its own name, or the whole chain folded into it.

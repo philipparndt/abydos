@@ -536,3 +536,37 @@ failure paths left it disabled saying "Drafting…" for ever.
 
 A commit page left over from another project is no longer reused for this one:
 it was being handed this project's remembered message and this project's draft.
+
+## A trashed row goes at once
+
+⌘⌫ used to do nothing visible for as long as the trash took to answer. The row
+left when the file-system watcher noticed the file had gone from its directory —
+after a cross-process round trip of hundreds of milliseconds, and after up to a
+quarter-second of event coalescing if anything else on the machine was writing.
+Reported on 2026-09-04: "when deleting files it takes long till the project view
+refreshes and removes the file. Sometimes it takes so long that the user tries
+again and gets an error message."
+
+The row now goes in the same event as the key, before the trash is asked, and the
+selection lands on the row above it as it always did. The trash's answer is still
+what ⌘Z remembers, because the dictionary it returns is the only place the trash
+location of each file exists — a file the trash renamed on collision comes back
+under its own name. What changed is what is on screen while that answer is
+awaited.
+
+The error message was the second press. `⌘⌫` never checked the file was still
+there, handed the dead URL to the trash again, and the toast said *Could not move
+that to the trash* over a file that was already in it. A row whose file has gone
+is no longer sent to the trash: its folder is re-read instead, which is the honest
+reply to a stale row however it went stale — a file deleted in a terminal reaches
+the same place.
+
+And the "sometimes" had a cause of its own. A trashed **folder** arrives from
+FSEvents as a must-scan event naming that folder, and the watcher re-reads only
+directories the tree has listed — so a folder nobody had ever expanded kept its
+row until something else changed its parent. The trash now re-reads the parents
+of what it moved, so that row goes whether the watcher notices or not. The
+watcher's own rule is unchanged: it is right for files written by something else.
+
+If the trash refuses a file, its row comes back beside the toast saying why, and
+whatever it did move stays gone.

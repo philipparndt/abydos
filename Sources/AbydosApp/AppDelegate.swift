@@ -1596,8 +1596,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if let steps = options.treeSteps {
-			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
-				controller?.treeStepsForTesting(steps)
+			// A run with a picture coming starts the script 1.5 s before the
+			// shutter, as everything else here does. A run without one starts it
+			// at the delay itself and ends when it ends, so a script with several
+			// `settle`s in it is not cut off by an `exit` it cannot see.
+			let capturing = options.writesACapture
+			let at = capturing ? max(1, options.screenshotDelay - 1.5) : options.screenshotDelay
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.treeStepsForTesting(steps, thenExit: !capturing)
 			}
 		}
 
