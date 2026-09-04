@@ -6,7 +6,7 @@
 2894 Sources/AbydosApp/Git/ChangesPane.swift
 1514 Sources/AbydosApp/Git/HistoryPane.swift
 1562 Sources/AbydosApp/LaunchOptions.swift
-4239 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift
+4364 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift
 1599 Sources/AbydosApp/Navigator/SidebarController.swift
 2606 Sources/AbydosApp/Panel/BacklogPane.swift
 5628 Sources/AbydosApp/Panel/BottomPanel.swift

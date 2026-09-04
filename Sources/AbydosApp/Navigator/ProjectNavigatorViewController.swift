@@ -189,7 +189,10 @@ final class ProjectNavigatorViewController: NSViewController {
 			self?.selectedNodes().map(\.url) ?? []
 		}
 		outline.onPaste = { [weak self] operation in self?.pasteIntoSelection(operation) }
-		outline.canPaste = { !FilePasteboard.files().isEmpty }
+		// Files, or a picture and no file — a screenshot, which ⌘V writes as a
+		// PNG. Asked of the board's types, not its bytes: this runs every time
+		// the Edit menu validates.
+		outline.canPaste = { !FilePasteboard.files().isEmpty || FilePasteboard.hasPicture() }
 		// ⌘Z, which reaches the outline view and stops there. The Undo section
 		// below says why that one door is the whole of how the tree's stack and
 		// the editor's stay apart, and why the door closes during a rename.
@@ -2423,10 +2426,93 @@ final class ProjectNavigatorViewController: NSViewController {
 	///
 	/// Whatever is on the pasteboard as files, so it works with a copy made in
 	/// the Finder as readily as with one made here.
-	private func paste(_ operation: FileTransfer.Operation, into folder: URL?) {
-		let files = FilePasteboard.files()
-		guard !files.isEmpty, let folder else { return }
-		transfer(files, into: folder, operation: operation)
+	private func paste(
+		_ operation: FileTransfer.Operation, into folder: URL?, from board: NSPasteboard = .general
+	) {
+		guard let folder else { return }
+		let files = FilePasteboard.files(on: board)
+		if !files.isEmpty {
+			transfer(files, into: folder, operation: operation)
+			return
+		}
+		// Pixels and no file: a screenshot, or a picture copied out of a browser
+		// or Preview. Files first, above, because copying an image file in the
+		// Finder can put pixels beside the URL and the file is what was meant.
+		// A copy only: pixels have nowhere to be moved from, so ⌥⌘V over them
+		// does nothing rather than quietly copying.
+		guard operation == .copy, FilePasteboard.hasPicture(on: board) else { return }
+		pastePicture(from: board, into: folder)
+	}
+
+	/// Writes the board's picture as a PNG into the folder and offers it a name.
+	///
+	/// Written the moment ⌘V arrives, under the first free `picture-<n>.png`,
+	/// and then the row opens for renaming with the stem selected — typing
+	/// replaces the name and Escape keeps it. Not the New File order, where
+	/// nothing is on disk until Return: that is right there because an empty
+	/// file Escape left behind is something. Here the picture is the thing, and
+	/// a paste that could still be cancelled after the key went down would be
+	/// the only paste in the app that is not done when it is pressed. ⌘Z is the
+	/// answer for a change of mind.
+	///
+	/// Revealed and not opened, on `revealExported`'s reasoning: a picture is
+	/// pasted into a project to be referred to from something being written,
+	/// and an image tab taking the front of the editor would be the paste
+	/// stealing that place — and the name field needs the keyboard the editor
+	/// would take. Return on the row opens it, as any picture row's does.
+	///
+	/// Returns where it went, for the driven run's report.
+	@discardableResult
+	private func pastePicture(from board: NSPasteboard, into folder: URL) -> URL? {
+		guard let png = FilePasteboard.picture(on: board) else {
+			// Said rather than nothing: the board declared a picture and ⌘V was
+			// heard, so silence would read as a key that does not work.
+			Toast.post("Cannot paste that picture", detail: "The clipboard's picture could not be read.")
+			return nil
+		}
+		let destination = FileTransfer.freeName(stem: "picture", extension: "png", in: folder) {
+			FileManager.default.fileExists(atPath: $0.path)
+		}
+		do {
+			try png.write(to: destination, options: .withoutOverwriting)
+		} catch {
+			Toast.post("Cannot paste that picture", detail: error.localizedDescription)
+			return nil
+		}
+		// The same record a new file makes, with the same guard: a ⌘Z arriving
+		// after something has written to the file refuses instead.
+		remember(FileUndo.pasted(destination) { Self.modificationDate(of: $0) })
+
+		// The folder has just gained an entry, so its listing is stale by one.
+		// Re-read here rather than waiting for the watcher, as New File does:
+		// the row has to exist before a field can be put on it.
+		guard let parent = rootNode?.node(for: folder) else {
+			pendingReveal = [destination]
+			return destination
+		}
+		parent.reloadPreservingIdentity()
+		let expanded = expandedPaths()
+		outlineView.reloadData()
+		restore(expandedPaths: expanded)
+		// Opened whether it was or not: a picture pasted into a collapsed folder
+		// is otherwise made and never seen.
+		outlineView.expandItem(parent)
+		guard let node = rootNode?.node(for: destination) else {
+			pendingReveal = [destination]
+			return destination
+		}
+		let index = outlineView.row(forItem: node)
+		guard index >= 0 else {
+			pendingReveal = [destination]
+			return destination
+		}
+		outlineView.scrollRowToVisible(index)
+		let wasSilent = isSelectingSilently
+		isSelectingSilently = true
+		outlineView.selectRowIndexes([index], byExtendingSelection: false)
+		isSelectingSilently = wasSilent
+		beginEditing(.rename(node: node, original: node.name), row: index, name: node.name)
+		return destination
 	}
 
 	/// The keyboard's paste: into the selected folder, or the folder holding the
@@ -2454,6 +2540,39 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// ⌘V reads.
 	func pasteForTesting(move: Bool) {
 		pasteIntoSelection(move ? .move : .copy)
+	}
+
+	/// ⌘V over a picture, from a board of the run's own.
+	///
+	/// A named board rather than the general one, unlike `copy-files` above: a
+	/// driven run changes nothing that belongs to whoever is at the keyboard,
+	/// and their clipboard is theirs. Released afterwards, since a named board
+	/// lives in the pasteboard server until somebody says otherwise.
+	func pastePictureForTesting(_ picture: URL) {
+		let board = NSPasteboard(name: NSPasteboard.Name("abydos.driven.paste-picture.\(UUID().uuidString)"))
+		defer { board.releaseGlobally() }
+		board.clearContents()
+		// A `.tiff` goes on as TIFF, which is the path that decodes and encodes;
+		// anything else goes on as PNG, which is written as it is.
+		board.setData(
+			(try? Data(contentsOf: picture)) ?? Data(),
+			forType: picture.pathExtension.lowercased() == "tiff" ? .tiff : .png
+		)
+		guard let folder = destinationFolder(for: selectedNodes().first) else {
+			print("TREE paste-picture: nowhere to paste")
+			return
+		}
+		let started = Date()
+		guard let written = pastePicture(from: board, into: folder) else {
+			print("TREE paste-picture: nothing written")
+			return
+		}
+		let took = Date().timeIntervalSince(started)
+		let size = (try? Data(contentsOf: written)).flatMap(NSBitmapImageRep.init(data:))
+		let relative = project.map { written.path.replacingOccurrences(of: $0.root.path + "/", with: "") }
+			?? written.path
+		print("TREE paste-picture: \(relative) \(size?.pixelsWide ?? 0)×\(size?.pixelsHigh ?? 0)"
+			+ String(format: " in %.3f s", took) + " \(renameFieldReportForTesting)")
 	}
 
 	// MARK: - Undo
@@ -3749,10 +3868,16 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				item.isEnabled = nodes.contains { $0 !== rootNode }
 			case #selector(contextCopyPath), #selector(contextCopyRelativePath):
 				item.isEnabled = !nodes.isEmpty
-			case #selector(contextPaste), #selector(contextPasteAsMove):
+			case #selector(contextPaste):
 				// About the board and the folder, not about how many rows are
 				// highlighted: pasting four files into a folder is one act, and
 				// right-clicking empty space still has somewhere to put them.
+				// Files, or a picture: a screenshot pastes as a PNG.
+				item.isEnabled = rootNode != nil
+					&& (!FilePasteboard.files().isEmpty || FilePasteboard.hasPicture())
+			case #selector(contextPasteAsMove):
+				// Files only. Pixels have nowhere to be moved from, and a move that
+				// copied would be a lie in the menu.
 				item.isEnabled = rootNode != nil && !FilePasteboard.files().isEmpty
 			case #selector(contextCollapseAll):
 				// About the tree, not about a row: right-clicking empty space

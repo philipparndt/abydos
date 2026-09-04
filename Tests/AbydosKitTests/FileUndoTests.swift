@@ -259,6 +259,16 @@ struct FileUndoTests {
 		#expect(FileUndo.Gesture.move.title == "Move")
 		#expect(FileUndo.Gesture.copy.title == "Copy")
 		#expect(FileUndo.Gesture.newFile.title == "New File")
+		#expect(FileUndo.Gesture.paste.title == "Paste")
+	}
+
+	/// A pasted picture is taken back the way a new file is — to the trash, with
+	/// the change check — under the word that was pressed.
+	@Test func aPastedPictureIsItsOwnGestureInTheMenu() {
+		let action = FileUndo.pasted(URL(fileURLWithPath: "/p/picture-1.png")) { _ in nil }
+		#expect(action.gesture == .paste)
+		#expect(action.discards.map(\.url.path) == ["/p/picture-1.png"])
+		#expect(action.restores.isEmpty)
 	}
 
 	/// Everything worked, so nothing is said. The tree showing the file back

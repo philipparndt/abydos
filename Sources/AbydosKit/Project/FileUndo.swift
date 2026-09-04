@@ -55,7 +55,7 @@ public enum FileUndo {
 	/// be worded for what actually happened: "no longer in the trash" is only
 	/// true of one of the five.
 	public enum Gesture: Equatable, Sendable {
-		case trash, rename, move, copy, newFile, newFolder
+		case trash, rename, move, copy, newFile, newFolder, paste
 
 		/// What `NSUndoManager.setActionName` is given, which the Edit menu turns
 		/// into "Undo Move to Trash".
@@ -67,6 +67,7 @@ public enum FileUndo {
 			case .copy: return "Copy"
 			case .newFile: return "New File"
 			case .newFolder: return "New Folder"
+			case .paste: return "Paste"
 			}
 		}
 
@@ -82,7 +83,7 @@ public enum FileUndo {
 		var undone: String {
 			switch self {
 			case .trash, .rename, .move: return "put back"
-			case .copy, .newFile, .newFolder: return "moved to the trash"
+			case .copy, .newFile, .newFolder, .paste: return "moved to the trash"
 			}
 		}
 	}
@@ -272,6 +273,13 @@ public extension FileUndo {
 			gesture: isDirectory ? .newFolder : .newFile,
 			discards: [Discard(url: url, made: modified(url))]
 		)
+	}
+
+	/// A picture pasted in as a file. The same record a new file makes, under
+	/// the word the Edit menu should say: "Undo Paste", since that is what was
+	/// pressed.
+	static func pasted(_ url: URL, modified: (URL) -> Date?) -> Action {
+		Action(gesture: .paste, discards: [Discard(url: url, made: modified(url))])
 	}
 }
 

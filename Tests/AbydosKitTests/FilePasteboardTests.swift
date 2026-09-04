@@ -79,3 +79,94 @@ struct FilePasteboardTests {
 		#expect(board.string(forType: .string) == nil)
 	}
 }
+
+/// A picture on the board, which ⌘V in the tree writes as a file.
+///
+/// The same scratch board: what somebody has on their clipboard while the
+/// suite runs is theirs.
+struct PicturePasteboardTests {
+	private func scratch(_ name: String = #function) -> NSPasteboard {
+		NSPasteboard(name: NSPasteboard.Name("abydos.test.\(name).\(UUID().uuidString)"))
+	}
+
+	/// A small opaque bitmap of a known size, so what comes back can be
+	/// measured against what went in.
+	private func bitmap(width: Int, height: Int) -> NSBitmapImageRep {
+		let rep = NSBitmapImageRep(
+			bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+			samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+			bytesPerRow: 0, bitsPerPixel: 0
+		)!
+		for x in 0..<width {
+			for y in 0..<height {
+				rep.setColor(x < width / 2 ? .red : .blue, atX: x, y: y)
+			}
+		}
+		return rep
+	}
+
+	private func size(of png: Data) -> (Int, Int)? {
+		guard let rep = NSBitmapImageRep(data: png) else { return nil }
+		return (rep.pixelsWide, rep.pixelsHigh)
+	}
+
+	/// A PNG the board already holds is the PNG that comes back, byte for byte:
+	/// the program that put it there had encoded it once, and once is enough.
+	@Test func aPngOnTheBoardComesBackAsItWas() {
+		let board = scratch()
+		let png = bitmap(width: 6, height: 4).representation(using: .png, properties: [:])!
+		board.clearContents()
+		board.setData(png, forType: .png)
+
+		#expect(FilePasteboard.hasPicture(on: board))
+		#expect(FilePasteboard.picture(on: board) == png)
+	}
+
+	/// A board with TIFF and nothing else — what some programs put there alone —
+	/// comes back as a PNG of the same size.
+	@Test func aTiffOnlyBoardComesBackAsAPngOfTheSameSize() {
+		let board = scratch()
+		board.clearContents()
+		board.setData(bitmap(width: 7, height: 5).tiffRepresentation!, forType: .tiff)
+
+		#expect(FilePasteboard.hasPicture(on: board))
+		let png = FilePasteboard.picture(on: board)
+		#expect(png != nil)
+		#expect(png.flatMap(size) ?? (0, 0) == (7, 5))
+		// It is a PNG and not the TIFF handed back under another name.
+		#expect(png?.prefix(8) == Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
+	}
+
+	/// Text is not a picture, so a board holding a path or a paragraph leaves
+	/// Paste grey for pixels as it does for files.
+	@Test func textIsNotAPicture() {
+		let board = scratch()
+		board.clearContents()
+		board.setString("not a picture", forType: .string)
+		#expect(!FilePasteboard.hasPicture(on: board))
+		#expect(FilePasteboard.picture(on: board) == nil)
+	}
+
+	/// A file copied in the Finder can carry pixels beside its URL. The file is
+	/// still listed: which of the two ⌘V pastes is the tree's decision, and it
+	/// needs to be able to see both.
+	@Test func aFileBesidePixelsIsStillAFile() {
+		let board = scratch()
+		FilePasteboard.write([URL(fileURLWithPath: "/tmp/abydos-test/logo.png")], to: board)
+		board.addTypes([.png], owner: nil)
+		board.setData(bitmap(width: 2, height: 2).representation(using: .png, properties: [:])!, forType: .png)
+
+		#expect(FilePasteboard.files(on: board).count == 1)
+		#expect(FilePasteboard.hasPicture(on: board))
+	}
+
+	/// A board may declare a type and carry rubbish under it. Nothing is written
+	/// under a `.png` name that no decoder opens; the paste says no instead.
+	@Test func bytesTheDecoderRefusesAreNotAPicture() {
+		let board = scratch()
+		board.clearContents()
+		board.setData(Data("definitely not an image".utf8), forType: .png)
+		#expect(FilePasteboard.hasPicture(on: board), "the type is declared, so the menu may offer it")
+		#expect(FilePasteboard.picture(on: board) == nil, "but the bytes do not decode, so there is nothing to write")
+	}
+}

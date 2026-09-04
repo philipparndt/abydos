@@ -364,6 +364,16 @@ extension MainWindowController {
 				// `drop:a.swift+b.swift>Sources`, and `drop-copy:` for the ⌥
 				// version — the whole of what a drag does once the mouse is up,
 				// without a mouse. Everything is relative to the project root.
+				// `paste-picture:<png>` — ⌘V over a picture, from a board the run
+				// makes for itself so the general clipboard is left alone. The path
+				// is the project's when relative, the machine's when absolute.
+				if step.hasPrefix("paste-picture:") {
+					let body = String(step.dropFirst("paste-picture:".count))
+					let picture = body.hasPrefix("/") ? URL(fileURLWithPath: body)
+						: (project?.root ?? URL(fileURLWithPath: ".")).appendingPathComponent(body)
+					navigator.pastePictureForTesting(picture)
+					continue
+				}
 				if step.hasPrefix("drop:") || step.hasPrefix("drop-copy:") {
 					let move = step.hasPrefix("drop:")
 					let body = String(step.dropFirst(move ? "drop:".count : "drop-copy:".count))

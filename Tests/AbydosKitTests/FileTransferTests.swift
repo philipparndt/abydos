@@ -242,6 +242,24 @@ struct FileDuplicateTests {
 		#expect(made.transfers.map(\.destination.lastPathComponent) == ["main-1.py", "other-1.py"])
 	}
 
+	/// A picture pasted from the clipboard has no name of its own, so it gets
+	/// the first one free in the folder.
+	@Test func aFileWithNoNameGetsTheFirstOneFree() {
+		let made = FileTransfer.freeName(
+			stem: "picture", extension: "png", in: folder, isTaken: { _ in false }
+		)
+		#expect(made.lastPathComponent == "picture-1.png")
+	}
+
+	/// A gap is a free name: the number is the first one free, not the count.
+	@Test func aGapInTheNumbersIsTakenBeforeTheNextCount() {
+		let made = FileTransfer.freeName(
+			stem: "picture", extension: "png", in: folder,
+			isTaken: { ["/p/src/picture-1.png", "/p/src/picture-3.png"].contains($0.standardizedFileURL.path) }
+		)
+		#expect(made.lastPathComponent == "picture-2.png")
+	}
+
 	/// A folder duplicates the same way, having no extension to preserve.
 	@Test func aFolderDuplicatesToo() {
 		let sub = folder.appendingPathComponent("Resources")

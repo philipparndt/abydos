@@ -225,6 +225,19 @@ extension FileTransfer {
 		let name = source.lastPathComponent
 		let ext = source.pathExtension
 		let stem = ext.isEmpty ? name : String(name.dropLast(ext.count + 1))
+		return freeName(stem: stem, extension: ext, in: folder, isTaken: isTaken)
+	}
+
+	/// `picture-1.png`, then `picture-2.png`, then the first one free: a name
+	/// for a file that arrives without one, which is what a picture pasted from
+	/// the clipboard is.
+	///
+	/// The first number free rather than the next count, the rule the duplicate
+	/// above follows: a gap left by a deletion is a name that is free, and a
+	/// folder holding `picture-1` and `picture-3` gets `picture-2`.
+	public static func freeName(
+		stem: String, extension ext: String, in folder: URL, isTaken: (URL) -> Bool
+	) -> URL {
 		var number = 1
 		while true {
 			let candidate = folder.appendingPathComponent(

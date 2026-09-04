@@ -47,4 +47,31 @@ public enum FilePasteboard {
 		)
 		return (objects ?? []).compactMap { $0 as? URL }
 	}
+
+	/// Whether the board carries a picture — asked of its types, with nothing
+	/// read. This is what menu validation calls, and a menu validates every
+	/// time it opens; the bytes are read once, by `picture`, when ⌘V arrives.
+	public static func hasPicture(on board: NSPasteboard = .general) -> Bool {
+		board.availableType(from: [.png, .tiff]) != nil
+	}
+
+	/// The board's picture as PNG bytes, or nil when it holds none it can read.
+	///
+	/// The board's own PNG when it has one, byte for byte: a program that put a
+	/// PNG there had already encoded it, and `NSImage(pasteboard:)` — the
+	/// obvious call — would pick a representation by its own rules and encode
+	/// again from a bitmap, so a file that was right could come out larger.
+	/// Only a board with TIFF alone is decoded and encoded here.
+	///
+	/// Decoded before it is believed, in either case: a board is allowed to
+	/// declare a type and carry rubbish under it, and a file named `.png` that
+	/// no decoder opens is worse than a paste that said no.
+	public static func picture(on board: NSPasteboard = .general) -> Data? {
+		if let png = board.data(forType: .png), NSBitmapImageRep(data: png) != nil {
+			return png
+		}
+		guard let tiff = board.data(forType: .tiff), let bitmap = NSBitmapImageRep(data: tiff)
+		else { return nil }
+		return bitmap.representation(using: .png, properties: [:])
+	}
 }
