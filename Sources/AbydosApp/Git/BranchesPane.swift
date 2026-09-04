@@ -3059,6 +3059,30 @@ final class BranchesPane: NSView {
 		run { await GitBranches.merge(branch.checkoutName, in: self.root) }
 	}
 
+	/// Replays the branch that is checked out on top of the one clicked.
+	///
+	/// **Asked first, unlike merge, and that is not an inconsistency.** A merge
+	/// adds a commit and can be undone by removing it; a rebase rewrites every
+	/// commit on the current branch, so the thing it changes is the work
+	/// somebody has not pushed yet. One sentence naming both branches is what
+	/// stops it being the wrong two.
+	@objc private func rebaseOntoBranch() {
+		guard let branch = selectedBranch, !branch.isCurrent else { return }
+		let onto = branch.checkoutName
+		let current = currentBranchName ?? "this branch"
+
+		let alert = NSAlert()
+		alert.messageText = "Rebase \(current) on \(onto)"
+		alert.informativeText = "Every commit on \(current) is rewritten on top of "
+			+ "\(onto). \(onto) does not move. A conflict stops the rebase part-way "
+			+ "and the changes list shows what to settle."
+		alert.addButton(withTitle: "Rebase")
+		alert.addButton(withTitle: "Cancel")
+		guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+		run { await GitBranches.rebase(onto: onto, in: self.root) }
+	}
+
 	/// The local branches a delete would act on: never the one checked out, and
 	/// never a remote branch or a tag.
 	///
@@ -3625,6 +3649,15 @@ extension BranchesPane: NSMenuDelegate {
 		menu.addItem(item(
 			"Merge into Current",
 			#selector(mergeIntoCurrent),
+			enabled: !branch.isCurrent
+		))
+		// **The other way of catching up, and the menu had only one.** Merge
+		// makes a commit; rebase replays what is here on top of there. Named
+		// for the row it hangs off, which is the destination: right-clicking
+		// `main` and asking to rebase means putting this branch on top of main.
+		menu.addItem(item(
+			"Rebase on \(branch.checkoutName)\u{2026}",
+			#selector(rebaseOntoBranch),
 			enabled: !branch.isCurrent
 		))
 		menu.addItem(.separator())

@@ -135,6 +135,18 @@ final class RepositoryRowView: ActionableRowView {
 				: state.explanation,
 			isAlwaysShown: true
 		)
+
+		// **Not the same word twice.** The second verb exists so that `Fetch`
+		// is on the row whatever the first one says — and when the first one
+		// *is* `Fetch`, which is what a branch level with its upstream gets,
+		// the two were drawn side by side saying the same thing. Reported as
+		// "two fetch buttons but no pull button": the row was on a level branch
+		// and the `↓2` in the picture belonged to another branch's own row.
+		//
+		// Dropped here rather than by whoever sets it, because this is where
+		// the first verb is decided; the pane sets the second on every refresh,
+		// so it comes back the moment the first verb is Pull or Push again.
+		if title == "Fetch", secondaryAction?.title == "Fetch" { secondaryAction = nil }
 	}
 
 	override var acceptsFirstResponder: Bool { true }

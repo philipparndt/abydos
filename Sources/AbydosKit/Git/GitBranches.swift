@@ -435,6 +435,26 @@ public enum GitBranches {
 		await GitRepository.run(["merge", "--no-edit", name], in: root)
 	}
 
+	/// Replays the branch that is checked out onto another one.
+	///
+	/// **The current branch moves, and the named one does not.** `git rebase
+	/// main` from `feature` takes feature's commits off and puts them back on
+	/// top of main, so the row somebody right-clicks is the *destination* —
+	/// which is why the menu item names it and says "on".
+	///
+	/// No `--autostash`: a working copy with changes in it makes git refuse,
+	/// and a refusal that says so is better than this quietly stashing
+	/// somebody's work and handing it back afterwards, which is a second thing
+	/// to go wrong halfway through a rebase. The pane says what git said.
+	///
+	/// A conflict leaves the repository mid-rebase, which `GitConflicts` already
+	/// recognises — `.rebase` is one of the states it reads, and the conflict
+	/// list already knows that "ours" and "theirs" are the other way round
+	/// there.
+	public static func rebase(onto name: String, in root: URL) async -> GitRepository.ProcessResult {
+		await GitRepository.run(["rebase", name], in: root)
+	}
+
 	/// A branch name git will accept, or nil with the reason it will not.
 	///
 	/// Checked before running anything so the failure is a sentence rather than
