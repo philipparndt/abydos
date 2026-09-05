@@ -861,7 +861,34 @@ extension MainWindowController {
 		case "header": return "header " + navigator.hoverHeaderActionForTesting(parts[1])
 		case "run":    return "run " + (run.runControl?.hoverPartForTesting(parts[1]) ?? "no run control")
 		case "strip":  return bottomPanel.hoverStripControlForTesting(parts[1])
+		// Any of the panes' own buttons, found by what it says rather than by
+		// wiring a door per pane: they are all `DrawnButton`s in this window's
+		// view tree, and a run that had to name the pane as well as the button
+		// would be naming the implementation.
+		case "button": return "button " + hoverPaneButtonForTesting(parts[1])
 		default:       return "no area called \(parts[0])"
 		}
+	}
+
+	private func hoverPaneButtonForTesting(_ name: String) -> String {
+		func look(in view: NSView) -> DrawnButton? {
+			for subview in view.subviews {
+				if let button = subview as? DrawnButton,
+				   button.title == name || button.accessibilityLabel() == name {
+					return button
+				}
+				if let found = look(in: subview) { return found }
+			}
+			return nil
+		}
+		// Every window this app has up, not only the project one: a sidebar
+		// tool can be shown in a popover, and a popover is a window of its own
+		// — which is why a search under the project window's content view
+		// found none of the panes' buttons.
+		let roots = ([window] + NSApp.windows).compactMap { $0?.contentView }
+		guard let button = roots.lazy.compactMap({ look(in: $0) }).first else {
+			return "\(name): not on screen"
+		}
+		return "\(name): " + button.hoverForTesting()
 	}
 }

@@ -91,7 +91,10 @@ final class PullRequestsPane: NSView {
 		refreshButton = DrawnButton(
 			symbol: "arrow.clockwise", description: "Ask GitHub again"
 		) { [weak self] in self?.refreshPressed() }
-		refreshButton.toolTip = "Ask GitHub again"
+		refreshButton.tip = StyledTip.Tip(
+			title: "Ask GitHub again",
+			detail: "The list is asked for rather than polled: it costs a network call and an API budget."
+		)
 
 		table = PullRequestTable()
 		table.headerView = nil

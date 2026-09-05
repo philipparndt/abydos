@@ -201,7 +201,10 @@ final class PullRequestPage: NSView {
 		checkOutButton = DrawnButton(title: "Check Out") { [weak self] in
 			self?.checkOutPressed()
 		}
-		checkOutButton.toolTip = "Check this branch out beside the project, to read it in place"
+		checkOutButton.tip = StyledTip.Tip(
+			title: "Check this branch out",
+			detail: "Beside the project, in a worktree, so the code can be read in place."
+		)
 
 		// **The point at which a review is finished** is the point at which it
 		// is worth doing here at all. Everything up to saying something happens
@@ -210,7 +213,10 @@ final class PullRequestPage: NSView {
 		reviewButton = DrawnButton(title: "Review…") { [weak self] in
 			self?.reviewPressed()
 		}
-		reviewButton.toolTip = "Submit what has been written as one review"
+		reviewButton.tip = StyledTip.Tip(
+			title: "Submit the review",
+			detail: "Everything written on this page goes to GitHub as one review."
+		)
 
 		let controls = NSStackView(views: [
 			progressLabel, reviewButton, checkOutButton, hideReadSwitch,
@@ -510,9 +516,18 @@ final class PullRequestPage: NSView {
 		let out = isCheckedOut()
 		checkOutButton.isLit = out
 		checkOutButton.setLabel(out ? "Checked Out" : "Check Out")
-		checkOutButton.toolTip = out
-			? "The branch is checked out beside the project. Press to remove that checkout."
-			: "Check this branch out beside the project, to read it in place"
+		// The tip follows the state, the way the label does: the same button
+		// says two things, and a stale sentence under it would be the worse of
+		// the two.
+		checkOutButton.tip = out
+			? StyledTip.Tip(
+				title: "Remove the checkout",
+				detail: "The branch is checked out beside the project. Press to take that worktree away."
+			)
+			: StyledTip.Tip(
+				title: "Check this branch out",
+				detail: "Beside the project, in a worktree, so the code can be read in place."
+			)
 	}
 
 	/// Writes, replaces or clears a remark on a line or a run of them.

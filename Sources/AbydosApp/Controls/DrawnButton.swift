@@ -87,9 +87,24 @@ final class DrawnButton: NSButton, ScaleFollowing {
 	/// hairline as its normal neighbours — so the answer to "is this a
 	/// button?" arrives before the click rather than after it.
 	private var isHovered = false {
-		didSet { if prominence == .quiet { applyTheme() } }
+		didSet {
+			guard isHovered != oldValue else { return }
+			applyTheme()
+		}
 	}
 	private var trackingArea: NSTrackingArea?
+
+	/// What it says when the pointer rests on it, in the app's own tooltip.
+	///
+	/// **The panes were the half of the window this had not reached.** The
+	/// terminal strip, the rail, the project pane's header and the run control
+	/// all explain themselves in the theme's own type; a pane's buttons —
+	/// Commit, Push, Check Out, New Scratch — explained themselves nowhere at
+	/// all, which was reported the day the others landed. Nil for a button
+	/// whose words already are the whole of it.
+	var tip: StyledTip.Tip? {
+		didSet { if !isHovered { StyledTip.shared.hide() } }
+	}
 
 	override func updateTrackingAreas() {
 		super.updateTrackingAreas()
@@ -101,8 +116,32 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		trackingArea = area
 	}
 
-	override func mouseEntered(with event: NSEvent) { isHovered = true }
-	override func mouseExited(with event: NSEvent) { isHovered = false }
+	override func mouseEntered(with event: NSEvent) {
+		isHovered = true
+		guard isEnabled, let tip else { return }
+		StyledTip.shared.show(tip, from: bounds, of: self)
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		isHovered = false
+		StyledTip.shared.hide()
+	}
+
+	override func mouseDown(with event: NSEvent) {
+		// A tip explains a control somebody has stopped reading about and
+		// started using.
+		StyledTip.shared.hide()
+		super.mouseDown(with: event)
+	}
+
+	/// Puts the pointer on it and says whether it lit and what it would tell
+	/// somebody, for a driven run.
+	func hoverForTesting() -> String {
+		guard isEnabled else { return "disabled" }
+		isHovered = true
+		if let tip { StyledTip.shared.show(tip, from: bounds, of: self) }
+		return "lit " + (tip?.reportForTesting ?? "no tip")
+	}
 
 	/// A quiet button drawn as a normal one while the pointer is on it.
 	private var isQuietAtRest: Bool { prominence == .quiet && !(isHovered && isEnabled) }
@@ -240,6 +279,22 @@ final class DrawnButton: NSButton, ScaleFollowing {
 
 	private var fillColour: NSColor {
 		if isLit { return Theme.current.selection(.row, hasKeyboard: true) }
+		// **Every prominence answers the pointer, not only the quiet one.** A
+		// quiet button takes the pill back under the pointer and always did;
+		// a normal or prominent one changed nothing at all, so Commit, Push and
+		// Check Out sat there looking like pictures — reported for the panes
+		// the day the chrome's own controls were given hover. A wash of the
+		// selection tint over what the prominence already gives, so the shape
+		// stays what it is and only its weight changes.
+		if isHovered, isEnabled, prominence != .quiet {
+			return base.blended(withFraction: 0.16, of: Theme.current.selection(.row, hasKeyboard: true))
+				?? base
+		}
+		return base
+	}
+
+	/// What the button is when the pointer is elsewhere.
+	private var base: NSColor {
 		// The tint colours the words and washes the ground, rather than filling
 		// it: a solid red button in a row of quiet ones reads as a warning
 		// about the row, and what is being said is "there is something here to

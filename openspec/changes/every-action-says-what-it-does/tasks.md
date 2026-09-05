@@ -80,3 +80,52 @@
 - [x] 4.2 Green by their exit codes: `make test` 4090 tests in 520 suites,
   exit 0 with the suite's two standing known issues, load 48.7 over 10 cores;
   `make warnings` exit 0, no warnings.
+
+## 5. The amendment: the panes, which are half the window
+
+*Reported the day this landed: "the hover effects are missing for the buttons
+in the scratches pane + PR review pane", "the new tooltips are missing in the
+git pane, pr review pane and in the scratches pane", and "also the debug pane
+is missing hover + tooltips". The first cut took the request's three areas at
+their word — the rail, the pane headers, the run controls — and a pane's own
+buttons are none of those, so they were left with what they had.*
+
+- [x] 5.1 `DrawnButton` — the panes' button, and the git and review pages'
+  — gained `tip`, shown from its own bounds on the pointer and dropped on a
+  click, and a driven `hoverForTesting`. It had hover *state* already and drew
+  it only for `.quiet` prominence, so Commit, Push and Check Out changed
+  nothing at all under the pointer; every prominence now washes its ground
+  with the selection tint, which keeps the shape and changes its weight.
+- [x] 5.2 The two panes whose buttons were not drawn ones: the scratches
+  pane's *New Scratch* and *New Global* were bezelled `NSButton`s — 20 points
+  tall whatever the zoom, the argument `DrawnButton` was written for — and the
+  debug pane's console-clearing trash was a borderless image button with a
+  system tooltip. Both are `DrawnButton`s now, with tips.
+- [x] 5.3 The words, where a pane's button had none or had a system string —
+  including the ones that *change*, which are the ones a leftover system
+  tooltip would have shadowed: the draft button's three states (offered,
+  drafting, and the red *Use draft instead*), and the review page's check-out
+  button, which says two things and now says both in the same place as its
+  label. Beside those, the ones that do not change: the changes pane's
+  *Commit*, *Push*, *…* and its message-history clock; the review page's
+  *Review…*; the pull-request pane's refresh; the debug pane's clear, with
+  ⌘K.
+- [x] 5.4 The driven door found the panes without a door per pane:
+  `--hover-control button:<what it says>` walks this app's windows — a sidebar
+  tool is shown in a popover, which is a window of its own, and a search under
+  the project window's content view found none of them — for the `DrawnButton`
+  whose title or accessibility label matches, and answers as the other areas
+  do.
+- [x] 5.5 Driven on 2026-09-05: `button:New Scratch` and `button:New Global`
+  lit with their tips; `button:Ask GitHub again` in the pull-request pane lit
+  with its; `button:Commit` and `button:Push` in the changes pane found and
+  answering *disabled*, which is the right answer for a button with nothing to
+  commit and nowhere to push — and a disabled button shows no tip. The tip
+  itself photographed over the scratches pane: *New scratch*, and the sentence
+  under it.
+- [x] 5.6 `Scripts/file-size-allowed.txt` raised for the two panes that grew:
+  `ChangesPane.swift` 3108 → 3134 (the draft button's three tips and the two
+  beside them) and `DebugPane.swift` 1542 → 1550 (the drawn clear button).
+  Green by their exit codes after it: `make test` 4104 tests in 522 suites,
+  exit 0 with the suite's two standing known issues, load 62.6 over 10 cores;
+  `make warnings` exit 0.

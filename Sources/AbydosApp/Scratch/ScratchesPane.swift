@@ -75,15 +75,23 @@ final class ScratchesPane: NSView {
 		searchField.delegate = self
 		searchField.sendsWholeSearchString = false
 
-		let newButton = NSButton(title: "New Scratch", target: self, action: #selector(newScratch))
-		newButton.bezelStyle = .rounded
-		newButton.controlSize = .small
-		newButton.font = Theme.current.uiFont(11)
+		// **The app's own button, not a bezel.** A bezel takes its height from
+		// `controlSize` and never from the font in it, so these two stayed 20
+		// points tall while the pane grew around them — the argument
+		// `DrawnButton` was written for — and, until this change, they had
+		// neither hover nor a tooltip while the terminal strip beside them had
+		// both.
+		let newButton = DrawnButton(title: "New Scratch") { [weak self] in self?.newScratch() }
+		newButton.tip = StyledTip.Tip(
+			title: "New scratch",
+			detail: "A note filed under this project, in .abydos rather than in the tree."
+		)
 
-		let globalButton = NSButton(title: "New Global", target: self, action: #selector(newGlobalScratch))
-		globalButton.bezelStyle = .rounded
-		globalButton.controlSize = .small
-		globalButton.font = Theme.current.uiFont(11)
+		let globalButton = DrawnButton(title: "New Global") { [weak self] in self?.newGlobalScratch() }
+		globalButton.tip = StyledTip.Tip(
+			title: "New global scratch",
+			detail: "A note that belongs to no project and is there in every window."
+		)
 
 		tableView = ScratchTableView()
 		tableView.headerView = nil

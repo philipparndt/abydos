@@ -77,3 +77,29 @@ SHALL show no tip rather than a repeat of its own label.
 
 - **WHEN** a driven run hovers a named chrome control
 - **THEN** it reports whether the control is lit and what its tip says, without a screenshot
+
+### Requirement: A pane's own buttons answer the pointer too
+
+The buttons inside a pane SHALL show the app's drawn tooltip and draw a hover
+of their own, as the window's chrome does — the git panes' commit, push and
+draft, the review page's check-out and submit, the pull-request list's
+refresh, the scratches pane's two and the debug console's clear. A button that
+is disabled SHALL neither light nor show a tip, since there is nothing there
+to press. No pane button SHALL be left as a system bezel explained by
+`NSView.toolTip` where it stands beside controls that are not.
+
+#### Scenario: a scratches pane button
+
+- **WHEN** the pointer rests on *New Scratch*
+- **THEN** it lights, and the tip says what a scratch filed under this project is
+
+#### Scenario: a pull-request list button
+
+- **WHEN** the pointer rests on the list's refresh button
+- **THEN** it lights, and the tip says the list is asked for rather than polled
+
+#### Scenario: a button with nothing to do
+
+- **GIVEN** a working copy with nothing staged
+- **WHEN** the pointer rests on *Commit*
+- **THEN** it neither lights nor shows a tip

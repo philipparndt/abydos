@@ -341,9 +341,15 @@ final class ChangesPane: NSView, ScaleFollowing {
 			button.isWorking = false
 			button.tint = nil
 			button.isEnabled = ClaudeDraft.isAvailable
-			button.toolTip = ClaudeDraft.isAvailable
-				? "Write a summary and description from what is staged"
-				: "The claude command was not found"
+			button.tip = ClaudeDraft.isAvailable
+				? StyledTip.Tip(
+					title: "Draft the message",
+					detail: "An agent reads what is staged and writes a summary and description."
+				)
+				: StyledTip.Tip(
+					title: "Draft the message",
+					detail: "The claude command was not found on the PATH."
+				)
 		case .drafting:
 			button.setLabel("Drafting…")
 			// The spinner `DrawnButton` has had since Push used it, and this
@@ -352,15 +358,21 @@ final class ChangesPane: NSView, ScaleFollowing {
 			button.isWorking = true
 			button.tint = nil
 			button.isEnabled = false
-			button.toolTip = "Asking claude for a summary and description"
+			button.tip = StyledTip.Tip(
+				title: "Drafting",
+				detail: "Asking claude for a summary and description."
+			)
 		case .offering:
 			button.setLabel("Use draft instead")
 			button.isWorking = false
 			// The palette's own red, which every scheme defines; no new key.
 			button.tint = Theme.current.gitConflict
 			button.isEnabled = true
-			button.toolTip = "A draft came back while this message had words in it. "
-				+ "Press to replace both fields with it."
+			button.tip = StyledTip.Tip(
+				title: "Use the draft instead",
+				detail: "A draft came back while this message had words in it. "
+					+ "Press to replace both fields with it."
+			)
 		}
 	}
 	private var historyButton: DrawnButton?
@@ -524,6 +536,10 @@ final class ChangesPane: NSView, ScaleFollowing {
 		amendCheckbox = DrawnCheckbox(title: "Amend") { [weak self] in self?.amendToggled() }
 
 		commitButton = DrawnButton(title: "Commit") { [weak self] in self?.commit() }
+		commitButton.tip = StyledTip.Tip(
+			title: "Commit the staged changes",
+			detail: "What is under Staged, with the message above."
+		)
 		commitButton.keyEquivalent = "\r"
 		// **⌘Return, not Return.** The button carried plain Return, which is the
 		// key the summary field now uses to open the description — and a page
@@ -538,6 +554,10 @@ final class ChangesPane: NSView, ScaleFollowing {
 		// decision from making a commit, and hiding it in a split button makes
 		// it hard to do on its own.
 		pushButton = DrawnButton(title: "Push") { [weak self] in self?.push() }
+		pushButton.tip = StyledTip.Tip(
+			title: "Push this branch",
+			detail: "To its upstream, or setting one if it has none yet."
+		)
 		pushButton.isEnabled = false
 		// The two swap `\r` between them in `updateCommitButton`, so the modifier
 		// belongs to both or the swap would give Return back.
@@ -563,7 +583,10 @@ final class ChangesPane: NSView, ScaleFollowing {
 		// message somebody will read in a year gets written, and `…` is how you
 		// get there with what you have already typed.
 		let more = DrawnButton(title: "…") { [weak self] in self?.openPage() }
-		more.toolTip = "Write the message on a page, with room for a description"
+		more.tip = StyledTip.Tip(
+			title: "Open the commit page",
+			detail: "The same commit, with room for the description and the file list."
+		)
 		commitRow.addArrangedSubview(more)
 
 		let stack = NSStackView(views: [
@@ -665,7 +688,10 @@ final class ChangesPane: NSView, ScaleFollowing {
 		let history = DrawnButton(
 			symbol: "clock", description: "Message history"
 		) { [weak self] in self?.openMessageHistory() }
-		history.toolTip = "Use one of the repository's recent commit messages"
+		history.tip = StyledTip.Tip(
+			title: "Message history",
+			detail: "One of the repository's recent commit messages, to start from."
+		)
 		history.prominence = .quiet
 		historyButton = history
 

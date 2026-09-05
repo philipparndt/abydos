@@ -184,6 +184,15 @@ found something: the Run menu declares ⌃R twice, on *Run…* and on *Run*, and
 menu answers a key with its first matching item — so the play button's own
 command has no key, and its tip says so instead of claiming one.
 
+**The panes too, once they were asked for.** A pane's buttons are not the
+window's chrome, so the first cut left them: the git panes' *Commit*, *Push*
+and *Draft*, the review page's *Check Out* and *Review…*, the pull-request
+refresh, the scratches pane's two and the debug console's clear. They now
+carry the same tip, and light under the pointer — `DrawnButton` had hover
+state and drew it only for its quietest buttons, so the loud ones never
+answered at all. The scratches and debug buttons stopped being system bezels
+on the way, which also settles their height at a large zoom.
+
 Driven: twelve hovers in one run, each saying whether the control lit and what
 its tip would tell somebody — the rail's *Project ⌘1*, *Git — 1 commit to
 push — ⌘2* and *Terminal ⌘J*, the header's three, the titlebar's four, and the

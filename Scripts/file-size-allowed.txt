@@ -3,14 +3,14 @@
 5849 Sources/AbydosApp/Editor/EditorViewController.swift
 3606 Sources/AbydosApp/Editor/LanguageService.swift
 4599 Sources/AbydosApp/Git/BranchesPane.swift
-3108 Sources/AbydosApp/Git/ChangesPane.swift
+3134 Sources/AbydosApp/Git/ChangesPane.swift
 1514 Sources/AbydosApp/Git/HistoryPane.swift
 1612 Sources/AbydosApp/LaunchOptions.swift
 4602 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift
 1719 Sources/AbydosApp/Navigator/SidebarController.swift
 2606 Sources/AbydosApp/Panel/BacklogPane.swift
 5861 Sources/AbydosApp/Panel/BottomPanel.swift
-1542 Sources/AbydosApp/Panel/DebugPane.swift
+1550 Sources/AbydosApp/Panel/DebugPane.swift
 1079 Sources/AbydosApp/Panel/ResultChecklist.swift
 1127 Sources/AbydosApp/Settings/SettingsWindowController.swift
 3684 Sources/AbydosApp/Terminal/TerminalView.swift

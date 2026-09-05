@@ -116,7 +116,7 @@ final class DebugPane: NSView {
 	override var isFlipped: Bool { true }
 
 	private var console: TerminalPane!
-	private var clearButton: NSButton!
+	private var clearButton: DrawnButton!
 	private var variablesScroll: NSScrollView!
 	private var rightSide: NSView!
 	private var sideTabs: NSSegmentedControl!
@@ -399,11 +399,19 @@ final class DebugPane: NSView {
 		console.isHidden = true
 		rightSide.addSubview(console)
 
-		clearButton = NSButton(title: "", target: self, action: #selector(clearConsole))
-		clearButton.isBordered = false
-		clearButton.image = Theme.symbol("trash", size: 10 * Theme.current.scale, color: Theme.current.gitIgnored)
-		clearButton.imagePosition = .imageOnly
-		clearButton.toolTip = "Clear the console (⌘K)"
+		// Drawn rather than bezelled, for the hover and the app's own tooltip
+		// the rest of the window's controls have: a glyph with a system
+		// tooltip and no hover was the half of this the panes had missed.
+		let clear = DrawnButton(symbol: "trash", description: "Clear the console") { [weak self] in
+			self?.clearConsole()
+		}
+		clear.prominence = .quiet
+		clear.tip = StyledTip.Tip(
+			title: "Clear the console",
+			detail: "What the program has printed so far, taken off the screen.",
+			shortcut: "⌘K"
+		)
+		clearButton = clear
 		clearButton.isHidden = true
 
 		sideTabs = NSSegmentedControl(
