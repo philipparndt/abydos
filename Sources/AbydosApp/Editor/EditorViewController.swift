@@ -131,6 +131,15 @@ final class EditorViewController: NSViewController {
 		/// kilobytes. Cleared by the lock, like everything else about a
 		/// decrypted buffer.
 		var decryptedBaseline: String?
+		/// A plaintext file the project's `.sops.yaml` has a creation rule for,
+		/// looked at once when the tab was opened — which is what turns the
+		/// chip into an offer to encrypt rather than nothing at all.
+		var sopsOffer = false
+		/// What git can see of a file whose values are covered: nothing for one
+		/// git ignores, and for the other two a sentence somebody can act on.
+		/// Asked when the tab opens and again when the file is reloaded or the
+		/// project's git state is refreshed — the two acts that change it.
+		var exposure = SecretExposure.State.fine
 		/// The Cadova model this file is a source of, when it is one — which its
 		/// name cannot say either, and for a harder reason than a recipe's: what
 		/// makes a `.swift` a model is the *package manifest*, two or three
@@ -1487,7 +1496,14 @@ final class EditorViewController: NSViewController {
 		// and `Tab.cadova` for why neither is asked again.
 		tab.looksLikeRecipe = Go3mfRecipe.looksLikeRecipe(fileURL)
 		tab.isSopsFile = SopsFile.looksEncrypted(fileURL)
+		// The other side of the same look: a plaintext file a creation rule
+		// matches is one the chip can offer to encrypt. Read from
+		// `.sops.yaml`, so most files are asked about and nothing is said.
+		if !tab.isSopsFile, let root = project?.root, Sops.isAvailable {
+			tab.sopsOffer = SopsRules.matches(fileURL, in: root)
+		}
 		tab.cadova = CadovaModel.find(for: fileURL, stoppingAt: project?.root)
+		askWhatGitCanSee(of: tab)
 
 		// Clicking a name in the blame column says what that commit was.
 		codeView.onShowBlameDetail = { entry in
@@ -3979,19 +3995,89 @@ final class EditorViewController: NSViewController {
 		case unavailable
 		case encrypted
 		case decrypted(edited: Bool)
+		/// Plaintext, and a creation rule in the project's `.sops.yaml` says
+		/// this path should be encrypted. An offer, not a warning: most files
+		/// are not meant to be encrypted, and a chip on each of them would be
+		/// answered by rote.
+		case offer
 	}
 
 	var sopsState: SopsState {
-		guard let tab = activeTab, tab.isSopsFile else { return .none }
+		guard let tab = activeTab else { return .none }
+		guard tab.isSopsFile else { return tab.sopsOffer ? .offer : .none }
 		if tab.isDecrypted { return .decrypted(edited: tab.isDirty) }
 		return Sops.isAvailable ? .encrypted : .unavailable
+	}
+
+	/// What git can see of the front tab's file, for the bar.
+	var exposureState: SecretExposure.State { activeTab?.exposure ?? .fine }
+
+	/// Asks git about a file whose values are covered, off the main thread, and
+	/// tells the bar when the answer comes back.
+	///
+	/// Only for a file that conceals — a decrypted SOPS buffer among them,
+	/// which is a `.dec` that never touched a disk — and only inside a project:
+	/// two `git` runs of one path each, and none at all for the ordinary file
+	/// somebody is editing.
+	private func askWhatGitCanSee(of tab: Tab) {
+		let conceals = DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent) || tab.isDecrypted
+		guard conceals, let root = project?.root else {
+			guard tab.exposure != .fine else { return }
+			tab.exposure = .fine
+			onStatusChanged?(self)
+			return
+		}
+		let url = tab.url
+		Task { @MainActor [weak self, weak tab] in
+			let state = await SecretExposure.state(of: url, in: root, conceals: true)
+			guard let self, let tab, tab.exposure != state else { return }
+			tab.exposure = state
+			self.onStatusChanged?(self)
+		}
+	}
+
+	/// Asked again for every open tab: a line added to `.gitignore`, or a file
+	/// added to the index, changes what git can see without changing the file.
+	func refreshWhatGitCanSee() {
+		for tab in tabs { askWhatGitCanSee(of: tab) }
+	}
+
+	/// The notice's one action: the front tab's file written into the
+	/// project's `.gitignore`.
+	///
+	/// The pattern is the file's own path from the repository root — the most
+	/// predictable of the suggestions the tree's dialog offers, and the one
+	/// nobody has to read a syntax guide to check. The tree's dialog stays
+	/// where it is for the fancier patterns; a status-bar press is for the
+	/// file in front of somebody.
+	func ignoreActiveFile() {
+		guard let tab = activeTab, let root = project?.root else { return }
+		let path = tab.url.standardizedFileURL.path
+		let rootPath = root.standardizedFileURL.path
+		guard path.hasPrefix(rootPath + "/") else {
+			Toast.post("Not in this project", detail: "\(tab.url.lastPathComponent) is outside \(root.lastPathComponent).")
+			return
+		}
+		let pattern = String(path.dropFirst(rootPath.count + 1))
+		do {
+			_ = try GitIgnore.add(pattern, toRepositoryAt: root)
+			Toast.post("Ignoring \(pattern)", detail: "Written to .gitignore.", kind: .information)
+			NotificationCenter.default.post(name: .abydosRepositoryChanged, object: root)
+			refreshWhatGitCanSee()
+		} catch {
+			Toast.post("Could not write .gitignore", detail: error.localizedDescription)
+		}
 	}
 
 	/// The chip, pressed: decrypt an encrypted file, encrypt and save an
 	/// edited decrypted one, and nothing for a decrypted buffer with nothing
 	/// to save — its tooltip says ⌘S is the save.
 	func pressSops() {
-		guard let tab = activeTab, tab.isSopsFile else { return }
+		guard let tab = activeTab else { return }
+		guard tab.isSopsFile else {
+			if tab.sopsOffer { Task { @MainActor in await self.encryptPlaintext(tab) } }
+			return
+		}
 		if tab.isDecrypted {
 			if tab.isDirty {
 				Task { @MainActor in await self.encryptAndSave(tab) }
@@ -4088,6 +4174,46 @@ final class EditorViewController: NSViewController {
 		return finishEncrypt(result, for: tab)
 	}
 
+	/// The offer taken: a plaintext file this project's rules say should be
+	/// encrypted, encrypted in place.
+	///
+	/// The same `sops --encrypt` the save path runs, under the file's own name
+	/// so the project's `.sops.yaml` picks the keys, and the ciphertext written
+	/// over the file. The tab is then what opening an already-encrypted file
+	/// gives: the chip reading *encrypted*, the ciphertext in the buffer, and
+	/// nothing decrypted held anywhere — the plaintext was never a *decrypted
+	/// buffer* and there is nothing to park or to ask about at quit.
+	///
+	/// An unsaved buffer is written first, because what `sops` is handed is
+	/// what is on the screen: encrypting the file under an edited buffer would
+	/// leave the edit outside the ciphertext and unrecoverable.
+	func encryptPlaintext(_ tab: Tab) async {
+		guard let document = tab.document, !tab.isSopsFile, !tab.isDecrypted else { return }
+		if document.isDirty { save() }
+		let result = await Sops.encrypt(text(of: document), for: tab.url)
+		guard result.exitCode == 0, !result.stdout.isEmpty else {
+			Toast.post(
+				"Could not encrypt \(tab.url.lastPathComponent)",
+				detail: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+			)
+			return
+		}
+		do {
+			try document.replaceOnDisk(with: Data(result.stdout.utf8))
+		} catch {
+			Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
+			return
+		}
+		tab.codeView?.replaceAllText(with: result.stdout)
+		document.markClean()
+		tab.isSopsFile = true
+		tab.sopsOffer = false
+		refreshChangedLines(for: tab)
+		refreshTabBar()
+		askWhatGitCanSee(of: tab)
+		onStatusChanged?(self)
+	}
+
 	/// The same on the calling thread, for a close dialog and for quitting,
 	/// where there is no run loop left to come back to.
 	func encryptAndSaveSync(_ tab: Tab) -> Bool {
@@ -4173,9 +4299,10 @@ final class EditorViewController: NSViewController {
 	/// The decrypted tabs with edits in them — what quitting has to ask about.
 	var editedDecryptedTabs: [Tab] { tabs.filter { $0.isDecrypted && $0.isDirty } }
 
-	/// Drives the chip from outside: `report` (the state, the line count and a
-	/// digest of the text — never the text, since a driven run's log must not
-	/// be a secret), `decrypt`, `encrypt`, `type:<text>`, `undo`, `settle`.
+	/// Drives the chip from outside: `report` (the state, what git can see, the
+	/// line count and a digest of the text — never the text, since a driven
+	/// run's log must not be a secret), `decrypt` or `press`, `encrypt`,
+	/// `type:<text>`, `undo`, `refresh`, `ignore`, `settle`.
 	func sopsForTesting(_ steps: String) {
 		let script = steps.split(separator: ",").map(String.init)
 		for (index, step) in script.enumerated() {
@@ -4193,8 +4320,17 @@ final class EditorViewController: NSViewController {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("SOPS: \(sopsReportForTesting())")
-			case "decrypt": pressSops()
+			// `press` and `decrypt` are the same door — the chip — and the
+			// second name is what it does on an encrypted file. On a plaintext
+			// file a creation rule matches, the same press encrypts it.
+			case "decrypt", "press": pressSops()
 			case "encrypt": save()
+			// What git can see, asked again: `.gitignore` gained a line, or the
+			// file was added, and neither touches the file itself.
+			case "refresh": refreshWhatGitCanSee()
+			// The notice's one action, through the same door its menu item
+			// goes through.
+			case "ignore": ignoreActiveFile()
 			case "type": simulateTyping(argument)
 			case "undo": undoForTesting()
 			default: print("SOPS: unknown step \(step)")
@@ -4211,10 +4347,17 @@ final class EditorViewController: NSViewController {
 		case .unavailable: state = "sops-missing"
 		case .encrypted: state = "encrypted"
 		case .decrypted: state = "decrypted"
+		case .offer: state = "offer"
+		}
+		let exposure: String
+		switch tab.exposure {
+		case .fine: exposure = "fine"
+		case .notIgnored: exposure = "not-ignored"
+		case .tracked: exposure = "tracked"
 		}
 		let text = tab.document.map { self.text(of: $0) } ?? ""
 		let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
-		return "file=\(tab.url.lastPathComponent) state=\(state) edited=\(tab.isDirty)"
+		return "file=\(tab.url.lastPathComponent) state=\(state) git=\(exposure) edited=\(tab.isDirty)"
 			+ " lines=\(tab.document?.rope.lineCount ?? 0) sha256=\(digest)"
 			+ " covers=\(tab.codeView?.showsSecretCovers ?? false)"
 			+ " revealed=\(tab.codeView?.secretsRevealedAll ?? false)"
@@ -5034,8 +5177,18 @@ final class EditorStatusView: NSView {
 	private var sopsState: EditorViewController.SopsState = .none
 	private var sopsRect = NSRect.zero
 	private var isSopsHovered = false
-	/// The chip was pressed: decrypt, or encrypt and save.
+	/// The chip was pressed: decrypt, encrypt and save, or encrypt a plaintext
+	/// file the project's rules are for.
 	var onSopsPressed: (() -> Void)?
+	/// What git can see of a file whose values are covered, pushed by the area
+	/// controller beside the lock's state. Nothing is drawn for a file git
+	/// ignores, which is the ordinary case and the quiet one.
+	private var exposure = SecretExposure.State.fine
+	private var exposureRect = NSRect.zero
+	private var isExposureHovered = false
+	/// The notice was pressed and its one action chosen: write this file into
+	/// `.gitignore`.
+	var onIgnoreFile: (() -> Void)?
 	/// How the front tab indents — the indent chip's words, pushed by the area
 	/// controller beside the lock's and the SOPS chip's. Nil with no editor,
 	/// and the chip is not drawn.
@@ -5072,6 +5225,13 @@ final class EditorStatusView: NSView {
 		guard concealing != secretsConcealing || revealed != secretsRevealed else { return }
 		secretsConcealing = concealing
 		secretsRevealed = revealed
+		toolTipRect = nil
+		needsDisplay = true
+	}
+
+	func setExposure(_ state: SecretExposure.State) {
+		guard state != exposure else { return }
+		exposure = state
 		toolTipRect = nil
 		needsDisplay = true
 	}
@@ -5124,8 +5284,11 @@ final class EditorStatusView: NSView {
 		let lock = !lockRect.isEmpty && lockRect.contains(point)
 		let sops = !sopsRect.isEmpty && sopsRect.contains(point)
 		let indent = !indentRect.isEmpty && indentRect.contains(point)
+		let exposed = !exposureRect.isEmpty && exposureRect.contains(point)
 		guard language != isLanguageHovered || server != isServerHovered
-			|| lock != isLockHovered || sops != isSopsHovered || indent != isIndentHovered else { return }
+			|| lock != isLockHovered || sops != isSopsHovered || indent != isIndentHovered
+			|| exposed != isExposureHovered else { return }
+		isExposureHovered = exposed
 		isLanguageHovered = language
 		isServerHovered = server
 		isLockHovered = lock
@@ -5152,6 +5315,12 @@ final class EditorStatusView: NSView {
 		}
 		if !sopsRect.isEmpty, sopsRect.contains(point) {
 			onSopsPressed?()
+			return
+		}
+		if !exposureRect.isEmpty, exposureRect.contains(point) {
+			makeExposureMenu().popUp(
+				positioning: nil, at: NSPoint(x: exposureRect.minX, y: exposureRect.maxY), in: self
+			)
 			return
 		}
 		if !indentRect.isEmpty, indentRect.contains(point) {
@@ -5182,6 +5351,7 @@ final class EditorStatusView: NSView {
 		addCursorRect(languageRect, cursor: .pointingHand)
 		if !serverRect.isEmpty { addCursorRect(serverRect, cursor: .pointingHand) }
 		if !indentRect.isEmpty { addCursorRect(indentRect, cursor: .pointingHand) }
+		if !exposureRect.isEmpty { addCursorRect(exposureRect, cursor: .pointingHand) }
 	}
 
 	private func showLanguageMenu(at point: NSPoint) {
@@ -5280,6 +5450,7 @@ final class EditorStatusView: NSView {
 		// that overlaps them.
 		drawSops()
 		drawLock()
+		drawExposure()
 		drawServer(leftOf: x, after: leftChipsExtent(), attributes: attributes)
 	}
 
@@ -5287,6 +5458,22 @@ final class EditorStatusView: NSView {
 	/// begins. Zero when none is shown, so the room falls back to the left
 	/// margin it always used.
 	private func leftChipsExtent() -> CGFloat {
+		max(
+			chipsBeforeExposure(),
+			exposureRect.isEmpty ? 0 : exposureRect.maxX
+		)
+	}
+
+	/// How far the two chips the notice stands after reach.
+	///
+	/// **Separate from `leftChipsExtent` because the notice must not measure
+	/// itself.** It did, for one build: its left edge came from an extent that
+	/// counted `exposureRect`, so every redraw put it one gap further along
+	/// than the last and the label walked to the right under the pointer —
+	/// reported as "moving the mouse over the new secrets label makes it move".
+	/// The server chip's room still counts all three, which is the question it
+	/// is asking.
+	private func chipsBeforeExposure() -> CGFloat {
 		max(
 			sopsRect.isEmpty ? 0 : sopsRect.maxX,
 			lockRect.isEmpty ? 0 : lockRect.maxX
@@ -5316,6 +5503,11 @@ final class EditorStatusView: NSView {
 		case .decrypted(let edited):
 			words = edited ? "SOPS · encrypt and save" : "SOPS · decrypted"
 			colour = Theme.current.gitModified; glyph = "shield.lefthalf.filled"
+		case .offer:
+			// An offer, so it says what pressing does rather than what the file
+			// is: the file is plaintext, which is the state nobody needs a chip
+			// to be told about.
+			words = "SOPS · encrypt"; colour = Theme.current.gitAdded; glyph = "lock.shield"
 		}
 		let height = Theme.current.scaled(12)
 		let symbol = Theme.symbol(glyph, size: 11 * Theme.current.scale, color: colour)
@@ -5387,6 +5579,43 @@ final class EditorStatusView: NSView {
 	/// stand revealed, absent for a file that conceals nothing. Pressing it
 	/// shows or hides every secret in the file — the same act as View ▸
 	/// Reveal Secrets, one click closer to where the covers are.
+	/// What git can see, after the lock: *Not in .gitignore*, or *Committed to
+	/// git* for the case a `.gitignore` line can no longer fix.
+	///
+	/// **A statement, not a warning.** It is drawn where the lock already is,
+	/// in the bar's own type, and nothing about it interrupts: a dialog at open
+	/// is a dialog answered by reflex, and the file this is about is usually
+	/// open before anybody thinks about committing it. Nothing is drawn at all
+	/// for a file git ignores, which is what most of them are.
+	private func drawExposure() {
+		guard let words = SecretExposure.words(for: exposure) else {
+			exposureRect = .zero
+			return
+		}
+		let colour = Theme.current.gitModified
+		let height = Theme.current.scaled(12)
+		let symbol = Theme.symbol("eye.trianglebadge.exclamationmark", size: 11 * Theme.current.scale, color: colour)
+		let aspect = (symbol?.size.height ?? 0) > 0 ? symbol!.size.width / symbol!.size.height : 1
+		let drawn = NSSize(width: height * aspect, height: height)
+		// After whichever of the chip and the lock is furthest along, so the
+		// two facts about the file stay where they were and this joins them.
+		let before = chipsBeforeExposure()
+		let left = before > 0 ? before + Theme.current.scaled(10) : Theme.current.scaled(12)
+		let origin = NSPoint(x: left, y: bounds.midY - drawn.height / 2)
+		let label = NSAttributedString(string: words, attributes: [
+			.font: Theme.current.uiFont(11), .foregroundColor: colour,
+		])
+		let labelSize = label.size()
+		let gap = symbol == nil ? 0 : drawn.width + Theme.current.scaled(5)
+		exposureRect = chipRect(
+			around: origin,
+			size: NSSize(width: gap + labelSize.width, height: max(drawn.height, labelSize.height))
+		)
+		if isExposureHovered { highlight(exposureRect) }
+		symbol?.drawFitted(in: NSRect(origin: origin, size: drawn))
+		label.draw(at: NSPoint(x: origin.x + gap, y: bounds.midY - labelSize.height / 2))
+	}
+
 	private func drawLock() {
 		guard secretsConcealing else {
 			lockRect = .zero
@@ -5436,6 +5665,35 @@ final class EditorStatusView: NSView {
 		symbol.drawFitted(in: NSRect(origin: origin, size: drawn))
 		label.draw(at: labelOrigin)
 	}
+
+	/// The notice's menu: the one thing there is to do about a file git can
+	/// see, and — for a file git already tracks — the reason that thing is not
+	/// offered, said as a disabled line rather than as an item that would look
+	/// like a fix.
+	private func makeExposureMenu() -> NSMenu {
+		let menu = NSMenu()
+		switch exposure {
+		case .fine:
+			break
+		case .notIgnored:
+			let item = NSMenuItem(title: "Add this file to .gitignore", action: #selector(ignoreFile), keyEquivalent: "")
+			item.target = self
+			menu.addItem(item)
+		case .tracked:
+			let said = NSMenuItem(title: "Git already tracks this file", action: nil, keyEquivalent: "")
+			said.isEnabled = false
+			menu.addItem(said)
+			let note = NSMenuItem(
+				title: "Ignoring it now would not take its values out of the history",
+				action: nil, keyEquivalent: ""
+			)
+			note.isEnabled = false
+			menu.addItem(note)
+		}
+		return menu
+	}
+
+	@objc private func ignoreFile() { onIgnoreFile?() }
 
 	/// The indent menu, popped at the chip on the right: the styles a file is
 	/// switched among, the current one ticked. Choosing converts the file's
@@ -5505,6 +5763,7 @@ final class EditorStatusView: NSView {
 	private var lockToolTipTag: NSView.ToolTipTag?
 	private var sopsToolTipTag: NSView.ToolTipTag?
 	private var indentToolTipTag: NSView.ToolTipTag?
+	private var exposureToolTipTag: NSView.ToolTipTag?
 
 	private func refreshServerToolTip() {
 		guard serverRect != toolTipRect else { return }
@@ -5513,6 +5772,7 @@ final class EditorStatusView: NSView {
 		lockToolTipTag = nil
 		sopsToolTipTag = nil
 		indentToolTipTag = nil
+		exposureToolTipTag = nil
 		if !sopsRect.isEmpty {
 			sopsToolTipTag = addToolTip(sopsRect, owner: self, userData: nil)
 		}
@@ -5528,6 +5788,9 @@ final class EditorStatusView: NSView {
 		}
 		if !indentRect.isEmpty {
 			indentToolTipTag = addToolTip(indentRect, owner: self, userData: nil)
+		}
+		if !exposureRect.isEmpty {
+			exposureToolTipTag = addToolTip(exposureRect, owner: self, userData: nil)
 		}
 		guard !serverRect.isEmpty else { return }
 		addToolTip(serverRect, owner: self, userData: nil)
@@ -5553,7 +5816,12 @@ final class EditorStatusView: NSView {
 				return edited
 					? "Encrypt with sops and save over the file, as ⌘S does; the buffer shows the ciphertext again"
 					: "Decrypted in the editor only. Press to put the ciphertext back; edit and ⌘S to encrypt and save."
+			case .offer:
+				return "This project's .sops.yaml has a rule for this path. Press to encrypt the file with sops."
 			}
+		}
+		if tag == exposureToolTipTag {
+			return SecretExposure.consequence(for: exposure) ?? ""
 		}
 		if tag == indentToolTipTag {
 			switch indentStyle {

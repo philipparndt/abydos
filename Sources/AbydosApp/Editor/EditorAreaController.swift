@@ -100,6 +100,7 @@ final class EditorAreaController: NSViewController {
 
 		statusBar.onSecretsToggled = { [weak self] in self?.toggleRevealSecrets() }
 		statusBar.onSopsPressed = { [weak self] in self?.pressSops() }
+		statusBar.onIgnoreFile = { [weak self] in self?.activeGroup?.ignoreActiveFile() }
 		statusBar.onIndentChosen = { [weak self] style in
 			self?.activeGroup?.convertIndentation(to: style)
 		}
@@ -132,6 +133,13 @@ final class EditorAreaController: NSViewController {
 	/// group is already holding. `statusServer` in particular is worked out when
 	/// a server starts, stops or is refused — never here: the three draw in one
 	/// view, and a lookup on this path would be a lookup per keystroke.
+	/// A line added to `.gitignore`, or a file added to the index, changes what
+	/// git can see without changing any file — so the window's git refresh asks
+	/// every open tab again.
+	func refreshWhatGitCanSee() {
+		for group in groups { group.refreshWhatGitCanSee() }
+	}
+
 	private func refreshStatus(from group: EditorViewController?) {
 		guard let group, group === activeGroup else { return }
 		statusBar.isHidden = group.isEmpty
@@ -141,6 +149,7 @@ final class EditorAreaController: NSViewController {
 		let secrets = group.secretsState
 		statusBar.setSecrets(concealing: secrets.conceals, revealed: secrets.revealed)
 		statusBar.setSops(group.sopsState)
+		statusBar.setExposure(group.exposureState)
 		statusBar.setIndent(group.indentState)
 	}
 

@@ -684,6 +684,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					name: .abydosRepositoryChanged, object: current.root
 				)
 				self.navigator.refreshGitStatus()
+				// And what git can see of any covered file that is open: a line
+				// added to `.gitignore`, or the file added to the index, is a
+				// write inside `.git` or beside it and arrives here.
+				self.editor.refreshWhatGitCanSee()
 				// The branch itself may be what changed — a checkout in a
 				// terminal is exactly the case this watcher exists for.
 				Task { @MainActor in
@@ -879,6 +883,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// is a window. The one in front takes it.
 		serverActions.takeServerEdits()
 		editor.reloadExternallyChangedFiles()
+		editor.refreshWhatGitCanSee()
 		// The tree needs the same treatment: an agent or a checkout that adds
 		// files while the app is in the background should not leave the
 		// navigator showing yesterday's directory listing.

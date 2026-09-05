@@ -191,3 +191,53 @@ strip's own *Hide the panel ⌘J* unchanged by the move. Photographed: the
 ground under the header's collapse button with the compact pill beside it
 untouched, the ground under the ladybird with the play button beside it
 without one, and the tip itself — *Debug*, and a ⌃D chip.
+
+## A secret file says whether git can see it
+
+Asked for on 2026-09-05: "a natural extension of the 'secrets' area in the
+editor could be to show that unencrypted file containing secrets is not
+gitignored", and with it "to initially sops encrypt a matching file (this is
+not a warning, just a possibility. For a lot of files the user will not want an
+encryption)."
+
+The editor covers a `.env`'s values from the moment it opens, and said nothing
+about the far worse exposure: that the file is about to be committed, pushed
+and read by everybody who clones the repository. It has the means to know —
+the tree asks `git status --ignored` for its tints and the backlog asks
+`git check-ignore` for what it writes — and never said.
+
+Now a file whose values are covered is asked about, once when it opens and
+again when it is reloaded or the project's git state changes: two `git` runs of
+one path each, off the main thread, and none at all for an ordinary file. What
+comes back stands beside the secrets lock — *Not in .gitignore*, or *Committed
+to git* for the case a `.gitignore` line can no longer fix, since git goes on
+tracking what it tracks and the values are in the history either way. Nothing
+is shown for a file git ignores, which is most of them, and nothing outside a
+repository. It is a statement of fact next to the control it is about: no
+dialog, no toast, and the lock still says only what it said.
+
+**The notice is a control.** Pressing it offers to add the file to
+`.gitignore` — the file's own path from the repository root, written, said, and
+the question asked again so the notice goes by itself. A tracked file's menu
+says git already tracks it rather than offering a fix that is not one; the
+project tree's *Add to .gitignore…*, where the pattern can be edited, is still
+there for everything else.
+
+**And the chip's other side: a plaintext file can be encrypted from it.** Where
+a creation rule in the project's `.sops.yaml` matches the path, the SOPS chip
+appears on the plaintext file reading *SOPS · encrypt*. Pressing it runs the
+same `sops --encrypt` a decrypted buffer's save runs, under the file's own name
+so the project's rules pick the keys, and leaves the tab exactly as opening an
+encrypted file leaves it. With no `.sops.yaml`, or no rule that matches, there
+is no chip and nothing is said — most files are not meant to be encrypted, and
+an editor that asked about each of them would be answered by rote. The rules
+are read by a bounded line scan for `path_regex`, not by a YAML library: a rule
+that cannot be read is a file with no offer, never a wrong one, and `sops`
+enforces the real rules when the press arrives.
+
+Driven against a scratch repository with real `sops` 3.13.3 and an `age` key
+made for the run: an ignored `.env` says nothing, an untracked one says *Not in
+.gitignore*, a committed one says *Committed to git*, and the ignore action
+writes the line and takes the notice away. A `secrets/dev.yaml` the rules match
+reports the offer, is pressed, and `sops --decrypt` at the terminal gives back
+the text that was there.
