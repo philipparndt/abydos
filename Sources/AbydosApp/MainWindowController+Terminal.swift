@@ -405,6 +405,9 @@ extension MainWindowController {
 			// for a tool nobody opened in this sitting.
 			session.folds = sidebar.foldsToRemember(carrying: rememberedFolds)
 			session.sidebarTool = sidebar.toolToRemember
+			// After the session has its list of files and before the tabs go:
+			// a decrypted buffer leaves through the park, not through a dialog.
+			editor.parkDecryptedTabs()
 			// The in-memory store is keyed by root, which is the wrong key for a
 			// folder: they share one session, so a folder's goes straight to the
 			// file every folder reads.

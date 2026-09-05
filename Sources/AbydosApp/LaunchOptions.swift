@@ -656,6 +656,8 @@ struct LaunchOptions {
 	var videoReport = false
 	/// Drive the secret covers: report, reveal, caret, toggle.
 	var secretsSteps: String?
+	/// `--sops <steps>`: the SOPS chip, driven — see `sopsForTesting`.
+	var sopsSteps: String?
 	/// Drive the editor's context menus: gutter, text, blame.
 	var editorMenuSteps: String?
 	/// Where the picture pane is scrolled to, as fractions of the picture:
@@ -1381,6 +1383,7 @@ struct LaunchOptions {
 			case "--image-zoom": options.imageZoom = next()
 			case "--video-report": options.videoReport = true
 			case "--secrets":    options.secretsSteps = next()
+			case "--sops":       options.sopsSteps = next()
 			case "--editor-menu": options.editorMenuSteps = next()
 			case "--image-pan":  options.imagePan = next()
 			case "--probe-lan":  options.probeLAN = next()

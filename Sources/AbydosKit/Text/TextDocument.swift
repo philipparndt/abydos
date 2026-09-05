@@ -280,9 +280,14 @@ public final class TextDocument {
 	/// Debounced rather than written per keystroke: a save is a full serialise
 	/// plus an atomic file replace, which has no business running inside the edit
 	/// path of a multi-megabyte file.
+	/// A document whose text must not reach the disk by itself: a decrypted
+	/// SOPS buffer. Its only saves are the ones somebody asks for, and those go
+	/// through `sops` rather than through `save()`.
+	public var declinesAutoSave = false
+
 	private func scheduleAutoSave() {
 		autoSaveWork?.cancel()
-		guard settings.autoSaveEnabled else { return }
+		guard settings.autoSaveEnabled, !declinesAutoSave else { return }
 
 		let work = DispatchWorkItem { [weak self] in
 			self?.autoSave()
@@ -292,7 +297,7 @@ public final class TextDocument {
 	}
 
 	private func autoSave() {
-		guard isDirty, settings.autoSaveEnabled else { return }
+		guard isDirty, settings.autoSaveEnabled, !declinesAutoSave else { return }
 		// A failed automatic save must stay silent — the user did not ask for
 		// this write, so interrupting them with an alert would be wrong. The tab
 		// simply stays dirty and an explicit ⌘S will surface the error.
@@ -304,7 +309,7 @@ public final class TextDocument {
 	/// Used when the app loses focus or a tab is closed.
 	@discardableResult
 	public func autoSaveIfNeeded() -> Bool {
-		guard settings.autoSaveEnabled, isDirty else { return false }
+		guard settings.autoSaveEnabled, isDirty, !declinesAutoSave else { return false }
 		autoSaveWork?.cancel()
 		guard (try? save()) != nil else { return false }
 		onAutoSaved?()
@@ -503,6 +508,23 @@ public final class TextDocument {
 			isDirty = false
 			recordDiskState()
 		}
+	}
+
+	/// Writes something *other* than the buffer over the file — the ciphertext
+	/// `sops` made of it — and counts the buffer as saved. The same atomic
+	/// write `save()` does, with the disk state recorded so the reload on
+	/// focus does not take the ciphertext for a change somebody else made.
+	public func replaceOnDisk(with data: Data) throws {
+		try data.write(to: url, options: .atomic)
+		isDirty = false
+		recordDiskState()
+	}
+
+	/// Counts the buffer as saved without writing: a parked decrypted buffer
+	/// that was never edited is put back into a tab by an edit, and that edit
+	/// is not somebody's.
+	public func markClean() {
+		isDirty = false
 	}
 
 	/// Replaces the whole document with what another editor made of it.

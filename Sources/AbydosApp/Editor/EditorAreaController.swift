@@ -99,6 +99,7 @@ final class EditorAreaController: NSViewController {
 		}
 
 		statusBar.onSecretsToggled = { [weak self] in self?.toggleRevealSecrets() }
+		statusBar.onSopsPressed = { [weak self] in self?.pressSops() }
 		statusBar.onLanguageChosen = { [weak self] languageId in
 			self?.activeGroup?.setActiveLanguage(languageId)
 		}
@@ -136,6 +137,28 @@ final class EditorAreaController: NSViewController {
 		statusBar.setServer(group.statusServer)
 		let secrets = group.secretsState
 		statusBar.setSecrets(concealing: secrets.conceals, revealed: secrets.revealed)
+		statusBar.setSops(group.sopsState)
+	}
+
+	// MARK: - SOPS
+
+	/// Where a decrypted buffer is parked on a switch and taken back from on
+	/// a restore — the window's, handed to every group as it is made.
+	var parkDecrypted: ((URL, DecryptedBuffer) -> Void)? {
+		didSet { for group in groups { group.parkDecrypted = parkDecrypted } }
+	}
+	var takeParkedDecrypted: ((URL) -> DecryptedBuffer?)? {
+		didSet { for group in groups { group.takeParkedDecrypted = takeParkedDecrypted } }
+	}
+
+	func pressSops() {
+		activeGroup.pressSops()
+		refreshStatus(from: activeGroup)
+	}
+	func sopsForTesting(_ steps: String) { activeGroup.sopsForTesting(steps) }
+	func parkDecryptedTabs() { for group in groups { group.parkDecryptedTabs() } }
+	var editedDecryptedTabs: [(group: EditorViewController, tab: EditorViewController.Tab)] {
+		groups.flatMap { group in group.editedDecryptedTabs.map { (group, $0) } }
 	}
 
 	// MARK: - Groups
@@ -151,6 +174,8 @@ final class EditorAreaController: NSViewController {
 			self?.onActiveFileChanged?(url)
 		}
 		group.onMaximize = { [weak self] in self?.onMaximize?() }
+		group.parkDecrypted = parkDecrypted
+		group.takeParkedDecrypted = takeParkedDecrypted
 		group.onNavigated = { [weak self] departure, arrival in
 			guard let self, self.recordsNavigation else { return }
 			self.onNavigated?(departure, arrival)

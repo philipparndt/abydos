@@ -64,10 +64,14 @@ public struct PreviewFacts: Equatable, Sendable {
 	/// A `.swift` that is a source of a Cadova executable target.
 	/// `CadovaModel.find(for:stoppingAt:)` answers it.
 	public var isCadovaModel: Bool
+	/// A file SOPS encrypted — `SopsFile.looksEncrypted(_:)` answers it, once,
+	/// at open, and the status bar's chip is drawn from it.
+	public var isSopsEncrypted: Bool
 
-	public init(looksLikeRecipe: Bool = false, isCadovaModel: Bool = false) {
+	public init(looksLikeRecipe: Bool = false, isCadovaModel: Bool = false, isSopsEncrypted: Bool = false) {
 		self.looksLikeRecipe = looksLikeRecipe
 		self.isCadovaModel = isCadovaModel
+		self.isSopsEncrypted = isSopsEncrypted
 	}
 
 	/// What everything running over a tree passes: nothing was looked at, and

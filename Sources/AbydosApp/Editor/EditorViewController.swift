@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import QuickLookUI
 import GoSTL
 import AbydosKit
@@ -113,6 +114,12 @@ final class EditorViewController: NSViewController {
 		/// alternative re-reads a file on every redraw to catch an edit somebody
 		/// makes once — and closing and reopening the tab settles it.
 		var looksLikeRecipe = false
+		/// A file SOPS encrypted, looked at once when the tab was opened.
+		var isSopsFile = false
+		/// The buffer holds the plaintext `sops` gave back. From then on it is
+		/// never auto-saved, never sent to a language server, never reloaded
+		/// from disk, and ⌘S encrypts it rather than writing it.
+		var isDecrypted = false
 		/// The Cadova model this file is a source of, when it is one — which its
 		/// name cannot say either, and for a harder reason than a recipe's: what
 		/// makes a `.swift` a model is the *package manifest*, two or three
@@ -129,7 +136,10 @@ final class EditorViewController: NSViewController {
 		var cadova: CadovaModel?
 		/// The two things about this file that its name could not say.
 		var previewFacts: PreviewFacts {
-			PreviewFacts(looksLikeRecipe: looksLikeRecipe, isCadovaModel: cadova != nil)
+			PreviewFacts(
+				looksLikeRecipe: looksLikeRecipe, isCadovaModel: cadova != nil,
+				isSopsEncrypted: isSopsFile
+			)
 		}
 		/// Where this tab's divider is, when it is split, as a fraction of the
 		/// pane. Asked of the split view itself rather than kept in step with it:
@@ -913,6 +923,11 @@ final class EditorViewController: NSViewController {
 	/// decides it; this remembers it, because it is a directory walk and the
 	/// questions asking it include one per keystroke.
 	private func serverRoot(for tab: Tab) -> URL? {
+		// A decrypted buffer has no server: a YAML server would hold the
+		// plaintext in its own process and its own cache, which is a place the
+		// plaintext must not go. Nil here is what gates every open, change,
+		// save and close announcement at once.
+		guard !tab.isDecrypted else { return nil }
 		guard let project else { return nil }
 		if let known = tab.serverRoot { return known }
 		guard let languageId = tab.document?.languageId else { return nil }
@@ -1460,6 +1475,7 @@ final class EditorViewController: NSViewController {
 		// `Package.swift` and a read of it. Once per tab — see `Tab.looksLikeRecipe`
 		// and `Tab.cadova` for why neither is asked again.
 		tab.looksLikeRecipe = Go3mfRecipe.looksLikeRecipe(fileURL)
+		tab.isSopsFile = SopsFile.looksEncrypted(fileURL)
 		tab.cadova = CadovaModel.find(for: fileURL, stoppingAt: project?.root)
 
 		// Clicking a name in the blame column says what that commit was.
@@ -3775,6 +3791,10 @@ final class EditorViewController: NSViewController {
 
 		switch alert.runModal() {
 		case .alertFirstButtonReturn:
+			// Never `save()` for a decrypted buffer: that would write the
+			// plaintext over the ciphertext, which is the one thing this whole
+			// feature exists not to do.
+			if tab.isDecrypted { return encryptAndSaveSync(tab) }
 			do {
 				try tab.document?.save()
 				return true
@@ -3820,6 +3840,12 @@ final class EditorViewController: NSViewController {
 
 	func save() {
 		guard let tab = activeTab else { return }
+		// A decrypted buffer is never written as it is: ⌘S encrypts it over
+		// the file through `sops`, and the plaintext stays where it was.
+		if tab.isDecrypted {
+			Task { @MainActor in await self.encryptAndSave(tab) }
+			return
+		}
 		// A `.drawio` is edited by draw.io rather than by this app, and draw.io
 		// reports a change a fraction of a second after it happens. That is soon
 		// enough for the dot but not for ⌘S, which somebody may press while
@@ -3925,6 +3951,229 @@ final class EditorViewController: NSViewController {
 			}
 		}
 		fflush(stdout)
+	}
+
+	// MARK: - SOPS
+
+	/// Where a decrypted buffer goes when a switch closes its tab, and where
+	/// it comes back from. Set by the window, which holds the park.
+	var parkDecrypted: ((URL, DecryptedBuffer) -> Void)?
+	var takeParkedDecrypted: ((URL) -> DecryptedBuffer?)?
+
+	/// What the status bar's chip shows for the front tab.
+	enum SopsState: Equatable {
+		case none
+		case unavailable
+		case encrypted
+		case decrypted(edited: Bool)
+	}
+
+	var sopsState: SopsState {
+		guard let tab = activeTab, tab.isSopsFile else { return .none }
+		if tab.isDecrypted { return .decrypted(edited: tab.isDirty) }
+		return Sops.isAvailable ? .encrypted : .unavailable
+	}
+
+	/// The chip, pressed: decrypt an encrypted file, encrypt and save an
+	/// edited decrypted one, and nothing for a decrypted buffer with nothing
+	/// to save — its tooltip says ⌘S is the save.
+	func pressSops() {
+		guard let tab = activeTab, tab.isSopsFile else { return }
+		if tab.isDecrypted {
+			if tab.isDirty {
+				Task { @MainActor in await self.encryptAndSave(tab) }
+			} else {
+				lockAgain(tab)
+			}
+		} else {
+			Task { @MainActor in await self.decrypt(tab) }
+		}
+	}
+
+	/// `sops --decrypt`, and what comes back on stdout into the buffer as one
+	/// edit — so the caret, folds and scroll come back, and ⌘Z would give the
+	/// ciphertext back, which is a way of re-locking a buffer and harmless.
+	/// Nothing is written anywhere: no `.dec`, no temp file, no scratch.
+	private func decrypt(_ tab: Tab) async {
+		guard let document = tab.document, let codeView = tab.codeView else { return }
+		let result = await Sops.decrypt(tab.url)
+		guard result.exitCode == 0 else {
+			Toast.post(
+				"Could not decrypt \(tab.url.lastPathComponent)",
+				detail: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+			)
+			return
+		}
+		// The server is told the file is closed *before* the buffer changes:
+		// from here on `serverRoot(for:)` answers nil for this tab, so this is
+		// the last announcement it will ever make about it.
+		announceClosed(tab)
+		codeView.replaceAllText(with: result.stdout)
+		document.markClean()
+		tab.isDecrypted = true
+		document.declinesAutoSave = true
+		// A decrypted buffer is a `.dec` that never touched disk: it conceals,
+		// whatever the file is called — and stands revealed from the start,
+		// with the lock open, because pressing *decrypt* is the explicit act
+		// the lock exists to demand; a second press to see what was just asked
+		// for would be the same question twice. The idle re-conceal still
+		// shuts it, and the lock shuts it at once.
+		codeView.setConcealsSecrets(Settings.shared.concealsSecrets)
+		codeView.setSecretsRevealed(true)
+		refreshTabBar()
+		onStatusChanged?(self)
+	}
+
+	/// The ciphertext back into the buffer, and the tab an ordinary one again:
+	/// after a save, from what `sops` just wrote; from the chip on an unedited
+	/// decrypted buffer, from the file. Either way the plaintext is gone from
+	/// the buffer and the chip reads *encrypted*, so the file can be decrypted
+	/// again in place rather than closed and reopened.
+	private func lockAgain(_ tab: Tab, ciphertext: String? = nil) {
+		guard let document = tab.document, let codeView = tab.codeView else { return }
+		let text = ciphertext ?? (try? String(contentsOf: tab.url, encoding: .utf8))
+		guard let text else { return }
+		codeView.replaceAllText(with: text)
+		document.markClean()
+		tab.isDecrypted = false
+		document.declinesAutoSave = false
+		codeView.setSecretsRevealed(false)
+		codeView.setConcealsSecrets(
+			Settings.shared.concealsSecrets
+				&& DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent)
+		)
+		// The server hears about the file again, as ciphertext, which is what
+		// it had before the decrypt.
+		if let languageId = document.languageId, let root = serverRoot(for: tab) {
+			LanguageService.shared.opened(
+				url: tab.url, languageId: languageId, text: self.text(of: document), project: root
+			)
+		}
+		refreshTabBar()
+		onStatusChanged?(self)
+	}
+
+	/// The buffer through `sops --encrypt` on stdin, the ciphertext over the
+	/// file. The buffer stays decrypted and becomes clean. Refused when the
+	/// file moved on disk since the decrypt: a stale save is a stale save.
+	@discardableResult
+	func encryptAndSave(_ tab: Tab) async -> Bool {
+		guard let document = tab.document, tab.isDecrypted else { return false }
+		guard !document.hasChangedOnDisk else {
+			Toast.post(
+				"\(tab.url.lastPathComponent) changed on disk",
+				detail: "Nothing was written. Close the tab and open the file again to see the new version."
+			)
+			return false
+		}
+		let result = await Sops.encrypt(text(of: document), for: tab.url)
+		return finishEncrypt(result, for: tab)
+	}
+
+	/// The same on the calling thread, for a close dialog and for quitting,
+	/// where there is no run loop left to come back to.
+	func encryptAndSaveSync(_ tab: Tab) -> Bool {
+		guard let document = tab.document, tab.isDecrypted else { return false }
+		guard !document.hasChangedOnDisk else {
+			Toast.post("\(tab.url.lastPathComponent) changed on disk", detail: "Nothing was written.")
+			return false
+		}
+		return finishEncrypt(Sops.encryptSync(text(of: document), for: tab.url), for: tab)
+	}
+
+	private func finishEncrypt(_ result: GitRepository.ProcessResult, for tab: Tab) -> Bool {
+		guard let document = tab.document else { return false }
+		guard result.exitCode == 0, !result.stdout.isEmpty else {
+			Toast.post(
+				"Could not encrypt \(tab.url.lastPathComponent)",
+				detail: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+			)
+			return false
+		}
+		do {
+			try document.replaceOnDisk(with: Data(result.stdout.utf8))
+		} catch {
+			Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
+			return false
+		}
+		lockAgain(tab, ciphertext: result.stdout)
+		refreshChangedLines(for: tab)
+		return true
+	}
+
+	/// Parks every decrypted tab and takes it out without asking, ahead of the
+	/// switch closing the rest. The switch is not a close: the buffer goes to
+	/// memory and comes back with the project, and a dialog on every switch
+	/// would make working on something else meanwhile a question.
+	func parkDecryptedTabs() {
+		for index in tabs.indices.reversed() where tabs[index].isDecrypted {
+			let tab = tabs[index]
+			guard let document = tab.document else { continue }
+			parkDecrypted?(tab.url, DecryptedBuffer(
+				text: text(of: document), isEdited: tab.isDirty,
+				caretLine: tab.codeView?.caretLine ?? 0
+			))
+			removeTab(at: index)
+		}
+	}
+
+	private func restoreDecrypted(_ parked: DecryptedBuffer, into tab: Tab) {
+		guard let document = tab.document, let codeView = tab.codeView else { return }
+		codeView.replaceAllText(with: parked.text)
+		if !parked.isEdited { document.markClean() }
+		tab.isDecrypted = true
+		document.declinesAutoSave = true
+		codeView.setConcealsSecrets(Settings.shared.concealsSecrets)
+		refreshTabBar()
+	}
+
+	/// The decrypted tabs with edits in them — what quitting has to ask about.
+	var editedDecryptedTabs: [Tab] { tabs.filter { $0.isDecrypted && $0.isDirty } }
+
+	/// Drives the chip from outside: `report` (the state, the line count and a
+	/// digest of the text — never the text, since a driven run's log must not
+	/// be a secret), `decrypt`, `encrypt`, `type:<text>`, `settle`.
+	func sopsForTesting(_ steps: String) {
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			if step.hasPrefix("settle") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.sopsForTesting(rest)
+				}
+				return
+			}
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "report": print("SOPS: \(sopsReportForTesting())")
+			case "decrypt": pressSops()
+			case "encrypt": save()
+			case "type": simulateTyping(argument)
+			default: print("SOPS: unknown step \(step)")
+			}
+		}
+		fflush(stdout)
+	}
+
+	private func sopsReportForTesting() -> String {
+		guard let tab = activeTab else { return "no editor" }
+		let state: String
+		switch sopsState {
+		case .none: state = "not-sops"
+		case .unavailable: state = "sops-missing"
+		case .encrypted: state = "encrypted"
+		case .decrypted: state = "decrypted"
+		}
+		let text = tab.document.map { self.text(of: $0) } ?? ""
+		let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
+		return "file=\(tab.url.lastPathComponent) state=\(state) edited=\(tab.isDirty)"
+			+ " lines=\(tab.document?.rope.lineCount ?? 0) sha256=\(digest)"
+			+ " covers=\(tab.codeView?.showsSecretCovers ?? false)"
+			+ " revealed=\(tab.codeView?.secretsRevealedAll ?? false)"
 	}
 
 	/// Drives the covers from outside: `report`, `caret:<line>` (as an
@@ -4084,6 +4333,12 @@ final class EditorViewController: NSViewController {
 				mode: file.previewMode,
 				dividerFraction: file.dividerFraction
 			)
+			// A decrypted buffer the switch parked goes back into its tab
+			// before anything is drawn, edits and all.
+			if let parked = takeParkedDecrypted?(url),
+			   let tab = tabs.last(where: { $0.url.path == file.path }) {
+				restoreDecrypted(parked, into: tab)
+			}
 			if file.line > 1 {
 				// Deferred: a document that has just been opened has not laid
 				// out, so scrolling to a line now would measure against nothing.
@@ -4526,7 +4781,10 @@ final class EditorViewController: NSViewController {
 	/// without asking. Auto-save is on by default, so that window is short.
 	func reloadExternallyChangedFiles() {
 		for tab in tabs {
-			guard let document = tab.document, !document.isDirty else { continue }
+			// A decrypted buffer is skipped as a dirty one is: the file on disk
+			// is ciphertext, and putting it back over the plaintext would be a
+			// reload nobody asked for. A save over a moved file is refused.
+			guard let document = tab.document, !document.isDirty, !tab.isDecrypted else { continue }
 			guard document.hasChangedOnDisk else { continue }
 			guard tab.codeView?.reloadFromDisk() == true else { continue }
 			onFileReloaded?(tab.url)
@@ -4631,6 +4889,12 @@ final class EditorStatusView: NSView {
 	private var secretsRevealed = false
 	private var lockRect = NSRect.zero
 	private var isLockHovered = false
+	/// The SOPS chip's state, pushed by the area controller beside the lock's.
+	private var sopsState: EditorViewController.SopsState = .none
+	private var sopsRect = NSRect.zero
+	private var isSopsHovered = false
+	/// The chip was pressed: decrypt, or encrypt and save.
+	var onSopsPressed: (() -> Void)?
 	/// The rectangle the tool tip is currently registered for, so it is put back
 	/// only when it has moved rather than on every redraw. Nil asks for it to be
 	/// registered again whatever the rectangle says.
@@ -4659,6 +4923,13 @@ final class EditorStatusView: NSView {
 		guard concealing != secretsConcealing || revealed != secretsRevealed else { return }
 		secretsConcealing = concealing
 		secretsRevealed = revealed
+		toolTipRect = nil
+		needsDisplay = true
+	}
+
+	func setSops(_ state: EditorViewController.SopsState) {
+		guard state != sopsState else { return }
+		sopsState = state
 		toolTipRect = nil
 		needsDisplay = true
 	}
@@ -4692,19 +4963,22 @@ final class EditorStatusView: NSView {
 		let language = languageRect.contains(point)
 		let server = !serverRect.isEmpty && serverRect.contains(point)
 		let lock = !lockRect.isEmpty && lockRect.contains(point)
+		let sops = !sopsRect.isEmpty && sopsRect.contains(point)
 		guard language != isLanguageHovered || server != isServerHovered
-			|| lock != isLockHovered else { return }
+			|| lock != isLockHovered || sops != isSopsHovered else { return }
 		isLanguageHovered = language
 		isServerHovered = server
 		isLockHovered = lock
+		isSopsHovered = sops
 		needsDisplay = true
 	}
 
 	override func mouseExited(with event: NSEvent) {
-		guard isLanguageHovered || isServerHovered || isLockHovered else { return }
+		guard isLanguageHovered || isServerHovered || isLockHovered || isSopsHovered else { return }
 		isLanguageHovered = false
 		isServerHovered = false
 		isLockHovered = false
+		isSopsHovered = false
 		needsDisplay = true
 	}
 
@@ -4712,6 +4986,10 @@ final class EditorStatusView: NSView {
 		let point = convert(event.locationInWindow, from: nil)
 		if secretsConcealing, lockRect.contains(point) {
 			onSecretsToggled?()
+			return
+		}
+		if !sopsRect.isEmpty, sopsRect.contains(point) {
+			onSopsPressed?()
 			return
 		}
 		if languageRect.contains(point) {
@@ -4819,6 +5097,55 @@ final class EditorStatusView: NSView {
 		// returns early for the many files with no server, and the lock is
 		// about the file's secrets, not its tooling.
 		drawLock()
+		drawSops()
+	}
+
+	/// The SOPS chip, after the lock: the file's encryption beside the file's
+	/// covers, the two facts somebody checks before typing a secret. Pressing
+	/// it decrypts, or encrypts and saves; ⌘S is the other way to the second.
+	private func drawSops() {
+		guard sopsState != .none else {
+			sopsRect = .zero
+			return
+		}
+		let words: String
+		let colour: NSColor
+		let glyph: String
+		switch sopsState {
+		case .none: return
+		case .unavailable:
+			words = "sops not found"; colour = Theme.current.gitIgnored.withAlphaComponent(0.6); glyph = "lock.shield"
+		case .encrypted:
+			words = "SOPS · encrypted"; colour = Theme.current.gitIgnored; glyph = "lock.shield.fill"
+		case .decrypted(let edited):
+			words = edited ? "SOPS · encrypt and save" : "SOPS · decrypted"
+			colour = Theme.current.gitModified; glyph = "shield.lefthalf.filled"
+		}
+		let height = Theme.current.scaled(12)
+		let symbol = Theme.symbol(glyph, size: 11 * Theme.current.scale, color: colour)
+		let aspect = (symbol?.size.height ?? 0) > 0 ? symbol!.size.width / symbol!.size.height : 1
+		let drawn = NSSize(width: height * aspect, height: height)
+		// After the lock when there is one, at the edge when there is not.
+		let left = lockRect.isEmpty ? Theme.current.scaled(12) : lockRect.maxX + Theme.current.scaled(10)
+		let origin = NSPoint(x: left, y: bounds.midY - drawn.height / 2)
+		let label = NSAttributedString(string: words, attributes: [
+			.font: Theme.current.uiFont(11), .foregroundColor: colour,
+		])
+		let labelSize = label.size()
+		let labelOrigin = NSPoint(
+			x: origin.x + (symbol == nil ? 0 : drawn.width + Theme.current.scaled(5)),
+			y: bounds.midY - labelSize.height / 2
+		)
+		sopsRect = chipRect(
+			around: origin,
+			size: NSSize(
+				width: (symbol == nil ? 0 : drawn.width + Theme.current.scaled(5)) + labelSize.width,
+				height: max(drawn.height, labelSize.height)
+			)
+		)
+		if isSopsHovered { highlight(sopsRect) }
+		symbol?.drawFitted(in: NSRect(origin: origin, size: drawn))
+		label.draw(at: labelOrigin)
 	}
 
 	/// The server chip, in the room the position and the language left.
@@ -4930,12 +5257,17 @@ final class EditorStatusView: NSView {
 	/// position changes width, so the chip beside it moves — and guarded so that
 	/// a redraw for a caret that moved within the same line costs nothing.
 	private var lockToolTipTag: NSView.ToolTipTag?
+	private var sopsToolTipTag: NSView.ToolTipTag?
 
 	private func refreshServerToolTip() {
 		guard serverRect != toolTipRect else { return }
 		toolTipRect = serverRect
 		removeAllToolTips()
 		lockToolTipTag = nil
+		sopsToolTipTag = nil
+		if !sopsRect.isEmpty {
+			sopsToolTipTag = addToolTip(sopsRect, owner: self, userData: nil)
+		}
 		// **The view is the owner, because `addToolTip` retains nothing.** A
 		// bridged NSString passed as owner is released as soon as this method
 		// returns, and the tooltip timer then asks a freed pointer whether it
@@ -4958,6 +5290,19 @@ final class EditorStatusView: NSView {
 			return secretsRevealed
 				? "Hide the file's secrets again"
 				: "Reveal all secrets in this file"
+		}
+		if tag == sopsToolTipTag {
+			switch sopsState {
+			case .none: return ""
+			case .unavailable:
+				return "This file is SOPS-encrypted, and the sops command was not found on the PATH"
+			case .encrypted:
+				return "Decrypt with sops into the editor. Nothing decrypted is written to disk."
+			case .decrypted(let edited):
+				return edited
+					? "Encrypt with sops and save over the file, as ⌘S does; the buffer shows the ciphertext again"
+					: "Decrypted in the editor only. Press to put the ciphertext back; edit and ⌘S to encrypt and save."
+			}
 		}
 		return serverDetail
 	}

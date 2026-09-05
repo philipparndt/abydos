@@ -846,6 +846,61 @@ extension MainWindowController {
 		editor.toggleRevealSecrets()
 	}
 
+	/// View ▸ Decrypt with sops: the chip's press, from the keyboard.
+	@objc func decryptWithSops(_ sender: Any?) {
+		editor.pressSops()
+	}
+
+	/// Asks about every edited decrypted buffer — open or parked — before the
+	/// app quits, per file: *Encrypt and save*, *Discard*, *Cancel*. False
+	/// stops the quit. Quitting is the one thing that loses a buffer kept in
+	/// memory, so it is the one place that asks; an unedited buffer needs no
+	/// answer, since the ciphertext is on disk.
+	func settleDecryptedBuffersForQuit() -> Bool {
+		for (group, tab) in editor.editedDecryptedTabs {
+			switch askAboutDecrypted(named: tab.url.lastPathComponent) {
+			case .alertFirstButtonReturn:
+				guard group.encryptAndSaveSync(tab) else { return false }
+			case .alertSecondButtonReturn:
+				continue
+			default:
+				return false
+			}
+		}
+		for parked in decrypted.edited() {
+			switch askAboutDecrypted(named: parked.file.lastPathComponent) {
+			case .alertFirstButtonReturn:
+				let result = Sops.encryptSync(parked.buffer.text, for: parked.file)
+				guard result.exitCode == 0, !result.stdout.isEmpty,
+				      (try? Data(result.stdout.utf8).write(to: parked.file, options: .atomic)) != nil
+				else {
+					Toast.post(
+						"Could not encrypt \(parked.file.lastPathComponent)",
+						detail: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+					)
+					return false
+				}
+				decrypted.discard(root: parked.root, file: parked.file)
+			case .alertSecondButtonReturn:
+				decrypted.discard(root: parked.root, file: parked.file)
+			default:
+				return false
+			}
+		}
+		return true
+	}
+
+	private func askAboutDecrypted(named name: String) -> NSApplication.ModalResponse {
+		let alert = NSAlert()
+		alert.messageText = "Encrypt and save \(name)?"
+		alert.informativeText = "It was decrypted in the editor and edited. "
+			+ "Nothing decrypted has been written to disk; discarding loses the edits."
+		alert.addButton(withTitle: "Encrypt and Save")
+		alert.addButton(withTitle: "Discard")
+		alert.addButton(withTitle: "Cancel")
+		return alert.runModal()
+	}
+
 	@objc func toggleWordWrap(_ sender: Any?) {
 		editor.toggleWordWrap()
 	}

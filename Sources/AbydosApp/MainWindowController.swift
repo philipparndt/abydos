@@ -52,6 +52,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// a project switch either dropped it or put one project's words into
 	/// another project's session.
 	let drafts = DraftInbox()
+	/// Decrypted SOPS buffers parked while their project is not in the window,
+	/// in memory only — see `DecryptedBuffers`.
+	let decrypted = DecryptedBuffers()
 
 	/// The message the project being opened was left composing, held until
 	/// something exists to put it in.
@@ -137,6 +140,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bar.rememberedFolds = { [weak self] in self?.rememberedFolds ?? [:] }
 		bar.holdDraft = { [weak self] root, draft in self?.drafts.hold(draft, for: root) }
 		bar.heldDraft = { [weak self] root in self?.drafts.peek(for: root) }
+		// A buffer is parked under the project being left, which is still
+		// `project` when the switch parks — and taken under the one that has
+		// just been loaded when its session reopens the file.
+		editor.parkDecrypted = { [weak self] file, buffer in
+			guard let self, let root = self.project?.root else { return }
+			self.decrypted.park(buffer, root: root, file: file)
+		}
+		editor.takeParkedDecrypted = { [weak self] file in
+			guard let self, let root = self.project?.root else { return nil }
+			return self.decrypted.take(root: root, file: file)
+		}
 		bar.discardDraft = { [weak self] root in self?.drafts.discard(for: root) }
 		// Restoring these two, not opening them fresh: both refuse to take the
 		// window from a maximised terminal on this path, since nobody asked.

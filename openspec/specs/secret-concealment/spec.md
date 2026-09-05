@@ -14,6 +14,12 @@ nothing about what it hides, its length included. Keys, comments, blank lines an
 shown as they are. A shared screen cannot wait for a signal that sharing
 started: the file at risk is usually open before the call is.
 
+A SOPS file decrypted in the editor SHALL conceal the same way, whatever its
+name: a decrypted buffer is a `.dec` that never touched a disk, decided by the
+tab's decrypted state rather than by the name. It arrives revealed, with the
+lock open, since the decrypt is the explicit act, and is shut by the lock and
+the idle limit as any covered file is.
+
 #### Scenario: an api key is not on the screen
 
 - **GIVEN** a `.env` holding `API_KEY=sk-abc123`
@@ -46,6 +52,12 @@ started: the file at risk is usually open before the call is.
 - **GIVEN** `export TOKEN="abc"`
 - **THEN** `export TOKEN=` is readable and the quoted value is covered whole
 
+#### Scenario: a decrypted SOPS file conceals once the lock is shut
+
+- **GIVEN** `secrets-dev.yaml` decrypted in the editor, its values shown
+- **WHEN** the lock is pressed
+- **THEN** every value is under a cover, as a `.dec` of the same file would be
+
 ### Requirement: A value is shown only by an explicit action
 
 A cover SHALL be lifted only by the file-wide reveal — the lock on the left
@@ -58,6 +70,10 @@ for a file that conceals nothing, and the whole feature can be turned off in
 the editor settings, where it is on by default. The caret arriving on a line — by arrow key, by find, by a
 jump — SHALL NOT reveal anything. A click's reveal SHALL end when the caret
 leaves that line, so a revealed value cannot be forgotten open.
+
+The lock SHALL keep its place on the left when the SOPS chip is shown beside
+it: the chip is the file's encryption and the lock is its covers, and pressing
+one SHALL NOT change the other.
 
 #### Scenario: arrowing through the file reveals nothing
 
@@ -96,6 +112,12 @@ leaves that line, so a revealed value cannot be forgotten open.
 - **GIVEN** "Conceal secrets" switched off in the editor settings
 - **THEN** open and newly opened dotenv files show their values plainly, and
   the lock is absent
+
+#### Scenario: the lock beside the chip
+
+- **GIVEN** a decrypted SOPS file with its values covered
+- **WHEN** the lock is pressed
+- **THEN** the values are shown and the chip still reads *SOPS · decrypted*
 
 ### Requirement: Editing a covered value stays covered
 

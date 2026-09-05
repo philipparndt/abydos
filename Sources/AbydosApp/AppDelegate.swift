@@ -650,6 +650,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.sopsSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.editorForTesting.sopsForTesting(steps)
+			}
+		}
+
 		if options.videoReport {
 			// After the player has had a moment to load the asset: duration is
 			// part of the report, and an unloaded item has none.
@@ -2730,6 +2736,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		true
 	}
 
+	/// The first quit-time gate this app has: a decrypted SOPS buffer with
+	/// edits lives in memory only, so quitting is the one thing that loses it,
+	/// and it asks. Ordinary unsaved tabs still quit as they always did.
+	public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+		for controller in windowControllers {
+			guard controller.settleDecryptedBuffersForQuit() else { return .terminateCancel }
+		}
+		return .terminateNow
+	}
+
 	/// ⌘, opens the settings in the window somebody is working in.
 	@objc func showSettings(_ sender: Any?) {
 		if let controller = frontmostController {
@@ -3648,6 +3664,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			keyEquivalent: ""
 		)
 		viewMenu.addItem(revealItem)
+		viewMenu.addItem(NSMenuItem(
+			title: "Decrypt with sops",
+			action: #selector(MainWindowController.decryptWithSops(_:)),
+			keyEquivalent: ""
+		))
 
 		let blameItem = NSMenuItem(
 			title: "Toggle Blame",
