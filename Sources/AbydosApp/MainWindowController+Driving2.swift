@@ -846,4 +846,22 @@ extension MainWindowController {
 		return "held for \(root.lastPathComponent); "
 			+ "window is on \(project?.root.lastPathComponent ?? "none")"
 	}
+
+	/// Puts the pointer on a named chrome control and says whether it lit and
+	/// what its tip would tell somebody.
+	///
+	/// One door for the four areas, because it is one gesture: `rail:git`,
+	/// `header:collapse`, `run:debug`, and a bare name for the terminal
+	/// strip's own trailing controls, which had this first.
+	func hoverChromeForTesting(_ name: String) -> String {
+		let parts = name.split(separator: ":", maxSplits: 1).map(String.init)
+		guard parts.count == 2 else { return bottomPanel.hoverStripControlForTesting(name) }
+		switch parts[0] {
+		case "rail":   return "rail " + toolStrip.hoverToolForTesting(parts[1])
+		case "header": return "header " + navigator.hoverHeaderActionForTesting(parts[1])
+		case "run":    return "run " + (run.runControl?.hoverPartForTesting(parts[1]) ?? "no run control")
+		case "strip":  return bottomPanel.hoverStripControlForTesting(parts[1])
+		default:       return "no area called \(parts[0])"
+		}
+	}
 }

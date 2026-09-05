@@ -59,7 +59,23 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	/// The chevron on the debug button, which opens the other ways to start.
 	private var debugMenuRect: NSRect = .zero
 	private var schemeRect: NSRect = .zero
-	private var toolTips: [NSView.ToolTipTag: String] = [:]
+
+	/// Which part the pointer is on, and what each says.
+	///
+	/// **They were rectangles with system tooltips and no hover at all**: the
+	/// run and debug buttons sat there looking like a picture until they were
+	/// pressed, while the terminal strip a few points below lit under the
+	/// pointer and explained itself in the theme's own type. `TipHost` is that
+	/// plumbing, written once for the whole window's chrome.
+	private lazy var tips = TipHost<Part>(
+		controls: { [weak self] in self?.partRects() ?? [] },
+		words: { [weak self] part in self?.words(for: part) ?? StyledTip.Tip(title: "") }
+	)
+	private var trackingArea: NSTrackingArea?
+
+	/// The things that can be pressed, named so the hover and the tips can talk
+	/// about them.
+	enum Part { case run, debug, debugMenu, scheme, status }
 	/// Told when a run starts or ends, so the titlebar can take the colour.
 	/// Told when the run state changes, so the line under the titlebar can show
 	/// it. A failure is part of it: it is not a kind of busyness, but it is
@@ -152,7 +168,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		guard name != configurationName else { return }
 		configurationName = name
 		needsDisplay = true
-		rebuildToolTips()
+		layoutParts()
 	}
 
 	/// What to say about the last or current run.
@@ -170,7 +186,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		let wasState = runState
 		status = text
 		if !busy { isStopping = false }
-		rebuildToolTips()
+		layoutParts()
 		isBusy = busy
 		// Only meaningful while busy: a failure or an idle strip has nothing to
 		// be preparing, and leaving it set would move the seam over a finished run.
@@ -179,7 +195,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		needsDisplay = true
 		// The run button is a stop button while busy, and says so.
 		if wasBusy != busy {
-			rebuildToolTips()
+			layoutParts()
 		}
 		if wasState != runState {
 			onRunStateChanged?(runState)
@@ -190,7 +206,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	func applyThemeChange() {
 		invalidateIntrinsicContentSize()
 		layoutParts()
-		rebuildToolTips()
+		layoutParts()
 		needsDisplay = true
 	}
 
@@ -218,27 +234,94 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		)
 	}
 
-	private func rebuildToolTips() {
-		removeAllToolTips()
-		toolTips = [:]
+	/// Where each part is, in the order they are asked: the chevron sits on the
+	/// debug button's trailing edge, so it is asked first.
+	private func partRects() -> [(Part, NSRect)] {
 		layoutParts()
-		toolTips[addToolTip(runRect, owner: self, userData: nil)] = isBusy ? "Stop" : "Run (⌃R)"
-		toolTips[addToolTip(debugRect, owner: self, userData: nil)] = "Debug (⌃D)"
-		toolTips[addToolTip(debugMenuRect, owner: self, userData: nil)] = "Profile, coverage…"
-		toolTips[addToolTip(schemeRect, owner: self, userData: nil)] = "Choose what to run"
-		if !status.isEmpty {
-			toolTips[addToolTip(statusRect, owner: self, userData: nil)] = status
+		return [
+			(.run, runRect), (.debugMenu, debugMenuRect), (.debug, debugRect),
+			(.scheme, schemeRect), (.status, status.isEmpty ? .zero : statusRect),
+		]
+	}
+
+	/// What each says when the pointer rests on it — the keys from the same
+	/// place the menu takes them, so what a tip promises and what the key does
+	/// cannot drift.
+	private func words(for part: Part) -> StyledTip.Tip {
+		switch part {
+		case .run:
+			return isBusy
+				? StyledTip.Tip(
+					title: isStopping ? "Stopping" : "Stop",
+					detail: isStopping ? "Already asked; waiting for it to end." : nil
+				)
+				: StyledTip.Tip(
+					title: "Run",
+					detail: configurationName.map { "Runs \($0)." } ?? "Choose what to run first.",
+					shortcut: MenuCommands.shortcut(sending: #selector(MainWindowController.runSelected(_:)))
+				)
+		case .debug:
+			return StyledTip.Tip(
+				title: "Debug",
+				detail: configurationName.map { "Runs \($0) with the debugger attached." },
+				shortcut: MenuCommands.shortcut(sending: #selector(MainWindowController.debugSelected(_:)))
+			)
+		case .debugMenu:
+			return StyledTip.Tip(
+				title: "The other ways to start",
+				detail: "Profile, coverage, an executable, or attaching to something already running."
+			)
+		case .scheme:
+			return StyledTip.Tip(
+				title: "Choose what to run",
+				detail: "What this project offers, ranked, with a filter.",
+				shortcut: MenuCommands.shortcut(sending: #selector(MainWindowController.showRunConfigurations(_:)))
+			)
+		case .status:
+			return StyledTip.Tip(title: status)
 		}
 	}
 
 	override func layout() {
 		super.layout()
-		rebuildToolTips()
+		layoutParts()
+	}
+
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		if let trackingArea { removeTrackingArea(trackingArea) }
+		let area = NSTrackingArea(
+			rect: bounds,
+			options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
+			owner: self
+		)
+		addTrackingArea(area)
+		trackingArea = area
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		if tips.update(at: convert(event.locationInWindow, from: nil), in: self) { needsDisplay = true }
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		if tips.clear() { needsDisplay = true }
+	}
+
+	/// Puts the pointer on a named part and says whether it lit and what it
+	/// would tell somebody, for a driven run.
+	func hoverPartForTesting(_ name: String) -> String {
+		tips.hoverForTesting(name, [
+			"run": .run, "debug": .debug, "debug-menu": .debugMenu,
+			"scheme": .scheme, "status": .status,
+		], in: self)
 	}
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 		layoutParts()
+		// A tip explains a control somebody has stopped reading about and
+		// started using.
+		StyledTip.shared.hide()
 
 		if !status.isEmpty, clearRect.insetBy(dx: -4, dy: -4).contains(point) {
 			setStatus("")
@@ -348,6 +431,13 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 			path.fill()
 		}
 
+		// Under whichever part the pointer is on, in the shape the terminal
+		// strip's controls draw: a button that acts when it is clicked says so
+		// before it is clicked.
+		if let hovered = tips.hovered, hovered != .status {
+			HoverGround.draw(around: tips.rect(of: hovered), ink: Theme.current.sidebarText)
+		}
+
 		drawButton(
 			in: runRect,
 			symbol: isBusy ? "stop.fill" : "play.fill",
@@ -428,13 +518,3 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	}
 }
 
-extension RunControl: NSViewToolTipOwner {
-	func view(
-		_ view: NSView,
-		stringForToolTip tag: NSView.ToolTipTag,
-		point: NSPoint,
-		userData: UnsafeMutableRawPointer?
-	) -> String {
-		toolTips[tag] ?? ""
-	}
-}

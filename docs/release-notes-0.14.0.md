@@ -152,3 +152,42 @@ than the palette wants to be — it stays inside that window's edge rather than
 hanging off both; ⇧⌘P again reports it closed; and the same run through the
 pill reports the anchored popover with the same 296 rows and the same first
 row under ↓.
+
+## Every action in the chrome says what it does
+
+Asked for on 2026-09-05: "we introduced the nice tooltips and hover effect for
+the actions in the terminal tab bar. I want the tool tips also for the other
+action like: left tool area, project, git, … panel actions, run, debug action.
+And I want the hover effect for: project, git, … panel actions, run, debug
+action."
+
+The terminal strip's controls have lit under the pointer and explained
+themselves in the theme's own type since they were given hover; everything
+else was explained by AppKit's yellow box, and two of the three areas lit up
+under nothing at all. The rail's tool buttons carried a `toolTip` string, the
+project pane's header buttons carried one and drew no hover, and the run and
+debug controls registered tooltip rectangles and drew no hover either.
+
+Now the left rail, the project pane's header buttons and the titlebar's run,
+debug, chooser and status controls all show the app's own tooltip — a title, a
+line of detail where one sentence cannot carry it, and the key in a chip — and
+the header and titlebar controls draw a ground under the pointer, the same
+rounded band the strip draws. The rail keeps the hover it had, which was
+already right. The plumbing behind all four is one type now rather than a copy
+per view, and the strip moved onto it too, so a fifth control cannot arrive
+with a fifth delay.
+
+**A tip's key comes from the menu bar, not from the control.** That is what
+keeps a tooltip's promise and a keystroke the same thing — including when
+macOS moves a shortcut it decides is hard to reach on this keyboard. It also
+found something: the Run menu declares ⌃R twice, on *Run…* and on *Run*, and a
+menu answers a key with its first matching item — so the play button's own
+command has no key, and its tip says so instead of claiming one.
+
+Driven: twelve hovers in one run, each saying whether the control lit and what
+its tip would tell somebody — the rail's *Project ⌘1*, *Git — 1 commit to
+push — ⌘2* and *Terminal ⌘J*, the header's three, the titlebar's four, and the
+strip's own *Hide the panel ⌘J* unchanged by the move. Photographed: the
+ground under the header's collapse button with the compact pill beside it
+untouched, the ground under the ladybird with the play button beside it
+without one, and the tip itself — *Debug*, and a ⌃D chip.

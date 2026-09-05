@@ -97,6 +97,25 @@ enum MenuCommands {
 		return item.title
 	}
 
+	/// The key a command answers to, found by the action it sends.
+	///
+	/// **So that a tooltip promising ⌃R and a menu offering something else
+	/// cannot both be true.** A control's tip says what its key is; taking that
+	/// from the menu bar means it survives a key being moved — by an edit here,
+	/// or by AppKit relocating one it decides is hard to reach on this
+	/// keyboard, which `MenuKeyReport` exists because of.
+	static func shortcut(sending action: Selector) -> String? {
+		guard let bar = NSApp.mainMenu else { return nil }
+		func look(in menu: NSMenu) -> NSMenuItem? {
+			for item in menu.items {
+				if let submenu = item.submenu, let found = look(in: submenu) { return found }
+				if item.action == action, !item.keyEquivalent.isEmpty { return item }
+			}
+			return nil
+		}
+		return look(in: bar).flatMap(shortcut(for:))
+	}
+
 	/// The key the item answers to, written the way a menu writes it.
 	static func shortcut(for item: NSMenuItem) -> String? {
 		let modifiers = item.keyEquivalentModifierMask

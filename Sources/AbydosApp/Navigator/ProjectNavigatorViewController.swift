@@ -84,6 +84,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	private var watcher: FileSystemWatcher?
 	private var outlineView: NavigatorOutlineView!
 	private var headerView: NavigatorHeaderView!
+
+	/// Puts the pointer on one of the header's three buttons and says whether
+	/// it lit and what it would tell somebody, for a driven run.
+	func hoverHeaderActionForTesting(_ name: String) -> String {
+		headerView?.hoverActionForTesting(name) ?? "no header"
+	}
 	private var headerTopConstraint: NSLayoutConstraint!
 	private var headerHeightConstraint: NSLayoutConstraint!
 	private var gitRoot: URL?
@@ -4077,19 +4083,60 @@ private final class NavigatorHeaderView: NSView {
 
 	private lazy var collapseButton = button(
 		symbol: "arrow.down.right.and.arrow.up.left",
-		tooltip: "Collapse all",
 		action: #selector(collapseAll)
 	)
 	private lazy var locateButton = button(
 		symbol: "scope",
-		tooltip: "Select the file in the editor",
 		action: #selector(selectOpenFile)
 	)
 	private lazy var compactButton = button(
 		symbol: "rectangle.compress.vertical",
-		tooltip: "Compact middle packages",
 		action: #selector(toggleCompactPackages)
 	)
+
+	/// Which of the three the pointer is on, and what each says.
+	///
+	/// **They were explained by AppKit's yellow box and lit up under
+	/// nothing.** A button that does something when it is clicked says so
+	/// before it is clicked, which the terminal strip's controls have done
+	/// since they were given hover and these had not; `TipHost` is that
+	/// plumbing, written once.
+	private lazy var tips = TipHost<Action>(
+		controls: { [weak self] in self?.actionRects() ?? [] },
+		words: { [weak self] action in self?.words(for: action) ?? StyledTip.Tip(title: "") }
+	)
+	private var trackingArea: NSTrackingArea?
+
+	enum Action { case collapse, locate, compact }
+
+	private func actionRects() -> [(Action, NSRect)] {
+		[(.locate, locateButton.frame), (.collapse, collapseButton.frame), (.compact, compactButton.frame)]
+	}
+
+	private func words(for action: Action) -> StyledTip.Tip {
+		switch action {
+		case .collapse:
+			return StyledTip.Tip(
+				title: "Collapse all",
+				detail: "Folds every folder away, leaving the roots."
+			)
+		case .locate:
+			return StyledTip.Tip(
+				title: "Select the file in the editor",
+				detail: "Finds whatever is in front, opening the folders on the way to it."
+			)
+		case .compact:
+			return isCompactingPackages
+				? StyledTip.Tip(
+					title: "Showing middle packages one per row",
+					detail: "Click to fold a chain of single folders back into one row."
+				)
+				: StyledTip.Tip(
+					title: "Compact middle packages",
+					detail: "A chain of folders holding nothing but the next one is drawn as a single row."
+				)
+		}
+	}
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -4101,7 +4148,7 @@ private final class NavigatorHeaderView: NSView {
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError("not from a nib") }
 
-	private func button(symbol: String, tooltip: String, action: Selector) -> NSButton {
+	private func button(symbol: String, action: Selector) -> NSButton {
 		let button = NSButton(image: NSImage(), target: self, action: action)
 		button.image = Theme.symbol(
 			symbol, size: Theme.current.scaled(11),
@@ -4110,7 +4157,8 @@ private final class NavigatorHeaderView: NSView {
 		button.isBordered = false
 		button.bezelStyle = .shadowlessSquare
 		button.imagePosition = .imageOnly
-		button.toolTip = tooltip
+		// No `toolTip`: what these say is drawn, from `tips` below, in the
+		// theme's own type rather than the system's box.
 		// Nothing here should take focus from the tree, which is the point of
 		// the buttons: the keyboard stays where it was.
 		button.refusesFirstResponder = true
@@ -4120,6 +4168,41 @@ private final class NavigatorHeaderView: NSView {
 	override func layout() {
 		super.layout()
 		layoutButtons()
+	}
+
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		if let trackingArea { removeTrackingArea(trackingArea) }
+		let area = NSTrackingArea(
+			rect: bounds,
+			options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
+			owner: self
+		)
+		addTrackingArea(area)
+		trackingArea = area
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		if tips.update(at: convert(event.locationInWindow, from: nil), in: self) { needsDisplay = true }
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		if tips.clear() { needsDisplay = true }
+	}
+
+	override func mouseDown(with event: NSEvent) {
+		// A tip explains a control somebody has stopped reading about and
+		// started using. The buttons themselves take the click.
+		tips.clear()
+		super.mouseDown(with: event)
+	}
+
+	/// Puts the pointer on one of the three and says whether it lit and what it
+	/// would tell somebody, for a driven run.
+	func hoverActionForTesting(_ name: String) -> String {
+		tips.hoverForTesting(
+			name, ["collapse": .collapse, "locate": .locate, "compact": .compact], in: self
+		)
 	}
 
 	private func layoutButtons() {
@@ -4166,6 +4249,17 @@ private final class NavigatorHeaderView: NSView {
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.sidebarBackground.setFill()
 		bounds.fill()
+
+		// Under the button the pointer is on, before the symbols are drawn over
+		// it. The compact button is a pill of its own when it is on, so its
+		// hover has to read against that tint rather than vanish under it.
+		if let hovered = tips.hovered {
+			HoverGround.draw(
+				around: tips.rect(of: hovered),
+				ink: Theme.current.sidebarHeaderText,
+				overTint: hovered == .compact && isCompactingPackages
+			)
+		}
 
 		let attributed = NSAttributedString(string: "Project", attributes: [
 			.font: Theme.current.uiFont(13, weight: .semibold),

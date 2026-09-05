@@ -360,9 +360,14 @@ struct LaunchOptions {
 	/// does: `--claude-seeded 6`. These are the records that carry no session
 	/// id, which is a state no other flag can produce.
 	var seededWindows: Int?
-	/// Put the pointer on one of the terminal strip's trailing controls and say
-	/// what it is and what it tells somebody: `--hover-control sessions`, and
-	/// `tag`, `follow`, `maximize`, `hide`, `overflow`, `add`, `add-menu`.
+	/// Put the pointer on one of the window's chrome controls and say what it
+	/// is and what it tells somebody: `--hover-control sessions`, and `tag`,
+	/// `follow`, `maximize`, `hide`, `overflow`, `add`, `add-menu` on the
+	/// terminal strip; `rail:project` and the rail's other tools;
+	/// `header:collapse`, `header:locate`, `header:compact` in the project
+	/// pane's header; `run:run`, `run:debug`, `run:debug-menu`, `run:scheme`
+	/// in the titlebar. One flag for one gesture, whichever part of the chrome
+	/// it is asked of.
 	///
 	/// A comma takes several in turn, spaced far enough apart to be separate
 	/// hovers: one run can then say what all eight tell somebody, and the last

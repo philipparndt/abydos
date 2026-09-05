@@ -3985,17 +3985,16 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		case sessions, mirrorTag, follow, maximize, hide, overflow, add, addMenu
 	}
 
-	/// Which of them is at a point, if any. Empty frames contain nothing, so a
-	/// control that is not on this strip answers for nobody.
-	private func trailingControl(at point: NSPoint) -> TrailingControl? {
-		let candidates: [(TrailingControl, NSRect)] = [
+	/// Where each of them is, in the order they are asked. Empty frames contain
+	/// nothing, so a control that is not on this strip answers for nobody.
+	private func trailingRects() -> [(TrailingControl, NSRect)] {
+		[
 			(.sessions, sessionsPillFrame), (.mirrorTag, mirrorTagFrame),
 			(.follow, followButtonFrame), (.maximize, maximizeButtonFrame),
 			(.hide, hideButtonFrame), (.overflow, overflowButtonFrame),
 			// The chevron sits on the +'s trailing edge, so it is asked first.
 			(.addMenu, addMenuFrame), (.add, addButtonFrame),
 		]
-		return candidates.first { $0.1.width > 0 && $0.1.contains(point) }?.0
 	}
 
 	/// What each of them says when the pointer rests on it.
@@ -4055,18 +4054,10 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		}
 	}
 
-	/// Where a control is, for putting a tip under it.
+	/// Where a control is, for putting a tip under it — the same table the hit
+	/// test reads, so the two cannot disagree about where a control stands.
 	private func frame(of control: TrailingControl) -> NSRect {
-		switch control {
-		case .sessions:  return sessionsPillFrame
-		case .mirrorTag: return mirrorTagFrame
-		case .follow:    return followButtonFrame
-		case .maximize:  return maximizeButtonFrame
-		case .hide:      return hideButtonFrame
-		case .overflow:  return overflowButtonFrame
-		case .add:       return addButtonFrame
-		case .addMenu:   return addMenuFrame
-		}
+		tips.rect(of: control)
 	}
 	/// Which tab the run of drawn tabs starts at.
 	///
@@ -4093,14 +4084,19 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	/// which is the difference between "click to select" and "click to close" and
 	/// so has to be visible before the click.
 	private var hoveredClose = false
-	/// Which of the trailing controls the pointer is on.
+	/// The trailing controls' hover and tooltips, kept by `TipHost` — which
+	/// this strip grew by hand and the rest of the window's chrome now shares.
 	///
 	/// **They had no hover and no tooltips**, which for the sessions pill meant
 	/// two coloured dots and two figures with nothing anywhere saying what they
 	/// counted — reported as "what is grey/orange on the agents element, what
 	/// is the agents element even". A control that explains itself only in a
 	/// settings page is a control somebody has to go and look up.
-	private var hoveredControl: TrailingControl?
+	private lazy var tips = TipHost<TrailingControl>(
+		controls: { [weak self] in self?.trailingRects() ?? [] },
+		words: { [weak self] control in self?.words(for: control) ?? StyledTip.Tip(title: "") }
+	)
+	private var hoveredControl: TrailingControl? { tips.hovered }
 	/// The frames the tooltip rects were registered for, so they are only
 	/// registered again when one of them has actually moved.
 	private var toolTipShape: [NSRect] = []
@@ -4266,17 +4262,11 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	/// what it would tell somebody — the hover and the tooltip in one answer,
 	/// since they are the same question asked with the pointer.
 	func hoverTrailingForTesting(_ name: String) -> String {
-		let named: [String: TrailingControl] = [
+		tips.hoverForTesting(name, [
 			"sessions": .sessions, "tag": .mirrorTag, "follow": .follow,
 			"maximize": .maximize, "hide": .hide, "overflow": .overflow,
 			"add": .add, "add-menu": .addMenu,
-		]
-		guard let control = named[name] else { return "no control called \(name)" }
-		let frame = frame(of: control)
-		guard frame.width > 0 else { return "\(name): not on this strip" }
-		updateHover(at: NSPoint(x: frame.midX, y: frame.midY))
-		let lit = hoveredControl == control ? "lit" : "NOT LIT"
-		return "\(name): \(lit) " + words(for: control).reportForTesting
+		], in: self)
 	}
 
 	/// How many tabs the strip holds, for deciding which strip the keys mean.
@@ -4726,20 +4716,11 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			(items[safe: index]?.isClosable ?? true) && closeRect(for: frames[index]).contains(point)
 		} ?? false
 
-		let control = trailingControl(at: point)
-		if index != hoveredIndex || overClose != hoveredClose || control != hoveredControl {
+		let movedControl = tips.update(at: point, in: self)
+		if index != hoveredIndex || overClose != hoveredClose || movedControl {
 			hoveredIndex = index
 			hoveredClose = overClose
-			hoveredControl = control
 			needsDisplay = true
-		}
-		// The tip follows the hover rather than a tooltip rect, so it is asked
-		// on every move and drops itself the moment the pointer is on a tab or
-		// on nothing.
-		if let control {
-			StyledTip.shared.show(words(for: control), from: frame(of: control), of: self)
-		} else {
-			StyledTip.shared.hide()
 		}
 	}
 
@@ -4750,8 +4731,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	private func clearHover() {
 		hoveredIndex = nil
 		hoveredClose = false
-		hoveredControl = nil
-		StyledTip.shared.hide()
+		tips.clear()
 		needsDisplay = true
 	}
 
@@ -5014,39 +4994,17 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	/// gesture on the same strip.
 	private func drawTrailingHover() {
 		guard let hoveredControl else { return }
-		let frame: NSRect
-		switch hoveredControl {
-		case .sessions:  frame = sessionsPillFrame
-		case .mirrorTag: frame = mirrorTagFrame
-		case .follow:    frame = followButtonFrame
-		case .maximize:  frame = maximizeButtonFrame
-		case .hide:      frame = hideButtonFrame
-		case .overflow:  frame = overflowButtonFrame
-		case .add:       frame = addButtonFrame
-		case .addMenu:   frame = addMenuFrame
-		}
-		guard frame.width > 0 else { return }
-
-		// The glyph buttons are the full height of the strip, and a ground that
-		// tall reads as a block rather than as a button under the pointer.
-		let inset = Theme.current.scaled(3)
-		let band = NSRect(
-			x: frame.minX - inset, y: frame.midY - Theme.current.scaled(10),
-			width: frame.width + inset * 2, height: Theme.current.scaled(20)
-		)
-
 		// **Twice as much for the two that have grounds of their own.** The
 		// pill and the tag are drawn on a tint already, so the faint band that
 		// reads clearly behind a bare glyph disappeared behind them entirely —
 		// checked against the pixels rather than assumed, after a chevron that
-		// was computed and never drawn earlier the same day. A halo it is:
-		// same colour, capsule-shaped like the thing it is behind, and strong
-		// enough to see.
-		let grounded = hoveredControl == .sessions || hoveredControl == .mirrorTag
-		(isMirroringTmux ? Self.onTmuxGreen : Theme.current.sidebarText)
-			.withAlphaComponent(grounded ? 0.26 : 0.12).setFill()
-		let radius = grounded ? band.height / 2 : Theme.current.scaled(5)
-		NSBezierPath(roundedRect: band, xRadius: radius, yRadius: radius).fill()
+		// was computed and never drawn earlier the same day. `HoverGround`
+		// keeps both weights, and the shape the rest of the chrome now draws.
+		HoverGround.draw(
+			around: frame(of: hoveredControl),
+			ink: isMirroringTmux ? Self.onTmuxGreen : Theme.current.sidebarText,
+			overTint: hoveredControl == .sessions || hoveredControl == .mirrorTag
+		)
 	}
 
 	/// The hide, maximise, follow and tag controls: the panel's own, and only

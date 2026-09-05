@@ -2143,8 +2143,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// catching the timer mid-flight.
 		for (index, name) in options.hoverControls.enumerated() {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.5 + Double(index) * 0.8) {
-				print("HOVER: " + (controller?.panelForTesting
-					.hoverStripControlForTesting(name) ?? "no window"))
+				print("HOVER: " + (controller?.hoverChromeForTesting(name) ?? "no window"))
 				fflush(stdout)
 			}
 		}

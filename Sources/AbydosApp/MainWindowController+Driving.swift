@@ -1034,6 +1034,7 @@ extension MainWindowController {
 
 	var panelForTesting: BottomPanel { bottomPanel }
 
+
 	var navigatorForTesting: ProjectNavigatorViewController { navigator }
 
 	var resultsForTesting: ResultsPresenter { results }

@@ -40,19 +40,28 @@ panel, delay and shape the terminal strip's controls show — rather than the
 system tooltip, and no chrome control SHALL be left explained by
 `NSView.toolTip`. What a tip says SHALL be what the control does, in a title,
 with a detail line only where one sentence cannot carry it, and with the
-control's keyboard shortcut where it has one, taken from the same place the
-menu takes it. A control with no action and no shortcut SHALL show no tip
-rather than a repeat of its own label.
+control's keyboard shortcut where the menu bar gives that command one, read
+from the menu item itself rather than written out again beside the control —
+so a key moved, or moved by the system on this keyboard, moves in both places
+at once. A control whose command has no key in the menu SHALL name none rather
+than name one it does not answer to. A control with no action and no shortcut
+SHALL show no tip rather than a repeat of its own label.
 
 #### Scenario: the run button's tip
 
 - **WHEN** the pointer rests on the run button
-- **THEN** the tip says it runs the chosen configuration and names ⌃R
+- **THEN** the tip says it runs the chosen configuration, and names it
 
 #### Scenario: the debug button's tip
 
 - **WHEN** the pointer rests on the debug button
-- **THEN** the tip says it debugs the chosen configuration and names ⌃D
+- **THEN** the tip says it debugs the chosen configuration and names ⌃D, the key the Run menu's Debug item answers to
+
+#### Scenario: a command the menu gives no key is not given one here
+
+- **GIVEN** the Run menu, where ⌃R belongs to *Run…* — the chooser — and the plain *Run* item answers to no press
+- **WHEN** the pointer rests on the run button
+- **THEN** its tip carries no shortcut, and the chooser beside it carries ⌃R
 
 #### Scenario: a rail button's tip
 

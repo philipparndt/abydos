@@ -97,9 +97,13 @@ final class ToolWindowBar: NSView {
 		if unpushedCount > 0 {
 			parts.append("\(unpushedCount) commit\(unpushedCount == 1 ? "" : "s") to push")
 		}
-		gitButton?.toolTip = parts.isEmpty
-			? "Git (⌘2)"
-			: "Git (⌘2) — " + parts.joined(separator: ", ")
+		// The counts on the detail line rather than after a dash: the tip draws
+		// the hierarchy, so the caller does not have to do it with punctuation.
+		gitButton?.tip = StyledTip.Tip(
+			title: "Git",
+			detail: parts.isEmpty ? nil : parts.joined(separator: ", "),
+			shortcut: "⌘2"
+		)
 	}
 	private var pullRequestsButton: StripButton!
 	private var structureButton: StripButton!
@@ -188,7 +192,7 @@ final class ToolWindowBar: NSView {
 	@objc private func reviewUncommittedClicked() { onReviewUncommitted?() }
 
 	private func build() {
-		projectButton = StripButton(symbol: "folder", tooltip: "Project (⌘1)", enabled: true)
+		projectButton = StripButton(symbol: "folder", tip: .init(title: "Project", shortcut: "⌘1"), enabled: true)
 		projectButton.isSelected = true
 		projectButton.onClick = { [weak self] in self?.onToggleNavigator?() }
 
@@ -199,7 +203,7 @@ final class ToolWindowBar: NSView {
 		// what is behind it is one tree: the working copy, the stashes and the
 		// refs are all things this repository holds.
 		gitButton = StripButton(
-			symbol: "arrow.trianglehead.branch", tooltip: "Git (⌘2)", enabled: true
+			symbol: "arrow.trianglehead.branch", tip: .init(title: "Git", shortcut: "⌘2"), enabled: true
 		)
 		gitButton.onClick = { [weak self] in self?.onToggleBranches?() }
 		// **Its own button, beside the git one rather than behind it.** What is
@@ -209,16 +213,16 @@ final class ToolWindowBar: NSView {
 		// the network, and it is opened to read somebody else's work rather than
 		// to see where you are standing.
 		pullRequestsButton = StripButton(
-			symbol: "arrow.trianglehead.pull", tooltip: "Pull Requests", enabled: true
+			symbol: "arrow.trianglehead.pull", tip: .init(title: "Pull Requests"), enabled: true
 		)
 		pullRequestsButton.onClick = { [weak self] in self?.onTogglePullRequests?() }
 
-		structureButton = StripButton(symbol: "list.bullet.indent", tooltip: "Structure (⌘3)", enabled: true)
+		structureButton = StripButton(symbol: "list.bullet.indent", tip: .init(title: "Structure", shortcut: "⌘3"), enabled: true)
 		structureButton.onClick = { [weak self] in self?.onToggleStructure?() }
 
 		// Notes are not part of the project, so the icon is a page rather than
 		// anything filed: what it opens is the pile you keep beside the work.
-		scratchesButton = StripButton(symbol: "note.text", tooltip: "Scratches (⌘4)", enabled: true)
+		scratchesButton = StripButton(symbol: "note.text", tip: .init(title: "Scratches", shortcut: "⌘4"), enabled: true)
 		scratchesButton.onClick = { [weak self] in self?.onToggleScratches?() }
 
 		// **The fence comes out with the buttons it fenced.** There is nothing
@@ -243,19 +247,19 @@ final class ToolWindowBar: NSView {
 
 		// Bottom-docked tool windows get buttons at the bottom of the strip, which
 		// is where IDEA puts them and matches where the panel actually appears.
-		terminalButton = StripButton(symbol: "terminal", tooltip: "Terminal (⌘J)", enabled: true)
+		terminalButton = StripButton(symbol: "terminal", tip: .init(title: "Terminal", shortcut: "⌘J"), enabled: true)
 		terminalButton.onClick = { [weak self] in self?.onToggleTerminal?() }
 
 		// The agent review is the reason this app exists, so it gets a button
 		// rather than living only in a menu. Two scopes behind one control: they
 		// are the same action asked of different code, and a strip this narrow
 		// cannot carry two icons that would be told apart at a glance.
-		reviewButton = StripButton(symbol: "checkmark.seal", tooltip: "Review (⇧⌘R)", enabled: true)
+		reviewButton = StripButton(symbol: "checkmark.seal", tip: .init(title: "Review", detail: "This project's changes, or an agent's.", shortcut: "⇧⌘R"), enabled: true)
 		reviewButton.onClick = { [weak self] in self?.showReviewMenu() }
 
 		// Bottom-docked, beside the terminal: the debugger is a panel down
 		// there too, and this is where somebody looks for it.
-		debugButton = StripButton(symbol: "ladybug", tooltip: "Debug", enabled: true)
+		debugButton = StripButton(symbol: "ladybug", tip: .init(title: "Debug"), enabled: true)
 		debugButton.onClick = { [weak self] in self?.debugButtonPressed() }
 
 		// First in the bottom group, which is where it was asked for.
@@ -265,7 +269,7 @@ final class ToolWindowBar: NSView {
 		// anybody who had not been told the shortcut. A checklist rather than a
 		// board or a list, because what a card actually shows about an item is
 		// how much of its `## Steps` is ticked.
-		backlogButton = StripButton(symbol: "checklist", tooltip: "Backlog (⇧⌘B)", enabled: true)
+		backlogButton = StripButton(symbol: "checklist", tip: .init(title: "Backlog", shortcut: "⇧⌘B"), enabled: true)
 		backlogButton.onClick = { [weak self] in self?.onToggleBacklog?() }
 
 		let bottomStack = NSStackView(views: [backlogButton, reviewButton, debugButton, terminalButton])
@@ -362,6 +366,20 @@ final class ToolWindowBar: NSView {
 		].joined(separator: " ")
 	}
 
+	/// Puts the pointer on a named rail button and says whether it lit and what
+	/// its tip would tell somebody — the words checked without a screenshot,
+	/// the way the terminal strip's controls are checked.
+	func hoverToolForTesting(_ name: String) -> String {
+		let named: [String: StripButton?] = [
+			"project": projectButton, "git": gitButton, "pullRequests": pullRequestsButton,
+			"structure": structureButton, "scratches": scratchesButton,
+			"terminal": terminalButton, "review": reviewButton,
+			"debug": debugButton, "backlog": backlogButton,
+		]
+		guard let button = named[name] ?? nil else { return "no button called \(name)" }
+		return "\(name): " + button.hoverForTesting()
+	}
+
 	private var topConstraint: NSLayoutConstraint!
 
 	/// Distance from the top of the window to the first icon.
@@ -412,11 +430,21 @@ final class StripButton: NSView {
 	}
 	private var trackingArea: NSTrackingArea?
 
-	init(symbol: String, tooltip: String, enabled: Bool) {
+	/// What it says when the pointer rests on it, in the app's own tooltip
+	/// rather than the system's yellow box.
+	///
+	/// **One tooltip in one window.** The terminal strip has drawn its own
+	/// since it was given hover; the rail's buttons carried `NSView.toolTip`,
+	/// so the same gesture on the same window was answered in two typefaces at
+	/// two delays. Settable, because the git button's says what is uncommitted
+	/// and that changes under it.
+	var tip: StyledTip.Tip
+
+	init(symbol: String, tip: StyledTip.Tip, enabled: Bool) {
 		self.symbol = symbol
 		self.enabled = enabled
+		self.tip = tip
 		super.init(frame: .zero)
-		toolTip = tooltip
 		translatesAutoresizingMaskIntoConstraints = false
 		sizeConstraints = [
 			widthAnchor.constraint(equalToConstant: Theme.current.scaled(30)),
@@ -444,8 +472,29 @@ final class StripButton: NSView {
 		trackingArea = area
 	}
 
-	override func mouseEntered(with event: NSEvent) { if enabled { isHovered = true } }
-	override func mouseExited(with event: NSEvent) { isHovered = false }
+	override func mouseEntered(with event: NSEvent) {
+		guard enabled else { return }
+		isHovered = true
+		// From the button's own bounds: a rail button *is* one control, so it
+		// shows its tip itself rather than keeping a `TipHost` — which earns
+		// its keep in a view that draws several controls and has to work out
+		// which one the pointer is on.
+		StyledTip.shared.show(tip, from: bounds, of: self)
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		isHovered = false
+		StyledTip.shared.hide()
+	}
+
+	/// Puts the pointer on it and says whether it lit and what it would tell
+	/// somebody, for a driven run — the same answer the strip's controls give.
+	func hoverForTesting() -> String {
+		guard enabled else { return "disabled" }
+		isHovered = true
+		StyledTip.shared.show(tip, from: bounds, of: self)
+		return "lit " + tip.reportForTesting
+	}
 
 	/// Claims the click.
 	///
@@ -461,6 +510,9 @@ final class StripButton: NSView {
 
 	override func mouseUp(with event: NSEvent) {
 		guard enabled, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+		// A tip explains a control somebody has stopped reading about and
+		// started using.
+		StyledTip.shared.hide()
 		onClick?()
 	}
 
