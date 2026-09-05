@@ -262,6 +262,10 @@ struct LaunchOptions {
 
 	/// Keys to press in the palette's list, comma separated.
 	var switcherKeys: String?
+	/// `--switcher-pill`: open the switcher the way a click on the project
+	/// pill opens it, rather than the way ⇧⌘P does — the two placements are
+	/// the subject, so a run has to be able to ask for either.
+	var switcherFromPill = false
 
 	/// Apply these theme settings in turn and say what each resolved to.
 	var appearanceWalk: String?
@@ -1411,6 +1415,7 @@ struct LaunchOptions {
 			case "--wrap":       options.wordWrap = true
 			case "--switcher":   options.switcherFilter = next()
 			case "--switcher-keys": options.switcherKeys = next()
+			case "--switcher-pill": options.switcherFromPill = true
 			case "--switch-to":
 				let said = next() ?? ""
 				// `path@seconds`, and a path with no `@` in it keeps the default.

@@ -513,7 +513,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let filter = options.switcherFilter {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				controller?.showProjectSwitcher(nil)
+				if options.switcherFromPill {
+					controller?.showProjectSwitcherAtPill()
+				} else {
+					controller?.showProjectSwitcher(nil)
+				}
+				// Where it landed, said before anything is typed: the key's
+				// palette is centred over the window that answered it, and a
+				// placement claim is one a report can make without a picture.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					print("SWITCHER placement: \(ProjectSwitcherPopover.placementForTesting())")
+					fflush(stdout)
+				}
 				if !filter.isEmpty {
 					DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
 						ProjectSwitcherPopover.applyFilterForTesting(filter)
@@ -522,7 +533,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				if let keys = options.switcherKeys {
 					DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 						for key in keys.split(separator: ",") {
-							print("SWITCHER \(key): \(ProjectSwitcherPopover.pressForTesting(String(key)))")
+							// `again` is the shortcut pressed a second time,
+							// which is a different door from the list's own
+							// keys: it goes to the panel, not to the table.
+							let said = key == "again"
+								? ProjectSwitcherPopover.pressTheKeyAgainForTesting()
+								: ProjectSwitcherPopover.pressForTesting(String(key))
+							print("SWITCHER \(key): \(said)")
 						}
 						fflush(stdout)
 						if options.writesACapture { return }

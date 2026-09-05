@@ -405,7 +405,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self?.run.runControl?.invalidateIntrinsicContentSize()
 			self?.run.runControl?.applyThemeChange()
 		}
-		bar.onProjectPressed = { [weak self] in self?.showProjectSwitcher(nil) }
+		bar.onProjectPressed = { [weak self] in self?.showProjectSwitcherAtPill() }
 		bar.onBranchPressed = { [weak self] in self?.showBranchMenu() }
 		bar.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
 		bar.onOpenSubproject = { [weak self] url in self?.openSubproject(at: url) }
@@ -835,7 +835,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.expandAllFolds()
 	}
 
+	/// ⇧⌘P, and the driven runs that stand in for it: the list centred over
+	/// this window, where somebody who pressed a key is looking, rather than
+	/// in the corner the pill happens to be in. The capsule is not lit for
+	/// this one — nothing is pointing at it.
 	@objc func showProjectSwitcher(_ sender: Any?) {
+		ProjectSwitcherPopover.showCentred(
+			over: window,
+			currentProject: project,
+			owner: self
+		)
+	}
+
+	/// The pill clicked, which keeps the geometry a click deserves: the list
+	/// hanging off the control that was pressed, with that half of the capsule
+	/// lit while it is open.
+	func showProjectSwitcherAtPill() {
 		guard let capsule = titlebar.capsuleView else { return }
 		capsule.menuHalf = .project
 		ProjectSwitcherPopover.show(

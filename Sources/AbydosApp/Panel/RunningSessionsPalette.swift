@@ -120,28 +120,17 @@ final class RunningSessionsPalette: RunningSessionsHost {
 		return window
 	}
 
-	/// Centred horizontally on the parent, near its top, and kept inside it:
-	/// a window narrower than the list would otherwise be given a list hanging
-	/// off both its edges.
+	/// Where it stands is `PalettePanel`'s, shared with the switcher's palette
+	/// rather than kept here: the arithmetic and the reason for it — the
+	/// window, not the screen — are written there once.
 	private func place(_ window: NSWindow, over parent: NSWindow) {
-		let size = controller.wantedSize
-		window.setContentSize(size)
-		let frame = parent.frame
-		let x = min(
-			max(frame.minX, frame.midX - window.frame.width / 2),
-			max(frame.minX, frame.maxX - window.frame.width)
-		)
-		window.setFrameOrigin(NSPoint(x: x, y: frame.maxY - window.frame.height - Theme.current.scaled(120)))
+		PalettePanel.place(window, over: parent, size: controller.wantedSize)
 	}
 
 	/// A session appearing or ending changes how tall the list wants to be.
-	/// The top edge stays where it is, so the rows somebody is reading do not
-	/// move under them.
 	private func resize(to size: NSSize) {
 		guard let window, window.isVisible else { return }
-		let top = window.frame.maxY
-		window.setContentSize(size)
-		window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+		PalettePanel.resize(window, to: size)
 	}
 
 	// MARK: - For the harness
@@ -152,16 +141,9 @@ final class RunningSessionsPalette: RunningSessionsHost {
 	func pressForTesting(_ key: String) -> String { controller.pressForTesting(key) }
 
 	/// Where it sits against the window it was opened over, for a run to check
-	/// that "centred, near the top" is what happened.
+	/// that "centred, near the top" is what happened — the report every palette
+	/// answers with, since they share the placement.
 	func placementForTesting(over parent: NSWindow?) -> String {
-		guard let window, window.isVisible else { return "not open" }
-		guard let parent else { return "no window" }
-		let mine = window.frame, theirs = parent.frame
-		return String(
-			format: "%.0f×%.0f centred=%@ offTop=%.0f",
-			mine.width, mine.height,
-			abs(mine.midX - theirs.midX) < 2 ? "yes" : "no",
-			theirs.maxY - mine.maxY
-		)
+		PalettePanel.placementForTesting(window, over: parent)
 	}
 }

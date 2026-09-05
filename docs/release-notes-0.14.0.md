@@ -122,3 +122,33 @@ two undos return it to tabs. A three-space file is offered its own three
 beside the standing widths — Tabs/2/3/4/8, *Spaces: 3* ticked. The footer
 photographed on the yaml: *1:1*, then *Spaces: 2*, then *YAML*, the chip
 between the position and the language where the request put it.
+
+## ⇧⌘P opens where you are looking
+
+Asked for on 2026-09-05: "the agent dialog is opened at the center of the
+window when open with the shortcut, which ist nice. I think we should do the
+same for the palette (shift + cmd + P)."
+
+⇧⌘A has put the list of running sessions in the middle of its window since it
+was added; ⇧⌘P — the same gesture, a key pressed by somebody looking at the
+middle of a wide window — opened its list in the top-left corner, because the
+key had been handed the geometry of the project pill a *click* opens it from.
+
+Now the key's palette opens centred horizontally on the window that answered
+it, near that window's top, as a child of it, in the same panel the sessions
+list and the symbol palette use — one placement, written once, rather than a
+third copy of the same arithmetic. Escape puts it away, so does clicking past
+it, and so does ⇧⌘P pressed again. The list itself is unchanged: the same
+rows, ranking, filter field and keys, being one controller in two windows.
+
+A click keeps the geometry a click deserves. The project pill, the branch pill
+and the run control still open the list hanging off themselves, with that half
+of the capsule lit — a list that jumped to the middle of the window when a
+corner control was pressed would have lost the thing it is about.
+
+Driven on a scratch project: over a 1600-point window the palette reports
+340×560, centred, 120 points below the top; over a 300-point window — narrower
+than the palette wants to be — it stays inside that window's edge rather than
+hanging off both; ⇧⌘P again reports it closed; and the same run through the
+pill reports the anchored popover with the same 296 rows and the same first
+row under ↓.

@@ -42,6 +42,11 @@ enum ProjectSwitcherPopover {
 	nonisolated(unsafe) static var reportsForTesting = false
 
 	private static var active: NSPopover?
+	/// The window the key's palette lives in, and the window it was opened
+	/// over — kept so that the key can close it again and a driven run can ask
+	/// where it landed.
+	private static var activePanel: PalettePanel?
+	private static weak var activeParent: NSWindow?
 	private static weak var activeController: SwitcherViewController?
 
 	/// What the popover is showing, headings and all, so a driven run can check
@@ -93,13 +98,9 @@ enum ProjectSwitcherPopover {
 		runs: RunList? = nil
 	) {
 		// Clicking the pill while open should dismiss rather than stack popovers.
-		if let active, active.isShown {
-			active.close()
-			Self.active = nil
-			return
-		}
+		guard !dismissedWhatWasOpen() else { return }
 
-		let controller = SwitcherViewController(
+		let controller = makeController(
 			currentProject: currentProject, owner: owner, focus: focus, runs: runs
 		)
 		let popover = NSPopover()
@@ -112,6 +113,7 @@ enum ProjectSwitcherPopover {
 		popover.willClose = {
 			pill.isMenuOpen = false
 			Self.active = nil
+			Self.activeController = nil
 		}
 
 		active = popover
@@ -119,6 +121,152 @@ enum ProjectSwitcherPopover {
 		popover.show(relativeTo: anchorRect ?? pill.bounds, of: pill, preferredEdge: .maxY)
 		// The table needs to be first responder for arrow keys to work immediately.
 		controller.focusTable()
+	}
+
+	/// The same list, centred over the window whose menu answered ⇧⌘P.
+	///
+	/// **A key's list belongs where the eyes are; a click's belongs at the
+	/// control.** ⇧⌘A had put the running-sessions list in the middle of its
+	/// window since it was added, and this one — the same gesture, a key
+	/// pressed by somebody looking at the middle of a wide window — opened in
+	/// the top-left corner, because the key had been given the pill's geometry.
+	/// The pill, the branch pill and the run control keep that geometry, which
+	/// is theirs: a list that jumped to the middle when a corner control was
+	/// clicked would have lost the thing it is about.
+	///
+	/// One controller either way, as the running-sessions list is one
+	/// controller in two windows — this is where it stands, not a second
+	/// palette.
+	static func showCentred(
+		over parent: NSWindow?,
+		currentProject: Project?,
+		owner: MainWindowController? = nil,
+		focus: Focus = .everything,
+		runs: RunList? = nil
+	) {
+		guard let parent else { return }
+		// The key pressed again puts it away, which is what the panel's own
+		// `onKey` below catches; this covers the other openings — the pill
+		// while the panel is up, and a driven run asking twice.
+		guard !dismissedWhatWasOpen() else { return }
+
+		let controller = makeController(
+			currentProject: currentProject, owner: owner, focus: focus, runs: runs
+		)
+		// A nominal frame: the list's own size is known only once the view has
+		// loaded, which setting the content controller below is what does, and
+		// `place` gives the window that size a moment later.
+		let window = PalettePanel(
+			contentRect: NSRect(x: 0, y: 0, width: Theme.current.scaled(340), height: Theme.current.scaled(360)),
+			styleMask: [.titled, .fullSizeContentView],
+			backing: .buffered,
+			defer: true
+		)
+		window.titleVisibility = .hidden
+		window.titlebarAppearsTransparent = true
+		window.isMovableByWindowBackground = true
+		window.contentViewController = controller
+
+		controller.onDismiss = { closeCentred() }
+		controller.onWantedSize = { [weak window] size in
+			guard let window, window.isVisible else { return }
+			PalettePanel.resize(window, to: size)
+		}
+		window.onResignKey = { closeCentred() }
+		// ⇧⌘P again, caught here because a child window's responder chain does
+		// not run through its parent: while this panel has the keyboard nothing
+		// answers `showProjectSwitcher(_:)`, the menu item is disabled, and the
+		// keystroke arrives at this window instead. The same place ⇧⌘A catches
+		// its own key.
+		window.onKey = { event in
+			guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command, .shift],
+			      event.charactersIgnoringModifiers?.lowercased() == "p"
+			else { return false }
+			closeCentred()
+			return true
+		}
+
+		activePanel = window
+		activeParent = parent
+		activeController = controller
+		PalettePanel.place(window, over: parent, size: controller.preferredContentSize)
+		parent.addChildWindow(window, ordered: .above)
+		// The keyboard only if the app already has it: opening this is an
+		// answer to a keystroke, so it always does in use, and never does in a
+		// capture run — where taking it would take it from somebody's terminal.
+		if NSApp.isActive {
+			window.makeKeyAndOrderFront(nil)
+		} else {
+			window.orderFront(nil)
+		}
+		controller.focusTable()
+	}
+
+	/// Whichever of the two was open, put away — so that the gesture that
+	/// opens one closes the other rather than stacking them.
+	@discardableResult
+	private static func dismissedWhatWasOpen() -> Bool {
+		if let active, active.isShown {
+			active.close()
+			Self.active = nil
+			Self.activeController = nil
+			return true
+		}
+		if activePanel?.isVisible == true {
+			closeCentred()
+			return true
+		}
+		return false
+	}
+
+	private static func closeCentred() {
+		guard let window = activePanel else { return }
+		window.parent?.removeChildWindow(window)
+		window.orderOut(nil)
+		activePanel = nil
+		activeParent = nil
+		activeController = nil
+	}
+
+	/// ⇧⌘P again, delivered where that key actually arrives while the palette
+	/// holds the keyboard — the panel itself, the menu item being disabled —
+	/// so a run can claim the second press closes it. The answer is where the
+	/// palette is afterwards, which for a working close is "not open".
+	static func pressTheKeyAgainForTesting() -> String {
+		guard let window = activePanel, window.isVisible else { return "not open" }
+		guard let event = NSEvent.keyEvent(
+			with: .keyDown,
+			location: .zero,
+			modifierFlags: [.command, .shift],
+			timestamp: ProcessInfo.processInfo.systemUptime,
+			windowNumber: window.windowNumber,
+			context: nil,
+			characters: "P",
+			charactersIgnoringModifiers: "p",
+			isARepeat: false,
+			keyCode: 35
+		) else { return "no event" }
+		window.keyDown(with: event)
+		return placementForTesting()
+	}
+
+	/// Where the centred palette sits against the window it was opened over, so
+	/// a driven run checks the placement without a screenshot.
+	static func placementForTesting() -> String {
+		// A click's list is a popover hanging off the control, which has no
+		// frame of its own to measure and needs none: that it is the anchored
+		// one is the whole claim.
+		if let active, active.isShown { return "anchored to the control" }
+		return PalettePanel.placementForTesting(activePanel, over: activeParent)
+	}
+
+	private static func makeController(
+		currentProject: Project?,
+		owner: MainWindowController?,
+		focus: Focus,
+		runs: RunList?
+	) -> SwitcherViewController {
+		SwitcherViewController(currentProject: currentProject, owner: owner, focus: focus, runs: runs)
 	}
 }
 
@@ -183,6 +331,9 @@ private final class SwitcherViewController: NSViewController {
 	}
 
 	var onDismiss: (() -> Void)?
+	/// How tall the list wants to be, for a window that has to be told —
+	/// `NSPopover` watches `preferredContentSize` itself; a panel does not.
+	var onWantedSize: ((NSSize) -> Void)?
 
 	private let currentProject: Project?
 	/// The window the choice was made in, which is the one that changes
@@ -366,6 +517,7 @@ private final class SwitcherViewController: NSViewController {
 			width: Theme.current.scaled(340),
 			height: min(max(contentHeight, Theme.current.scaled(120)), Theme.current.scaled(560))
 		)
+		onWantedSize?(preferredContentSize)
 	}
 
 	/// Checkouts found by scanning, refreshed in the background.
