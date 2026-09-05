@@ -6,11 +6,18 @@ public struct DecryptedBuffer: Equatable {
 	public var text: String
 	public var isEdited: Bool
 	public var caretLine: Int
+	/// The plaintext exactly as `sops` returned it at the decrypt, kept so a
+	/// save can tell "edited" from "edited and undone back" — `isEdited`
+	/// cannot: undo marks the buffer dirty on the way back too. Nil for a
+	/// buffer that predates the field, which cannot happen while the app
+	/// runs and is merely the honest answer if it did.
+	public var baseline: String?
 
-	public init(text: String, isEdited: Bool, caretLine: Int) {
+	public init(text: String, isEdited: Bool, caretLine: Int, baseline: String? = nil) {
 		self.text = text
 		self.isEdited = isEdited
 		self.caretLine = caretLine
+		self.baseline = baseline
 	}
 }
 

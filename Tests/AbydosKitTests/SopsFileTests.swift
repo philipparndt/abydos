@@ -110,6 +110,19 @@ struct DecryptedBuffersTests {
 		#expect(park.take(root: a, file: file) == newer)
 	}
 
+	/// A buffer edited and undone back to the decrypt's own text parks with
+	/// its baseline and the baseline comes back with it — the round trip is
+	/// what lets a save after the switch skip the encrypt, which `isEdited`
+	/// alone would never say.
+	@Test func theBaselineSurvivesThePark() {
+		let park = DecryptedBuffers()
+		let undone = DecryptedBuffer(
+			text: "k: v\n", isEdited: true, caretLine: 0, baseline: "k: v\n"
+		)
+		park.park(undone, root: a, file: file)
+		#expect(park.take(root: a, file: file)?.baseline == "k: v\n")
+	}
+
 	@Test func aTrailingSlashIsTheSameRoot() {
 		let park = DecryptedBuffers()
 		park.park(buffer, root: URL(fileURLWithPath: "/p/a/"), file: file)

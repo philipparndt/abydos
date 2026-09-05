@@ -120,6 +120,17 @@ final class EditorViewController: NSViewController {
 		/// never auto-saved, never sent to a language server, never reloaded
 		/// from disk, and ⌘S encrypts it rather than writing it.
 		var isDecrypted = false
+		/// The plaintext exactly as `sops` gave it back, set by the decrypt
+		/// and read by the save — the one comparison that can tell an
+		/// unchanged buffer from an edited one, which `isDirty` cannot: undo
+		/// marks a buffer dirty on the way back to the decrypt's own text,
+		/// and `sops --encrypt` is randomised, so encrypting that buffer
+		/// would give the file a new version of the same text. Text and not a
+		/// digest because the rope and the undo tree already hold the whole
+		/// of it, and a hash would cost a save-time computation to save
+		/// kilobytes. Cleared by the lock, like everything else about a
+		/// decrypted buffer.
+		var decryptedBaseline: String?
 		/// The Cadova model this file is a source of, when it is one — which its
 		/// name cannot say either, and for a harder reason than a recipe's: what
 		/// makes a `.swift` a model is the *package manifest*, two or three
@@ -3840,8 +3851,10 @@ final class EditorViewController: NSViewController {
 
 	func save() {
 		guard let tab = activeTab else { return }
-		// A decrypted buffer is never written as it is: ⌘S encrypts it over
-		// the file through `sops`, and the plaintext stays where it was.
+		// A decrypted buffer is never written as it is: ⌘S sends it through the
+		// encrypt path — which runs `sops` over the file when something was
+		// edited into it, and only locks it back when nothing was — and the
+		// plaintext stays where it was.
 		if tab.isDecrypted {
 			Task { @MainActor in await self.encryptAndSave(tab) }
 			return
@@ -4011,6 +4024,7 @@ final class EditorViewController: NSViewController {
 		codeView.replaceAllText(with: result.stdout)
 		document.markClean()
 		tab.isDecrypted = true
+		tab.decryptedBaseline = result.stdout
 		document.declinesAutoSave = true
 		// A decrypted buffer is a `.dec` that never touched disk: it conceals,
 		// whatever the file is called — and stands revealed from the start,
@@ -4036,6 +4050,7 @@ final class EditorViewController: NSViewController {
 		codeView.replaceAllText(with: text)
 		document.markClean()
 		tab.isDecrypted = false
+		tab.decryptedBaseline = nil
 		document.declinesAutoSave = false
 		codeView.setSecretsRevealed(false)
 		codeView.setConcealsSecrets(
@@ -4056,6 +4071,8 @@ final class EditorViewController: NSViewController {
 	/// The buffer through `sops --encrypt` on stdin, the ciphertext over the
 	/// file. The buffer stays decrypted and becomes clean. Refused when the
 	/// file moved on disk since the decrypt: a stale save is a stale save.
+	/// A buffer still holding the decrypt's own plaintext skips the encrypt
+	/// — `lockIfUnchanged(_:)` below.
 	@discardableResult
 	func encryptAndSave(_ tab: Tab) async -> Bool {
 		guard let document = tab.document, tab.isDecrypted else { return false }
@@ -4066,6 +4083,7 @@ final class EditorViewController: NSViewController {
 			)
 			return false
 		}
+		if lockIfUnchanged(tab) { return true }
 		let result = await Sops.encrypt(text(of: document), for: tab.url)
 		return finishEncrypt(result, for: tab)
 	}
@@ -4078,7 +4096,27 @@ final class EditorViewController: NSViewController {
 			Toast.post("\(tab.url.lastPathComponent) changed on disk", detail: "Nothing was written.")
 			return false
 		}
+		if lockIfUnchanged(tab) { return true }
 		return finishEncrypt(Sops.encryptSync(text(of: document), for: tab.url), for: tab)
+	}
+
+	/// The save's first question, asked on every route to one: whether the
+	/// buffer still holds exactly what the decrypt returned. Such a save
+	/// costs the file nothing — the ciphertext on disk already *is* this
+	/// text's version, while `sops --encrypt` would mint a fresh one, the
+	/// same plaintext going in and a file sharing not one line coming out —
+	/// so the encrypt is skipped and the buffer locked back, the same lock
+	/// the chip gives an unedited buffer. `isDirty` could not answer this:
+	/// undo marks a buffer dirty on the way back to the decrypt's own text,
+	/// and ⌘S never asked at all. Called only after the changed-on-disk
+	/// refusal, because a file that moved is not the file this baseline came
+	/// from, and its answer is the refusal.
+	@discardableResult
+	private func lockIfUnchanged(_ tab: Tab) -> Bool {
+		guard let document = tab.document else { return false }
+		guard text(of: document) == tab.decryptedBaseline else { return false }
+		lockAgain(tab)
+		return true
 	}
 
 	private func finishEncrypt(_ result: GitRepository.ProcessResult, for tab: Tab) -> Bool {
@@ -4111,7 +4149,8 @@ final class EditorViewController: NSViewController {
 			guard let document = tab.document else { continue }
 			parkDecrypted?(tab.url, DecryptedBuffer(
 				text: text(of: document), isEdited: tab.isDirty,
-				caretLine: tab.codeView?.caretLine ?? 0
+				caretLine: tab.codeView?.caretLine ?? 0,
+				baseline: tab.decryptedBaseline
 			))
 			removeTab(at: index)
 		}
@@ -4122,6 +4161,10 @@ final class EditorViewController: NSViewController {
 		codeView.replaceAllText(with: parked.text)
 		if !parked.isEdited { document.markClean() }
 		tab.isDecrypted = true
+		// The park carried the baseline or it never existed; re-deriving it
+		// from the parked text when `isEdited` is false would lose exactly
+		// the edited-then-undone buffer the skip exists for.
+		tab.decryptedBaseline = parked.baseline
 		document.declinesAutoSave = true
 		codeView.setConcealsSecrets(Settings.shared.concealsSecrets)
 		refreshTabBar()
@@ -4132,7 +4175,7 @@ final class EditorViewController: NSViewController {
 
 	/// Drives the chip from outside: `report` (the state, the line count and a
 	/// digest of the text — never the text, since a driven run's log must not
-	/// be a secret), `decrypt`, `encrypt`, `type:<text>`, `settle`.
+	/// be a secret), `decrypt`, `encrypt`, `type:<text>`, `undo`, `settle`.
 	func sopsForTesting(_ steps: String) {
 		let script = steps.split(separator: ",").map(String.init)
 		for (index, step) in script.enumerated() {
@@ -4153,6 +4196,7 @@ final class EditorViewController: NSViewController {
 			case "decrypt": pressSops()
 			case "encrypt": save()
 			case "type": simulateTyping(argument)
+			case "undo": undoForTesting()
 			default: print("SOPS: unknown step \(step)")
 			}
 		}
@@ -4174,6 +4218,103 @@ final class EditorViewController: NSViewController {
 			+ " lines=\(tab.document?.rope.lineCount ?? 0) sha256=\(digest)"
 			+ " covers=\(tab.codeView?.showsSecretCovers ?? false)"
 			+ " revealed=\(tab.codeView?.secretsRevealedAll ?? false)"
+	}
+
+	// MARK: - Indentation
+
+	/// What the footer's indent chip says for the front tab: the style its
+	/// view holds, asked of the view because the view is what inserts. Nil
+	/// with no editor, which is when the bar is hidden anyway.
+	var indentState: IndentStyle? { activeTab?.codeView?.indentStyle }
+
+	/// The footer menu's pick, routed to the view that owns the buffer: the
+	/// file's indentation converted to the chosen style, and the style made
+	/// the one that is inserted from here. The view does the converting —
+	/// it holds the buffer and the style both — and this lets the bar hear
+	/// about it, the choice's one obligation to the world above it.
+	func convertIndentation(to style: IndentStyle) {
+		activeTab?.codeView?.convertIndentation(to: style)
+		onStatusChanged?(self)
+	}
+
+	/// Drives the chip, its menu and the keys around it from outside:
+	/// `report` (the chip's words, the menu's offer and the buffer's head,
+	/// tail on a longer file, tabs as `→`), `menu` (the offer alone),
+	/// `choose:tabs` or `choose:<width>` (the menu's pick), `tab`, `return`,
+	/// `caret:<line>`, `type:<text>`, `shift:<from>-<to>` and
+	/// `unshift:<from>-<to>` (lines 1-based, inclusive, shifted as ⇥ and ⇧⇥
+	/// shift them), `undo`, `settle`.
+	func indentChipForTesting(_ steps: String) {
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			if step.hasPrefix("settle") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.indentChipForTesting(rest)
+				}
+				return
+			}
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "report": print("INDENT: \(indentChipReportForTesting())")
+			case "menu": print("INDENT: \(indentMenuReportForTesting())")
+			case "choose":
+				if argument == "tabs" {
+					convertIndentation(to: .tabs)
+				} else if let width = Int(argument) {
+					convertIndentation(to: .spaces(width: width))
+				} else {
+					print("INDENT: unknown style \(argument)")
+				}
+			case "tab": simulateTab()
+			case "return": simulateReturn()
+			case "caret": activeTab?.codeView?.moveCaretForTesting(toLine: (Int(argument) ?? 1) - 1)
+			case "type": simulateTyping(argument)
+			case "undo": undoForTesting()
+			case "shift", "unshift":
+				// Lines the way the other steps name them, 1-based and
+				// inclusive, handed to the block driver that ⇥ and ⇧⇥ go
+				// through — the same door, so what is measured is what the
+				// keys do.
+				let bounds = argument.split(separator: "-").compactMap { Int($0) }
+				guard bounds.count == 2, bounds[0] <= bounds[1] else {
+					print("INDENT: unknown lines \(argument)")
+					continue
+				}
+				_ = indentForTesting(
+					fromLine: bounds[0] - 1, toLine: bounds[1] - 1, outdent: step.hasPrefix("unshift")
+				)
+			default: print("INDENT: unknown step \(step)")
+			}
+		}
+		fflush(stdout)
+	}
+
+	private func indentChipReportForTesting() -> String {
+		guard let tab = activeTab, let codeView = tab.codeView else { return "no editor" }
+		// The head and, on a file longer than the head, the tail with an ellipsis:
+		// a return proof types at the end, and the head alone would not show it.
+		let lines = codeView.textForTesting.components(separatedBy: "\n")
+		let visible = { (line: String) in line.replacingOccurrences(of: "\t", with: "→") }
+		var shown = lines.prefix(8).map(visible)
+		if lines.count > 8 { shown += ["…"] + lines.suffix(4).map(visible) }
+		return "chip=\(codeView.indentStyle.words) file=\(tab.url.lastPathComponent)"
+			+ " \(indentMenuReportForTesting()) lines=\(shown.joined(separator: " ⏎ "))"
+	}
+
+	/// The menu's offer, from the same rule the menu is built from — one
+	/// source in the engine, read by both — with the current style named.
+	private func indentMenuReportForTesting() -> String {
+		guard let codeView = activeTab?.codeView else { return "menu=none" }
+		let currentWidth: Int?
+		if case .spaces(let width) = codeView.indentStyle { currentWidth = width } else { currentWidth = nil }
+		let offered = (["Tabs"] + IndentStyle.offeredWidths(currentWidth: currentWidth).map(String.init))
+			.joined(separator: "/")
+		return "menu=\(offered) ticked=\(codeView.indentStyle.words)"
 	}
 
 	/// Drives the covers from outside: `report`, `caret:<line>` (as an
@@ -4895,6 +5036,14 @@ final class EditorStatusView: NSView {
 	private var isSopsHovered = false
 	/// The chip was pressed: decrypt, or encrypt and save.
 	var onSopsPressed: (() -> Void)?
+	/// How the front tab indents — the indent chip's words, pushed by the area
+	/// controller beside the lock's and the SOPS chip's. Nil with no editor,
+	/// and the chip is not drawn.
+	private var indentStyle: IndentStyle?
+	private var indentRect = NSRect.zero
+	private var isIndentHovered = false
+	/// A style was chosen from the menu: convert the file to it.
+	var onIndentChosen: ((IndentStyle) -> Void)?
 	/// The rectangle the tool tip is currently registered for, so it is put back
 	/// only when it has moved rather than on every redraw. Nil asks for it to be
 	/// registered again whatever the rectangle says.
@@ -4934,6 +5083,16 @@ final class EditorStatusView: NSView {
 		needsDisplay = true
 	}
 
+	/// How the front tab indents, for the chip. Pushed on every status
+	/// refresh beside the others, which is cheap here: a stored enum read,
+	/// never a sample of the file.
+	func setIndent(_ style: IndentStyle?) {
+		guard style != indentStyle else { return }
+		indentStyle = style
+		toolTipRect = nil
+		needsDisplay = true
+	}
+
 	func setServer(_ footer: LanguageServerFooter?) {
 		let text = footer?.text(containerMark: MainWindowController.containerMark) ?? ""
 		let detail = footer?.detail ?? ""
@@ -4964,21 +5123,24 @@ final class EditorStatusView: NSView {
 		let server = !serverRect.isEmpty && serverRect.contains(point)
 		let lock = !lockRect.isEmpty && lockRect.contains(point)
 		let sops = !sopsRect.isEmpty && sopsRect.contains(point)
+		let indent = !indentRect.isEmpty && indentRect.contains(point)
 		guard language != isLanguageHovered || server != isServerHovered
-			|| lock != isLockHovered || sops != isSopsHovered else { return }
+			|| lock != isLockHovered || sops != isSopsHovered || indent != isIndentHovered else { return }
 		isLanguageHovered = language
 		isServerHovered = server
 		isLockHovered = lock
 		isSopsHovered = sops
+		isIndentHovered = indent
 		needsDisplay = true
 	}
 
 	override func mouseExited(with event: NSEvent) {
-		guard isLanguageHovered || isServerHovered || isLockHovered || isSopsHovered else { return }
+		guard isLanguageHovered || isServerHovered || isLockHovered || isSopsHovered || isIndentHovered else { return }
 		isLanguageHovered = false
 		isServerHovered = false
 		isLockHovered = false
 		isSopsHovered = false
+		isIndentHovered = false
 		needsDisplay = true
 	}
 
@@ -4990,6 +5152,10 @@ final class EditorStatusView: NSView {
 		}
 		if !sopsRect.isEmpty, sopsRect.contains(point) {
 			onSopsPressed?()
+			return
+		}
+		if !indentRect.isEmpty, indentRect.contains(point) {
+			showIndentMenu(at: NSPoint(x: indentRect.minX, y: indentRect.maxY))
 			return
 		}
 		if languageRect.contains(point) {
@@ -5015,6 +5181,7 @@ final class EditorStatusView: NSView {
 		super.resetCursorRects()
 		addCursorRect(languageRect, cursor: .pointingHand)
 		if !serverRect.isEmpty { addCursorRect(serverRect, cursor: .pointingHand) }
+		if !indentRect.isEmpty { addCursorRect(indentRect, cursor: .pointingHand) }
 	}
 
 	private func showLanguageMenu(at point: NSPoint) {
@@ -5064,45 +5231,74 @@ final class EditorStatusView: NSView {
 			.foregroundColor: Theme.current.gitIgnored,
 		]
 
-		// Right-aligned: server, then position, then language at the edge.
+		// Right-aligned: server, then position, then the indentation, then
+		// language at the edge.
 		//
-		// **The order is about which one is allowed to lose.** The language and
-		// the caret's position are a handful of characters and never more, so
-		// they are laid out first and keep their place; the server is beside the
-		// language — the same fact one layer down — and is the one that can be a
-		// name and an image tag together, so it takes whatever room the other two
-		// leave and truncates at the tail. 0458 hit this on a card and settled it
-		// the same way: say the important part first.
+		// **The order is about which one is allowed to lose.** The language,
+		// the caret's position and the file's indentation are a handful of
+		// characters and never more, so they are laid out first and keep
+		// their place; the server is beside the language — the same fact one
+		// layer down — and is the one that can be a name and an image tag
+		// together, so it takes whatever room the others leave and truncates
+		// at the tail. 0458 hit this on a card and settled it the same way:
+		// say the important part first.
 		let gap = Theme.current.scaled(16)
 		var x = bounds.width - Theme.current.scaled(12)
-		for (index, text) in [languageText, positionText].enumerated() where !text.isEmpty {
+		// The indent chip joins the right side as the language's neighbour —
+		// both are menus, and two controls that open menus belong side by
+		// side. Cleared first so a redraw with no style (no editor) takes
+		// its hit area with it.
+		indentRect = .zero
+		let indentText = indentStyle?.words ?? ""
+		for (index, text) in [languageText, indentText, positionText].enumerated() where !text.isEmpty {
 			let attributed = NSAttributedString(string: text, attributes: attributes)
 			let size = attributed.size()
 			x -= size.width
 			let origin = NSPoint(x: x, y: bounds.midY - size.height / 2)
 
-			// The language is a control, so it gets a hit area and a hover
-			// background — otherwise nothing suggests it can be clicked.
+			// The language and the indentation are controls, so each gets a
+			// hit area and a hover background — otherwise nothing suggests
+			// it can be clicked.
 			if index == 0 {
 				languageRect = chipRect(around: origin, size: size)
 				if isLanguageHovered { highlight(languageRect) }
+			} else if index == 1 {
+				indentRect = chipRect(around: origin, size: size)
+				if isIndentHovered { highlight(indentRect) }
 			}
 
 			attributed.draw(at: origin)
 			x -= gap
 		}
 
-		drawServer(leftOf: x, attributes: attributes)
-		// After the right-aligned chips, not inside `drawServer`: that one
-		// returns early for the many files with no server, and the lock is
-		// about the file's secrets, not its tooling.
-		drawLock()
+		// The file's facts first — SOPS, then the lock — each taking its
+		// origin from the one before it, and none of them inside
+		// `drawServer`, which returns early for the many files with no server.
+		// Drawn before it so the server's room can begin after they end: these
+		// two are about the file, not its tooling, and a narrow window owes
+		// the server a name that starts after they finish rather than one
+		// that overlaps them.
 		drawSops()
+		drawLock()
+		drawServer(leftOf: x, after: leftChipsExtent(), attributes: attributes)
 	}
 
-	/// The SOPS chip, after the lock: the file's encryption beside the file's
-	/// covers, the two facts somebody checks before typing a secret. Pressing
-	/// it decrypts, or encrypts and saves; ⌘S is the other way to the second.
+	/// Where the left side's chips end, which is where the server's room
+	/// begins. Zero when none is shown, so the room falls back to the left
+	/// margin it always used.
+	private func leftChipsExtent() -> CGFloat {
+		max(
+			sopsRect.isEmpty ? 0 : sopsRect.maxX,
+			lockRect.isEmpty ? 0 : lockRect.maxX
+		)
+	}
+
+	/// The SOPS chip, first at the edge, before the lock: the chip is the
+	/// button and the lock is a fact beside it, and a button that moves
+	/// between its two states is a button nobody learns to reach for. It used
+	/// to stand after the lock, and a decrypt brought the lock up beside it —
+	/// so the chip jumped away the moment it was pressed. Pressing it
+	/// decrypts, or encrypts and saves; ⌘S is the other way to the second.
 	private func drawSops() {
 		guard sopsState != .none else {
 			sopsRect = .zero
@@ -5125,9 +5321,9 @@ final class EditorStatusView: NSView {
 		let symbol = Theme.symbol(glyph, size: 11 * Theme.current.scale, color: colour)
 		let aspect = (symbol?.size.height ?? 0) > 0 ? symbol!.size.width / symbol!.size.height : 1
 		let drawn = NSSize(width: height * aspect, height: height)
-		// After the lock when there is one, at the edge when there is not.
-		let left = lockRect.isEmpty ? Theme.current.scaled(12) : lockRect.maxX + Theme.current.scaled(10)
-		let origin = NSPoint(x: left, y: bounds.midY - drawn.height / 2)
+		// At the edge, always — the one place the chip keeps through every
+		// state, so it is where the cursor already is when its state changes.
+		let origin = NSPoint(x: Theme.current.scaled(12), y: bounds.midY - drawn.height / 2)
 		let label = NSAttributedString(string: words, attributes: [
 			.font: Theme.current.uiFont(11), .foregroundColor: colour,
 		])
@@ -5148,8 +5344,13 @@ final class EditorStatusView: NSView {
 		label.draw(at: labelOrigin)
 	}
 
-	/// The server chip, in the room the position and the language left.
-	private func drawServer(leftOf right: CGFloat, attributes: [NSAttributedString.Key: Any]) {
+	/// The server chip, in the room the position and the language left, which
+	/// begins after the file-fact chips on the left rather than at the
+	/// window's margin: with the indent chip always present, an overlap on a
+	/// narrow window was a matter of time rather than of bad luck.
+	private func drawServer(
+		leftOf right: CGFloat, after leftExtent: CGFloat, attributes: [NSAttributedString.Key: Any]
+	) {
 		defer { refreshServerToolTip() }
 		serverRect = .zero
 		guard !serverText.isEmpty else { return }
@@ -5166,7 +5367,8 @@ final class EditorStatusView: NSView {
 		// comparison written where the drawing is. 0467 is why: the rule used to
 		// be here, it asked the wrong question, and nothing in the suite could
 		// see it ask.
-		let room = right - Theme.current.scaled(12) - Theme.current.scaled(10)
+		let left = max(leftExtent, Theme.current.scaled(12))
+		let room = right - left - Theme.current.scaled(10)
 		guard let fits = LanguageServerFooter.chipWidth(
 			text: Double(size.width),
 			room: Double(room),
@@ -5180,11 +5382,11 @@ final class EditorStatusView: NSView {
 		attributed.draw(in: NSRect(origin: origin, size: NSSize(width: width, height: size.height)))
 	}
 
-	/// The lock, on the left, where the eye already checks the file's facts:
-	/// shut while the file's secrets are covered, open while they stand
-	/// revealed, absent for a file that conceals nothing. Pressing it shows or
-	/// hides every secret in the file — the same act as View ▸ Reveal Secrets,
-	/// one click closer to where the covers are.
+	/// The lock, after the SOPS chip when one is shown, alone at the edge when
+	/// there is not: shut while the file's secrets are covered, open while they
+	/// stand revealed, absent for a file that conceals nothing. Pressing it
+	/// shows or hides every secret in the file — the same act as View ▸
+	/// Reveal Secrets, one click closer to where the covers are.
 	private func drawLock() {
 		guard secretsConcealing else {
 			lockRect = .zero
@@ -5203,7 +5405,10 @@ final class EditorStatusView: NSView {
 		// square rect squeezed it out of shape.
 		let aspect = symbol.size.height > 0 ? symbol.size.width / symbol.size.height : 1
 		let drawn = NSSize(width: height * aspect, height: height)
-		let origin = NSPoint(x: Theme.current.scaled(12), y: bounds.midY - drawn.height / 2)
+		// After the chip when there is one, at the edge when there is not: the
+		// chip is the control that gets pressed, and it keeps its place.
+		let left = sopsRect.isEmpty ? Theme.current.scaled(12) : sopsRect.maxX + Theme.current.scaled(10)
+		let origin = NSPoint(x: left, y: bounds.midY - drawn.height / 2)
 
 		// The word beside the symbol, because a lock alone could be about
 		// anything — the file, the git index, the window.
@@ -5232,6 +5437,47 @@ final class EditorStatusView: NSView {
 		label.draw(at: labelOrigin)
 	}
 
+	/// The indent menu, popped at the chip on the right: the styles a file is
+	/// switched among, the current one ticked. Choosing converts the file's
+	/// indentation to the style and makes it the one inserted from here; the
+	/// chip itself is drawn in the right-aligned row beside the language,
+	/// where the two menu-openers stand together.
+	private func showIndentMenu(at point: NSPoint) {
+		makeIndentMenu().popUp(positioning: nil, at: point, in: self)
+	}
+
+	/// The menu's items, built from the one rule the driven report also
+	/// reads: tabs, then the standing widths with the file's own beside them
+	/// when it is not one of them.
+	private func makeIndentMenu() -> NSMenu {
+		let menu = NSMenu()
+		let tabs = NSMenuItem(
+			title: "Indent with Tabs", action: #selector(chooseIndent(_:)), keyEquivalent: ""
+		)
+		tabs.target = self
+		tabs.tag = 0
+		tabs.state = indentStyle == .tabs ? .on : .off
+		menu.addItem(tabs)
+		menu.addItem(.separator())
+
+		var currentWidth: Int?
+		if case .spaces(let width) = indentStyle { currentWidth = width }
+		for width in IndentStyle.offeredWidths(currentWidth: currentWidth) {
+			let item = NSMenuItem(
+				title: "Indent with \(width) Spaces", action: #selector(chooseIndent(_:)), keyEquivalent: ""
+			)
+			item.target = self
+			item.tag = width
+			item.state = indentStyle == .spaces(width: width) ? .on : .off
+			menu.addItem(item)
+		}
+		return menu
+	}
+
+	@objc private func chooseIndent(_ sender: NSMenuItem) {
+		onIndentChosen?(sender.tag == 0 ? .tabs : .spaces(width: sender.tag))
+	}
+
 	/// The hit area and hover background of a chip, around the text it holds.
 	private func chipRect(around origin: NSPoint, size: NSSize) -> NSRect {
 		let padding = Theme.current.scaled(5)
@@ -5258,6 +5504,7 @@ final class EditorStatusView: NSView {
 	/// a redraw for a caret that moved within the same line costs nothing.
 	private var lockToolTipTag: NSView.ToolTipTag?
 	private var sopsToolTipTag: NSView.ToolTipTag?
+	private var indentToolTipTag: NSView.ToolTipTag?
 
 	private func refreshServerToolTip() {
 		guard serverRect != toolTipRect else { return }
@@ -5265,6 +5512,7 @@ final class EditorStatusView: NSView {
 		removeAllToolTips()
 		lockToolTipTag = nil
 		sopsToolTipTag = nil
+		indentToolTipTag = nil
 		if !sopsRect.isEmpty {
 			sopsToolTipTag = addToolTip(sopsRect, owner: self, userData: nil)
 		}
@@ -5277,6 +5525,9 @@ final class EditorStatusView: NSView {
 		// answers below with text computed when the tip is shown.
 		if !lockRect.isEmpty {
 			lockToolTipTag = addToolTip(lockRect, owner: self, userData: nil)
+		}
+		if !indentRect.isEmpty {
+			indentToolTipTag = addToolTip(indentRect, owner: self, userData: nil)
 		}
 		guard !serverRect.isEmpty else { return }
 		addToolTip(serverRect, owner: self, userData: nil)
@@ -5302,6 +5553,15 @@ final class EditorStatusView: NSView {
 				return edited
 					? "Encrypt with sops and save over the file, as ⌘S does; the buffer shows the ciphertext again"
 					: "Decrypted in the editor only. Press to put the ciphertext back; edit and ⌘S to encrypt and save."
+			}
+		}
+		if tag == indentToolTipTag {
+			switch indentStyle {
+			case .none: return ""
+			case .tabs:
+				return "This file indents with tabs. Choosing an indentation converts the file to it, and what ⇥, ⇧⇥ and return insert follows."
+			case .spaces(let width):
+				return "This file indents with \(width) spaces. Choosing an indentation converts the file to it, and what ⇥, ⇧⇥ and return insert follows."
 			}
 		}
 		return serverDetail

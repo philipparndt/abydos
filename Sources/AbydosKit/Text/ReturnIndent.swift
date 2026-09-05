@@ -145,20 +145,4 @@ public enum ReturnIndent {
 		}
 		return String(indent.dropLast(step.count))
 	}
-
-	/// Whether a file indents with tabs, judged by what it already does.
-	///
-	/// The file's own habit beats the setting: joining a tab-indented file and
-	/// filling it with spaces is worse than either convention on its own.
-	public static func usesTabs(in text: String, default fallback: Bool) -> Bool {
-		var tabs = 0
-		var spaces = 0
-		for line in text.split(separator: "\n", omittingEmptySubsequences: true).prefix(200) {
-			guard let first = line.first else { continue }
-			if first == "\t" { tabs += 1 }
-			if first == " " { spaces += 1 }
-		}
-		if tabs == 0, spaces == 0 { return fallback }
-		return tabs >= spaces
-	}
 }

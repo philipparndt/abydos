@@ -616,6 +616,10 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
 		let length = rope.utf16Offset(fromByte: rope.byteCount)
 		document.replace(utf16Range: 0..<length, with: text, caretBefore: caret)
+		// A buffer replaced wholesale — a decrypt, a lock, an external reload —
+		// is a new text whose habit is new, and a choice made from the
+		// footer's menu about the old one goes with it.
+		redetectIndentStyle()
 
 		folding = FoldingState()
 		folding.setAvailable(document.folds)
@@ -652,6 +656,10 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		// a block scalar's key sat in the clear. Computed again here, they see
 		// the file.
 		refreshSecretRoles()
+		// The file's indent habit, read once here rather than sampled on every
+		// return keypress the way `usesTabsForIndent` used to: the footer's
+		// chip needs a held answer, and the sample costs more than the holding.
+		redetectIndentStyle()
 		document.onLinesChanged = { [weak self] first, removed, inserted in
 			// The change marks ride the same signal breakpoints anchor by,
 			// before it is relayed: the marks are this view's own.
@@ -3693,8 +3701,8 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		let result = ReturnIndent.result(
 			before: before,
 			after: after,
-			usesTabs: usesTabsForIndent,
-			indentWidth: Theme.current.tabWidth,
+			usesTabs: indentStyle == .tabs,
+			indentWidth: indentSpaceWidth,
 			unclosed: unclosed
 		)
 
@@ -3723,7 +3731,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		guard ReturnIndent.shouldDedent(afterTyping: character, lineBefore: before) else { return }
 
 		let dedented = ReturnIndent.dedented(
-			before, usesTabs: usesTabsForIndent, indentWidth: Theme.current.tabWidth
+			before, usesTabs: indentStyle == .tabs, indentWidth: indentSpaceWidth
 		)
 		guard dedented != before else { return }
 
@@ -3735,24 +3743,57 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		afterEdit(caret: newCaret + 1)
 	}
 
-	/// Whether this file indents with tabs, judged by what it already does.
-	private var usesTabsForIndent: Bool {
-		guard let document else { return false }
-		// A window of the top of the file: enough to see the habit, cheap on a
-		// file of any size.
+	/// How this file indents — the kind, and for spaces the width — read from
+	/// the buffer when it arrives and whenever it is replaced wholesale, and
+	/// changed by the footer's menu through `convertIndentation(to:)`. Every
+	/// insertion follows it: ⇥, ⇧⇥, a block indent, return's auto-indent and
+	/// the closing brace's dedent. Held once here rather than sampled per
+	/// keypress — `usesTabsForIndent`, which this replaces, re-read the top
+	/// of the file on every return.
+	private(set) var indentStyle: IndentStyle = .spaces(width: Settings.shared.tabWidth)
+
+	/// Reads the buffer's habit into the style, at open and after a wholesale
+	/// replacement. The same 8 KB window the old per-keypress sample read.
+	private func redetectIndentStyle() {
+		guard let document else { return }
 		let sample = document.rope.string(in: 0..<min(document.rope.byteCount, 8192))
-		return ReturnIndent.usesTabs(in: sample, default: false)
+		indentStyle = IndentStyle.detect(in: sample, fallbackWidth: Settings.shared.tabWidth)
 	}
 
-	/// Tab: one tab where the caret is, or a level of indentation on every line
-	/// the selection touches.
+	/// The footer menu's pick: the buffer's indentation converted to the
+	/// chosen style — every leading level becomes a level of it, alignment
+	/// after the first non-blank left alone — and the style made the one
+	/// that is inserted from here. One edit, so one ⌘Z returns the file to
+	/// what it was.
+	func convertIndentation(to style: IndentStyle) {
+		guard let document else { return }
+		let text = document.rope.string(in: 0..<document.rope.byteCount)
+		replaceAllText(with: IndentStyle.converted(text, from: indentStyle, to: style))
+		// The choice stands over the re-read a wholesale replacement does: a
+		// conversion is the one replacement whose style is known without
+		// reading the buffer, because it was chosen — a file converted to
+		// tabs that has no indented line yet must not fall back to spaces
+		// the moment its own menu item is taken.
+		indentStyle = style
+	}
+
+	/// The width a spaces style inserts at; for a tabs file, the setting —
+	/// which `ReturnIndent` ignores for tabs and `LineIndent` needs only for
+	/// the space branch of an outdent.
+	private var indentSpaceWidth: Int {
+		if case .spaces(let width) = indentStyle { return width }
+		return Settings.shared.tabWidth
+	}
+
+	/// Tab: one level of the file's own style where the caret is, or a level
+	/// on every line the selection touches.
 	///
 	/// Pressing it with a block selected used to replace the block with a
 	/// single tab — the selection gone and the work with it, which is the sort
 	/// of thing that costs an undo and a moment's fright.
 	private func indentSelectionOrInsertTab() {
 		guard shiftLines(by: .indent) else {
-			insertTextAtCaret("\t")
+			insertTextAtCaret(indentStyle.unit)
 			return
 		}
 	}
@@ -3780,8 +3821,8 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		let end = block.range.upperBound
 		let before = block.text
 		let after = shift == .indent
-			? LineIndent.indent(before, using: "\t")
-			: LineIndent.outdent(before, tabWidth: Settings.shared.tabWidth)
+			? LineIndent.indent(before, using: indentStyle.unit)
+			: LineIndent.outdent(before, tabWidth: indentSpaceWidth)
 		guard after != before else { return false }
 
 		_ = document.replace(utf16Range: start..<end, with: after, caretBefore: caret)
@@ -4249,6 +4290,11 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		updateFrameSize()
 		scrollCaretToVisible()
 		needsDisplay = true
+		// With undo, redo and this: the three doors by which the text goes
+		// back to a former state. The habit is that state's — an undo that
+		// restored a conversion's tabs while the chip still claimed the
+		// conversion is a lie somebody would type against.
+		redetectIndentStyle()
 		reportCaretPosition()
 		onDirtyChanged?(document.isDirty)
 	}
@@ -4324,11 +4370,18 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	@objc func undo(_ sender: Any?) {
 		guard let document, let restored = document.undo() else { return }
 		afterEdit(caret: restored)
+		// The text went back to a former state; its habit is that state's.
+		// The undo of a conversion is the case, and the chip follows the
+		// text back rather than claiming the conversion still stands.
+		redetectIndentStyle()
 	}
 
 	@objc func redo(_ sender: Any?) {
 		guard let document, let restored = document.redo() else { return }
 		afterEdit(caret: restored)
+		// The mirror of undo's reason: redo re-applies what the text went
+		// back to, conversion included.
+		redetectIndentStyle()
 	}
 
 	/// The document's undo is not the rename field's.

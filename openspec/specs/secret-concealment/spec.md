@@ -6,11 +6,11 @@ Values in dotenv-shaped and decrypted secret files are drawn under an opaque cov
 ## Requirements
 ### Requirement: Dotenv values are concealed by default
 
-In a file whose name is dotenv-shaped — `.env`, `.env.*`, `*.env` — or a
-decrypted secret file — `*.dec` — the editor
-SHALL draw the value of every `KEY=VALUE` line under an opaque cover from the
-moment the file opens — a cover of one fixed width for every value, saying
-nothing about what it hides, its length included. Keys, comments, blank lines and lines without `=` are
+The editor SHALL draw the value of every `KEY=VALUE` line under an opaque
+cover from the moment the file opens, in a file whose name is dotenv-shaped —
+`.env`, `.env.*`, `*.env` — or a decrypted secret file — `*.dec` — a cover of
+one fixed width for every value, saying nothing about what it hides, its
+length included. Keys, comments, blank lines and lines without `=` are
 shown as they are. A shared screen cannot wait for a signal that sharing
 started: the file at risk is usually open before the call is.
 
@@ -60,8 +60,8 @@ the idle limit as any covered file is.
 
 ### Requirement: A value is shown only by an explicit action
 
-A cover SHALL be lifted only by the file-wide reveal — the lock on the left
-of the editor's status bar, labelled "Secrets hidden" while shut and
+A cover SHALL be lifted only by the file-wide reveal — the lock in the
+editor's status bar, labelled "Secrets hidden" while shut and
 "Secrets shown" while open, and View ▸ Reveal Secrets, the same act in two
 places — which lasts until toggled back. A click on a cover SHALL reveal
 nothing and say how to look instead: a click is exactly what a presenter
@@ -71,9 +71,10 @@ the editor settings, where it is on by default. The caret arriving on a line —
 jump — SHALL NOT reveal anything. A click's reveal SHALL end when the caret
 leaves that line, so a revealed value cannot be forgotten open.
 
-The lock SHALL keep its place on the left when the SOPS chip is shown beside
-it: the chip is the file's encryption and the lock is its covers, and pressing
-one SHALL NOT change the other.
+The SOPS chip SHALL keep its place at the bar's left edge in every state, and
+the lock SHALL follow it when both are shown, at the edge on its own for a
+file that conceals without being SOPS's: the chip is the file's encryption
+and the lock is its covers, and pressing one SHALL NOT change the other.
 
 #### Scenario: arrowing through the file reveals nothing
 
@@ -99,8 +100,8 @@ one SHALL NOT change the other.
 - **GIVEN** a revealed file untouched — no key, click, scroll or edit — for
   five minutes
 - **THEN** the covers come back on their own and the lock shuts, so an
-  unlocked document forgotten in the background does not sit open through
-  the next call
+  unlocked document forgotten in the background does not sit open through the
+  next call
 
 #### Scenario: reading resets the clock
 
@@ -117,7 +118,8 @@ one SHALL NOT change the other.
 
 - **GIVEN** a decrypted SOPS file with its values covered
 - **WHEN** the lock is pressed
-- **THEN** the values are shown and the chip still reads *SOPS · decrypted*
+- **THEN** the values are shown, the chip still reads *SOPS · decrypted*, and
+  neither chip nor lock has moved
 
 ### Requirement: Editing a covered value stays covered
 
@@ -145,3 +147,4 @@ corrupted copy would make the file unusable for the one person it belongs to.
 
 - **GIVEN** a covered value selected and copied
 - **THEN** the pasteboard holds the real value
+

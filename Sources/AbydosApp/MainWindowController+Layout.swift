@@ -870,6 +870,16 @@ extension MainWindowController {
 		for parked in decrypted.edited() {
 			switch askAboutDecrypted(named: parked.file.lastPathComponent) {
 			case .alertFirstButtonReturn:
+				// The same skip the editor's save path takes, for a loop that
+				// does not go through it: a buffer whose text is still the
+				// decrypt's own is a text whose ciphertext is already on disk,
+				// byte for byte, and `sops` would mint a fresh one. Dropped as
+				// *Discard* drops it, because there is nothing in it the disk
+				// has not.
+				if parked.buffer.baseline == parked.buffer.text {
+					decrypted.discard(root: parked.root, file: parked.file)
+					continue
+				}
 				let result = Sops.encryptSync(parked.buffer.text, for: parked.file)
 				guard result.exitCode == 0, !result.stdout.isEmpty,
 				      (try? Data(result.stdout.utf8).write(to: parked.file, options: .atomic)) != nil

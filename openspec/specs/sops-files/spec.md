@@ -5,24 +5,35 @@
 How a SOPS-encrypted file is recognised in the editor, what the status bar
 offers for it, where its plaintext lives and where it never goes, how a save
 encrypts it, what survives a project switch, and what quitting asks.
-
 ## Requirements
-
 ### Requirement: A SOPS file is recognised when it opens and says so in the status bar
 
 A file SHALL be treated as a SOPS file when its extension is one SOPS formats
 — `yaml`, `yml`, `json`, `env`, `ini` — and its contents, read once at open
 and bounded, hold both an `ENC[` value and a top-level `sops` key. The
-editor's status bar SHALL show a chip beside the secrets lock reading *SOPS ·
-encrypted* for such a file, and nothing for any other file. When `sops`
-cannot be found the chip SHALL be shown dimmed with the reason in its
-tooltip.
+editor's status bar SHALL show a chip as its first item, at the left edge,
+reading *SOPS · encrypted* for such a file, and nothing for any other file.
+The chip SHALL keep that place in every state — encrypted, decrypted, edited,
+dimmed — whether the secrets lock is shown or not, because it is a button, and
+a button that moves between its two states is a button nobody learns to reach
+for; the lock, when the file conceals, SHALL follow the chip rather than lead
+it. When `sops` cannot be found the chip SHALL be shown dimmed with the reason
+in its tooltip.
 
 #### Scenario: an encrypted values file
 
 - **GIVEN** `secrets-dev.yaml` encrypted with `sops`, opened in the editor
 - **WHEN** the status bar is looked at
-- **THEN** a chip beside the lock reads *SOPS · encrypted*
+- **THEN** a chip at the left edge, the first item in the bar, reads
+  *SOPS · encrypted*
+
+#### Scenario: the chip keeps its place through a decrypt
+
+- **GIVEN** `secrets-dev.yaml` encrypted, its chip the first item at the
+  bar's left edge
+- **WHEN** the chip is pressed and the values arrive revealed, the lock shown
+- **THEN** the chip's left edge is where it was, reading *SOPS · decrypted*,
+  and the lock stands to its right
 
 #### Scenario: a YAML file with a sops key and no ciphertext
 
@@ -81,22 +92,42 @@ the idle limit, and shown again only by the lock or View ▸ Reveal Secrets.
 
 ### Requirement: Saving a decrypted buffer encrypts it over the file
 
-⌘S on a decrypted buffer, and the chip when the buffer is edited, SHALL pipe
-the buffer into `sops --encrypt` on standard input under the file's own name,
-so the project's `.sops.yaml` rules choose the keys, and SHALL write the
-ciphertext over the file atomically. The buffer SHALL then hold the
-ciphertext again, clean, with the chip reading *SOPS · encrypted*, so the
-file can be decrypted again in place. Pressing the chip on a decrypted buffer
-with no edits SHALL put the ciphertext back the same way. An encrypt that
-fails SHALL leave the file and the buffer as they were and say why. A save
-over a file that changed on disk since the decrypt SHALL be refused and say
-so.
+⌘S on a decrypted buffer SHALL pipe the buffer into `sops --encrypt` on
+standard input under the file's own name, so the project's `.sops.yaml` rules
+choose the keys, and SHALL write the ciphertext over the file atomically; the
+chip on an edited buffer, the close dialog's *Save* and the quit gate's
+*Encrypt and save* — for a buffer open or parked — SHALL take the same route.
+The buffer SHALL then hold the ciphertext again, clean, with the chip reading
+*SOPS · encrypted*, so the file can be decrypted again in place. Pressing the
+chip on a decrypted buffer with no edits SHALL put the ciphertext back the
+same way. A save whose buffer still holds exactly the plaintext the decrypt
+returned SHALL be skipped: no `sops`, no write, the file keeping every byte
+it has — the ciphertext on disk already is that text's version, and `sops`
+encrypts with a fresh key every run, so an encrypt over unchanged text is a
+new version of the file nobody edited into — and the buffer SHALL be locked
+back to that ciphertext as any save locks it. The skip SHALL NOT wait for the
+buffer to be marked clean: an edit undone back to the decrypt's own text is
+unchanged the same way a never-touched buffer is. An encrypt that fails SHALL
+leave the file and the buffer as they were and say why. A save over a file
+that changed on disk since the decrypt SHALL be refused and say so.
 
 #### Scenario: edit and save
 
 - **GIVEN** a decrypted buffer with one value changed
 - **WHEN** ⌘S is pressed
 - **THEN** the file on disk is ciphertext that `sops --decrypt` turns back into the edited text, the buffer shows that ciphertext, the tab is clean, and pressing the chip decrypts it again
+
+#### Scenario: a save that changed nothing writes nothing
+
+- **GIVEN** a decrypted buffer holding the decrypt's own plaintext — never edited, or edited and undone back to it
+- **WHEN** ⌘S is pressed, or the chip is pressed, or the quit gate's *Encrypt and save* is chosen
+- **THEN** the file on disk is byte for byte what it was before the save, the buffer shows the ciphertext from disk, the tab is clean, and the chip reads *SOPS · encrypted*
+
+#### Scenario: the skip survives a project switch
+
+- **GIVEN** a decrypted buffer holding the decrypt's own plaintext, parked by a project switch and restored
+- **WHEN** ⌘S is pressed
+- **THEN** the file on disk is byte for byte what it was, and the buffer shows the ciphertext from disk
 
 #### Scenario: locking again without a save
 
@@ -156,3 +187,4 @@ the line count and a digest of the buffer and SHALL NOT print the text.
 - **GIVEN** a scratch project with an `age` key, a `.sops.yaml` naming it, and a file encrypted with `sops`
 - **WHEN** the steps `report,decrypt,report,type:…,encrypt,report` run
 - **THEN** the reports read encrypted, then decrypted and revealed with the plaintext's digest, then encrypted and clean, and `sops --decrypt` at a terminal gives the edited text
+

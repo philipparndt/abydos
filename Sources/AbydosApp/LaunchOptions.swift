@@ -658,6 +658,9 @@ struct LaunchOptions {
 	var secretsSteps: String?
 	/// `--sops <steps>`: the SOPS chip, driven — see `sopsForTesting`.
 	var sopsSteps: String?
+	/// `--indent <steps>`: the indent chip and the keys around it, driven —
+	/// see `indentChipForTesting`.
+	var indentSteps: String?
 	/// Drive the editor's context menus: gutter, text, blame.
 	var editorMenuSteps: String?
 	/// Where the picture pane is scrolled to, as fractions of the picture:
@@ -1384,6 +1387,7 @@ struct LaunchOptions {
 			case "--video-report": options.videoReport = true
 			case "--secrets":    options.secretsSteps = next()
 			case "--sops":       options.sopsSteps = next()
+			case "--indent":     options.indentSteps = next()
 			case "--editor-menu": options.editorMenuSteps = next()
 			case "--image-pan":  options.imagePan = next()
 			case "--probe-lan":  options.probeLAN = next()

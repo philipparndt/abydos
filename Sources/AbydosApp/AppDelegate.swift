@@ -656,6 +656,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.indentSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.editorForTesting.indentChipForTesting(steps)
+			}
+		}
+
 		if options.videoReport {
 			// After the player has had a moment to load the asset: duration is
 			// part of the report, and an unloaded item has none.

@@ -100,6 +100,9 @@ final class EditorAreaController: NSViewController {
 
 		statusBar.onSecretsToggled = { [weak self] in self?.toggleRevealSecrets() }
 		statusBar.onSopsPressed = { [weak self] in self?.pressSops() }
+		statusBar.onIndentChosen = { [weak self] style in
+			self?.activeGroup?.convertIndentation(to: style)
+		}
 		statusBar.onLanguageChosen = { [weak self] languageId in
 			self?.activeGroup?.setActiveLanguage(languageId)
 		}
@@ -138,6 +141,7 @@ final class EditorAreaController: NSViewController {
 		let secrets = group.secretsState
 		statusBar.setSecrets(concealing: secrets.conceals, revealed: secrets.revealed)
 		statusBar.setSops(group.sopsState)
+		statusBar.setIndent(group.indentState)
 	}
 
 	// MARK: - SOPS
@@ -156,6 +160,11 @@ final class EditorAreaController: NSViewController {
 		refreshStatus(from: activeGroup)
 	}
 	func sopsForTesting(_ steps: String) { activeGroup.sopsForTesting(steps) }
+
+	/// The indent menu's pick and the driver, the same routing the SOPS
+	/// chip's take. The pick needs no refresh of its own: the conversion
+	/// is what lets the group's own status change through.
+	func indentChipForTesting(_ steps: String) { activeGroup.indentChipForTesting(steps) }
 	func parkDecryptedTabs() { for group in groups { group.parkDecryptedTabs() } }
 	var editedDecryptedTabs: [(group: EditorViewController, tab: EditorViewController.Tab)] {
 		groups.flatMap { group in group.editedDecryptedTabs.map { (group, $0) } }

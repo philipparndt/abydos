@@ -99,21 +99,9 @@ struct ReturnIndentTests {
 	}
 
 	// MARK: - Which convention the file uses
-
-	/// The file's own habit beats the setting.
-	@Test func followsWhateverTheFileAlreadyDoes() {
-		let tabbed = "func a() {\n\tlet x = 1\n\tlet y = 2\n}\n"
-		#expect(ReturnIndent.usesTabs(in: tabbed, default: false))
-
-		let spaced = "func a() {\n    let x = 1\n    let y = 2\n}\n"
-		#expect(!ReturnIndent.usesTabs(in: spaced, default: true))
-	}
-
-	@Test func fallsBackToTheSettingForAFileWithNoIndentation() {
-		#expect(ReturnIndent.usesTabs(in: "one\ntwo\n", default: true))
-		#expect(!ReturnIndent.usesTabs(in: "one\ntwo\n", default: false))
-		#expect(ReturnIndent.usesTabs(in: "", default: true))
-	}
+	//
+	// Moved to `IndentStyleTests` when the detection grew a width and a home
+	// of its own: one detector, one suite.
 
 	@Test func readsTheLeadingWhitespace() {
 		#expect(ReturnIndent.leadingWhitespace(of: "    let x") == "    ")
