@@ -295,7 +295,9 @@ final class OperationBanner: NSView {
 			// start, which says what to do about them without a second line.
 			state.stringValue = done > 0
 				? "\(done) of \(waiting.count) resolved"
-				: "\(left) file\(left == 1 ? "" : "s") still have conflict markers"
+				: left == 1
+					? "1 file still has conflict markers"
+					: "\(left) files still have conflict markers"
 			why.stringValue = "Click a file to open it. Right-click for the two sides."
 			why.isHidden = false
 		} else if staged {
