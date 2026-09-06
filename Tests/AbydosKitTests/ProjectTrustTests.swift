@@ -170,6 +170,24 @@ struct ProjectTrustTests {
 		#expect(!trust.isTrusted(project))
 	}
 
+	/// **The world is not a scope.** `github.com` is every repository anybody
+	/// has ever pushed; `git.company.com` is a place whose every repository is
+	/// a colleague's, which is the case the host scope exists for.
+	@Test func aPublicForgeIsNotSomewhereToTrustWholesale() {
+		#expect(TrustedRemote.isPublicForge("github.com"))
+		#expect(TrustedRemote.isPublicForge("GitHub.com"))
+		#expect(TrustedRemote.isPublicForge("gitlab.com"))
+		#expect(TrustedRemote.isPublicForge("bitbucket.org"))
+		#expect(!TrustedRemote.isPublicForge("github.company.com"))
+		#expect(!TrustedRemote.isPublicForge("git.company.com"))
+	}
+
+	/// What is not a known forge is somebody's own server until shown
+	/// otherwise: one entry too narrow is the safe way to be wrong.
+	@Test func anUnknownHostIsTreatedAsSomebodysOwn() {
+		#expect(!TrustedRemote.isPublicForge("scm.internal"))
+	}
+
 	@Test func aRemoteEntryReadsAsAPlace() {
 		#expect(TrustedRemote(host: "github.com", owner: "my-org").said == "github.com/my-org")
 		#expect(TrustedRemote(host: "git.company.com").said == "git.company.com")

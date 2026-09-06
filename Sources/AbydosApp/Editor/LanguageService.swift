@@ -2735,6 +2735,14 @@ final class LanguageService {
 	/// a decision somebody made.
 	private func bringUpDevContainer(_ project: URL, choice: DevContainerFile.Choice?) {
 		let path = project.standardizedFileURL.path
+		// The container the project's own file describes, and the lifecycle
+		// commands it carries. Gated here as well as where the question is
+		// asked, for the reason `start` gives: one check on one of several
+		// routes is a check the other routes walk past.
+		guard ProjectTrust.shared.isTrusted(project) else {
+			devcontainerStarting.remove(path)
+			return
+		}
 		guard let choice else {
 			// The file went away between the answer and the start, which is not a
 			// failure and must not be reported as one.
@@ -2861,12 +2869,19 @@ final class LanguageService {
 	}
 
 	/// Starts a server whose image, if it has one, is already here.
+	///
+	/// **The gate is here as well as at `opened`**, and this is the one that
+	/// matters: a server is started from several places — a file opening, a
+	/// container arriving, a scope changing under an open file — and a check at
+	/// one of them is a check three others walk past. It was: an untrusted
+	/// project was photographed with its devcontainer starting gopls.
 	private func start(
 		_ resolved: LanguageServers.Resolution,
 		languageId: String,
 		project: URL,
 		key: String
 	) -> Server? {
+		guard ProjectTrust.shared.isTrusted(project) else { return nil }
 		let client = LSPClient()
 		// Before anything is sent, including the handshake: from here on every
 		// path going out is the container's and every one coming back is ours.

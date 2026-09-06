@@ -345,6 +345,13 @@ extension RunCoordinator {
 		in root: URL,
 		environment: [String: String]
 	) {
+		// **The last door before a debugger runs the project's program**, and
+		// the one that was missing: the gutter's own debug went through
+		// `debug(_:)` rather than `debugConfiguration(_:in:)`, so an untrusted
+		// project was photographed paused at a breakpoint. A check at the top
+		// of one route is a check the other routes walk past — so it is here
+		// too, where there is no route left.
+		guard mayRunProjectCode() else { return }
 		// A script before anything else, because the thing it is *not* is what
 		// the rest of this function assumes: a file a debugger can open. Handing
 		// `./mvnw` to lldb-dap got "is not a valid executable" — true, and about

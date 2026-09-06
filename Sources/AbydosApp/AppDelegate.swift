@@ -540,6 +540,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				let root = controller?.project?.root
 				let trusted = root.map { ProjectTrust.shared.isTrusted($0) } ?? false
+				print("TRUST menu: " + (controller?.trustMenuForTesting() ?? "no window"))
 				print("TRUST: trusted=\(trusted) banner=["
 					+ (controller?.trustBannerReportForTesting() ?? "no window") + "]")
 				fflush(stdout)
@@ -2849,6 +2850,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		ToolContainers.shared.removeAll()
 	}
 
+	/// Fills File ▸ Project Trust from the window in front when it is opened.
+	///
+	/// Every item there is about a project — its name, its folder, the remote
+	/// it says it came from, and whether any of those is trusted already — so
+	/// there is nothing to build until somebody looks.
+	@MainActor let trustMenuDelegate = TrustMenuDelegate()
+
 	public func application(_ application: NSApplication, open urls: [URL]) {
 		for url in urls {
 			if url.hasDirectoryPath {
@@ -3121,11 +3129,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// can be dismissed without trusting anything, and a window with no
 		// strip needs somewhere the project can still be trusted from — this,
 		// and the settings page that lists what is trusted already.
-		let trustItem = NSMenuItem(
-			title: "Trust This Project…",
-			action: #selector(MainWindowController.trustThisProject(_:)),
-			keyEquivalent: ""
-		)
+		//
+		// A submenu rather than an item, carrying the same scopes the strip's
+		// dropdown carries: this project, the folder it sits in, where a clone
+		// says it came from — and, once it is trusted, taking that back. Built
+		// on opening, from whichever window is in front, since every one of
+		// those depends on the project being looked at.
+		let trustItem = NSMenuItem(title: "Project Trust", action: nil, keyEquivalent: "")
+		let trustSubmenu = NSMenu(title: "Project Trust")
+		trustSubmenu.delegate = trustMenuDelegate
+		trustItem.submenu = trustSubmenu
 		fileMenu.addItem(trustItem)
 
 		let switcherItem = NSMenuItem(
@@ -3833,4 +3846,27 @@ private func whenTheBoardHasCards(
 	// The first look is still after a beat: the pane is made when the panel is
 	// shown, and showing it is what the report itself does.
 	DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: look)
+}
+
+/// Builds File ▸ Project Trust when it is opened — see `trustMenuDelegate`.
+@MainActor
+final class TrustMenuDelegate: NSObject, NSMenuDelegate {
+	func menuNeedsUpdate(_ menu: NSMenu) {
+		menu.removeAllItems()
+		let controller = NSApp.keyWindow?.windowController as? MainWindowController
+			?? NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first
+		guard let controller else {
+			let none = NSMenuItem(title: "No project", action: nil, keyEquivalent: "")
+			none.isEnabled = false
+			menu.addItem(none)
+			return
+		}
+		// The window's own menu, moved rather than copied: an item carries its
+		// target, and two menus built from two lists is how they come to say
+		// different things.
+		for item in controller.trustMenu().items {
+			item.menu?.removeItem(item)
+			menu.addItem(item)
+		}
+	}
 }

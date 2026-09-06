@@ -176,6 +176,18 @@ consults while deciding, and half of it — the reading that is unaffected — i
 the half that makes "look first, decide later" an option. A notice that goes on
 a timer is not that.
 
+**Trusting SHALL be a choice of scope made from a menu**, on the strip's own
+button and in the application's menus alike: this project, the folder it sits
+in, or where a clone says it came from. The menu SHALL appear at the control
+that opened it. A scope that reaches beyond the project in front of somebody —
+a folder of checkouts, a remote anything can claim to come from — SHALL say
+what it covers before it is granted; trusting the project being looked at SHALL
+be the press itself.
+
+**Trust SHALL be withdrawable from the same menu**, naming the entry that
+grants it — which may be a parent folder or a remote, and so may cover more
+than this project; that SHALL be said before it is taken back.
+
 **The strip SHALL be dismissable without trusting anything.** A strip that can
 only be got rid of by trusting the project is a strip that gets projects
 trusted. Dismissing it SHALL change nothing about the project — it stays
@@ -219,6 +231,17 @@ return the project to what an unknown project gets.
 - **WHEN** its trust is withdrawn in the settings
 - **THEN** the project is untrusted again, and nothing of its own runs
 
+#### Scenario: the scopes are a menu at the button
+
+- **WHEN** the strip's trust button is pressed
+- **THEN** a menu of scopes opens at that button
+
+#### Scenario: untrusting from the same menu
+
+- **GIVEN** a project trusted by a parent folder
+- **WHEN** the trust menu is opened
+- **THEN** it says which entry trusts the project and offers to take that entry back, saying what else it covers
+
 ### Requirement: Trust can be granted to where a clone came from
 
 Trust SHALL also be grantable by the remote a project says it was cloned from
@@ -226,6 +249,13 @@ Trust SHALL also be grantable by the remote a project says it was cloned from
 a host, since one organisation is a place and `github.com` is the world. A
 project whose `origin` names a trusted host, or a trusted owner on that host,
 SHALL be trusted without a folder entry of its own.
+
+**A public forge SHALL NOT be offered as a whole host.** `github.com`,
+`gitlab.com` and the rest are every repository anybody has ever pushed;
+offering one beside "this organisation", as though they were two sizes of the
+same thing, is how somebody picks the wrong one. On those the owner is the only
+remote scope offered. A host the application does not know SHALL be treated as
+somebody's own server, since one scope too narrow is the safe way to be wrong.
 
 Where this is offered, and where trusted remotes are listed, it SHALL say what
 it is worth: **a repository's remote is what its own `.git/config` claims**, so
@@ -248,6 +278,18 @@ arrives late.
 - **GIVEN** `github.com/my-org` trusted
 - **WHEN** a project cloned from `github.com/somebody-else` is opened
 - **THEN** it is untrusted
+
+#### Scenario: the world is not offered as a scope
+
+- **GIVEN** a project cloned from `github.com/philipparndt`
+- **WHEN** the trust scopes are offered
+- **THEN** `github.com/philipparndt` is among them and `github.com` is not
+
+#### Scenario: an enterprise host is
+
+- **GIVEN** a project cloned from `github.company.com/my-org`
+- **WHEN** the trust scopes are offered
+- **THEN** both `github.company.com/my-org` and `github.company.com` are among them
 
 #### Scenario: what it is worth is said
 

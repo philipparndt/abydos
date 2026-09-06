@@ -64,6 +64,17 @@ final class DrawnButton: NSButton, ScaleFollowing {
 	private var count: Int?
 	/// The tag drawn after the words, made in `applyTheme` for `draw`.
 	private var badge: NSImage?
+	/// A glyph after the words — a chevron on a button that opens a menu.
+	///
+	/// **Drawn rather than typed.** The trust strip's button said
+	/// `Trust This Project ⌄` with the chevron in the title, and a text glyph
+	/// sits on the text's baseline: it hung below the capitals, which is what
+	/// was reported. This is measured into the width and drawn on the cap
+	/// height's middle, the way the count badge already is.
+	var trailingSymbol: String? {
+		didSet { if trailingSymbol != oldValue { applyTheme() } }
+	}
+	private var trailingImage: NSImage?
 
 	/// Drawn as busy: a spinner at the trailing end, in the tag's place.
 	///
@@ -231,6 +242,9 @@ final class DrawnButton: NSButton, ScaleFollowing {
 				.font: font, .foregroundColor: colour,
 			])
 			badge = (count != nil && !isWorking) ? Self.tag(count!, colour: colour, size: fontSize) : nil
+			trailingImage = trailingSymbol.flatMap {
+				Theme.symbol($0, size: (fontSize - 2) * Theme.current.scale, color: colour)
+			}
 			showSpinner(isWorking, colour: colour)
 			needsDisplay = true
 		}
@@ -365,6 +379,7 @@ final class DrawnButton: NSButton, ScaleFollowing {
 	private var contentWidth: CGFloat {
 		var width = ceil(attributedTitle.size().width)
 		if let badge { width += gap + badge.size.width }
+		if let trailingImage { width += gap + trailingImage.size.width }
 		if isWorking { width += gap + spinnerSide }
 		return width
 	}
@@ -390,12 +405,22 @@ final class DrawnButton: NSButton, ScaleFollowing {
 			flipped: isFlipped
 		)
 		x += ceil(text.width)
+		let middle = baseline + font.capHeight / 2
 		if let badge {
-			let middle = baseline + font.capHeight / 2
 			x += gap
 			badge.draw(in: NSRect(
 				x: x, y: (middle - badge.size.height / 2).rounded(),
 				width: badge.size.width, height: badge.size.height
+			))
+			x += badge.size.width
+		}
+		if let trailingImage {
+			// On the capitals' middle, like the badge: a chevron centred on the
+			// *line box* sits low, the descender being under it.
+			x += gap
+			trailingImage.draw(in: NSRect(
+				x: x, y: (middle - trailingImage.size.height / 2).rounded(),
+				width: trailingImage.size.width, height: trailingImage.size.height
 			))
 		}
 	}

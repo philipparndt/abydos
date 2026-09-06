@@ -59,93 +59,127 @@ extension MainWindowController {
 		askToTrustProject()
 	}
 
-	/// The sheet: the folder, the parent as the wider choice, and what trusting
-	/// turns on said before it is granted.
+	/// The scopes this project can be trusted at, and — once it is — the entry
+	/// that trusts it, to take back.
 	///
-	/// **The only place trust is granted.** Everything else — the run control,
-	/// the terminal, the language servers — refuses and points here, so there is
-	/// one gesture to recognise and one sentence to have read.
-	func askToTrustProject() {
-		guard let root = project?.root else { return }
-		let alert = NSAlert()
-		alert.messageText = "Trust “\(root.lastPathComponent)”?"
-		alert.informativeText = "Trusting it lets this project run on your machine: its run and "
-			+ "debug configurations, its build and test commands, its devcontainer, the language "
-			+ "servers its tree provides, the environment its files ask for, a terminal in its "
-			+ "directory and its git hooks.\n\n"
-			+ "Trust it only if you would run its code from a terminal yourself."
-
-		// The host this clone says it came from, offered beside the folder: an
-		// enterprise server is a hundred repositories from one place, and a
-		// folder entry per clone is the dialog people learn to dismiss.
-		var alsoHost: NSButton?
-		var alsoParent: NSButton?
-		if let parent = ProjectTrust.parent(of: root) {
-			// The wider choice offered rather than assumed: one entry for a
-			// folder of checkouts is the difference between a feature people use
-			// and a dialog people learn to dismiss.
-			let box = NSButton(
-				checkboxWithTitle: "Trust everything in \(Project.abbreviate(parent))",
-				target: nil, action: nil
-			)
-			// An explicit frame, for the reason `BranchDeletion` records: an
-			// accessory at zero by zero is a dialog with an invisible control.
-			box.frame = NSRect(origin: .zero, size: box.fittingSize)
-			box.state = .off
-			alsoParent = box
+	/// **A menu rather than a sheet with checkboxes**, which is what this was
+	/// first and what was reported: trusting is a choice of *scope*, and a
+	/// scope is what a menu is for. Each item says exactly what it covers, so
+	/// the press is the decision rather than a dialog to get through.
+	///
+	/// The same menu hangs off the strip's button and off the File menu, so
+	/// there is one list to learn and one place it is built.
+	func trustMenu() -> NSMenu {
+		let menu = NSMenu()
+		guard let root = project?.root else {
+			let none = NSMenuItem(title: "No project in this window", action: nil, keyEquivalent: "")
+			none.isEnabled = false
+			menu.addItem(none)
+			return menu
 		}
-		var alsoOwner: NSButton?
+
+		func add(_ title: String, _ scope: TrustScope, caution: String? = nil) {
+			let item = NSMenuItem(title: title, action: #selector(trustScopeChosen(_:)), keyEquivalent: "")
+			item.target = self
+			item.representedObject = TrustScopeBox(scope: scope, caution: caution)
+			menu.addItem(item)
+		}
+
+		if let entry = ProjectTrust.shared.entry(covering: root) {
+			// Trusted by a folder: say which, since it may not be this one.
+			let name = Project.abbreviate(URL(fileURLWithPath: entry.path))
+			let said = entry.coversChildren ? "\(name) and everything in it" : name
+			addHeading("Trusted by \(said)", to: menu)
+			add(
+				entry.coversChildren ? "Untrust \(name) and everything in it" : "Untrust \(name)",
+				.withdrawFolder(entry.path),
+				caution: entry.coversChildren
+					? "Every project under \(name) stops being trusted, not only this one."
+					: nil
+			)
+			return menu
+		}
+		if let remote = ProjectTrust.shared.remote(of: root),
+		   let entry = ProjectTrust.shared.remotes.first(
+			where: { $0.matches(host: remote.host, owner: remote.owner) }
+		   ) {
+			addHeading("Trusted by \(entry.said)", to: menu)
+			add(
+				"Untrust everything from \(entry.said)",
+				.withdrawRemote(host: entry.host, owner: entry.owner),
+				caution: "Every clone that says it came from \(entry.said) stops being trusted."
+			)
+			return menu
+		}
+
+		add("Trust “\(root.lastPathComponent)”", .folder(root, coversChildren: false))
+		if let parent = ProjectTrust.parent(of: root) {
+			// One entry for a folder of checkouts is the difference between a
+			// feature people use and a dialog people learn to dismiss.
+			add("Trust everything in \(Project.abbreviate(parent))", .folder(parent, coversChildren: true))
+		}
 		if let remote = ProjectTrust.shared.remote(of: root) {
-			// **Weaker than a folder, and said so where it is offered.** A
+			menu.addItem(.separator())
+			// **Weaker than a folder, and it says so before it is granted.** A
 			// repository's remote is what its own `.git/config` claims, so a
 			// folder that arrived with a `.git` somebody else wrote can name
-			// any host it likes.
-			let caution = "A repository's remote is what its own .git/config says, "
-				+ "so this trusts every folder that claims to come from there."
+			// any host it likes — the one caveat a menu item's title cannot
+			// carry, so these two ask first.
+			let caution = "A repository's remote is what its own .git/config says, so this "
+				+ "trusts every folder that claims to come from there — including one that "
+				+ "arrived with a .git directory somebody else wrote."
 			if let owner = remote.owner {
-				// The owner first, and it is what somebody usually means:
-				// `github.com` is the world, and one organisation on it is a
-				// place.
-				let box = NSButton(
-					checkboxWithTitle: "Trust everything from \(remote.host)/\(owner)",
-					target: nil, action: nil
+				add(
+					"Trust everything from \(remote.host)/\(owner)",
+					.remote(host: remote.host, owner: owner),
+					caution: caution
 				)
-				box.frame = NSRect(origin: .zero, size: box.fittingSize)
-				box.state = .off
-				box.toolTip = caution
-				alsoOwner = box
 			}
-			let box = NSButton(
-				checkboxWithTitle: "Trust everything from \(remote.host)", target: nil, action: nil
-			)
-			box.frame = NSRect(origin: .zero, size: box.fittingSize)
-			box.state = .off
-			box.toolTip = remote.owner == nil
-				? caution
-				: caution + " The whole host, not only \(remote.owner ?? "")."
-			alsoHost = box
+			// **The whole host, but not a public forge.** `github.com` is every
+			// repository anybody has ever pushed, and offering it beside "this
+			// organisation" as though they were two sizes of the same thing is
+			// how somebody picks the wrong one. An enterprise server is the
+			// opposite — a place, whose every repository is a colleague's — and
+			// that is the case the host scope exists for.
+			if !TrustedRemote.isPublicForge(remote.host) {
+				add(
+					"Trust everything from \(remote.host)",
+					.remote(host: remote.host, owner: nil),
+					caution: remote.owner == nil ? caution : caution + " The whole host, not only "
+						+ "\(remote.owner ?? "") on it."
+				)
+			}
 		}
-		alert.accessoryView = Self.trustAccessory(
-			[alsoParent, alsoOwner, alsoHost].compactMap { $0 }
-		)
+		return menu
+	}
 
-		alert.addButton(withTitle: "Trust")
+	private func addHeading(_ text: String, to menu: NSMenu) {
+		let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+		item.isEnabled = false
+		menu.addItem(item)
+		menu.addItem(.separator())
+	}
+
+	/// One of the scopes, chosen.
+	///
+	/// The ones that reach beyond this project — a folder of checkouts, a
+	/// remote anything can claim to come from — confirm first; trusting the
+	/// project in front of somebody is the press itself, since that is what
+	/// they are looking at.
+	@objc private func trustScopeChosen(_ sender: NSMenuItem) {
+		guard let box = sender.representedObject as? TrustScopeBox else { return }
+		guard let caution = box.caution else {
+			apply(box.scope)
+			return
+		}
+		let alert = NSAlert()
+		alert.messageText = sender.title
+		alert.informativeText = caution
+		alert.addButton(withTitle: sender.title.hasPrefix("Untrust") ? "Untrust" : "Trust")
 		alert.addButton(withTitle: "Cancel")
-
 		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
 			guard let self, response == .alertFirstButtonReturn else { return }
-			let coversChildren = alsoParent?.state == .on
-			let folder = coversChildren ? (ProjectTrust.parent(of: root) ?? root) : root
-			ProjectTrust.shared.trust(folder, coveringChildren: coversChildren)
-			if let remote = ProjectTrust.shared.remote(of: root) {
-				if alsoOwner?.state == .on, let owner = remote.owner {
-					ProjectTrust.shared.trust(remoteHost: remote.host, owner: owner)
-				}
-				if alsoHost?.state == .on {
-					ProjectTrust.shared.trust(remoteHost: remote.host)
-				}
-			}
-			self.trustGranted()
+			self.apply(box.scope)
 		}
 		if let window {
 			alert.beginSheetModal(for: window, completionHandler: act)
@@ -154,23 +188,43 @@ extension MainWindowController {
 		}
 	}
 
-	/// The sheet's checkboxes, stacked — `NSAlert` takes one accessory view,
-	/// and there may be a parent folder and a host to offer.
-	private static func trustAccessory(_ boxes: [NSView]) -> NSView? {
-		guard !boxes.isEmpty else { return nil }
-		guard boxes.count > 1 else { return boxes[0] }
-		let gap: CGFloat = 6
-		let width = boxes.map(\.frame.width).max() ?? 0
-		let height = boxes.map(\.frame.height).reduce(0, +) + gap * CGFloat(boxes.count - 1)
-		let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-		var y = height
-		for box in boxes {
-			y -= box.frame.height
-			box.frame = NSRect(x: 0, y: y, width: max(box.frame.width, width), height: box.frame.height)
-			container.addSubview(box)
-			y -= gap
+	private func apply(_ scope: TrustScope) {
+		switch scope {
+		case let .folder(url, coversChildren):
+			ProjectTrust.shared.trust(url, coveringChildren: coversChildren)
+			trustGranted()
+		case let .remote(host, owner):
+			ProjectTrust.shared.trust(remoteHost: host, owner: owner)
+			trustGranted()
+		case let .withdrawFolder(path):
+			ProjectTrust.shared.withdraw(path: path)
+			trustWithdrawn()
+		case let .withdrawRemote(host, owner):
+			ProjectTrust.shared.withdraw(remoteHost: host, owner: owner)
+			trustWithdrawn()
 		}
-		return container
+	}
+
+	/// The palette's route to the same scopes: it lists menu items, and this is
+	/// the one that opens the list rather than granting anything by itself.
+	///
+	/// The strip's button hangs its own menu off itself — a dropdown that
+	/// appeared at the strip's leading edge read as a menu about something
+	/// else — and File ▸ Project Trust is a submenu, built when it opens.
+	func askToTrustProject() {
+		trustMenu().popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+	}
+
+	/// Every window says what it now is: trust is the app's, not one window's.
+	private func trustWithdrawn() {
+		for controller in NSApp.windows.compactMap({ $0.windowController as? MainWindowController }) {
+			controller.refreshTrustBanner()
+		}
+		Toast.post(
+			"Untrusted \(project?.root.lastPathComponent ?? "")",
+			detail: "Nothing in it runs by itself again.",
+			kind: .information
+		)
 	}
 
 	/// The window after trust is granted.
@@ -211,6 +265,14 @@ extension MainWindowController {
 		trustGranted()
 	}
 
+	/// The scopes the menu offers, for a driven run — the words are the
+	/// requirement, and which scopes are *absent* is half of it.
+	func trustMenuForTesting() -> String {
+		trustMenu().items
+			.map { $0.isSeparatorItem ? "—" : $0.title + ($0.isEnabled ? "" : " (off)") }
+			.joined(separator: " | ")
+	}
+
 	/// What the strip says, for a driven run.
 	func trustBannerReportForTesting() -> String { trustBanner.reportForTesting }
 
@@ -219,5 +281,25 @@ extension MainWindowController {
 		trustBanner.showHeldBackForTesting()
 		print("HELDBACK: " + trustBanner.heldBackReportForTesting())
 		fflush(stdout)
+	}
+}
+
+/// What a trust menu item does.
+enum TrustScope {
+	case folder(URL, coversChildren: Bool)
+	case remote(host: String, owner: String?)
+	case withdrawFolder(String)
+	case withdrawRemote(host: String, owner: String?)
+}
+
+/// A scope on a menu item, with the sentence that must be read first where
+/// there is one. `representedObject` takes an object, and an enum is not one.
+final class TrustScopeBox: NSObject {
+	let scope: TrustScope
+	let caution: String?
+
+	init(scope: TrustScope, caution: String?) {
+		self.scope = scope
+		self.caution = caution
 	}
 }

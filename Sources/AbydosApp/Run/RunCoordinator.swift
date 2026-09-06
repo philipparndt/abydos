@@ -849,6 +849,7 @@ final class RunCoordinator {
 
 	/// Starts the native debugger on a configuration's package.
 	func debug(_ configuration: RunConfiguration) {
+		guard mayRunProjectCode() else { return }
 		guard configuration.isDebuggable else { return }
 
 		// Java does not go through Delve, and it does not go through a program

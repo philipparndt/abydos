@@ -348,6 +348,15 @@ organisation on it is a place. That last one is weaker on purpose and says so
 where it is offered: a repository's remote is what its own `.git/config`
 claims.
 
+Trusting is a **choice of scope from a dropdown** — this project, the folder it
+sits in, or where a clone says it came from — on the strip's button and in
+File ▸ Project Trust alike, which is also where trust is taken back. A scope
+that reaches past the project in front of you says what it covers before it is
+granted. And a **public forge is never offered as a whole host**: `github.com`
+is every repository anybody has ever pushed, so there the owner is the only
+remote scope; an enterprise server is a place, and that is what the host scope
+is for.
+
 This is not a sandbox — it decides what starts, not what a trusted project's
 build then does — and it is not a scanner: no heuristic reads a project and
 decides it looks safe.

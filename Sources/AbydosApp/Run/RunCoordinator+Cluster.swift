@@ -34,6 +34,7 @@ extension RunCoordinator {
 		environment: [String: String],
 		debug: Bool
 	) {
+		guard mayRunProjectCode() else { return }
 		guard let settings = configuration.devPod else { return }
 		stopDevPodForwards()
 		onSetPanelVisible(true)

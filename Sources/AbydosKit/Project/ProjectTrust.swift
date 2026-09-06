@@ -83,6 +83,28 @@ public struct TrustedRemote: Codable, Equatable, Sendable {
 	public static func normalised(_ host: String) -> String {
 		host.lowercased().components(separatedBy: "@").last ?? host.lowercased()
 	}
+
+	/// The forges anybody in the world can push to.
+	///
+	/// **Trusting one of these as a whole host is trusting the world**, and it
+	/// must not be offered as though it were a choice between two scopes: on
+	/// `github.com` the useful unit is the owner — your own account, your
+	/// company's organisation — and the host is every repository ever pushed
+	/// there. An enterprise server is the opposite: `git.company.com` is a
+	/// place, and every repository on it is a colleague's.
+	///
+	/// A list rather than a guess, and a short one: what is not on it is
+	/// somebody's own server until it is shown otherwise, and the cost of being
+	/// wrong in that direction is one entry too narrow rather than the world
+	/// trusted by a menu press.
+	public static let publicForges: Set<String> = [
+		"github.com", "gitlab.com", "bitbucket.org", "codeberg.org",
+		"git.sr.ht", "gitea.com", "sourceforge.net", "gitee.com",
+	]
+
+	public static func isPublicForge(_ host: String) -> Bool {
+		publicForges.contains(normalised(host))
+	}
 }
 
 /// What a call site may do with a project, and why.

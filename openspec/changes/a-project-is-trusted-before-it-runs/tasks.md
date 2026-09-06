@@ -185,6 +185,51 @@ back' opens a toast", and "I miss a way to hide the bar without trusting".*
   names it beside the banner, and the item says so when the project is already
   trusted rather than opening a sheet about nothing.
 
+## 10. The amendment: the scopes are a menu, and two holes it found
+
+*Reported while it was being applied: "maybe the trust project button should be
+a dropdown button and ask to trust the folder, …", "And also a untrust action
+in the file menu would be nice", "the drop down opens at the wrong location",
+"the chevron shall be vertically centered", "trust everything on github.com is
+not a good idea" — and, most seriously, a screenshot of an untrusted project
+paused at a breakpoint with its devcontainer starting gopls.*
+
+- [x] 10.1 **Two gates were missed, and the screenshot found them.** The
+  gutter's debug goes through `debug(_ configuration:)`, not
+  `debugConfiguration(_:in:)`, and nothing there asked; and a language server
+  is started from several places — a file opening, a container arriving, a
+  scope changing under an open file — of which only the first was gated. Both
+  are now gated at the *last* door instead: `startDebug`, where there is no
+  route left before a debugger runs the program, and `LanguageService.start`
+  and `bringUpDevContainer`, which every route to a server passes through.
+  `runInCluster` was gated at the same time, being the third way to start a
+  program. Driven: `--debug-line` in an untrusted project starts nothing, and
+  a `.devcontainer/devcontainer.json` whose `postCreateCommand` would leave a
+  trace leaves none.
+- [x] 10.2 The strip's button is a dropdown of scopes rather than a sheet of
+  checkboxes — trusting is a choice of scope, and a scope is what a menu is
+  for. The scopes that reach beyond the project confirm first; trusting what
+  is in front of somebody is the press itself.
+- [x] 10.3 The same menu is File ▸ Project Trust, built when it opens from the
+  window in front — and it carries the untrust as well, naming the entry that
+  grants the trust, since that may be a parent folder or a remote and so may
+  cover more than this project.
+- [x] 10.4 The menu opens at the button rather than at the strip's leading
+  edge: a menu that appears somewhere other than the control that opened it
+  reads as a menu about something else.
+- [x] 10.5 The chevron is a drawn glyph on the capitals' middle rather than a
+  `⌄` in the title on the text baseline, where it hung low. `DrawnButton`
+  gained `trailingSymbol` for it, measured into the width beside the count
+  badge it already draws that way.
+- [x] 10.6 **A public forge is never offered as a whole host.** `github.com`
+  is every repository anybody has ever pushed, and offering it beside "this
+  organisation" is how somebody picks the wrong one; an enterprise server is
+  the opposite, and is the case the host scope exists for. A short list of
+  known forges, with anything unknown treated as somebody's own server — one
+  scope too narrow is the safe way to be wrong. Driven both ways:
+  `github.com/philipparndt` offered without `github.com`, and
+  `github.company.com/my-org` offered with `github.company.com`.
+
 ## 7. Finishing
 
 - [x] 7.1 `Scripts/file-size-allowed.txt` raised for the six files that grew

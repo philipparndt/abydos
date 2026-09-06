@@ -352,7 +352,7 @@ extension MainWindowController {
 		trustBannerHeight = trustBanner.heightAnchor.constraint(equalToConstant: 0)
 		trustBannerTop = trustBanner.topAnchor.constraint(equalTo: root.topAnchor)
 		trustBanner.isHidden = true
-		trustBanner.onTrust = { [weak self] in self?.askToTrustProject() }
+		trustBanner.trustScopes = { [weak self] in self?.trustMenu() ?? NSMenu() }
 		trustBanner.onDismiss = { [weak self] in self?.hideTrustBanner() }
 
 		NSLayoutConstraint.activate([

@@ -14,8 +14,9 @@ import AbydosKit
 /// sentence and a button, above the file": same ground, same hairline, same
 /// drawn buttons, so a second strip does not read as a different kind of thing.
 final class TrustBanner: NSView {
-	/// Trust this project — the sheet, not the deed.
-	var onTrust: (() -> Void)?
+	/// The scopes this project can be trusted at, asked for when the button is
+	/// pressed — the menu is the window's, and where it hangs is this strip's.
+	var trustScopes: (() -> NSMenu)?
 	/// Put the strip away without trusting anything.
 	var onDismiss: (() -> Void)?
 
@@ -52,11 +53,20 @@ final class TrustBanner: NSView {
 		label = NSTextField(labelWithString: "")
 		label.lineBreakMode = .byTruncatingTail
 
-		trustButton = DrawnButton(title: "Trust This Project") { [weak self] in self?.onTrust?() }
+		// **A dropdown, because trusting is a choice of scope.** This project,
+		// the folder of checkouts it sits in, or everywhere a clone says it
+		// came from — one press, then the scope, rather than a sheet of
+		// checkboxes to work through. The chevron is drawn into the title the
+		// way the capsule's own menus draw theirs.
+		trustButton = DrawnButton(title: "Trust This Project") { [weak self] in self?.popTrustMenu() }
 		trustButton.prominence = .prominent
+		// The chevron as a drawn glyph on the capitals' middle, not a `⌄` in
+		// the title sitting on the baseline — which hung low, and was reported.
+		trustButton.trailingSymbol = "chevron.down"
 		trustButton.tip = StyledTip.Tip(
 			title: "Trust this project",
-			detail: "Lets it run: configurations, builds, language servers, containers and a terminal."
+			detail: "Choose how far it reaches: this project, the folder it is in, "
+				+ "or everywhere a clone says it came from."
 		)
 		detailsButton = DrawnButton(title: "What is held back") { [weak self] in self?.showHeldBack() }
 		detailsButton.prominence = .quiet
@@ -118,6 +128,18 @@ final class TrustBanner: NSView {
 		detailsButton.applyTheme()
 		closeButton.applyTheme()
 		needsDisplay = true
+	}
+
+	/// Under the button, which is where a dropdown belongs: it opened at the
+	/// strip's leading edge to begin with — a menu that appears somewhere other
+	/// than the control that opened it reads as a menu about something else.
+	private func popTrustMenu() {
+		guard let menu = trustScopes?() else { return }
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: 0, y: trustButton.bounds.height),
+			in: trustButton
+		)
 	}
 
 	// MARK: - What is held back
