@@ -250,3 +250,42 @@ made for the run: an ignored `.env` says nothing, an untracked one says *Not in
 writes the line and takes the notice away. A `secrets/dev.yaml` the rules match
 reports the offer, is pressed, and `sops --decrypt` at the terminal gives back
 the text that was there.
+
+## A tag can be deleted, here and on the remote
+
+Asked for on 2026-09-06: "it should be possible to delete tags (+ remote
+tags)."
+
+The engine has been able to do this since tags learnt to move — `GitTags`
+deletes locally and on the remote, fully qualified as `refs/tags/<name>`
+because `git push origin :v1` is ambiguous when a branch shares the name — and
+nothing in the window called either. The tag rows offered *Recreate…* and the
+forge, so getting rid of a tag meant a terminal, while the spec had said for
+months that a tag could be made, moved and deleted.
+
+A tag row now offers *Delete Tag…*, for one tag or several, and ⌘⌫ does the
+same from the keyboard — this app's delete gesture, which the project tree has
+trashed files with since it had a tree. Branches keep their menu-only delete on
+purpose: theirs asks about worktrees and about commits nothing else has, and a
+bare key is too small a gesture for that question. A selection holding a branch
+and a tag together is two different questions, so the item is shown disabled
+rather than acting on half of it.
+
+**The remote is a separate tick, off by default, named after the remote.**
+*Also delete on `origin`* — because a fork and an upstream are both plausible
+and a sheet that made somebody remember which is a sheet that gets the wrong
+answer. Locally a tag is a name for a commit and can be written again while
+that commit is there; on the remote it is what a workflow, a release page and
+everybody else's fetch read.
+
+**And each half is reported in its own words.** The local delete runs first, so
+a remote that refuses — a protected tag, no permission, no network — leaves the
+tag gone from the tree in front of you and says *Deleted here, still on origin*
+with git's reason under it. One "could not delete" over a half-done pair is the
+sentence that sends somebody to a terminal to find out what state they are in.
+
+Driven against a scratch repository whose `origin` is a bare repository beside
+it: a tag deleted locally with `git ls-remote` still showing it; the same tag
+taken from both; two at once; a mixed selection disabled; a repository with no
+remote offering no remote choice; and a broken `origin` proving the half-done
+report.

@@ -13,8 +13,11 @@ gesture and an action needs the two told apart rather than overloaded. What the
 keyboard offers SHALL be the same set the pointer offers, and the context menu
 remains the place where everything is named.
 
-A tag row's delete SHALL be one of those actions: the tags section is not the
-one place in this tree where a row's own verb is reachable by pointer only.
+A tag row's delete SHALL be one of those actions, on ⌘⌫ — the delete gesture
+this app already has in the project tree — so the tags section is not the one
+place in this tree where a row's own verb needs a pointer. The key SHALL act on
+the selection or on nothing: where the selection is not all tags there is a
+different question to ask, and no key answers two.
 
 #### Scenario: the repository row from the keyboard
 
@@ -31,4 +34,11 @@ one place in this tree where a row's own verb is reachable by pointer only.
 #### Scenario: a tag row's delete
 
 - **GIVEN** a tag row selected
-- **THEN** its delete is reachable from the keyboard and named in the context menu
+- **WHEN** ⌘⌫ is pressed
+- **THEN** the tag's delete sheet opens, as choosing it from the context menu does
+
+#### Scenario: the key on a selection that is not all tags
+
+- **GIVEN** a branch row and a tag row selected together
+- **WHEN** ⌘⌫ is pressed
+- **THEN** nothing is asked and nothing is deleted

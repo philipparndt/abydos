@@ -325,6 +325,11 @@ final class BranchesPane: NSView {
 		tableView.menu = makeMenu()
 		tableView.onActivate = { [weak self] in self?.checkoutSelected() }
 		tableView.onRowAction = { [weak self] in self?.fireSelectedRowAction() }
+		// Tags only, deliberately: a branch delete asks about worktrees and
+		// about commits nothing else has, and giving that a bare key would be
+		// answering a bigger question with a smaller gesture. `deleteTag` is a
+		// no-op unless every selected row is a tag.
+		tableView.onDeleteKey = { [weak self] in self?.deleteTag() }
 		tableView.onLeaveTop = { [weak self] in self?.moveKeyboardToRepositoryRow() }
 
 		conflictBanner = OperationBanner()
@@ -2016,7 +2021,14 @@ final class BranchesPane: NSView {
 		// Through the delegate the real menu goes through, so what is reported is
 		// what would be shown — titles included, which is where the count is.
 		menuNeedsUpdate(menu)
-		return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+		// **And whether it can be chosen**, as the per-row report already says:
+		// an item that is shown and disabled over a selection it cannot act on
+		// is a different answer from one that is not there, and a report that
+		// could not tell them apart made a mixed selection look like an offer.
+		return menu.items.map { item in
+			guard !item.isSeparatorItem else { return "—" }
+			return item.title + (item.isEnabled ? "" : " (off)")
+		}
 	}
 
 	/// What the operation banner says and offers.
@@ -3116,6 +3128,60 @@ final class BranchesPane: NSView {
 		deletion().ask(about: deletableBranches, target: currentBranchName ?? "HEAD")
 	}
 
+	/// The tags in the selection — and only where every selected row is one.
+	///
+	/// **A mixed selection is two questions.** A branch delete asks about
+	/// worktrees and about commits nothing else has; a tag delete asks about a
+	/// remote. Offering either over a selection holding both would act on half
+	/// of it, so neither is offered.
+	private var deletableTags: [GitBranch] {
+		let tags = selectedBranches.filter { $0.kind == .tag }
+		return tags.count == selectedBranches.count ? tags : []
+	}
+
+	@objc private func deleteTag() {
+		let tags = deletableTags
+		guard !tags.isEmpty else { return }
+		madeDeletion().ask(about: tags)
+	}
+
+	/// One `TagDeletion` per press, told what this pane knows — the shape
+	/// `deletion()` has for branches.
+	private func madeDeletion() -> TagDeletion {
+		// The remote from the rows the tree already holds rather than a fresh
+		// `git remote`: the sheet opens on a press, and a process between the
+		// press and the sheet is a press that hangs on a slow disk. `origin`
+		// where there is one, since that is where a tag anybody else reads
+		// lives; otherwise whichever remote the listing has.
+		let named = branches.compactMap { branch -> String? in
+			if case .remote(let name) = branch.kind { return name }
+			return nil
+		}
+		let remote = named.contains("origin") ? "origin" : named.first
+		let deletion = TagDeletion(root: root, remote: remote, window: window)
+		deletion.onDeleting = { [weak self] names in
+			guard let self else { return }
+			self.deletingBranches = names
+			self.reloadKeepingSelection { self.tableView.reloadData() }
+		}
+		deletion.onFinished = { [weak self] in
+			self?.deletingBranches = []
+			self?.refresh()
+		}
+		return deletion
+	}
+
+	/// Drives the tag delete from outside, through the same door the menu item
+	/// goes through — the sheet included, for a run that photographs it.
+	func deleteTagForTesting() { deleteTag() }
+
+	/// The same delete with the sheet's answer given, for a run that cannot
+	/// press a modal: it says what the sheet would have said and then does what
+	/// agreeing to it does.
+	func deleteTagForTesting(alsoOnRemote: Bool) {
+		madeDeletion().askForTesting(about: deletableTags, alsoOnRemote: alsoOnRemote)
+	}
+
 	/// The remote branches in the selection, all on one remote.
 	///
 	/// **One remote at a time.** A selection spanning `origin` and a fork is
@@ -3700,6 +3766,15 @@ extension BranchesPane: NSMenuDelegate {
 		if case .tag = branch.kind {
 			menu.addItem(.separator())
 			menu.addItem(item("Recreate…", #selector(recreateTag)))
+			// How many, as Copy Name and the branch deletes say it: a menu
+			// opened over three selected tags must not read as being about the
+			// one row under the pointer.
+			let deleting = deletableTags.count
+			menu.addItem(item(
+				deleting > 1 ? "Delete \(deleting) Tags…" : "Delete Tag…",
+				#selector(deleteTag),
+				enabled: deleting > 0
+			))
 		}
 	}
 }
@@ -3770,6 +3845,9 @@ private final class BranchesOutlineView: NSOutlineView {
 	var onRowAction: (() -> Void)?
 	/// `↑` from the first row, which leaves for the row pinned above the tree.
 	var onLeaveTop: (() -> Void)?
+	/// ⌘⌫ on the selection, which is this app's delete gesture: the project
+	/// tree has trashed a file with it since it had a tree.
+	var onDeleteKey: (() -> Void)?
 
 	/// A click from an inactive window lands on the row rather than being spent
 	/// activating the app, which is what the project tree has always done.
@@ -3797,6 +3875,15 @@ private final class BranchesOutlineView: NSOutlineView {
 			} else {
 				onActivate?()
 			}
+			return
+		}
+
+		// ⌘⌫, the delete gesture this app already has in the project tree — so
+		// a tag's own verb is not the one thing in this tree that needs a
+		// pointer. It acts on the selection or on nothing, which is what a key
+		// that means "delete what is highlighted" has to do.
+		if event.keyCode == 51, event.modifierFlags.contains(.command) {
+			onDeleteKey?()
 			return
 		}
 

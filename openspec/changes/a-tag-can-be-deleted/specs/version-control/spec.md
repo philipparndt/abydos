@@ -43,7 +43,7 @@ was selected.
 #### Scenario: a selection that is not all tags
 
 - **GIVEN** a branch row and a tag row selected together
-- **THEN** the tag delete is not offered
+- **THEN** the tag delete is shown disabled rather than acting on half the selection
 
 ## ADDED Requirements
 

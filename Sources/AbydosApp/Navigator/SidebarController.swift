@@ -336,6 +336,11 @@ final class SidebarController: NSObject {
 			case "stash":
 				pane.openStashForTesting(Int(argument) ?? 0)
 			case "recreate": pane.recreateTagForTesting()
+			// The tag delete with the sheet's answer given — `delete-tag` for
+			// the local half alone, `delete-tag:remote` for both. The sheet
+			// itself stays undriven: `NSAlert` wants a person, and reaching in
+			// to press it would be testing `NSAlert`.
+			case "delete-tag": pane.deleteTagForTesting(alsoOnRemote: argument == "remote")
 			// Opening a stash as a page, and what that page then says.
 			case "review-stash":
 				print("BRANCHES review-stash: " + pane.reviewStashForTesting(argument))
