@@ -137,6 +137,11 @@ extension HexEditorController {
 				report.append("structure-focus: " + inspector.structure.focusForTesting())
 			case "structure-key":
 				report.append("structure-key \(argument): " + inspector.structure.pressForTesting(argument) + " · \(statusText)")
+			case "show-entropy":
+				// Scrolls the inspector so the curve is in the picture.
+				inspector.layoutSubtreeIfNeeded()
+				inspector.curve.scrollToVisible(inspector.curve.bounds.insetBy(dx: 0, dy: -40))
+				report.append("show-entropy: curve at \(inspector.curve.frame)")
 			case "entropy-hover":
 				// The pointer at a fraction of the curve's width, without a pointer.
 				await statisticsTask?.value
