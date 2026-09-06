@@ -1,0 +1,181 @@
+## ADDED Requirements
+
+### Requirement: A project is untrusted until somebody trusts it
+
+A project SHALL be untrusted when it is opened and this application has not
+been told otherwise, whatever it contains and however it was opened. Reading it
+SHALL be unaffected — the tree, the editor, syntax, folding, search, the git
+panes, history, diffs, blame and the previews this app renders itself — because
+a mode that cannot read is a mode nobody stays in long enough to be protected
+by.
+
+#### Scenario: a repository just cloned to look at
+
+- **GIVEN** a project this application has never been told to trust
+- **WHEN** it is opened
+- **THEN** its files, its history and its diffs can be read
+
+#### Scenario: opening does not run anything
+
+- **GIVEN** an untrusted project carrying a `Makefile`, a `launch.json` and a devcontainer definition
+- **WHEN** it is opened
+- **THEN** nothing from it is started
+
+### Requirement: An untrusted project executes nothing of its own
+
+While a project is untrusted the application SHALL NOT start anything the
+project supplies or names: no run, debug, build or test configuration; no Make
+goal, gradle or maven wrapper; no devcontainer and no image it names; no
+language server, formatter or linter, whether found in the project's tree or
+chosen by its files; no scheme, task or agent command it carries; and no
+terminal in its directory, a shell there being a general-purpose runner.
+
+Each refusal SHALL say the same thing in the same words — that the project is
+not trusted — and SHALL offer the one gesture that changes it, rather than
+failing as though something were broken.
+
+#### Scenario: pressing run
+
+- **GIVEN** an untrusted project with a run configuration discovered
+- **WHEN** run is pressed
+- **THEN** nothing is launched, and what is said names the trust and offers to grant it
+
+#### Scenario: the language server
+
+- **GIVEN** an untrusted project whose tree carries a language server binary
+- **WHEN** a file that would use it is opened
+- **THEN** no server is started, and the editor works without one
+
+#### Scenario: the terminal
+
+- **GIVEN** an untrusted project
+- **WHEN** the terminal is opened
+- **THEN** no shell is started in the project's directory, and the panel says why
+
+#### Scenario: a devcontainer
+
+- **GIVEN** an untrusted project with a devcontainer definition
+- **WHEN** it would otherwise be offered or started
+- **THEN** it is not started
+
+### Requirement: No environment variable the project supplies reaches a process
+
+While a project is untrusted, no environment variable it supplies SHALL be
+applied to any process this application starts, for the project or for itself
+— not a `launch.json` `env` block, not a devcontainer's `containerEnv`, not an
+`.envrc`, not a run configuration's own environment. A variable is a command in
+every case that matters: `SOPS_AGE_KEY_CMD` is run by sops, `GIT_SSH_COMMAND`
+and `GIT_EXTERNAL_DIFF` by git, and the dynamic loader's variables choose what
+is loaded into a process that was never asked.
+
+The application's own environment SHALL be unaffected, being this
+application's and not the project's. Variables SHALL be dropped rather than
+filtered against a list of dangerous names: the dangerous ones do not look
+dangerous, and a list of them is a list somebody has to keep correct forever.
+
+#### Scenario: a decrypt in an untrusted project
+
+- **GIVEN** an untrusted project whose files set `SOPS_AGE_KEY_CMD`
+- **WHEN** a SOPS file is decrypted
+- **THEN** that variable is not in the environment sops is run with
+
+#### Scenario: a launch configuration's environment
+
+- **GIVEN** an untrusted project whose `launch.json` sets `DYLD_INSERT_LIBRARIES`
+- **THEN** nothing is launched at all, and the variable reaches nothing
+
+#### Scenario: the application's own environment
+
+- **GIVEN** an untrusted project
+- **WHEN** the application runs git on it
+- **THEN** git runs with the environment this application gives it, unchanged
+
+### Requirement: A git write that would run the project's hooks says so
+
+A commit made in an untrusted project SHALL NOT run the project's hooks, and
+what is said where the commit is made SHALL say that the hooks were declined —
+`.git/hooks` being code the project carries and a clone brings with it.
+Committing SHALL NOT be refused outright: reading a repository and committing to
+it is work somebody may legitimately be doing, and a mode that cannot commit is
+a mode they leave.
+
+#### Scenario: committing in an untrusted project
+
+- **GIVEN** an untrusted project with a `pre-commit` hook
+- **WHEN** a commit is made
+- **THEN** the commit is made, the hook does not run, and what is said names that
+
+#### Scenario: once it is trusted
+
+- **GIVEN** the same project trusted
+- **WHEN** a commit is made
+- **THEN** the hook runs as it always did
+
+### Requirement: Trust is remembered per folder, outside the project
+
+Trust SHALL be remembered in this application's own support directory, beside
+the recent projects it already keeps there, as the folder's resolved path, when
+it was trusted and by which gesture. It SHALL NOT be remembered inside the
+project under any name: a project that can grant itself trust is the hole this
+requirement exists to close.
+
+Trusting a **parent folder** SHALL be offered and SHALL cover everything under
+it, matched on the resolved path at a component boundary, so that a folder of
+checkouts is answered once rather than once per checkout. A driven run SHALL
+keep the list in memory and SHALL NOT write it, as the recent projects list
+already does not.
+
+#### Scenario: trusting a project
+
+- **GIVEN** an untrusted project
+- **WHEN** it is trusted
+- **THEN** it opens trusted next time, without asking again
+
+#### Scenario: trusting a folder of checkouts
+
+- **GIVEN** `~/dev` trusted as a parent
+- **WHEN** `~/dev/anything` is opened
+- **THEN** it is trusted, and nothing asks
+
+#### Scenario: a name that only looks like it is under a trusted parent
+
+- **GIVEN** `~/dev` trusted as a parent
+- **WHEN** `~/development/thing` is opened
+- **THEN** it is untrusted
+
+#### Scenario: the project cannot grant itself
+
+- **GIVEN** an untrusted project carrying any file claiming trust
+- **WHEN** it is opened
+- **THEN** it is untrusted
+
+#### Scenario: a driven run leaves no trace
+
+- **GIVEN** a driven run that trusts a temporary project
+- **THEN** the list on disk is unchanged when it ends
+
+### Requirement: The window says what is held back, and one gesture changes it
+
+An untrusted project's window SHALL say so where it can be read without being
+in the way — a strip rather than a modal, naming what is held back and carrying
+the gesture that grants trust. Granting SHALL name the folder, offer the parent
+folder as the wider choice, and say what trusting turns on.
+
+Trust SHALL be listed and withdrawable in the settings, and withdrawing it SHALL
+return the project to what an unknown project gets.
+
+#### Scenario: the strip
+
+- **GIVEN** an untrusted project open
+- **THEN** the window says it is untrusted, what that holds back, and offers to trust it
+
+#### Scenario: the sheet says what it turns on
+
+- **WHEN** the trust gesture is used
+- **THEN** what is asked names the folder, offers the parent folder, and says what trusting allows
+
+#### Scenario: taking it back
+
+- **GIVEN** a trusted project
+- **WHEN** its trust is withdrawn in the settings
+- **THEN** the project is untrusted again, and nothing of its own runs
