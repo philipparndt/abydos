@@ -337,11 +337,23 @@ extension MainWindowController {
 		bottomPanel.isHidden = true
 
 		root.addSubview(toolStrip)
+		// **Above everything the project can reach, and across the window.**
+		// The strip is about the project, not about a file, so it belongs above
+		// the editor *and* the panel rather than inside one editor group —
+		// which would draw it twice in a split and not at all in a window
+		// showing only a terminal.
+		root.addSubview(trustBanner)
 		root.addSubview(verticalSplitView)
 		toolStrip.translatesAutoresizingMaskIntoConstraints = false
+		trustBanner.translatesAutoresizingMaskIntoConstraints = false
 		verticalSplitView.translatesAutoresizingMaskIntoConstraints = false
 
 		toolStripWidthConstraint = toolStrip.widthAnchor.constraint(equalToConstant: ToolWindowBar.width)
+		trustBannerHeight = trustBanner.heightAnchor.constraint(equalToConstant: 0)
+		trustBannerTop = trustBanner.topAnchor.constraint(equalTo: root.topAnchor)
+		trustBanner.isHidden = true
+		trustBanner.onTrust = { [weak self] in self?.askToTrustProject() }
+		trustBanner.onDetails = { [weak self] in self?.sayWhatTrustHoldsBack() }
 
 		NSLayoutConstraint.activate([
 			toolStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -349,13 +361,25 @@ extension MainWindowController {
 			toolStrip.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 			toolStripWidthConstraint,
 
+			trustBanner.leadingAnchor.constraint(equalTo: toolStrip.trailingAnchor),
+			trustBanner.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+			// **Below the titlebar, not under it.** The content view spans the
+			// whole window — the titlebar is transparent — so every pane here
+			// takes a top inset to clear it, and a strip pinned to the top
+			// edge is a strip drawn behind the traffic lights. It was, and the
+			// photograph is how that was found: the report said the strip was
+			// up and the window did not show it.
+			trustBannerTop,
+			trustBannerHeight,
+
 			verticalSplitView.leadingAnchor.constraint(equalTo: toolStrip.trailingAnchor),
 			verticalSplitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-			verticalSplitView.topAnchor.constraint(equalTo: root.topAnchor),
+			verticalSplitView.topAnchor.constraint(equalTo: trustBanner.bottomAnchor),
 			verticalSplitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 		])
 
 		window?.contentView = root
+		refreshTrustBanner()
 
 		// A click in the tree opens provisionally and keeps focus in the tree;
 		// Return or a double-click pins the tab and moves focus to the editor.

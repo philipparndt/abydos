@@ -329,6 +329,7 @@ extension RunCoordinator {
 	}
 
 	func debugConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
+		guard mayRunProjectCode() else { return }
 		prepare(configuration, in: root) { [weak self] environment in
 			guard let self else { return }
 			if configuration.devPod != nil {

@@ -313,8 +313,18 @@ public enum GitWorkingCopy {
 		return "\(subject)\n\n\(body)"
 	}
 
-	public static func commitArguments(subject: String, body: String, amend: Bool) -> [String] {
+	/// - Parameter runsHooks: whether the project's own hooks may run.
+	///   `.git/hooks/pre-commit` is code the project carries and a clone brings
+	///   with it, so an untrusted project commits with `--no-verify`. Not
+	///   refused: reading a repository and committing to it is work somebody may
+	///   legitimately be doing, and a mode that cannot commit is a mode they
+	///   leave — but it is said where the commit is made rather than done
+	///   quietly, which is `GitWorkingCopy.hooksDeclined`.
+	public static func commitArguments(
+		subject: String, body: String, amend: Bool, runsHooks: Bool = true
+	) -> [String] {
 		var arguments = ["commit"]
+		if !runsHooks { arguments.append("--no-verify") }
 		if amend { arguments.append("--amend") }
 		// Two -m flags rather than one embedded newline: git joins them with a
 		// blank line itself, and it keeps the body out of the subject if the
@@ -330,10 +340,27 @@ public enum GitWorkingCopy {
 		subject: String,
 		body: String,
 		amend: Bool,
-		in root: URL
+		in root: URL,
+		runsHooks: Bool = true
 	) async -> GitRepository.ProcessResult {
-		await GitRepository.run(commitArguments(subject: subject, body: body, amend: amend), in: root)
+		await GitRepository.run(
+			commitArguments(subject: subject, body: body, amend: amend, runsHooks: runsHooks),
+			in: root
+		)
 	}
+
+	/// What is said about a commit that did not run the project's hooks.
+	///
+	/// Here rather than in the pane, so the commit page and the changes pane
+	/// say the same thing — and so a test can hold the wording, which is the
+	/// requirement: the danger of `--no-verify` is somebody not knowing it
+	/// happened.
+	public static let hooksDeclined =
+		"The project is not trusted, so its hooks did not run. "
+		+ "Trust it in the window's banner to let them."
+}
+
+extension GitWorkingCopy {
 
 	/// The message of the last commit, for pre-filling an amend.
 	public static func lastCommitMessage(in root: URL) async -> (subject: String, body: String)? {

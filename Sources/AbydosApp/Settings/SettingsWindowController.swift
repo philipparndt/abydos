@@ -872,6 +872,81 @@ final class SettingsPaneController: NSViewController {
 		]
 	}
 
+	/// What this app is allowed to run, and where that was decided.
+	///
+	/// **A list of folders rather than a switch.** Trust is granted per project
+	/// in the window's own strip, which is where somebody is looking at the
+	/// project they are deciding about; this page is where the decisions are
+	/// read back and taken away — the one thing a strip cannot do, since the
+	/// project it was about may not be open any more.
+	static func trustRows() -> [Row] {
+		let folders = ProjectTrust.shared.folders.sorted { $0.path < $1.path }
+		var rows: [Row] = [
+			.group(
+				title: "Trusted folders",
+				help: folders.isEmpty
+					? "Nothing is trusted yet. A project is trusted from the strip at the top "
+						+ "of its window, and until it is, nothing in it runs: no run or debug "
+						+ "configuration, no build, no devcontainer, no language server, no "
+						+ "terminal in its directory, and none of the environment its files "
+						+ "ask for. Reading it is unaffected."
+					: "Trust is remembered by folder, in this app's own support directory and "
+						+ "never inside the project — a project that could grant itself trust "
+						+ "would be the whole hole. A folder trusted with everything under it "
+						+ "covers every checkout inside it.",
+				rows: folders.map { folder in
+					.button(
+						title: Project.abbreviate(URL(fileURLWithPath: folder.path))
+							+ (folder.coversChildren ? " and everything in it" : ""),
+						label: "Withdraw",
+						action: {
+							ProjectTrust.shared.withdraw(path: folder.path)
+							// Every window says what it now is: a project whose
+							// trust has just gone is untrusted while it is open.
+							for controller in NSApp.windows.compactMap({
+								$0.windowController as? MainWindowController
+							}) {
+								controller.refreshTrustBanner()
+							}
+						}
+					)
+				}
+			),
+		]
+		let remotes = ProjectTrust.shared.remotes.sorted { $0.said < $1.said }
+		if !remotes.isEmpty {
+			rows.append(.group(
+				title: "Trusted remotes",
+				help: "Every clone that says it came from one of these is trusted. Weaker than a "
+					+ "folder, deliberately: a repository's remote is what its own .git/config "
+					+ "claims, so this trusts anything that claims to come from there. Worth it "
+					+ "for a server nobody outside your company can reach, or for one "
+					+ "organisation — never for the whole of github.com.",
+				rows: remotes.map { remote in
+					.button(title: remote.said, label: "Withdraw", action: {
+						ProjectTrust.shared.withdraw(remoteHost: remote.host, owner: remote.owner)
+						for controller in NSApp.windows.compactMap({
+							$0.windowController as? MainWindowController
+						}) {
+							controller.refreshTrustBanner()
+						}
+					})
+				}
+			))
+		}
+		rows.append(.group(
+			title: "What trust means",
+			help: "Trusting a project lets it run on this machine — its configurations, its "
+				+ "build and test commands, its devcontainer, the language servers its tree "
+				+ "provides, the environment its files ask for, a terminal in its directory "
+				+ "and its git hooks. It is not a sandbox: a trusted project's build does what "
+				+ "builds do. Trust a project only if you would run its code from a terminal "
+				+ "yourself.",
+			rows: []
+		))
+		return rows
+	}
+
 	static func gitRows() -> [Row] {
 		[
 			.toggle(
@@ -1098,6 +1173,7 @@ enum SettingsSections {
 		Section(title: "Navigator", symbol: "folder", rows: SettingsPaneController.navigatorRows),
 		Section(title: "Git", symbol: "arrow.trianglehead.branch", rows: SettingsPaneController.gitRows),
 		Section(title: "Agent", symbol: "sparkles", rows: SettingsPaneController.agentRows),
+		Section(title: "Trust", symbol: "hand.raised", rows: SettingsPaneController.trustRows),
 		Section(
 			title: "Tools",
 			symbol: "shippingbox",

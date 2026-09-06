@@ -164,6 +164,23 @@ extension MainWindowController {
 		let remembered = SessionStore.read(in: project.sessionRoot)
 
 		self.project = project
+		// The strip goes up or comes down with the project, since trust is per
+		// project and a window changes project without being closed.
+		refreshTrustBanner()
+		// And what host it says it came from, asked once here rather than at
+		// every gate: a subprocess between a keypress and a refusal is a
+		// refusal that arrives late. The strip is refreshed again when the
+		// answer lands, since a trusted host makes it go away.
+		let root = project.root
+		Task { @MainActor [weak self] in
+			let remote = await GitForge.remoteURL(in: root)
+			let repository = remote.flatMap { GitForge.repository(fromRemote: $0) }
+			ProjectTrust.shared.noteRemote(
+				host: repository?.host, owner: repository?.owner, for: root
+			)
+			guard self?.project?.root == root else { return }
+			self?.refreshTrustBanner()
+		}
 		// And its breakpoints, in place of the ones the window was holding.
 		// They are the project's — kept in its session file, per project — but
 		// they lived in the window and nothing took them away, so the first

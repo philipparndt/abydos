@@ -895,7 +895,15 @@ final class LanguageService {
 
 	/// A file was opened. Starts a server for it if this is the first of its
 	/// language, and hands it the text.
+	///
+	/// **Nothing at all for an untrusted project.** A language server is a
+	/// program, and the one that answers for a project is often the project's
+	/// own — `node_modules/.bin`, a gradle wrapper, a binary in its tree. It is
+	/// also handed the file's text, which is the other half of what a project
+	/// that has not been trusted should not get. The editor works without one:
+	/// syntax, folding and search are this app's.
 	func opened(url: URL, languageId: String, text: String, project: URL) {
+		guard ProjectTrust.shared.isTrusted(project) else { return }
 		let key = key(project: project, languageId: languageId)
 		let uri = uri(for: url)
 
@@ -2553,6 +2561,11 @@ final class LanguageService {
 	/// learn to dismiss without reading. The moment something needs the container
 	/// is the moment the question means anything.
 	private func startDevContainer(_ project: URL) {
+		// A devcontainer is a container the project's own file describes — an
+		// image it names, a `postCreateCommand` it carries — so an untrusted
+		// project does not get one, and is not asked about one either: the
+		// question would be about running its code.
+		guard ProjectTrust.shared.isTrusted(project) else { return }
 		let path = project.standardizedFileURL.path
 		guard devcontainerStarting.insert(path).inserted else { return }
 		guard let consent = consent(for: project) else {

@@ -2043,13 +2043,24 @@ final class ChangesPane: NSView, ScaleFollowing {
 		guard !subject.trimmingCharacters(in: .whitespaces).isEmpty else { return }
 
 		isBusy = true
+		// A commit runs `.git/hooks/pre-commit`, which is code the project
+		// carries and a clone brings with it. An untrusted project's hooks are
+		// declined rather than the commit being refused — and it is said here,
+		// where the commit was made, because the danger of `--no-verify` is
+		// somebody not knowing it happened.
+		let hooks = ProjectTrust.shared.isTrusted(root)
 		Task { @MainActor in
-			let result = await GitWorkingCopy.commit(subject: subject, body: body, amend: amend, in: root)
+			let result = await GitWorkingCopy.commit(
+				subject: subject, body: body, amend: amend, in: root, runsHooks: hooks
+			)
 			endBusy()
 
 			guard result.exitCode == 0 else {
 				presentFailure(result.stderr.isEmpty ? result.stdout : result.stderr)
 				return
+			}
+			if !hooks {
+				Toast.post("Committed without hooks", detail: GitWorkingCopy.hooksDeclined, kind: .information)
 			}
 
 			subjectField.stringValue = ""
@@ -2277,6 +2288,13 @@ final class ChangesPane: NSView, ScaleFollowing {
 	}
 
 	/// What the fields hold, in one line, for a report either side of a switch.
+	/// Commits what is staged, through the button's own door — so a driven run
+	/// can show whether the project's hooks ran.
+	func commitForTesting(subject: String) {
+		composeForTesting(summary: subject, body: "")
+		commit()
+	}
+
 	func messageReportForTesting() -> String {
 		"summary=[\(subjectField.stringValue)] body=[\(bodyView.string)]"
 	}

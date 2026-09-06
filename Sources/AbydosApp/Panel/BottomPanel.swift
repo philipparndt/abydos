@@ -1963,6 +1963,22 @@ final class BottomPanel: NSView {
 		attachingTo session: String? = nil,
 		joinsSession: Bool = true
 	) -> TerminalPane? {
+		// **The one door every shell in this panel goes through**, which is
+		// why the trust question is asked here rather than at each of the four
+		// verbs above it — a fifth verb is then gated by construction.
+		//
+		// A shell in an untrusted project's directory is a general-purpose
+		// runner standing in it: the machine's own shell configuration is
+		// sourced, and tools like direnv exist to execute the project's
+		// `.envrc`. There is no half-measure to offer, so the panel says why
+		// instead of coming up empty and looking broken.
+		if let root = projectRoot(), !ProjectTrust.shared.isTrusted(root) {
+			Toast.post(
+				"Not trusted",
+				detail: ProjectTrust.shared.decision(for: root).said ?? ""
+			)
+			return nil
+		}
 		// A terminal of a window can be told to run something instead of a
 		// plain shell — `tmux new -A -s ideai`, for whoever lives in tmux. One
 		// of them, not all: the ones opened beside it are for the odd job that
@@ -2375,6 +2391,14 @@ final class BottomPanel: NSView {
 	/// terminal in the first place.
 	func startBacklogItem(_ item: BacklogItem) {
 		guard let root = workingDirectory else { return }
+		// An agent started in a project reads that project's instructions and
+		// acts on them — a `CLAUDE.md` in a downloaded repository is a list of
+		// things somebody else wants run on this machine. So it waits for
+		// trust, like everything else the project can steer.
+		guard ProjectTrust.shared.isTrusted(root) else {
+			Toast.post("Not trusted", detail: ProjectTrust.shared.decision(for: root).said ?? "")
+			return
+		}
 		let backlog = Backlog(projectRoot: root)
 		let configuration = BacklogConfiguration.read(backlog.configFile) ?? BacklogConfiguration()
 

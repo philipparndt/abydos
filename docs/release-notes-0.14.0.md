@@ -289,3 +289,59 @@ it: a tag deleted locally with `git ls-remote` still showing it; the same tag
 taken from both; two at once; a mixed selection disabled; a repository with no
 remote offering no remote choice; and a broken `origin` proving the half-done
 report.
+
+## A project is trusted before it runs
+
+Asked for on 2026-09-06: "abydos shall have a untrusted mode, where no code
+from downloaded projects is executed, like devcontainers. VSCode does something
+similar." — and, before it, the sharpest case: "in the untrusted mode, also
+setting environment variables must not be possible (think of setting
+SOPS_AGE_KEY_CMD)".
+
+Opening a folder here used to run code from it. Not on a press — on the open:
+run configurations are discovered by reading a `Makefile`, a `launch.json` and
+a devcontainer definition; a language server is started from what the project's
+tree provides; a terminal comes up in its directory; a commit runs
+`.git/hooks`. A repository cloned to read — a bug report's reproduction, a
+dependency somebody linked — got the trust its owner's code gets.
+
+Now a project is untrusted until you say otherwise, and says so in a strip at
+the top of the window with the one button that changes it. **Reading is
+untouched**: the tree, the editor, syntax, folding, search, the git panes,
+history, diffs, blame and the previews this app draws itself all work. What
+waits is everything that executes: running, debugging and building; make,
+gradle and maven; devcontainers; language servers; agents; and a terminal in
+that directory, a shell there being a general-purpose runner standing in it.
+
+**No environment variable the project asks for reaches anything.** A variable
+is a command in every case that matters — `SOPS_AGE_KEY_CMD` is run by sops,
+`GIT_SSH_COMMAND` and `GIT_EXTERNAL_DIFF` by git, and the loader's variables
+choose what is loaded into a process that was never asked. They are dropped
+rather than filtered against a list of dangerous names, because the dangerous
+ones do not look dangerous.
+
+**A commit declines the project's hooks and says so.** Not refused — reading a
+repository and committing to it is work somebody may legitimately be doing, and
+a mode that cannot commit is a mode people leave — but `--no-verify` is said on
+the commit rather than done quietly.
+
+**Trust is remembered by folder, and by where a clone came from.** The folder's
+resolved path, in this app's own support directory beside the recents and never
+inside the project — a repository that could grant itself trust would be the
+whole hole. A parent folder can be trusted once (`~/dev`, rather than a hundred
+checkouts), matched at a component boundary so `~/dev` is not `~/development`.
+And a remote: a whole host for a server whose every repository is a
+colleague's, or one owner on a host, since `github.com` is the world and an
+organisation on it is a place. That last one is weaker on purpose and says so
+where it is offered: a repository's remote is what its own `.git/config`
+claims.
+
+This is not a sandbox — it decides what starts, not what a trusted project's
+build then does — and it is not a scanner: no heuristic reads a project and
+decides it looks safe.
+
+Driven against a project deliberately hostile to itself, each part leaving a
+trace if it ran: a `Makefile` goal, a `launch.json` whose `env` sets
+`SOPS_AGE_KEY_CMD` and `DYLD_INSERT_LIBRARIES`, a `pre-commit` hook and an
+`.envrc`. Untrusted, every gesture refused with the same sentence and not one
+trace; trusted, the goal ran and the strip was gone.

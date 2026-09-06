@@ -228,6 +228,7 @@ final class RunCoordinator {
 	/// usually interactive, or prints as it goes, and watching it in a real
 	/// shell is what makes it debuggable.
 	func run(_ configuration: RunConfiguration) {
+		guard mayRunProjectCode() else { return }
 		// A scheme is not a command line until somewhere to run it is known,
 		// and finding that out means asking `xcodebuild`, which takes long
 		// enough that it cannot happen while a list of runnable things is being
@@ -302,6 +303,7 @@ final class RunCoordinator {
 
 	/// Builds, installs and launches, in the terminal where the output is.
 	func start(_ configuration: RunConfiguration, target: XcodeTarget, on destination: XcodeDestination) {
+		guard mayRunProjectCode() else { return }
 		xcodeDestinations[XcodeDestinationMemory.key(for: target)] = destination.id
 
 
@@ -602,8 +604,27 @@ final class RunCoordinator {
 		print("ATTACH: \(processPicker?.shownNamesForTesting.prefix(5).joined(separator: ", ") ?? "none")")
 	}
 
+	/// Whether this project's own code may be run, and the refusal if not.
+	///
+	/// **At the point of execution, not at the point of display.** A menu that
+	/// hides its items teaches nobody why; a menu that explains itself teaches
+	/// once. Every way of starting something asks this, so a new way of
+	/// starting something is added beside a call to it.
+	///
+	/// The sentence is `TrustDecision`'s own, so the run control, the terminal
+	/// and the language servers all refuse in the same words — a refusal that
+	/// reads differently in two places teaches somebody they are two different
+	/// problems.
+	func mayRunProjectCode() -> Bool {
+		guard let root = currentProject()?.root else { return true }
+		guard let said = ProjectTrust.shared.decision(for: root).said else { return true }
+		notify("Not trusted", detail: said)
+		return false
+	}
+
 	func runSelectedConfiguration(debug: Bool) {
 		guard currentProject() != nil else { return }
+		guard mayRunProjectCode() else { return }
 
 		// A make goal nothing can debug runs as make runs it, in the terminal,
 		// for both buttons: there is no debugger to offer and refusing to start
@@ -643,9 +664,17 @@ final class RunCoordinator {
 	) {
 		let evaluate = { [weak self] in
 			guard let self else { return }
+			// **The one place a project's environment is assembled**, so it is
+			// the one place it is dropped. The launches above are gated
+			// already; this is the belt to that pair of braces, and it is what
+			// makes "an untrusted project's variables reach nothing" a claim a
+			// test can hold rather than a consequence of four other guards.
+			let trusted = ProjectTrust.shared.isTrusted(root)
 			let commands = configuration.environmentCommands
-			guard !commands.isEmpty else {
-				start(configuration.expandedEnvironment(root: root))
+			guard trusted, !commands.isEmpty else {
+				start(ProjectEnvironment.allowed(
+					configuration.expandedEnvironment(root: root), trusted: trusted
+				))
 				return
 			}
 
@@ -853,6 +882,7 @@ final class RunCoordinator {
 	/// and a program run by hand covers whatever the person doing it happened
 	/// to touch.
 	func runSelectedWithCoverage() {
+		guard mayRunProjectCode() else { return }
 		guard let root = currentProject()?.root else { return }
 		guard FileManager.default.fileExists(atPath: root.appendingPathComponent("go.mod").path) else {
 			notify(

@@ -179,3 +179,44 @@ return the project to what an unknown project gets.
 - **GIVEN** a trusted project
 - **WHEN** its trust is withdrawn in the settings
 - **THEN** the project is untrusted again, and nothing of its own runs
+
+### Requirement: Trust can be granted to where a clone came from
+
+Trust SHALL also be grantable by the remote a project says it was cloned from
+— a host, for a server whose every repository is a colleague's, or an owner on
+a host, since one organisation is a place and `github.com` is the world. A
+project whose `origin` names a trusted host, or a trusted owner on that host,
+SHALL be trusted without a folder entry of its own.
+
+Where this is offered, and where trusted remotes are listed, it SHALL say what
+it is worth: **a repository's remote is what its own `.git/config` claims**, so
+trusting a remote trusts every folder that says it came from there. It is
+weaker than a folder deliberately, and somebody granting it is owed that
+sentence before they do.
+
+The remote SHALL be read once when the project is opened rather than at each
+refusal: a subprocess between a keypress and a refusal is a refusal that
+arrives late.
+
+#### Scenario: an enterprise server
+
+- **GIVEN** a project whose `origin` is `git@git.company.com:platform/thing.git`
+- **WHEN** `git.company.com` is trusted
+- **THEN** that project is trusted, and so is the next clone from that server
+
+#### Scenario: one organisation, not the whole of github.com
+
+- **GIVEN** `github.com/my-org` trusted
+- **WHEN** a project cloned from `github.com/somebody-else` is opened
+- **THEN** it is untrusted
+
+#### Scenario: what it is worth is said
+
+- **WHEN** trusting a remote is offered
+- **THEN** what is said is that a repository's remote is its own claim, and that this trusts anything claiming to come from there
+
+#### Scenario: a project with no remote
+
+- **GIVEN** a trusted host and a project with no `origin` at all
+- **WHEN** it is opened
+- **THEN** it is untrusted

@@ -580,6 +580,10 @@ final class SidebarController: NSObject {
 				)
 			case "message":
 				print("CHANGES message: " + pane.messageReportForTesting())
+			// Commits what is staged with this subject, through the button's
+			// own door: whether the project's hooks ran is a claim that wants a
+			// trace rather than an assertion.
+			case "commit-now": pane.commitForTesting(subject: argument)
 			case "use-history":
 				pane.useHistoryEntryForTesting(Int(argument) ?? 0)
 			// Ends the run, and is the one ending that flushes: a script with
@@ -1458,6 +1462,10 @@ final class SidebarController: NSObject {
 			// `use-history:<n>` fills the fields from one — both async, so
 			// settle before reading.
 			case "history":     page.messageHistoryForTesting()
+			// Commits what is staged with this subject, through the button's
+			// own door: whether the project's hooks ran is a claim that wants a
+			// trace rather than an assertion.
+			case "commit-now": page.commitForTesting(subject: argument)
 			case "use-history": page.useHistoryEntryForTesting(Int(argument) ?? 0)
 			// A script that says so ends the run. Without it the process is
 			// killed by whatever is waiting on it, and a killed process never

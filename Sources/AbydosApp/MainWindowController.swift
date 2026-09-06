@@ -481,6 +481,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// on it is drawn differently, and the capsule cannot tell from a string.
 	var branchRead: Task<GitRepository.HeadState?, Never>?
 	var toolStripWidthConstraint: NSLayoutConstraint!
+	/// The strip that says this project is not trusted, above everything the
+	/// project can reach.
+	let trustBanner = TrustBanner()
+	var trustBannerHeight: NSLayoutConstraint!
+	/// How far below the window's top the strip sits — the titlebar's own
+	/// inset, which every pane here takes.
+	var trustBannerTop: NSLayoutConstraint!
 
 	var navigatorWidth: CGFloat = 260
 
@@ -732,6 +739,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		sidebar.primaryToolTop?.constant = inset
 		editor.setTopInset(inset)
 		toolStrip.setTopInset(inset)
+		trustBannerTop?.constant = inset
 	}
 
 	// MARK: - Loading

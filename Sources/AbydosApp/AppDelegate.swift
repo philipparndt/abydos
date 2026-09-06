@@ -511,6 +511,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.trustsRemoteHost || options.trustsRemoteOwner {
+			// Later than the folder's: the remote is read from git after the
+			// project loads, and trusting where a clone came from needs the
+			// answer to have arrived.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+				controller?.trustRemoteForTesting(owner: options.trustsRemoteOwner)
+			}
+		}
+		if options.trustsProject || options.trustsParent {
+			// Before anything else asks: the point of the flag is a run that
+			// starts where a person would be after pressing Trust.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				controller?.trustProjectForTesting(coveringChildren: options.trustsParent)
+			}
+		}
+		if options.trustReport {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				let root = controller?.project?.root
+				let trusted = root.map { ProjectTrust.shared.isTrusted($0) } ?? false
+				print("TRUST: trusted=\(trusted) banner=["
+					+ (controller?.trustBannerReportForTesting() ?? "no window") + "]")
+				fflush(stdout)
+			}
+		}
 		if let filter = options.switcherFilter {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				if options.switcherFromPill {

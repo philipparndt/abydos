@@ -14,6 +14,7 @@ extension RunCoordinator {
 	/// you want from the same marker, and a button that starts a process on a
 	/// single click with no way to say which is a button you learn to distrust.
 	func runConfiguration(forFile url: URL, line: Int) {
+		guard mayRunProjectCode() else { return }
 		let path = RunConfigurationDiscovery.canonicalPath(url)
 		let matching = runConfigurations.filter { $0.file == path && $0.line == line }
 
@@ -490,6 +491,7 @@ extension RunCoordinator {
 	}
 
 	func runConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
+		guard mayRunProjectCode() else { return }
 		prepare(configuration, in: root) { [weak self] environment in
 			guard let self else { return }
 			if configuration.devPod != nil {

@@ -262,6 +262,18 @@ struct LaunchOptions {
 
 	/// Keys to press in the palette's list, comma separated.
 	var switcherKeys: String?
+	/// `--trust` / `--trust-parent`: grant this project trust as the window's
+	/// strip grants it, so a run can drive both sides of the gate. The sheet
+	/// itself stays undriven — `NSAlert` wants a person.
+	var trustsProject = false
+	var trustsParent = false
+	/// `--trust-remote [owner]`: trust where this clone says it came from —
+	/// the host, or the owner on it — as the sheet's own checkboxes do.
+	var trustsRemoteHost = false
+	var trustsRemoteOwner = false
+	/// `--trust-report`: what the strip says, and whether the project is
+	/// trusted, printed once the window is up.
+	var trustReport = false
 	/// `--switcher-pill`: open the switcher the way a click on the project
 	/// pill opens it, rather than the way ⇧⌘P does — the two placements are
 	/// the subject, so a run has to be able to ask for either.
@@ -1421,6 +1433,11 @@ struct LaunchOptions {
 			case "--switcher":   options.switcherFilter = next()
 			case "--switcher-keys": options.switcherKeys = next()
 			case "--switcher-pill": options.switcherFromPill = true
+			case "--trust":         options.trustsProject = true
+			case "--trust-parent":  options.trustsParent = true
+			case "--trust-remote":  options.trustsRemoteHost = true
+			case "--trust-owner":   options.trustsRemoteOwner = true
+			case "--trust-report":  options.trustReport = true
 			case "--switch-to":
 				let said = next() ?? ""
 				// `path@seconds`, and a path with no `@` in it keeps the default.
