@@ -8,6 +8,9 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// `focusEditor` is true when the user committed to the file (Return or a
 	/// double-click) rather than merely highlighting it.
 	var onSelectFile: ((URL, _ focusEditor: Bool) -> Void)?
+	/// A file should open as bytes, whatever it is: the tree's door into the
+	/// hex editor, beside the notice's button and the tab's menu.
+	var onOpenAsHex: ((URL) -> Void)?
 	/// Asked to open a terminal in the given directory.
 	var onOpenTerminal: ((URL) -> Void)?
 	/// Asked to work on part of the project, or on the whole of it again.
@@ -1286,6 +1289,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(.separator())
 		menu.addItem(item("Open", #selector(contextOpen)))
 		menu.addItem(item("Open Externally", #selector(contextOpenExternally)))
+		menu.addItem(item("Open as Hex", #selector(contextOpenAsHex)))
 		// Space does this too. Written down here because a key with nothing
 		// naming it is a key nobody finds — and hidden per click, like the
 		// model preview below, because whether it is worth offering depends on
@@ -1489,6 +1493,11 @@ final class ProjectNavigatorViewController: NSViewController {
 	@objc private func contextOpenExternally() {
 		guard let node = contextNode else { return }
 		NSWorkspace.shared.open(node.url)
+	}
+
+	@objc private func contextOpenAsHex() {
+		guard let node = contextNode, !node.isDirectory else { return }
+		onOpenAsHex?(node.url)
 	}
 
 	@objc private func contextOpenTerminal() {
@@ -3985,7 +3994,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			}
 
 			switch item.action {
-			case #selector(contextOpenExternally):
+			case #selector(contextOpenExternally), #selector(contextOpenAsHex):
 				item.isHidden = node?.isDirectory ?? true
 			case #selector(contextQuickLook):
 				// Only where the system would actually render something. A

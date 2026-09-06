@@ -174,6 +174,16 @@ extension MainWindowController {
 			return false
 		}
 
+		if item.action == #selector(openAsHex(_:)) {
+			return editor.activeGroupTabURL != nil && !editor.activeTabIsHex
+		}
+		if item.action == #selector(openAsText(_:)) {
+			return editor.activeTabCanOpenAsText
+		}
+		if item.action == #selector(goToOffset(_:)) {
+			return editor.activeTabIsHex
+		}
+
 		if item.action == #selector(trustThisProject(_:)) {
 			// **Enabled once the project is trusted, too.** A greyed-out item
 			// is how somebody learns the app has forgotten the question; this
@@ -594,6 +604,21 @@ extension MainWindowController {
 
 	@objc func findInFile(_ sender: Any?) {
 		editor.showFind()
+	}
+
+	/// Edit ▸ Go to Offset…, which is ⌘L: the hex tab's offset field.
+	@objc func goToOffset(_ sender: Any?) {
+		editor.goToOffset()
+	}
+
+	/// File ▸ Open as Hex: the front tab's file as bytes, whatever it holds.
+	@objc func openAsHex(_ sender: Any?) {
+		editor.openActiveAsHex()
+	}
+
+	/// File ▸ Open as Text: back from a hex tab over a file that is text.
+	@objc func openAsText(_ sender: Any?) {
+		editor.openActiveAsText()
 	}
 
 	/// Edit ▸ Replace…, which is ⌘R.

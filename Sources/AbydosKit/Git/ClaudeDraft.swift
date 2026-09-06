@@ -62,47 +62,22 @@ public enum ClaudeDraft {
 
 	// MARK: - Whether it can be done at all
 
-	/// The places to look besides the `PATH`.
-	///
-	/// A parameter so a test can say "nowhere" and mean it: these are absolute
-	/// and exist on the machine the suite runs on, so an empty `PATH` alone
-	/// does not describe a machine without the command.
+	/// `ClaudeCommand` holds the search now, shared with the hex editor's
+	/// ask; these stay so the commit page and its tests read as they did.
 	public static func fallbackPlaces(
 		home: URL = FileManager.default.homeDirectoryForCurrentUser
 	) -> [URL] {
-		[
-			home.appendingPathComponent(".local/bin"),
-			home.appendingPathComponent(".claude/local"),
-			URL(fileURLWithPath: "/opt/homebrew/bin"),
-			URL(fileURLWithPath: "/usr/local/bin"),
-		]
+		ClaudeCommand.fallbackPlaces(home: home)
 	}
 
-	/// Where the command is, or nil when it is not anywhere.
-	///
-	/// The `PATH` this process has, and then the places a per-user install puts
-	/// it — a GUI app launched from Finder does not inherit the shell's `PATH`,
-	/// so looking only there would say "not installed" on most machines that
-	/// have it.
 	public static func executable(
 		environment: [String: String] = ProcessInfo.processInfo.environment,
 		besides extra: [URL]? = nil
 	) -> URL? {
-		var places = (environment["PATH"] ?? "")
-			.split(separator: ":")
-			.map { URL(fileURLWithPath: String($0)) }
-		places += extra ?? fallbackPlaces()
-
-		for place in places {
-			let candidate = place.appendingPathComponent("claude")
-			if FileManager.default.isExecutableFile(atPath: candidate.path) {
-				return candidate
-			}
-		}
-		return nil
+		ClaudeCommand.executable(environment: environment, besides: extra)
 	}
 
-	public static var isAvailable: Bool { executable() != nil }
+	public static var isAvailable: Bool { ClaudeCommand.isAvailable }
 
 	// MARK: - What is sent
 
@@ -279,54 +254,13 @@ public enum ClaudeDraft {
 		return .success(draft)
 	}
 
-	/// Runs the command with the prompt on standard input.
-	///
-	/// On stdin rather than as an argument: a staged diff is tens of thousands
-	/// of characters and an argument list has a limit that a large commit walks
-	/// straight through.
+	/// `ClaudeCommand.run`, in the shape this file's callers expect.
 	private static func run(
 		_ command: URL,
 		prompt: String,
 		in root: URL
 	) async -> (stdout: String, stderr: String, exitCode: Int32) {
-		await withCheckedContinuation { continuation in
-			DispatchQueue.global(qos: .userInitiated).async {
-				let process = Process()
-				process.executableURL = command
-				process.arguments = ["-p"]
-				process.currentDirectoryURL = root
-
-				let out = Pipe(), err = Pipe(), input = Pipe()
-				process.standardOutput = out
-				process.standardError = err
-				process.standardInput = input
-
-				do {
-					try process.run()
-				} catch {
-					continuation.resume(returning: ("", "\(error)", -1))
-					return
-				}
-
-				// Written on a thread of its own and both pipes drained
-				// together: a program blocked writing to a pipe nobody is
-				// reading deadlocks against a reader waiting for it to finish.
-				// The same lesson `ProcessPipes` records, and the same several
-				// afternoons.
-				DispatchQueue.global(qos: .utility).async {
-					input.fileHandleForWriting.write(Data(prompt.utf8))
-					try? input.fileHandleForWriting.close()
-				}
-
-				let data = out.fileHandleForReading.readDataToEndOfFile()
-				let problem = err.fileHandleForReading.readDataToEndOfFile()
-				process.waitUntilExit()
-				continuation.resume(returning: (
-					String(decoding: data, as: UTF8.self),
-					String(decoding: problem, as: UTF8.self),
-					process.terminationStatus
-				))
-			}
-		}
+		let outcome = await ClaudeCommand.run(command, prompt: prompt, in: root)
+		return (outcome.stdout, outcome.stderr, outcome.exitCode)
 	}
 }

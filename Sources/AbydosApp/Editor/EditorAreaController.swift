@@ -143,7 +143,11 @@ final class EditorAreaController: NSViewController {
 	private func refreshStatus(from group: EditorViewController?) {
 		guard let group, group === activeGroup else { return }
 		statusBar.isHidden = group.isEmpty
-		statusBar.setPosition(line: group.statusLine, column: group.statusColumn)
+		if let text = group.statusPositionText {
+			statusBar.setPosition(text: text)
+		} else {
+			statusBar.setPosition(line: group.statusLine, column: group.statusColumn)
+		}
 		statusBar.setLanguage(group.statusLanguage)
 		statusBar.setServer(group.statusServer)
 		let secrets = group.secretsState
@@ -935,6 +939,13 @@ final class EditorAreaController: NSViewController {
 		activeGroup.open(fileURL: fileURL, focusEditor: focusEditor, preview: preview)
 	}
 
+	/// Opens the file as a tab of its own and turns that tab into the hex
+	/// editor, whatever the file would otherwise have opened as.
+	func openAsHex(fileURL: URL) {
+		activeGroup.open(fileURL: fileURL, focusEditor: true)
+		activeGroup.openActiveAsHex()
+	}
+
 	func selectDiffHunkForTesting(_ hunk: Int) {
 		activeGroup.selectDiffHunkForTesting(hunk)
 	}
@@ -1025,6 +1036,15 @@ final class EditorAreaController: NSViewController {
 	}
 
 	func showFind() { activeGroup.showFind() }
+	func goToOffset() { activeGroup.goToOffset() }
+	func openActiveAsHex() { activeGroup.openActiveAsHex() }
+	func openActiveAsText() { activeGroup.openActiveAsText() }
+	var activeTabIsHex: Bool { activeGroup?.activeTabIsHex ?? false }
+	var activeTabCanOpenAsText: Bool { activeGroup?.activeTabCanOpenAsText ?? false }
+	/// The driver's steps on the front tab, as bytes.
+	func hexStepsForTesting(_ steps: String) async -> String {
+		await activeGroup.hexStepsForTesting(steps)
+	}
 	func showReplace() { activeGroup.showReplace() }
 	@discardableResult
 	func selectTextForTesting(_ text: String) -> Bool { activeGroup.selectTextForTesting(text) }

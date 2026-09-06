@@ -21,6 +21,7 @@ final class EditorViewController: NSViewController {
 	/// tab, which can swap itself for a hex dump in place. Modelling that as tab
 	/// content rather than an alert is what keeps the app free of blocking
 	/// dialogs.
+	@MainActor
 	final class Tab {
 		let url: URL
 		/// nil for anything not opened as text.
@@ -178,7 +179,15 @@ final class EditorViewController: NSViewController {
 			self.isPreview = isPreview
 		}
 
-		var isDirty: Bool { document?.isDirty ?? false }
+		/// The file as bytes, when the tab is a hex editor; its controller
+		/// owns the view and every task behind it. A tab has one of
+		/// `document` and `hex`, never both.
+		var hex: HexEditorController?
+
+		var isDirty: Bool {
+			if let hex { return hex.isDirty }
+			return document?.isDirty ?? false
+		}
 	}
 
 	private var tabs: [Tab] = []
@@ -439,6 +448,10 @@ final class EditorViewController: NSViewController {
 			guard let url = self?.tabs[safe: index]?.url else { return }
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(url.path, forType: .string)
+		}
+		tabBar.onOpenAsHex = { [weak self] index in
+			guard let self, let tab = tabs[safe: index] else { return }
+			showHexEditor(for: tab)
 		}
 		tabBar.onRevealInFinder = { [weak self] index in
 			guard let url = self?.tabs[safe: index]?.url else { return }
@@ -2623,6 +2636,10 @@ final class EditorViewController: NSViewController {
 	var findBarIsShowingForTesting: Bool { !findBar.isHidden }
 
 	func showFind() {
+		if let hex = activeTab?.hex {
+			hex.focusFind()
+			return
+		}
 		guard let tab = activeTab, tab.codeView != nil || pdfPreview != nil else { return }
 		tab.find.isShowing = true
 		// The tab's mode, which ⌘F reports rather than changes: somebody who
@@ -3595,27 +3612,87 @@ final class EditorViewController: NSViewController {
 		return tab
 	}
 
-	/// Swaps a notice tab's content for a hex dump of the same file.
+	/// Swaps a tab's content for a hex editor over the same file.
+	///
+	/// The notice's button, *Open as Hex* on a text tab, and the driver all
+	/// arrive here. A text tab with unsaved edits is refused rather than
+	/// silently dropped: the bytes on disk are not the ones being looked at.
 	private func showHexEditor(for tab: Tab) {
-		guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
-
-		// Mapped rather than read: a 100 MB file costs no resident memory until
-		// the visible rows are actually touched.
-		guard let data = try? Data(contentsOf: tab.url, options: .mappedIfSafe) else {
+		guard let index = tabs.firstIndex(where: { $0 === tab }), tab.hex == nil else { return }
+		if tab.document?.isDirty == true {
+			Toast.post("Save \(tab.url.lastPathComponent) first", detail: "The hex editor shows the file on disk, and this tab has edits that are not there yet.", kind: .warning)
 			return
 		}
-
-		let viewer = HexViewerController(data: data)
-		tab.contentView = viewer.scrollView
+		let hex: HexEditorController
+		do {
+			// Mapped rather than read: a 100 MB file costs no resident memory
+			// until the visible rows are actually touched.
+			hex = try HexEditorController(url: tab.url)
+		} catch {
+			Toast.post("Cannot open \(tab.url.lastPathComponent) as bytes", detail: error.localizedDescription, kind: .warning)
+			return
+		}
+		tab.document = nil
+		tab.codeView = nil
+		tab.hex = hex
+		tab.contentView = hex.view
 		// Inspecting a file is a commitment to the tab, same as editing one.
 		tab.isPreview = false
+		hex.onDirtyChanged = { [weak self] in self?.refreshTabBar() }
+		hex.onStatusChanged = { [weak self] in
+			guard let self else { return }
+			onStatusChanged?(self)
+		}
 
 		if activeIndex == index {
 			activeIndex = nil
-			activate(index: index, focusEditor: false)
+			activate(index: index, focusEditor: true)
 		} else {
 			refreshTabBar()
 		}
+		onStatusChanged?(self)
+	}
+
+	/// *Open as Hex* for the tab in front, whatever it holds.
+	func openActiveAsHex() {
+		guard let tab = activeTab else { return }
+		showHexEditor(for: tab)
+	}
+
+	/// *Open as Text* for a hex tab over a file that is text: the tab is
+	/// closed and the file opened the ordinary way, in the same place.
+	func openActiveAsText() {
+		guard let index = activeIndex, let tab = activeTab, tab.hex != nil else { return }
+		if tab.isDirty, !confirmDiscard(for: tab) { return }
+		let url = tab.url
+		removeTab(at: index)
+		open(fileURL: url, focusEditor: true)
+	}
+
+	var activeTabIsHex: Bool { activeTab?.hex != nil }
+
+	/// Whether *Open as Text* is worth offering: a hex tab over a file the
+	/// binary test passes. A binary would only land on the notice again.
+	var activeTabCanOpenAsText: Bool {
+		guard let tab = activeTab, tab.hex != nil else { return false }
+		return !FileInspector.isProbablyBinary(url: tab.url)
+	}
+
+	/// ⌘L on a hex tab: the offset field.
+	func goToOffset() {
+		activeTab?.hex?.focusOffset()
+	}
+
+	/// What the status bar shows in place of line and column for a hex tab.
+	var statusPositionText: String? { activeTab?.hex?.statusText }
+
+	/// The driver: opens the front tab as hex when it is not, then performs
+	/// the steps and returns the report.
+	func hexStepsForTesting(_ steps: String) async -> String {
+		guard let tab = activeTab else { return "HEX no tab" }
+		if tab.hex == nil { showHexEditor(for: tab) }
+		guard let hex = tab.hex else { return "HEX \(tab.url.lastPathComponent) could not be opened as bytes" }
+		return await hex.performForTesting(steps)
 	}
 
 	private var activeTab: Tab? {
@@ -3627,6 +3704,9 @@ final class EditorViewController: NSViewController {
 
 	private func activate(index: Int, focusEditor: Bool) {
 		guard tabs.indices.contains(index) else { return }
+		// Insert is turned off when a hex tab is left, so a mode nobody is
+		// looking at cannot shift a file by a byte when they come back.
+		if let leaving = activeTab, leaving !== tabs[index] { leaving.hex?.tabWasLeft() }
 
 		// Whether the keyboard is in the tab about to be taken off screen.
 		//
@@ -3788,6 +3868,7 @@ final class EditorViewController: NSViewController {
 		guard tabs.indices.contains(index) else { return }
 
 		announceClosed(tabs[index])
+		tabs[index].hex?.close()
 		teardown(tabs[index])
 		tabs.remove(at: index)
 
@@ -3893,7 +3974,11 @@ final class EditorViewController: NSViewController {
 
 	private func write(_ tab: Tab) {
 		do {
-			try tab.document?.save()
+			if let hex = tab.hex {
+				try hex.save()
+			} else {
+				try tab.document?.save()
+			}
 			refreshTabBar()
 			told(tab, wasSaved: true)
 			refreshChangedLines(for: tab)
@@ -5226,6 +5311,12 @@ final class EditorStatusView: NSView {
 
 	func setPosition(line: Int, column: Int) {
 		positionText = "\(line):\(column)"
+		needsDisplay = true
+	}
+
+	/// A hex tab's offset and selection, where a text tab has line and column.
+	func setPosition(text: String) {
+		positionText = text
 		needsDisplay = true
 	}
 

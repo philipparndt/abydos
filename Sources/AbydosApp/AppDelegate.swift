@@ -1726,6 +1726,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.hexSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				Task { @MainActor in
+					let report = await controller?.editorForTesting.hexStepsForTesting(steps) ?? "HEX no window"
+					print(report)
+					fflush(stdout)
+				}
+			}
+		}
+
 		if let row = options.commitMenuRow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.sidebarForTesting.commitMenuForTesting(row: row)
@@ -3187,6 +3197,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		fileMenu.addItem(scratchItem)
 		fileMenu.addItem(.separator())
 		fileMenu.addItem(withTitle: "Save", action: #selector(MainWindowController.saveDocument(_:)), keyEquivalent: "s")
+		fileMenu.addItem(.separator())
+		// Any file as bytes, and back: the binary notice's button is the door
+		// for a binary, these are the doors for everything else.
+		fileMenu.addItem(withTitle: "Open as Hex", action: #selector(MainWindowController.openAsHex(_:)), keyEquivalent: "")
+		fileMenu.addItem(withTitle: "Open as Text", action: #selector(MainWindowController.openAsText(_:)), keyEquivalent: "")
+		fileMenu.addItem(.separator())
 		fileMenu.addItem(withTitle: "Close Tab", action: #selector(MainWindowController.closeTab(_:)), keyEquivalent: "w")
 		let closeWindow = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 		closeWindow.keyEquivalentModifierMask = [.command, .shift]
@@ -3386,6 +3402,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		editMenu.addItem(forward)
 		editMenu.addItem(.separator())
 		editMenu.addItem(withTitle: "Find…", action: #selector(MainWindowController.findInFile(_:)), keyEquivalent: "f")
+		editMenu.addItem(withTitle: "Go to Offset…", action: #selector(MainWindowController.goToOffset(_:)), keyEquivalent: "l")
 		let findInProject = NSMenuItem(
 			title: "Find in Project…",
 			action: #selector(MainWindowController.findInProject(_:)),

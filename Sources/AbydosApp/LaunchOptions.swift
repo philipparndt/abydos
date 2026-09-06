@@ -443,6 +443,8 @@ struct LaunchOptions {
 	var pillState = false
 	/// Drive the refs tree and print what it holds. See `branchRowsForTesting`.
 	var branchRowSteps: String?
+	/// `--hex <steps>`: the front tab as bytes, driven, with a report.
+	var hexSteps: String?
 	/// Print what the menu over a commit in the log offers.
 	var commitMenuRow: Int?
 	/// Drive the log page and print what it holds.
@@ -1086,6 +1088,7 @@ struct LaunchOptions {
 				}
 			case "--pill-state": options.pillState = true
 			case "--branch-rows": options.branchRowSteps = next()
+			case "--hex":        options.hexSteps = next()
 			case "--commit-menu": options.commitMenuRow = next().flatMap(Int.init)
 			case "--log-page": options.logPageSteps = next()
 			case "--commit-page": options.commitPageSteps = next()

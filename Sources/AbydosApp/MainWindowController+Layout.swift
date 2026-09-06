@@ -394,6 +394,11 @@ extension MainWindowController {
 			// source file; one previewed by arrowing past it does not.
 			if focusEditor { DefaultEditor.considerAsking(about: url, in: self.window) }
 		}
+		navigator.onOpenAsHex = { [weak self] url in
+			guard let self else { return }
+			self.leaveTerminalFullScreen()
+			self.editor.openAsHex(fileURL: url)
+		}
 		navigator.onOpenTerminal = { [weak self] directory in
 			self?.openTerminal(in: directory)
 		}
