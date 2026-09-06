@@ -619,6 +619,16 @@ final class RunCoordinator {
 		guard let root = currentProject()?.root else { return true }
 		guard let said = ProjectTrust.shared.decision(for: root).said else { return true }
 		notify("Not trusted", detail: said)
+		// **And the control says so rather than saying "Starting…".** A refusal
+		// deeper than the press leaves whatever the press had already put in
+		// the titlebar — reported as a run that was refused and still showed a
+		// stop button and a green seam, which reads as "it is running" for as
+		// long as nobody presses anything else. A refusal is an ending, so it
+		// ends the way a failure ends.
+		// `setStatus` tells the seam itself — see `RunControl.onRunStateChanged`
+		// — so the titlebar goes from running-green to failed-red with it,
+		// rather than keeping the colour of a run that never started.
+		runControl?.setStatus("Not trusted", failed: true)
 		return false
 	}
 

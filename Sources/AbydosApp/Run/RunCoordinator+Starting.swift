@@ -9,6 +9,10 @@ import AbydosKit
 extension RunCoordinator {
 	/// Starts the native debugger and wires its state to the editor.
 	func startNativeDebugger(delve: String, package: String) {
+		// The Go menu reaches this without passing the run control's own
+		// verbs — one more door to the same place, gated here rather than at
+		// the two callers, for the reason the others were moved down.
+		guard mayRunProjectCode() else { return }
 		onSetPanelVisible(true)
 		// The titlebar follows the session from here on — `wire` reports every
 		// state change to it — but the gap before the adapter answers is worth

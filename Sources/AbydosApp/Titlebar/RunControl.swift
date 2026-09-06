@@ -164,6 +164,14 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	/// What the strip is showing, for tests.
 	var selectedNameForTesting: String? { configurationName }
 
+	/// What the control is saying and which state it is in, for a driven run —
+	/// "Starting…" while busy and "Not trusted" as a failure are the same
+	/// string to a photograph and different things to somebody reading the
+	/// titlebar's colour.
+	var statusReportForTesting: String {
+		"[\(status)] busy=\(isBusy) failed=\(failed) state=\(runState)"
+	}
+
 	func setConfiguration(_ name: String?) {
 		guard name != configurationName else { return }
 		configurationName = name

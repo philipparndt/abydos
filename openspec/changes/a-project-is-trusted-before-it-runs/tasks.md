@@ -230,6 +230,17 @@ paused at a breakpoint with its devcontainer starting gopls.*
   `github.com/philipparndt` offered without `github.com`, and
   `github.company.com/my-org` offered with `github.company.com`.
 
+- [x] 10.7 **A refused run ends like a failure**, reported with a picture: the
+  titlebar kept "Starting…", a stop button and the green seam after a refusal,
+  because a press that reaches a gate deeper than itself leaves what it had
+  already put there. The gate now sets the control to *Not trusted* as a
+  failure, and the seam follows `setStatus` on its own. Driven:
+  `[Not trusted] busy=false failed=true state=failed` after a refused
+  `--run-config`, where it read `idle`-then-busy before.
+- [x] 10.8 And one more door, found while reading for that one:
+  `startNativeDebugger` — the Go menu's own debug — reached the debugger
+  without passing any of the run control's verbs.
+
 ## 7. Finishing
 
 - [x] 7.1 `Scripts/file-size-allowed.txt` raised for the six files that grew

@@ -537,10 +537,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 		if options.trustReport {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+			// Late enough to be *after* whatever the run asked for: the useful
+			// question is what the window says once a refusal has happened, and
+			// a report before the press only ever says "idle".
+			DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
 				let root = controller?.project?.root
 				let trusted = root.map { ProjectTrust.shared.isTrusted($0) } ?? false
 				print("TRUST menu: " + (controller?.trustMenuForTesting() ?? "no window"))
+				print("TRUST run control: "
+					+ (controller?.runForTesting.runControl?.statusReportForTesting ?? "none"))
 				print("TRUST: trusted=\(trusted) banner=["
 					+ (controller?.trustBannerReportForTesting() ?? "no window") + "]")
 				fflush(stdout)

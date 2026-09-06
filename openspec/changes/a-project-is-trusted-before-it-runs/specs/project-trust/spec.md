@@ -43,11 +43,19 @@ Each refusal SHALL say the same thing in the same words — that the project is
 not trusted — and SHALL offer the one gesture that changes it, rather than
 failing as though something were broken.
 
+**A refused run SHALL leave the window saying so**, not saying what a run in
+progress says. A press that reaches a refusal deeper than itself leaves
+whatever it had already put in the titlebar — a stop button, a busy line, the
+colour of a running program — and a window that looks like it is running
+something is a window nobody presses anything else in. The run control SHALL
+end as a failure ends.
+
 #### Scenario: pressing run
 
 - **GIVEN** an untrusted project with a run configuration discovered
 - **WHEN** run is pressed
 - **THEN** nothing is launched, and what is said names the trust and offers to grant it
+- **AND** the run control reads as a failure rather than as a run in progress
 
 #### Scenario: the language server
 
