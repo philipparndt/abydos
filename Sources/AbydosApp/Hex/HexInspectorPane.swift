@@ -25,7 +25,7 @@ final class HexInspectorPane: NSView, ScaleFollowing {
 	private var checksumRows: [Checksum: ChecksumRow] = [:]
 	private var checksumScope: NSTextField!
 	private var checksumResults: [Checksum: String] = [:]
-	private let curve = EntropyCurveView()
+	let curve = EntropyCurveView()
 	private var notesStack: NSStackView!
 	private var stringsFilter: ScaledSearchField!
 	private var stringsTable: NSTableView!
@@ -188,8 +188,10 @@ final class HexInspectorPane: NSView, ScaleFollowing {
 	func show(readings: [ByteValues.Reading]) {
 		for reading in readings {
 			guard let field = valueFields[reading.field] else { continue }
-			// Not while somebody is typing into it.
-			if window?.firstResponder === field.currentEditor() { continue }
+			// Not while somebody is typing into it. Both sides bound first:
+			// before the pane is in a window, `nil === nil` was true and every
+			// field stayed empty until the caret first moved.
+			if let editor = field.currentEditor(), window?.firstResponder === editor { continue }
 			field.stringValue = reading.text ?? reading.unavailable
 			field.textColor = reading.text == nil ? Theme.current.gitIgnored : Theme.current.editorText
 			valueLengths[reading.field] = reading.length
@@ -198,6 +200,16 @@ final class HexInspectorPane: NSView, ScaleFollowing {
 
 	func setOrder(_ order: ByteOrder) {
 		orderControl.selectedSegment = order == .little ? 0 : 1
+	}
+
+	/// Where each value field is and what it says, for a layout that draws
+	/// nothing where a number should be.
+	var valueFramesForTesting: [String] {
+		ByteValues.Field.allCases.compactMap { field in
+			guard let view = valueFields[field] else { return nil }
+			let frame = view.superview.map { $0.convert(view.frame, to: nil) } ?? view.frame
+			return "\(field.name)=\"\(view.stringValue)\" at (\(Int(frame.minX)),\(Int(frame.minY)))+\(Int(frame.width))×\(Int(frame.height)) hidden=\(view.isHiddenOrHasHiddenAncestor) alpha=\(view.alphaValue)"
+		}
 	}
 
 	var readingsForTesting: [String: String] {
@@ -391,7 +403,8 @@ extension HexInspectorPane: NSTableViewDataSource, NSTableViewDelegate {
 		let found = strings[row]
 		let line = NSMutableAttributedString(string: String(format: "%08X  ", found.offset), attributes: [.font: theme.monoFont(10), .foregroundColor: theme.gitIgnored])
 		line.append(NSAttributedString(string: found.text, attributes: [.font: theme.monoFont(11), .foregroundColor: theme.editorText]))
-		let cell = NSTextField(labelWithAttributedString: line)
+		let cell = RowLabel(labelWithAttributedString: line)
+		cell.isSelectable = false
 		cell.lineBreakMode = .byTruncatingTail
 		return cell
 	}
@@ -413,7 +426,94 @@ final class EntropyCurveView: NSView {
 	var statistics: ByteStatistics? { didSet { needsDisplay = true } }
 	var visibleRange: Range<Int> = 0..<0 { didSet { needsDisplay = true } }
 
+	/// A click or a drag on the curve, and a horizontal wheel over it, move
+	/// the editor to that part of the file.
+	var onScrollTo: ((Int) -> Void)?
+
+	/// Where the pointer is across the curve, as a fraction of the file, or
+	/// nil when it is elsewhere. A curve is a shape; the number under the
+	/// pointer is what somebody asking "how random is *this* part" wants.
+	private(set) var hoverFraction: CGFloat? { didSet { needsDisplay = true } }
+
 	override var isFlipped: Bool { true }
+
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		for area in trackingAreas { removeTrackingArea(area) }
+		addTrackingArea(NSTrackingArea(
+			rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+			owner: self
+		))
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		hover(atFraction: bounds.width > 0 ? point.x / bounds.width : nil)
+	}
+
+	override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
+	override func mouseExited(with event: NSEvent) { hover(atFraction: nil) }
+
+	override func mouseDown(with event: NSEvent) { jump(to: event) }
+	override func mouseDragged(with event: NSEvent) { jump(to: event) }
+
+	private func jump(to event: NSEvent) {
+		guard let statistics, statistics.count > 0, bounds.width > 0 else { return }
+		let point = convert(event.locationInWindow, from: nil)
+		let fraction = max(0, min(1, point.x / bounds.width))
+		hover(atFraction: fraction)
+		onScrollTo?(Int(fraction * CGFloat(statistics.count)))
+	}
+
+	/// Sideways over the curve pans the file, since the curve is the file
+	/// laid out sideways; up and down go on to the pane, which is a column.
+	override func scrollWheel(with event: NSEvent) {
+		guard let statistics, statistics.count > 0, bounds.width > 0,
+			  abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+		else {
+			super.scrollWheel(with: event)
+			return
+		}
+		let bytesPerPoint = CGFloat(statistics.count) / bounds.width
+		let moved = Int(-event.scrollingDeltaX * bytesPerPoint)
+		let target = max(0, min(statistics.count - 1, visibleRange.lowerBound + visibleRange.count / 2 + moved))
+		onScrollTo?(target)
+	}
+
+	/// Puts the hover line at a fraction of the file, or takes it away. The
+	/// pointer calls this; so does the driver, which has no pointer.
+	func hover(atFraction fraction: CGFloat?) {
+		hoverFraction = fraction.map { max(0, min(1, $0)) }
+	}
+
+	/// The entropy and the byte range under a fraction of the width — the
+	/// same blocks the curve's column at that x was drawn from.
+	func reading(atFraction fraction: CGFloat) -> (entropy: Double, range: Range<Int>)? {
+		guard let statistics, !statistics.blocks.isEmpty, bounds.width >= 1 else { return nil }
+		let columns = max(1, Int(bounds.width))
+		let column = max(0, min(columns - 1, Int(fraction * CGFloat(columns))))
+		let blocks = statistics.blocks
+		let first = column * blocks.count / columns
+		let last = max(first + 1, (column + 1) * blocks.count / columns)
+		var sum = 0.0, measured = 0
+		for index in first..<min(blocks.count, last) {
+			guard let block = blocks[index] else { continue }
+			sum += block.entropy; measured += 1
+		}
+		guard measured > 0 else { return nil }
+		let range = statistics.range(ofBlock: first).lowerBound..<statistics.range(ofBlock: min(blocks.count, last) - 1).upperBound
+		return (sum / Double(measured), range)
+	}
+
+	/// What the hover says, for the driver's report.
+	var hoverTextForTesting: String? {
+		guard let fraction = hoverFraction, let reading = reading(atFraction: fraction) else { return nil }
+		return Self.said(reading)
+	}
+
+	static func said(_ reading: (entropy: Double, range: Range<Int>)) -> String {
+		String(format: "%.2f bits · 0x%llX–0x%llX", reading.entropy, reading.range.lowerBound, reading.range.upperBound - 1)
+	}
 
 	override func draw(_ dirtyRect: NSRect) {
 		let theme = Theme.current
@@ -457,6 +557,40 @@ final class EntropyCurveView: NSView {
 		theme.gitAdded.setStroke()
 		path.lineWidth = 1
 		path.stroke()
+
+		drawHover()
+	}
+
+	/// A line where the pointer is, a dot on the curve, and the number.
+	private func drawHover() {
+		guard let fraction = hoverFraction, let reading = reading(atFraction: fraction) else { return }
+		let theme = Theme.current
+		let x = (fraction * bounds.width).rounded() + 0.5
+		let y = bounds.height * (1 - CGFloat(reading.entropy / 8))
+
+		theme.editorText.withAlphaComponent(0.6).setStroke()
+		let line = NSBezierPath()
+		line.move(to: NSPoint(x: x, y: 0))
+		line.line(to: NSPoint(x: x, y: bounds.height))
+		line.lineWidth = 1
+		line.stroke()
+		theme.gitAdded.setFill()
+		NSBezierPath(ovalIn: NSRect(x: x - 2.5, y: y - 2.5, width: 5, height: 5)).fill()
+
+		// The label on whichever side has room, so it never leaves the view.
+		let text = NSAttributedString(string: Self.said(reading), attributes: [
+			.font: theme.monoFont(10), .foregroundColor: theme.editorText,
+		])
+		let padding = theme.scaled(4)
+		let size = text.size()
+		let box = NSRect(
+			x: x + padding + size.width + 2 * padding <= bounds.width ? x + padding : x - padding - size.width - 2 * padding,
+			y: max(0, min(bounds.height - size.height - 2 * padding, y - size.height / 2 - padding)),
+			width: size.width + 2 * padding, height: size.height + 2 * padding
+		)
+		theme.sidebarBackground.withAlphaComponent(0.92).setFill()
+		NSBezierPath(roundedRect: box, xRadius: theme.scaled(3), yRadius: theme.scaled(3)).fill()
+		text.draw(at: NSPoint(x: box.minX + padding, y: box.minY + padding))
 	}
 }
 

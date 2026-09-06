@@ -23,8 +23,9 @@ byte. Now it opens one.
 - **Checksums** on demand — CRC-32, Adler-32, MD5, SHA-1, SHA-256, SHA-512 —
   over the file or the selection, streamed, and marked stale when a byte
   changes.
-- **Entropy** per block as a curve, with regions above 7.5 bits named as
-  likely compressed or encrypted; **a minimap** of the whole file coloured by
+- **Entropy** per block as a curve that reads its value under the pointer
+  and takes a click or a sideways wheel to that part of the file, with
+  regions above 7.5 bits named as likely compressed or encrypted; **a minimap** of the whole file coloured by
   what its bytes are or how random they are.
 - **Known formats explained** as a tree of fields that selects bytes: PNG,
   JPEG, GIF, BMP, ZIP and what is a ZIP under another name, gzip, tar, ELF,
@@ -36,6 +37,8 @@ byte. Now it opens one.
   back as rows in the same tree, drawn as Claude's and never as parsed fact,
   with the prompt one click away. Absent when there is no `claude`.
 - **Strings**, listed and filtered, each a jump.
+- **A hex tab is remembered** across a restart: that it was one, its caret,
+  how it read the bytes, and what Claude said.
 - **Any file can be opened as hex** from the project tree's context menu,
   the tab's menu, File ▸ Open as Hex and the palette; a hex tab over a text
   file goes back with Open as Text.

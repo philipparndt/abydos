@@ -211,7 +211,8 @@ public enum SessionStore {
 				// file written by a later version knows a mode this one does not,
 				// and guessing at it is worse than falling back to the kind.
 				previewMode: (entry["mode"] as? String).flatMap(PreviewMode.init(rawValue:)),
-				dividerFraction: dividerFraction(entry["divider"])
+				dividerFraction: dividerFraction(entry["divider"]),
+				hex: hexState(entry["hex"])
 			)
 		}
 
@@ -396,6 +397,7 @@ public enum SessionStore {
 					// the file noisy in git for a divider that did not move.
 					entry["divider"] = (divider * 100).rounded() / 100
 				}
+				if let hex = open.hex { entry["hex"] = hexEntry(hex) }
 				return entry
 			},
 		]
@@ -493,5 +495,51 @@ public enum LaunchNames {
 		var attempt = 2
 		while existing.contains("\(name) \(attempt)") { attempt += 1 }
 		return "\(name) \(attempt)"
+	}
+}
+
+
+// MARK: - A hex tab's state, in the session file
+
+extension SessionStore {
+	/// The `hex` object under a file entry: the caret and the reading, and
+	/// Claude's answer when there was one. Fields are rows of four so a large
+	/// answer stays a compact list rather than forty little dictionaries.
+	static func hexEntry(_ hex: ProjectSession.HexState) -> [String: Any] {
+		var entry: [String: Any] = [
+			"caret": hex.caret, "rows": hex.bytesPerRow, "encoding": hex.encoding, "order": hex.order,
+		]
+		if hex.claudeSummary != nil || !hex.claudeFields.isEmpty {
+			var claude: [String: Any] = [
+				"fields": hex.claudeFields.map { [$0.name, $0.offset, $0.length, $0.meaning ?? ""] as [Any] },
+			]
+			if let summary = hex.claudeSummary { claude["summary"] = summary }
+			if let prompt = hex.claudePrompt { claude["prompt"] = prompt }
+			entry["claude"] = claude
+		}
+		return entry
+	}
+
+	static func hexState(_ value: Any?) -> ProjectSession.HexState? {
+		guard let entry = value as? [String: Any] else { return nil }
+		var state = ProjectSession.HexState(
+			caret: entry["caret"] as? Int ?? 0,
+			bytesPerRow: entry["rows"] as? Int ?? 16,
+			encoding: entry["encoding"] as? String ?? "ascii",
+			order: entry["order"] as? String ?? "little"
+		)
+		if let claude = entry["claude"] as? [String: Any] {
+			state.claudeSummary = claude["summary"] as? String
+			state.claudePrompt = claude["prompt"] as? String
+			state.claudeFields = (claude["fields"] as? [[Any]] ?? []).compactMap { row in
+				guard row.count >= 3, let name = row[0] as? String,
+					  let offset = row[1] as? Int, let length = row[2] as? Int else { return nil }
+				let meaning = row.count > 3 ? row[3] as? String : nil
+				return ProjectSession.HexState.ClaudeField(
+					name: name, offset: offset, length: length, meaning: meaning?.isEmpty == true ? nil : meaning
+				)
+			}
+		}
+		return state
 	}
 }

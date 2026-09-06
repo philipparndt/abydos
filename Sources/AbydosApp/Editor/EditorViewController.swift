@@ -3761,7 +3761,7 @@ final class EditorViewController: NSViewController {
 
 		if focusEditor {
 			// A notice tab has no code view to focus.
-			view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
+			view.window?.makeFirstResponder(tab.hex?.editor ?? tab.codeView ?? tab.contentView)
 		} else if keyboardWasInTheTabLeaving {
 			// Nobody asked for the keyboard to move, and the removal above took it
 			// from the view that had it. Putting it in the tab now showing is what
@@ -3770,7 +3770,7 @@ final class EditorViewController: NSViewController {
 			// the editor — a responder outside `contentArea` never reaches here —
 			// so a results row clicked with the keyboard in the list is untouched,
 			// which is item 510's rule and must stay true.
-			view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
+			view.window?.makeFirstResponder(tab.hex?.editor ?? tab.codeView ?? tab.contentView)
 		}
 		onActiveFileChanged?(tab.url)
 	}
@@ -4035,7 +4035,7 @@ final class EditorViewController: NSViewController {
 	/// Returns keyboard focus to the code view, used when the panel closes.
 	func focusActiveEditor() {
 		guard let tab = activeTab else { return }
-		view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
+		view.window?.makeFirstResponder(tab.hex?.editor ?? tab.codeView ?? tab.contentView)
 	}
 
 	/// Shows or hides who last touched each line, for the file in front.
@@ -4694,7 +4694,8 @@ final class EditorViewController: NSViewController {
 					previewMode: FilePreview.hasPreview(
 						tab.url, facts: tab.previewFacts
 					) ? tab.previewMode : nil,
-					dividerFraction: tab.dividerFraction
+					dividerFraction: tab.dividerFraction,
+					hex: tab.hex?.sessionState
 				)
 			},
 			activePath: activeTab?.url.path
@@ -4719,6 +4720,13 @@ final class EditorViewController: NSViewController {
 			if let parked = takeParkedDecrypted?(url),
 			   let tab = tabs.last(where: { $0.url.path == file.path }) {
 				restoreDecrypted(parked, into: tab)
+			}
+			// A hex tab comes back as the hex editor, with its caret, its
+			// reading and what Claude said — not as the notice it was before
+			// somebody pressed the button.
+			if let state = file.hex, let tab = tabs.last(where: { $0.url.path == file.path }) {
+				showHexEditor(for: tab)
+				tab.hex?.restore(state)
 			}
 			if file.line > 1 {
 				// Deferred: a document that has just been opened has not laid

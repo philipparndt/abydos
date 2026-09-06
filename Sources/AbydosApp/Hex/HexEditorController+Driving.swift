@@ -115,6 +115,34 @@ extension HexEditorController {
 					done, statistics.blocks.count, statistics.blockSize, mean
 				))
 				report.append(contentsOf: inspector.notesForTesting.map { "  note: " + $0 })
+			case "session":
+				// What the session file would keep of this tab, and a restore of
+				// it into this same tab, so the round trip is one step.
+				let state = sessionState
+				report.append("session: caret=\(state.caret) rows=\(state.bytesPerRow) encoding=\(state.encoding) order=\(state.order) claude=\(state.claudeFields.count) fields, summary \(state.claudeSummary?.count ?? 0) chars, prompt \(state.claudePrompt?.count ?? 0) chars")
+				editor.moveCaret(to: 0, extending: false)
+				claudeNodes = []
+				claudeSummary = nil
+				restore(state)
+				report.append("restored: \(statusText) claude=\(claudeNodes.count) fields, summary \(claudeSummary?.count ?? 0) chars")
+			case "structure-click":
+				await structureTask?.value
+				await Task.yield()
+				report.append("structure-click \(argument): " + inspector.structure.clickRowForTesting(Int(argument) ?? 0))
+			case "value-frames":
+				report.append(contentsOf: inspector.valueFramesForTesting.prefix(6).map { "  " + $0 })
+			case "structure-focus":
+				await structureTask?.value
+				await Task.yield()
+				report.append("structure-focus: " + inspector.structure.focusForTesting())
+			case "structure-key":
+				report.append("structure-key \(argument): " + inspector.structure.pressForTesting(argument) + " · \(statusText)")
+			case "entropy-hover":
+				// The pointer at a fraction of the curve's width, without a pointer.
+				await statisticsTask?.value
+				inspector.curve.layoutSubtreeIfNeeded()
+				inspector.curve.hover(atFraction: CGFloat(Double(argument) ?? 0.5))
+				report.append("entropy-hover \(argument): \(inspector.curve.hoverTextForTesting ?? "nothing under the pointer")")
 			case "strings":
 				await stringsTask?.value
 				await Task.yield()

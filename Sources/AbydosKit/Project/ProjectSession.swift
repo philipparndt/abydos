@@ -38,19 +38,73 @@ public struct ProjectSession: Equatable, Sendable {
 		/// width. Nil when the tab was not split, or when the split was never laid
 		/// out and so never had a divider anywhere in particular.
 		public var dividerFraction: Double?
+		/// Set when the tab was the hex editor, with what it had: nil for a
+		/// text tab, and for a session written before hex tabs were recorded.
+		public var hex: HexState?
 
 		public init(
 			path: String,
 			line: Int = 1,
 			isPreview: Bool = false,
 			previewMode: PreviewMode? = nil,
-			dividerFraction: Double? = nil
+			dividerFraction: Double? = nil,
+			hex: HexState? = nil
 		) {
 			self.path = path
 			self.line = line
 			self.isPreview = isPreview
 			self.previewMode = previewMode
 			self.dividerFraction = dividerFraction
+			self.hex = hex
+		}
+	}
+
+	/// A hex tab as it was left: where the caret was, how the bytes were
+	/// read, and what Claude said — which cost a model call and is not asked
+	/// again just because the window was closed.
+	public struct HexState: Equatable, Sendable {
+		public var caret: Int
+		public var bytesPerRow: Int
+		/// `ByteEncoding` and `ByteOrder` raw values, kept as text so an
+		/// encoding a later version knows reads as nothing here rather than
+		/// failing the whole entry.
+		public var encoding: String
+		public var order: String
+		public var claudeSummary: String?
+		public var claudeFields: [ClaudeField]
+		/// What was asked, so *Show what was asked* still answers.
+		public var claudePrompt: String?
+
+		public struct ClaudeField: Equatable, Sendable {
+			public var name: String
+			public var offset: Int
+			public var length: Int
+			public var meaning: String?
+
+			public init(name: String, offset: Int, length: Int, meaning: String? = nil) {
+				self.name = name
+				self.offset = offset
+				self.length = length
+				self.meaning = meaning
+			}
+		}
+
+		public init(
+			caret: Int = 0,
+			bytesPerRow: Int = 16,
+			encoding: String = "ascii",
+			order: String = "little",
+			claudeSummary: String? = nil,
+			claudeFields: [ClaudeField] = [],
+			claudePrompt: String? = nil
+		) {
+			self.caret = caret
+			self.bytesPerRow = bytesPerRow
+			self.encoding = encoding
+			self.order = order
+			self.claudeSummary = claudeSummary
+			self.claudeFields = claudeFields
+			self.claudePrompt = claudePrompt
 		}
 	}
 

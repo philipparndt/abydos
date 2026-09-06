@@ -282,8 +282,13 @@ four thousand blocks. The inspector SHALL draw the result as a curve from zero
 to eight bits a byte with the viewport marked on it, filling as the pass
 arrives rather than after it. A run of blocks above 7.5 bits SHALL be named
 in words as likely compressed or encrypted, with its offset range, and
-choosing it SHALL select those bytes. An edit SHALL invalidate the blocks it
-touched and only those.
+choosing it SHALL select those bytes. The pointer over the curve SHALL show a
+line where it is and the entropy there as a number, with the byte range it
+covers, so a value can be read off rather than judged against the axis. A click or a
+drag on the curve SHALL move the editor to that part of the file, and a
+sideways wheel over it SHALL pan through the file, since the curve is the
+file laid out sideways. An edit SHALL invalidate the blocks it touched and
+only those.
 
 #### Scenario: a file with a compressed tail
 
@@ -291,6 +296,19 @@ touched and only those.
   gzip stream
 - **THEN** the curve is low then near eight, and one note names the second
   half's range as likely compressed or encrypted
+
+#### Scenario: the pointer over the curve
+
+- **GIVEN** the curve drawn
+- **WHEN** the pointer rests two thirds of the way along it
+- **THEN** a line stands there and the label reads the entropy at that point
+  in bits, with the offsets of the blocks under it
+
+#### Scenario: a click on the curve
+
+- **GIVEN** the curve drawn over a large file
+- **WHEN** it is clicked two thirds of the way along
+- **THEN** the editor shows the bytes two thirds of the way through the file
 
 #### Scenario: the pass on a gigabyte
 
@@ -340,7 +358,10 @@ field's bytes when a row is chosen and names the field the caret is in above
 the bytes. The built-in formats SHALL be PNG, JPEG, GIF, BMP, ZIP, gzip, tar,
 ELF, Mach-O including fat binaries, PE, SQLite, RIFF and WAV, Java class and
 WebAssembly, with a ZIP under another extension — JAR, 3MF, DOCX — recognised
-by its magic and named by its extension. A truncated or malformed file SHALL
+by its magic and named by its extension. The tree SHALL take the keyboard when a row is
+clicked and walk with the arrows as every tree in this app does, with Return
+selecting the row's bytes and putting the keyboard in them; a re-parse SHALL
+keep the selected row. A truncated or malformed file SHALL
 yield the tree up to where parsing stopped and a node saying where and why.
 A repeated section SHALL be capped at a written count with a node saying how
 many were not listed.
@@ -356,6 +377,13 @@ many were not listed.
 
 - **GIVEN** the caret on byte 0x14 of a PNG
 - **THEN** the label above the bytes reads *IHDR › height*
+
+#### Scenario: the tree from the keyboard
+
+- **GIVEN** a row of the tree clicked
+- **WHEN** ↓ is pressed, then Return
+- **THEN** the next row is selected and its bytes highlighted, and Return
+  selects those bytes in the editor with the keyboard there
 
 #### Scenario: a JAR
 
@@ -479,6 +507,33 @@ Timing claims SHALL be made through `Stopwatch.maySay` and printed with
   gigabyte
 - **THEN** scrolling and selecting are at full speed, and closing the tab
   stops all three
+
+### Requirement: A hex tab comes back as it was left
+
+The session SHALL record, for a tab that is the hex editor, that it is one,
+where its caret was, the bytes per row, the text column's encoding, the
+inspector's byte order, and Claude's answer — the summary, the rows and the
+prompt they came from. Opening the project again SHALL bring the tab back as
+the hex editor with all of that, not as the notice it was before the button
+was pressed. A text tab SHALL write none of it, and a session written before
+this was recorded SHALL read as it did.
+
+Claude's answer cost a model call, and a window closed for the evening is not
+a reason to ask the question again.
+
+#### Scenario: a hex tab across a restart
+
+- **GIVEN** a file open as bytes with the caret at 0x40, thirty-two bytes a
+  row and an answer from Claude in the tree
+- **WHEN** the project is closed and opened again
+- **THEN** the tab is the hex editor with the caret at 0x40, thirty-two bytes
+  a row, and Claude's rows and summary where they were
+
+#### Scenario: a text tab
+
+- **GIVEN** a text tab
+- **WHEN** the session is written
+- **THEN** its entry has no hex record
 
 ### Requirement: The hex editor follows the zoom
 

@@ -40,9 +40,9 @@ final class HexEditorController {
 	private(set) var matches: [Int] = []
 	private(set) var searchCapped = false
 	private(set) var structure: StructureNode?
-	private(set) var claudeNodes: [StructureNode] = []
-	private(set) var claudeSummary: String?
-	private(set) var lastPrompt: String?
+	var claudeNodes: [StructureNode] = []
+	var claudeSummary: String?
+	var lastPrompt: String?
 	private(set) var lastFailure: String?
 	private(set) var strings = PrintableStrings.Listing(strings: [], unlisted: 0)
 	private var stringsFilter = ""
@@ -199,6 +199,12 @@ final class HexEditorController {
 			self?.editor.select(range)
 			self?.editor.scroll(toShow: range.lowerBound)
 		}
+		inspector.structure.onActivateRange = { [weak self] range in
+			self?.editor.select(range)
+			self?.editor.scroll(toShow: range.lowerBound)
+			self?.focusEditor()
+		}
+		inspector.curve.onScrollTo = { [weak self] offset in self?.editor.scroll(toShow: offset) }
 		inspector.structure.onAsk = { [weak self] in self?.toggleAsk() }
 		inspector.structure.onShowPrompt = { [weak self] in self?.showPrompt() }
 		inspector.setChecksumScope("over the whole file, \(ByteSize.said(Int64(document.count)))")
@@ -238,6 +244,52 @@ final class HexEditorController {
 		refreshWork = work
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
 		if pattern != nil { search(bar.query, kind: bar.kind) }
+	}
+
+	// MARK: - The session
+
+	/// What the session file keeps of this tab.
+	var sessionState: ProjectSession.HexState {
+		ProjectSession.HexState(
+			caret: editor.caret,
+			bytesPerRow: editor.bytesPerRow,
+			encoding: editor.encoding.rawValue,
+			order: order.rawValue,
+			claudeSummary: claudeSummary,
+			claudeFields: claudeNodes.map {
+				ProjectSession.HexState.ClaudeField(name: $0.name, offset: $0.range.lowerBound, length: $0.range.count, meaning: $0.meaning)
+			},
+			claudePrompt: lastPrompt
+		)
+	}
+
+	/// Puts a session's state back. The caret's scroll is deferred, because
+	/// the view has no size until it is laid out and a scroll now would
+	/// measure against nothing — the same reason a text tab defers its line.
+	func restore(_ state: ProjectSession.HexState) {
+		if [8, 16, 32].contains(state.bytesPerRow) {
+			editor.bytesPerRow = state.bytesPerRow
+			bar.setBytesPerRow(state.bytesPerRow)
+		}
+		if let encoding = ByteEncoding(rawValue: state.encoding) {
+			editor.encoding = encoding
+			bar.setEncoding(encoding)
+		}
+		if let order = ByteOrder(rawValue: state.order) {
+			self.order = order
+			inspector.setOrder(order)
+		}
+		claudeSummary = state.claudeSummary
+		lastPrompt = state.claudePrompt
+		claudeNodes = state.claudeFields.compactMap { field in
+			guard field.offset >= 0, field.length >= 0, field.offset + field.length <= document.count else { return nil }
+			return StructureNode(name: field.name, range: field.offset..<(field.offset + field.length), meaning: field.meaning, source: .claude)
+		}
+		showStructure()
+		let caret = max(0, min(document.count, state.caret))
+		editor.moveCaret(to: caret, extending: false)
+		DispatchQueue.main.async { [weak self] in self?.editor.scroll(toShow: caret) }
+		refreshInspectorValues()
 	}
 
 	func save() throws {

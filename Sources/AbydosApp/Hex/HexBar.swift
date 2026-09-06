@@ -262,6 +262,11 @@ final class HexBar: NSView, ScaleFollowing {
 		inspectorButton.state = shown ? .on : .off
 	}
 
+	func setEncoding(_ encoding: ByteEncoding) {
+		self.encoding = encoding
+		encodingPopup.selectItem(at: ByteEncoding.allCases.firstIndex(of: encoding) ?? 0)
+	}
+
 	func setBytesPerRow(_ count: Int) {
 		rowsPopup.selectItem(at: [8, 16, 32].firstIndex(of: count) ?? 1)
 	}

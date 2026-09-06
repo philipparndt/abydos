@@ -146,6 +146,43 @@
   `ScaledHeights`) and spacing in `applyTheme`. The ten `controlSize` uses
   are gone; the two search fields are `ScaledSearchField`s.
 
+- [x] 8a.3 The entropy curve has a hover: a line under the pointer, a dot on
+  the curve and the entropy there as a number with its byte range (asked for
+  on 2026-09-06: "the entropy shall have a hover line that shows the entropy
+  as a number"). `entropy-hover:<fraction>` drives it.
+
+- [x] 8a.4 The structure outline from the keyboard (asked for on 2026-09-06:
+  "in the structure view it should be possible to navigate with the
+  keyboard. Not sure if the tree is even getting the focus"): the app's
+  `TreeRowView` so the selection says whether it has the keyboard, the
+  selection kept by path across the re-parse that follows every pause in
+  typing — which is what had been dropping it — and Return, Enter or Space
+  jumping to the row's bytes. `structure-click:<row>`,
+  `structure-focus` and `structure-key:<arrow|return>` drive it through
+  `TreeKeys`. Driven: from the tree's first row, ↓ selected *signature* and
+  the status read `0x0–0x7 · 8 bytes`, ↓ again *IHDR*, → opened it, ↓
+  *length*, and Return put the keyboard in `HexEditorView` with `0x8–0xB`
+  selected. The synthetic click reported `key=false`: the driven window did
+  not become key in this environment, so an activating click is swallowed
+  before any view sees it — the instrument, not the tree, and why the
+  `focus` step exists, as it does for the changed-file list. Two real faults
+  were found on the way and fixed: activation put the keyboard on the tab's
+  stack view rather than the bytes, and the outline's cells were attributed
+  labels, which are selectable and take the press.
+- [x] 8a.5 The entropy curve moves the editor (asked for on 2026-09-06: "it
+  should be possible to scroll in the entropy view"): a click or drag jumps
+  to that part of the file, a sideways wheel pans through it, and up and
+  down still scroll the pane.
+
+- [x] 8a.6 The session remembers a hex tab (asked for on 2026-09-06: "The
+  hex editor should be remembered in the session file (that it is opened for
+  a file, its position, the claude content, ...)"): `ProjectSession.HexState`
+  under the file entry's `hex` key — caret, rows, encoding, order, and
+  Claude's summary, fields and prompt — written and read by `SessionStore`,
+  captured from the tab and restored into it after the file is reopened.
+  `ProjectSessionTests` round-trips it; `--hex "…,session"` reports the
+  capture and restores it into the same tab.
+
 ## 9. Proving it
 
 - [x] 9.1 `LaunchOptions` — `--hex <steps>` and its report, in
@@ -213,7 +250,8 @@
   digest over a selection an edit did not touch is kept rather than marked
   stale, and the "byte mode" is the hex tab's own bar rather than a mode of
   the editor's find bar, for the reason `HexBar` gives.
-- [x] 10.4 Green by their exit codes on 2026-09-06, after the review and the
-  zoom: `make test` 4214 tests in 534 suites, exit 0 with the suite's two
-  standing known issues, load 38.0 over 10 cores; `make warnings` exit 0,
-  *No warnings in this repository's Swift*.
+- [x] 10.4 Green by their exit codes on 2026-09-06, after the hover, the
+  keyboard, the curve's scroll and the session: `make test` 4215 tests in
+  534 suites, exit 0 with the suite's two standing known issues, load 36.0
+  over 10 cores; `make warnings` exit 0, *No warnings in this repository's
+  Swift*.

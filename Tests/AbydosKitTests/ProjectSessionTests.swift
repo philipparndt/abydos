@@ -106,6 +106,34 @@ struct PreviewModeSessionTests {
 		#expect(file.line == 12)
 	}
 
+	/// A hex tab is written with its caret, its reading and what Claude said,
+	/// and a text tab writes none of it.
+	@Test func aHexTabSurvivesBeingWrittenDownAndATextTabWritesNoHex() throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let state = ProjectSession.HexState(
+			caret: 0x40, bytesPerRow: 32, encoding: "utf8", order: "big",
+			claudeSummary: "A table.",
+			claudeFields: [
+				.init(name: "count", offset: 4, length: 2, meaning: "rows"),
+				.init(name: "magic", offset: 0, length: 4),
+			],
+			claudePrompt: "what is this"
+		)
+		try SessionStore.write(
+			ProjectSession(files: [
+				ProjectSession.OpenFile(path: "/p/blob.bin", hex: state),
+				ProjectSession.OpenFile(path: "/p/notes.md"),
+			]),
+			in: root
+		)
+
+		let files = try #require(SessionStore.read(in: root)?.files)
+		#expect(files[0].hex == state)
+		#expect(files[1].hex == nil)
+	}
+
 	/// A split whose mode is remembered but whose divider is at its default is
 	/// still not the tab somebody left, so the fraction goes beside the mode —
 	/// and only where there is a divider to have.
