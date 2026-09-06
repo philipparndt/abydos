@@ -169,7 +169,18 @@ back' opens a toast", and "I miss a way to hide the bar without trusting".*
   panes, never both; the left rail keeps its own, being beside the strip and
   running the window's whole height. `refreshTrustBanner` asks for the insets
   again, since putting the strip away gives them back.
-- [x] 9.3 **File ▸ Trust This Project…**, because a strip that can be put away
+- [x] 9.2c **And the gap that survived dismissing it**, reported with a second
+  picture: the split view hangs off the strip's bottom edge, so a *hidden*
+  strip that kept its top offset held everything a titlebar's height down while
+  the panes below were also clearing the titlebar themselves. The offset now
+  goes with the strip — the titlebar's height is taken once, by whichever of
+  them is there. Photographed in both states.
+- [x] 9.3 **File ▸ Trust This Project…**, which stays enabled once the project
+  is trusted rather than greying out: a disabled item is how somebody learns
+  the app has forgotten the question, and it says the project is already
+  trusted instead. It is also found by ⇧⌘P, typing "trust", which is the third
+  way to it and the one somebody who has dismissed the strip is most likely to
+  reach for., because a strip that can be put away
   must not take the only way to trust with it. The shared refusal sentence
   names it beside the banner, and the item says so when the project is already
   trusted rather than opening a sheet about nothing.

@@ -174,6 +174,15 @@ extension MainWindowController {
 			return false
 		}
 
+		if item.action == #selector(trustThisProject(_:)) {
+			// **Enabled once the project is trusted, too.** A greyed-out item
+			// is how somebody learns the app has forgotten the question; this
+			// one says the project is already trusted instead, which is the
+			// answer they were looking for. It is disabled only where there is
+			// no project to be asked about.
+			return project != nil
+		}
+
 		if item.action == #selector(toggleRevealSecrets(_:)) {
 			// Enabled only where there are covers to lift, ticked while they
 			// are lifted: the item is the file-wide explicit action the

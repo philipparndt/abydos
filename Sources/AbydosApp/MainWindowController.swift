@@ -745,7 +745,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// The rail is beside the strip rather than under it, and runs the whole
 		// height of the window, so it keeps the titlebar's own inset either way.
 		toolStrip.setTopInset(inset)
-		trustBannerTop?.constant = inset
+		// **And the strip's own offset goes with it.** The split view hangs off
+		// the strip's bottom edge, so a hidden strip that kept its offset held
+		// everything a titlebar's height down while the panes were also
+		// clearing the titlebar themselves — the second gap, the one that
+		// survived dismissing the strip, and the one a maximised panel showed
+		// most plainly.
+		trustBannerTop?.constant = trustBanner.isHidden ? 0 : inset
 
 		navigator.setTopInset(below)
 		sidebar.sidebarTopInset = below

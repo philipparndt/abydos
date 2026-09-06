@@ -526,6 +526,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.trustProjectForTesting(coveringChildren: options.trustsParent)
 			}
 		}
+		if options.trustDismiss {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.hideTrustBanner()
+			}
+		}
 		if options.trustHeldBack {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.heldBackForTesting()
