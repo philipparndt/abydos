@@ -161,6 +161,14 @@ back' opens a toast", and "I miss a way to hide the bar without trusting".*
   as "not now". A list is scanned; a paragraph is skipped, and this is read
   while somebody decides. Photographed, and the words are in the driven report
   as well, since a photograph cannot be grepped.
+- [x] 9.2b **The gap under the strip**, reported with a picture: the content
+  view spans the whole window, so every pane here clears the transparent
+  titlebar by taking its inset — and with the strip up, the strip clears it and
+  the panes below start under the strip, so each of them was taking the
+  titlebar's height a second time. The inset now goes to the strip *or* to the
+  panes, never both; the left rail keeps its own, being beside the strip and
+  running the window's whole height. `refreshTrustBanner` asks for the insets
+  again, since putting the strip away gives them back.
 - [x] 9.3 **File ▸ Trust This Project…**, because a strip that can be put away
   must not take the only way to trust with it. The shared refusal sentence
   names it beside the banner, and the item says so when the project is already

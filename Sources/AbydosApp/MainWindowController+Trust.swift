@@ -19,6 +19,10 @@ extension MainWindowController {
 		let shows = untrusted && !hidden
 		trustBanner.show(project: shows ? root : nil)
 		trustBannerHeight.constant = shows ? Theme.current.scaled(30) : 0
+		// The panes under it take their inset from whether the strip is there:
+		// with it up, the strip clears the titlebar and they must not clear it
+		// again. See `updateTopInsets`.
+		updateTopInsets()
 	}
 
 	/// The strip put away without anything being trusted.

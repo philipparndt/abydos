@@ -735,14 +735,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let inset = max(0, contentView.bounds.height - layoutRect.height - layoutRect.origin.y)
 
 		titlebar.setInset(inset)
-		// Views added after it would otherwise cover it.
-		navigator.setTopInset(inset)
-		sidebar.sidebarTopInset = inset
-		if isPanelMaximized { bottomPanel.setTopInset(inset) }
-		sidebar.primaryToolTop?.constant = inset
-		editor.setTopInset(inset)
+		// **The inset is the titlebar's, and only one thing may take it.**
+		// Every pane here clears the titlebar itself, because the content view
+		// spans the whole window. With the trust strip up, the strip is what
+		// clears it and the panes below start under the strip — so taking the
+		// inset again is the titlebar's height counted twice, which is the gap
+		// that was reported between the strip and everything under it.
+		let below = trustBanner.isHidden ? inset : 0
+		// The rail is beside the strip rather than under it, and runs the whole
+		// height of the window, so it keeps the titlebar's own inset either way.
 		toolStrip.setTopInset(inset)
 		trustBannerTop?.constant = inset
+
+		navigator.setTopInset(below)
+		sidebar.sidebarTopInset = below
+		if isPanelMaximized { bottomPanel.setTopInset(below) }
+		sidebar.primaryToolTop?.constant = below
+		editor.setTopInset(below)
 	}
 
 	// MARK: - Loading
