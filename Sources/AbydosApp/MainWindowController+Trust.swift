@@ -13,9 +13,46 @@ extension MainWindowController {
 
 	/// Puts the strip up or takes it down for whatever project this window has.
 	func refreshTrustBanner() {
-		let untrusted = project.map { !ProjectTrust.shared.isTrusted($0.root) } ?? false
-		trustBanner.show(project: untrusted ? project?.root : nil)
-		trustBannerHeight.constant = untrusted ? Theme.current.scaled(30) : 0
+		let root = project?.root
+		let untrusted = root.map { !ProjectTrust.shared.isTrusted($0) } ?? false
+		let hidden = root.map { hiddenTrustBanners.contains(ProjectTrust.resolvedForTesting($0)) } ?? false
+		let shows = untrusted && !hidden
+		trustBanner.show(project: shows ? root : nil)
+		trustBannerHeight.constant = shows ? Theme.current.scaled(30) : 0
+	}
+
+	/// The strip put away without anything being trusted.
+	///
+	/// **Per project and per window, and only until it is opened again.** A
+	/// dismissal that outlived the session would be a decision about safety
+	/// made by somebody trying to get a bar out of the way — and the one thing
+	/// this strip must not become is a thing people learn to silence. Nothing
+	/// about the project changes: it is still untrusted, everything still
+	/// refuses, and File ▸ Trust This Project… is where the gesture lives.
+	func hideTrustBanner() {
+		guard let root = project?.root else { return }
+		hiddenTrustBanners.insert(ProjectTrust.resolvedForTesting(root))
+		refreshTrustBanner()
+	}
+
+	/// Whether this window's project could be trusted and is not — what the
+	/// menu item asks before it offers itself.
+	var couldBeTrusted: Bool {
+		project.map { !ProjectTrust.shared.isTrusted($0.root) } ?? false
+	}
+
+	/// File ▸ Trust This Project…, which is the same sheet the strip's button
+	/// opens — and the only way to it once the strip has been put away.
+	@objc func trustThisProject(_ sender: Any?) {
+		guard couldBeTrusted else {
+			Toast.post(
+				"Already trusted",
+				detail: "\(project?.root.lastPathComponent ?? "This project") can run its own code.",
+				kind: .information
+			)
+			return
+		}
+		askToTrustProject()
 	}
 
 	/// The sheet: the folder, the parent as the wider choice, and what trusting
@@ -132,20 +169,6 @@ extension MainWindowController {
 		return container
 	}
 
-	/// What is held back, listed rather than summarised: somebody deciding
-	/// whether to trust a repository is owed the list.
-	func sayWhatTrustHoldsBack() {
-		Toast.post(
-			"Not trusted",
-			detail: "Held back: running, debugging and building; make, gradle and maven; "
-				+ "devcontainers; language servers, formatters and linters; agents; a terminal "
-				+ "in this directory; the environment its files ask for; and its git hooks. "
-				+ "Reading it — the tree, the editor, search, history, diffs and blame — is "
-				+ "unaffected.",
-			kind: .information
-		)
-	}
-
 	/// The window after trust is granted.
 	///
 	/// Nothing is started retroactively: a project that has just become trusted
@@ -186,4 +209,11 @@ extension MainWindowController {
 
 	/// What the strip says, for a driven run.
 	func trustBannerReportForTesting() -> String { trustBanner.reportForTesting }
+
+	/// Opens *What is held back*, and says what it lists.
+	func heldBackForTesting() {
+		trustBanner.showHeldBackForTesting()
+		print("HELDBACK: " + trustBanner.heldBackReportForTesting())
+		fflush(stdout)
+	}
 }

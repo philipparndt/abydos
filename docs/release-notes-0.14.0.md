@@ -306,12 +306,24 @@ tree provides; a terminal comes up in its directory; a commit runs
 dependency somebody linked — got the trust its owner's code gets.
 
 Now a project is untrusted until you say otherwise, and says so in a strip at
-the top of the window with the one button that changes it. **Reading is
+the top of the window with the one button that changes it — and a *What is held
+back* beside it, which opens two short lists: what waits, and what does not.
+The strip can also be put away without trusting anything, in which case nothing
+changes about the project and **File ▸ Trust This Project…** is where the
+gesture lives. **Reading is
 untouched**: the tree, the editor, syntax, folding, search, the git panes,
 history, diffs, blame and the previews this app draws itself all work. What
-waits is everything that executes: running, debugging and building; make,
-gradle and maven; devcontainers; language servers; agents; and a terminal in
-that directory, a shell there being a general-purpose runner standing in it.
+waits is everything that executes by itself: running, debugging and building;
+make, gradle and maven; devcontainers; language servers; and agents.
+
+**The terminal is not one of them**, and the first cut had it wrong. A shell in
+the project's directory is *your* shell with your configuration, and typing
+`make` in it is you choosing to run that code exactly as you would in
+Terminal.app — while refusing one costs the way you move between projects in a
+terminal-first editor. What the shell must not do is run the project's own
+files behind you, so an untrusted project's terminal gets `DIRENV_DISABLE`,
+which is belt to direnv's own brace: it already refuses an `.envrc` nobody has
+allowed.
 
 **No environment variable the project asks for reaches anything.** A variable
 is a command in every case that matters — `SOPS_AGE_KEY_CMD` is run by sops,

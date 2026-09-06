@@ -27,8 +27,17 @@ While a project is untrusted the application SHALL NOT start anything the
 project supplies or names: no run, debug, build or test configuration; no Make
 goal, gradle or maven wrapper; no devcontainer and no image it names; no
 language server, formatter or linter, whether found in the project's tree or
-chosen by its files; no scheme, task or agent command it carries; and no
-terminal in its directory, a shell there being a general-purpose runner.
+chosen by its files; and no agent command it carries.
+
+**A terminal SHALL still open.** The shell is the person's own, with their own
+configuration, and what they type into it is their choosing — running `make`
+there is what they would do in any terminal, and this application's job is not
+to police typing but to start nothing itself. Refusing one would cost the way
+somebody moves between projects in a terminal-first editor and buy almost
+nothing. What the shell must not do on its own is run the *project's* files, so
+an untrusted project's terminal SHALL be given `DIRENV_DISABLE`, which is belt
+to direnv's own brace — it refuses an `.envrc` it has not been allowed — and
+best-effort by nature.
 
 Each refusal SHALL say the same thing in the same words — that the project is
 not trusted — and SHALL offer the one gesture that changes it, rather than
@@ -46,11 +55,11 @@ failing as though something were broken.
 - **WHEN** a file that would use it is opened
 - **THEN** no server is started, and the editor works without one
 
-#### Scenario: the terminal
+#### Scenario: the terminal opens, and runs none of the project's files
 
-- **GIVEN** an untrusted project
+- **GIVEN** an untrusted project with an `.envrc`
 - **WHEN** the terminal is opened
-- **THEN** no shell is started in the project's directory, and the panel says why
+- **THEN** a shell starts in the project's directory, with `DIRENV_DISABLE` set, and nothing of the project's has run
 
 #### Scenario: a devcontainer
 
@@ -161,6 +170,19 @@ in the way — a strip rather than a modal, naming what is held back and carryin
 the gesture that grants trust. Granting SHALL name the folder, offer the parent
 folder as the wider choice, and say what trusting turns on.
 
+**What is held back SHALL be readable for as long as somebody is reading it**,
+and SHALL say what still works beside what does not: it is a list somebody
+consults while deciding, and half of it — the reading that is unaffected — is
+the half that makes "look first, decide later" an option. A notice that goes on
+a timer is not that.
+
+**The strip SHALL be dismissable without trusting anything.** A strip that can
+only be got rid of by trusting the project is a strip that gets projects
+trusted. Dismissing it SHALL change nothing about the project — it stays
+untrusted and everything still refuses — and SHALL last only until that project
+is opened again. The gesture that grants trust SHALL remain reachable with the
+strip gone, from the application's own menus.
+
 Trust SHALL be listed and withdrawable in the settings, and withdrawing it SHALL
 return the project to what an unknown project gets.
 
@@ -173,6 +195,23 @@ return the project to what an unknown project gets.
 
 - **WHEN** the trust gesture is used
 - **THEN** what is asked names the folder, offers the parent folder, and says what trusting allows
+
+#### Scenario: what is held back stays on screen
+
+- **WHEN** the strip's *What is held back* is chosen
+- **THEN** what is listed stays until it is dismissed, and says what still works as well as what does not
+
+#### Scenario: putting the strip away
+
+- **GIVEN** an untrusted project showing the strip
+- **WHEN** the strip is dismissed
+- **THEN** it goes, the project is still untrusted, and running anything still refuses
+
+#### Scenario: trusting once the strip is gone
+
+- **GIVEN** the strip dismissed
+- **WHEN** the application's menu is used to trust the project
+- **THEN** the same sheet opens
 
 #### Scenario: taking it back
 

@@ -274,6 +274,9 @@ struct LaunchOptions {
 	/// `--trust-report`: what the strip says, and whether the project is
 	/// trusted, printed once the window is up.
 	var trustReport = false
+	/// `--trust-held-back`: open the strip's list, for a photograph and for
+	/// the words.
+	var trustHeldBack = false
 	/// `--switcher-pill`: open the switcher the way a click on the project
 	/// pill opens it, rather than the way ⇧⌘P does — the two placements are
 	/// the subject, so a run has to be able to ask for either.
@@ -1438,6 +1441,7 @@ struct LaunchOptions {
 			case "--trust-remote":  options.trustsRemoteHost = true
 			case "--trust-owner":   options.trustsRemoteOwner = true
 			case "--trust-report":  options.trustReport = true
+			case "--trust-held-back": options.trustHeldBack = true
 			case "--switch-to":
 				let said = next() ?? ""
 				// `path@seconds`, and a path with no `@` in it keeps the default.

@@ -23,10 +23,18 @@
 - [x] 2.3 Language servers, formatters and linters — including the ones found
   in the project's own tree, which is the case a machine-wide binary check
   would miss.
-- [x] 2.4 The terminal: no shell in an untrusted project's directory, and the
-  panel says why rather than looking broken. A shell there sources whatever the
-  machine's configuration sources, and direnv exists to run the project's own
-  `.envrc`.
+- [x] 2.4 The terminal — **and this one was reversed**, which is the useful
+  part of the task. The first cut refused a shell in an untrusted project's
+  directory. Reported: "why is the terminal hidden, does this increase the
+  security? This would make it hard to switch between projects." It barely
+  does: the shell and its configuration are the person's own, typing `make` in
+  it is them choosing to run the project's code exactly as they would in
+  Terminal.app, and direnv already refuses an `.envrc` it has not been
+  allowed — while refusing costs the way somebody moves between projects in a
+  terminal-first editor. So the terminal opens, `DIRENV_DISABLE` is set for an
+  untrusted project (belt to direnv's brace, best-effort by nature), and the
+  rule left standing is the sharper one: this app starts nothing of the
+  project's by itself, and does not police what anybody types.
 - [x] 2.5 The agent commands: `startBacklogItem` refuses in an untrusted
   project, because an agent started in one reads that project's instructions
   and acts on them — a `CLAUDE.md` in a downloaded repository is a list of
@@ -132,6 +140,32 @@ github.com/my-org)".*
   `git@github.company.com:my-org/thing.git` — trusted, banner gone, with no
   folder entry of its own.
 
+## 9. The amendment: the strip itself
+
+*Two reports while it was being applied: "I dont like that the 'What is held
+back' opens a toast", and "I miss a way to hide the bar without trusting".*
+
+- [x] 9.1 *What is held back* is a popover from the button that asked, not a
+  toast: it is a list somebody reads **while deciding**, and a toast goes on a
+  timer and cannot be read twice. It says what still works beside what does
+  not — the reading that is unaffected is the half that makes "look first,
+  decide later" an option rather than a slogan.
+- [x] 9.2 The strip has a dismiss, and dismissing grants nothing: the project
+  stays untrusted, every refusal stands, and it lasts only until that project
+  is opened again — a dismissal that outlived the session would be a safety
+  decision made by somebody trying to get a bar out of the way.
+- [x] 9.2a The list is **two lists rather than two paragraphs**, reported as
+  "the text is to verbose (block text) which is hard to read": seven items and
+  five, each with a mark — red for what waits, green for what does not, since
+  `gitModified` is blue in every scheme here and reads as "changed" rather than
+  as "not now". A list is scanned; a paragraph is skipped, and this is read
+  while somebody decides. Photographed, and the words are in the driven report
+  as well, since a photograph cannot be grepped.
+- [x] 9.3 **File ▸ Trust This Project…**, because a strip that can be put away
+  must not take the only way to trust with it. The shared refusal sentence
+  names it beside the banner, and the item says so when the project is already
+  trusted rather than opening a sheet about nothing.
+
 ## 7. Finishing
 
 - [x] 7.1 `Scripts/file-size-allowed.txt` raised for the six files that grew
@@ -144,4 +178,6 @@ github.com/my-org)".*
   not a sandbox, and not a scanner.
 - [x] 7.2 Green by their exit codes: `make test` 4130 tests in 525 suites,
   exit 0 with the suite's two standing known issues, load 118.1 over 10 cores;
-  `make warnings` exit 0.
+  `make warnings` exit 0. Run again after the amendments, with the ledger
+  raised for `AppDelegate.swift` 3815 → 3831 and `LaunchOptions.swift`
+  1629 → 1633 (the two driver flags and the menu item).

@@ -97,10 +97,20 @@ run configuration's own. The app's own environment — the `PATH` it needs, the
 variables it sets for git's prompts — is unaffected, being this app's and not
 the project's.
 
-The terminal is the case with no half-measure: a shell in the project's
-directory sources whatever the machine's shell configuration sources, and
-tools like direnv exist to run a project's `.envrc`. So an untrusted project
-does not get a terminal at all, and the panel says why.
+*Amended on 2026-09-06, after the first cut refused a terminal outright.* The
+argument for refusing was that a shell in the project's directory sources
+whatever the machine's shell configuration sources and that direnv runs an
+`.envrc`. Neither survives contact: the shell and its configuration are the
+person's own, typing `make` in it is them choosing to run the project's code
+exactly as they would in Terminal.app, and direnv refuses an `.envrc` it has
+not been allowed. What refusing *did* cost was the way somebody moves between
+projects in a terminal-first editor — reported as exactly that.
+
+So the terminal opens, and the one project-driven thing in it is switched off:
+`DIRENV_DISABLE` for an untrusted project, belt to direnv's own brace and
+best-effort by nature. The rule this leaves is the sharper one: **this
+application starts nothing of the project's by itself**, and does not pretend
+to police what somebody types.
 
 ### Git hooks: `--no-verify`, and said out loud
 
@@ -118,12 +128,19 @@ commit is a mode people leave.
 
 A strip at the top of the window: what is held back, in a sentence, and
 **Trust This Project**. Trusting is a sheet naming the folder, offering the
-parent folder as the wider choice, and saying what trusting turns on. It is
-the only place trust is granted, and the settings page is where it is listed
-and taken back.
+parent folder as the wider choice, and saying what trusting turns on. The
+settings page is where trust is listed and taken back.
 
 *Ruled out:* a modal at open. A window that cannot be looked at until a
 security question is answered is a security question answered by reflex.
+
+*Amended on 2026-09-06, from two reports about the strip itself.* **What is
+held back** was a toast, and a toast goes on a timer: it is a list somebody
+reads while deciding, so it is a popover from the button that asked, and it
+says what still works beside what does not. And the strip can be **dismissed
+without trusting anything** — a strip whose only exit is trusting the project
+is a strip that gets projects trusted — which moves the trust gesture into the
+File menu as well, since a window with no strip still needs one.
 
 ## Risks / Trade-offs
 

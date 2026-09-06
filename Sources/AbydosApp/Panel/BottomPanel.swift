@@ -1465,6 +1465,19 @@ final class BottomPanel: NSView {
 	/// itself was launched from.
 	private func nameTab(_ session: Session, of pane: TerminalPane) {
 		pane.terminalView.launchEnvironment["ABYDOS_TERMINAL"] = session.identity
+		// **The one thing in a shell that runs the project's own files.**
+		// direnv reads an `.envrc` on entering a directory — it refuses one it
+		// has not been allowed, so this is belt to that brace rather than the
+		// brace itself, and best-effort by nature: a hook somebody wrote
+		// themselves is theirs, and this app does not read anybody's shell
+		// configuration to find out.
+		//
+		// The shell itself is not gated: it is *yours*, and typing `make` in it
+		// is you choosing to run the project's code exactly as you would in
+		// Terminal.app. What this app must not do is start that code by itself.
+		if let root = projectRoot(), !ProjectTrust.shared.isTrusted(root) {
+			pane.terminalView.launchEnvironment["DIRENV_DISABLE"] = "1"
+		}
 	}
 
 	/// The identities of the tabs this panel holds, for the app to say which
@@ -1963,22 +1976,24 @@ final class BottomPanel: NSView {
 		attachingTo session: String? = nil,
 		joinsSession: Bool = true
 	) -> TerminalPane? {
-		// **The one door every shell in this panel goes through**, which is
-		// why the trust question is asked here rather than at each of the four
-		// verbs above it — a fifth verb is then gated by construction.
+		// **An untrusted project still gets a terminal**, and the first cut of
+		// this refused one. The reasoning was that a shell in the project's
+		// directory is a general-purpose runner standing in it — but the shell
+		// is *yours*, with your configuration, and typing `make` in it is you
+		// choosing to run the project's code exactly as you would in
+		// Terminal.app. What this app must not do is *start* the project's
+		// code by itself; policing what somebody types is a different job and
+		// not one it can do.
 		//
-		// A shell in an untrusted project's directory is a general-purpose
-		// runner standing in it: the machine's own shell configuration is
-		// sourced, and tools like direnv exist to execute the project's
-		// `.envrc`. There is no half-measure to offer, so the panel says why
-		// instead of coming up empty and looking broken.
-		if let root = projectRoot(), !ProjectTrust.shared.isTrusted(root) {
-			Toast.post(
-				"Not trusted",
-				detail: ProjectTrust.shared.decision(for: root).said ?? ""
-			)
-			return nil
-		}
+		// The cost was the thing that settled it: this is a terminal-first IDE
+		// and the terminal is how somebody moves between projects. Reported as
+		// exactly that.
+		//
+		// What is left of the risk is the shell running the *project's* files
+		// on its own — direnv's `.envrc`, which direnv already refuses until it
+		// has been allowed. `DIRENV_DISABLE` is set for an untrusted project
+		// as well, which is belt to that brace and best-effort by nature: a
+		// hook somebody wrote themselves is theirs.
 		// A terminal of a window can be told to run something instead of a
 		// plain shell — `tmux new -A -s ideai`, for whoever lives in tmux. One
 		// of them, not all: the ones opened beside it are for the odd job that

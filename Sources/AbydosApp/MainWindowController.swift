@@ -488,6 +488,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// How far below the window's top the strip sits — the titlebar's own
 	/// inset, which every pane here takes.
 	var trustBannerTop: NSLayoutConstraint!
+	/// Projects whose strip has been put away in this window, until they are
+	/// opened again. Nothing about their trust changes — see `hideTrustBanner`.
+	var hiddenTrustBanners: Set<String> = []
 
 	var navigatorWidth: CGFloat = 260
 

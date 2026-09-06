@@ -526,6 +526,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.trustProjectForTesting(coveringChildren: options.trustsParent)
 			}
 		}
+		if options.trustHeldBack {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.heldBackForTesting()
+			}
+		}
 		if options.trustReport {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				let root = controller?.project?.root
@@ -3107,6 +3112,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// Not plain ⌘K, which clears the terminal as it does in Terminal and
 		// every console — a menu's key equivalent is matched before any view
 		// sees the key, so taking it would have quietly stopped that working.
+		// **Where the trust gesture lives when the strip is away.** The strip
+		// can be dismissed without trusting anything, and a window with no
+		// strip needs somewhere the project can still be trusted from — this,
+		// and the settings page that lists what is trusted already.
+		let trustItem = NSMenuItem(
+			title: "Trust This Project…",
+			action: #selector(MainWindowController.trustThisProject(_:)),
+			keyEquivalent: ""
+		)
+		fileMenu.addItem(trustItem)
+
 		let switcherItem = NSMenuItem(
 			title: "Go to Anything…",
 			action: #selector(MainWindowController.showProjectSwitcher(_:)),

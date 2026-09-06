@@ -353,7 +353,7 @@ extension MainWindowController {
 		trustBannerTop = trustBanner.topAnchor.constraint(equalTo: root.topAnchor)
 		trustBanner.isHidden = true
 		trustBanner.onTrust = { [weak self] in self?.askToTrustProject() }
-		trustBanner.onDetails = { [weak self] in self?.sayWhatTrustHoldsBack() }
+		trustBanner.onDismiss = { [weak self] in self?.hideTrustBanner() }
 
 		NSLayoutConstraint.activate([
 			toolStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),

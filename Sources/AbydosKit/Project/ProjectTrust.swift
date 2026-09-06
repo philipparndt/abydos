@@ -106,8 +106,8 @@ public enum TrustDecision: Equatable, Sendable {
 		case .trusted: return nil
 		case .untrusted(let project):
 			return "\(project) is not trusted, so nothing in it runs. "
-				+ "Trust it in the window's banner to run, debug, open a terminal "
-				+ "and start language servers."
+				+ "Trust it from the window's banner, or File ▸ Trust This Project…, "
+				+ "to run, debug and start language servers."
 		}
 	}
 }
@@ -242,6 +242,10 @@ public final class ProjectTrust {
 	/// git paths do, and for the same reason: a project under `/tmp` is really
 	/// under `/private/tmp`, and an answer that depends on which spelling
 	/// arrived is an answer nobody can predict.
+	/// The same standardising, for a caller outside this file that has to key
+	/// something by the same string.
+	public static func resolvedForTesting(_ url: URL) -> String { resolved(url) }
+
 	static func resolved(_ url: URL) -> String {
 		url.standardizedFileURL.resolvingSymlinksInPath().path
 	}
