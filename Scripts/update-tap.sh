@@ -57,7 +57,18 @@ CASK="$WORK/abydos.rb"
 # carrying any other — and it kept the name the project had before it was
 # Abydos. A cask that zapped `de.rnd7.abydos` would tidy away nothing and leave
 # every real file behind.
+#
+# The two magic comments are what `brew style` asks every cask for — a Sorbet
+# sigil and the frozen-string-literal pragma — and it asked three times per
+# release until they were written here. A generated file that has to be
+# hand-corrected after generation is a generated file nobody trusts.
+#
+# `strict` rather than `true`: Homebrew's own rubocop wants at least that of a
+# cask, and a cask is thirty lines of literals with nothing to type loosely.
 cat > "$CASK" <<RUBY
+# typed: strict
+# frozen_string_literal: true
+
 cask "abydos" do
   version "$VERSION"
   sha256 "$SHA"
