@@ -62,14 +62,28 @@ final class DebugCoordinator {
 		print("EDITORWATCH: added=\(added) showsConsole=\(pane?.showsConsoleForTesting ?? true)")
 	}
 
-	/// Puts a condition on a breakpoint before the program runs.
+	/// Puts a breakpoint's options on it before the program runs.
+	///
+	/// All three of them, separated by tabs — `condition\thits\tlog` — because a
+	/// breakpoint is three fields and a run that could only set one could only
+	/// ever show a third of the sheet. A tab and not a comma or a pipe: every
+	/// one of these fields is an expression, and `a || b` and `f(x, y)` are what
+	/// they look like, while a tab is a character no expression contains.
+	///
+	/// Missing parts are absent rather than empty, which is what the sheet's own
+	/// rule says an empty field means: it drops that part.
 	func setBreakpointConditionForTesting(line: Int, condition: String) {
 		guard let url = editor.activeGroup?.activeTabURL else { return }
+		let parts = condition.components(separatedBy: "\t")
+		func part(_ index: Int) -> String? {
+			guard index < parts.count, !parts[index].isEmpty else { return nil }
+			return parts[index]
+		}
 		setBreakpointOptions(
 			file: FilePath.canonical(url), line: line,
-			condition: condition, hitCondition: nil, logMessage: nil
+			condition: part(0), hitCondition: part(1), logMessage: part(2)
 		)
-		print("COND: \(condition) on line \(line)")
+		print("COND: \(parts.joined(separator: " | ")) on line \(line)")
 	}
 
 	/// Walks the debugger a step at a time, saying where it stopped.

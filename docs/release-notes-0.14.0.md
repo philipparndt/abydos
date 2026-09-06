@@ -99,6 +99,25 @@ own tooltip.
 - The scratches and debug buttons stopped being system bezels on the way, which
   also settles their height at a large zoom.
 
+## The Finder knows what this app opens
+
+The bundle declared one thing — a folder — so a source file's *Open With* menu
+had never heard of Abydos.
+
+- It is now offered for what the editor actually reads, as an *alternate*: an
+  offer in the menu, claiming nothing at installation.
+- The first source file you open asks once whether it should be the default,
+  with *Not Now* and *Never Ask* meaning what they say. Settings ▸ System has
+  the same switch, read back from Launch Services rather than from what the app
+  once asked for.
+- **Right-click a folder in the Finder ▸ Services ▸ New Terminal Here** opens
+  the project with its terminal there. The Finder's own *Open in Terminal*
+  belongs to Terminal.app and macOS lets no application take it — a service
+  beside it is the whole of what is on offer, and the settings page says so.
+- Two gaps on purpose: `.ts` and `.mts` are an MPEG-2 transport stream to
+  macOS, and claiming that would put this editor in the *Open With* menu of a
+  video.
+
 ## ⇧⌘P opens where you are looking
 
 ⇧⌘A centred its list on the window; ⇧⌘P opened its own in the top-left corner.

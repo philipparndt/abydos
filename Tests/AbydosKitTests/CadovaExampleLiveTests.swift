@@ -52,7 +52,13 @@ import Testing
 		guard let package else { return }
 
 		let read = try #require(SwiftPackage.find(in: package))
-		#expect(read.executables.map(\.name) == ["hex-key-holder", "coaster"])
+		// **The two spellings are the claim; the list is not.** This asked for
+		// the whole list in order, so the examples repository gaining a third
+		// model — which is what an examples repository is for — failed a test
+		// about how names are spelt. What matters is that both of these are
+		// offered, and how.
+		#expect(read.executables.map(\.name).contains("hex-key-holder"))
+		#expect(read.executables.map(\.name).contains("coaster"))
 		// A product's name and a bare target's, and not the target the product
 		// wraps — which is the one SwiftPM will not answer to.
 		#expect(!read.executables.contains { $0.name == "HexKeyHolder" })

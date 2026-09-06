@@ -165,6 +165,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// nothing behind to say why.
 		BrokenPipes.ignore()
 		Self.recordUncaughtExceptions()
+		// The Finder's Services menu is told who answers *New Terminal Here*.
+		// Registered here rather than lazily: the menu is built from the
+		// bundle, and the object has to exist by the time somebody chooses it.
+		terminalService.open = { [weak self] root in self?.open(projectAt: root) }
+		NSApp.servicesProvider = terminalService
 		Self.endToolsOnExit()
 		// Settings from the other identifier this app has had, before anything
 		// reads one: a change of identifier would otherwise look like every
@@ -524,6 +529,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// starts where a person would be after pressing Trust.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				controller?.trustProjectForTesting(coveringChildren: options.trustsParent)
+			}
+		}
+		if let path = options.terminalServicePath {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				print("SERVICE: " + self.terminalService.openTerminalForTesting(path))
+				fflush(stdout)
+				// What it opened and where its terminal is, a moment later: the
+				// window has to exist before it can be asked.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+					let controller = self.frontmostController
+					print("SERVICE window: project="
+						+ (controller?.project?.root.lastPathComponent ?? "none")
+						+ " terminals=\(controller?.panelForTesting.terminalIdentities.count ?? 0)")
+					fflush(stdout)
+					if options.writesACapture { return }
+					exit(0)
+				}
 			}
 		}
 		if options.trustDismiss {
@@ -2861,6 +2883,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	/// it says it came from, and whether any of those is trusted already — so
 	/// there is nothing to build until somebody looks.
 	@MainActor let trustMenuDelegate = TrustMenuDelegate()
+
+	/// *New Terminal Here*, which the Finder shows in its Services menu.
+	@MainActor let terminalService = TerminalService()
 
 	public func application(_ application: NSApplication, open urls: [URL]) {
 		for url in urls {

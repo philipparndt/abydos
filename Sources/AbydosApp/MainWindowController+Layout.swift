@@ -390,6 +390,9 @@ extension MainWindowController {
 			// on the way past.
 			if focusEditor { self.leaveTerminalFullScreen() }
 			self.editor.open(fileURL: url, focusEditor: focusEditor, preview: !focusEditor)
+			// A file opened deliberately from the tree counts as the first
+			// source file; one previewed by arrowing past it does not.
+			if focusEditor { DefaultEditor.considerAsking(about: url, in: self.window) }
 		}
 		navigator.onOpenTerminal = { [weak self] directory in
 			self?.openTerminal(in: directory)

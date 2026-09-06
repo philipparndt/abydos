@@ -192,6 +192,7 @@ public final class Settings {
 		static let projectSearchDepth = "projectSearchDepth"
 		static let concealsSecrets = "concealsSecrets"
 		static let conventionalCommitDrafts = "conventionalCommitDrafts"
+		static let defaultEditorAsked = "defaultEditorAsked"
 		static let refsSortLocal = "refsSortLocal"
 		static let refsSortRemotes = "refsSortRemotes"
 		static let refsSortTags = "refsSortTags"
@@ -757,6 +758,26 @@ public final class Settings {
 		set { set(newValue, Key.concealsSecrets) }
 	}
 
+	/// What was answered when this app offered to become the default editor.
+	///
+	/// **Three states, because "not now" and "never" are different.** The first
+	/// leaves the settings page offering it and stops the ask; the second stops
+	/// the ask and says so. Neither writes a handler — Launch Services is the
+	/// record of what is default, and this is only the record of having asked.
+	public enum DefaultEditorAnswer: String, Sendable {
+		case unasked
+		case notNow
+		case neverAsk
+	}
+
+	public var defaultEditorAsked: DefaultEditorAnswer {
+		get {
+			DefaultEditorAnswer(rawValue: defaults.string(forKey: Key.defaultEditorAsked) ?? "")
+				?? .unasked
+		}
+		set { set(newValue.rawValue, Key.defaultEditorAsked) }
+	}
+
 	/// Whether a drafted commit message is asked for as a Conventional Commit.
 	///
 	/// On: the format is what changelog and release tooling reads, and a draft
@@ -930,7 +951,7 @@ public final class Settings {
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.compactsPackages, Key.commitFilesByFolder,
-			Key.concealsSecrets,
+			Key.concealsSecrets, Key.defaultEditorAsked,
 			Key.refsSortLocal, Key.refsSortRemotes, Key.refsSortTags,
 			Key.excludedDirectories,
 			Key.uiScale, Key.terminalFontName, Key.wordWrap, Key.fontLigatures,

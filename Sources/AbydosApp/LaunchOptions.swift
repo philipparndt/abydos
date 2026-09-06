@@ -279,6 +279,10 @@ struct LaunchOptions {
 	var trustHeldBack = false
 	/// `--trust-dismiss`: put the strip away without trusting, as its ✕ does.
 	var trustDismiss = false
+	/// `--terminal-service <path>`: the Finder's *New Terminal Here*, driven
+	/// on a path — the handler is reachable without the Finder, and what it
+	/// does with a path is the half that is this app's.
+	var terminalServicePath: String?
 	/// `--switcher-pill`: open the switcher the way a click on the project
 	/// pill opens it, rather than the way ⇧⌘P does — the two placements are
 	/// the subject, so a run has to be able to ask for either.
@@ -1445,6 +1449,7 @@ struct LaunchOptions {
 			case "--trust-report":  options.trustReport = true
 			case "--trust-held-back": options.trustHeldBack = true
 			case "--trust-dismiss": options.trustDismiss = true
+			case "--terminal-service": options.terminalServicePath = next()
 			case "--switch-to":
 				let said = next() ?? ""
 				// `path@seconds`, and a path with no `@` in it keeps the default.

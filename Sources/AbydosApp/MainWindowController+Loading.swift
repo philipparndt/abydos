@@ -335,6 +335,10 @@ extension MainWindowController {
 	func openFile(at url: URL) {
 		editor.open(fileURL: url, focusEditor: true, preview: false)
 		navigator.selectWithoutOpening(url: url)
+		// The first source file somebody opens is the moment the question about
+		// the Finder is about something they are doing — see `DefaultEditor`.
+		// Asked once, and never in a driven run.
+		DefaultEditor.considerAsking(about: url, in: window)
 	}
 
 	/// `abydos <file>`, typed in one of this window's terminals.

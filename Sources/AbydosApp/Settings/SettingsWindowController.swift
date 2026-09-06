@@ -879,6 +879,51 @@ final class SettingsPaneController: NSViewController {
 	/// project they are deciding about; this page is where the decisions are
 	/// read back and taken away — the one thing a strip cannot do, since the
 	/// project it was about may not be open any more.
+	/// What the Finder opens with this editor, and the terminal it can offer.
+	static func systemRows() -> [Row] {
+		let opened = DefaultEditor.typesThisAppOpens().count
+		let declared = DefaultEditor.declaredTypes.count
+		return [
+			.group(
+				title: "The Finder",
+				help: "Abydos is offered under Open With for the files it can read — that is in "
+					+ "the bundle and claims nothing. This makes it the one that opens when you "
+					+ "double-click them.",
+				rows: [
+					.toggle(
+						title: "Open source files with Abydos",
+						help: opened == 0
+							? "Currently \(declared) kinds of file open with something else."
+							: "Currently \(opened) of \(declared) kinds open with Abydos. "
+								+ "macOS decides this one and may ask you again in its own words.",
+						// Read from Launch Services rather than from what this
+						// app once asked for: another editor can take a kind
+						// back, and the page is read at exactly that moment.
+						get: { DefaultEditor.isDefaultForEverythingDeclared },
+						set: { wanted in
+							Task { @MainActor in
+								if wanted {
+									await DefaultEditor.makeDefault()
+								} else {
+									await DefaultEditor.handBack()
+								}
+							}
+						}
+					),
+				]
+			),
+			.group(
+				title: "The Finder's terminal",
+				help: "Right-click a folder and choose Services ▸ New Terminal Here to open it "
+					+ "in this app's terminal. The Finder's own Open in Terminal belongs to "
+					+ "Terminal.app and cannot be pointed at another application — macOS offers "
+					+ "that to nobody. A keyboard shortcut for the service is set in System "
+					+ "Settings ▸ Keyboard ▸ Keyboard Shortcuts ▸ Services.",
+				rows: []
+			),
+		]
+	}
+
 	static func trustRows() -> [Row] {
 		let folders = ProjectTrust.shared.folders.sorted { $0.path < $1.path }
 		var rows: [Row] = [
@@ -1174,6 +1219,7 @@ enum SettingsSections {
 		Section(title: "Git", symbol: "arrow.trianglehead.branch", rows: SettingsPaneController.gitRows),
 		Section(title: "Agent", symbol: "sparkles", rows: SettingsPaneController.agentRows),
 		Section(title: "Trust", symbol: "hand.raised", rows: SettingsPaneController.trustRows),
+		Section(title: "System", symbol: "macwindow.on.rectangle", rows: SettingsPaneController.systemRows),
 		Section(
 			title: "Tools",
 			symbol: "shippingbox",
