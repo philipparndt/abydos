@@ -4120,6 +4120,9 @@ final class EditorViewController: NSViewController {
 		// shuts it, and the lock shuts it at once.
 		codeView.setConcealsSecrets(Settings.shared.concealsSecrets)
 		codeView.setSecretsRevealed(true)
+		// No marks while it is decrypted, and the ciphertext's marks back when
+		// it is locked: both go through the one place that asks git.
+		refreshChangedLines(for: tab)
 		refreshTabBar()
 		onStatusChanged?(self)
 	}
@@ -4150,6 +4153,9 @@ final class EditorViewController: NSViewController {
 				url: tab.url, languageId: languageId, text: self.text(of: document), project: root
 			)
 		}
+		// And the gutter says what git says about the ciphertext — which for a
+		// decrypt that changed nothing is nothing at all.
+		refreshChangedLines(for: tab)
 		refreshTabBar()
 		onStatusChanged?(self)
 	}
@@ -4320,6 +4326,12 @@ final class EditorViewController: NSViewController {
 			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report": print("SOPS: \(sopsReportForTesting())")
+			// What the gutter is marking, which is a different question from
+			// what git says: a decrypted buffer differs from HEAD in every
+			// line and has changed nothing.
+			case "marks":
+				print("SOPS marks: "
+					+ (activeTab?.codeView?.changedLinesReportForTesting ?? "no editor"))
 			// `press` and `decrypt` are the same door — the chip — and the
 			// second name is what it does on an encrypted file. On a plaintext
 			// file a creation rule matches, the same press encrypts it.
@@ -5006,6 +5018,14 @@ final class EditorViewController: NSViewController {
 	/// callers are open, save, reload, and the repository moving.
 	private func refreshChangedLines(for tab: Tab) {
 		guard tab.codeView != nil else { return }
+		// **A decrypted buffer has nothing to compare.** The marks say what
+		// differs from HEAD, and HEAD holds the ciphertext: every line of the
+		// plaintext differs from it, which says nothing about whether anybody
+		// has changed anything. The diff comes back when the ciphertext does.
+		guard !tab.isDecrypted else {
+			tab.codeView?.setChangedLines(GitChangedLines())
+			return
+		}
 		tab.changedLinesGeneration += 1
 		let generation = tab.changedLinesGeneration
 		let url = tab.url.standardizedFileURL

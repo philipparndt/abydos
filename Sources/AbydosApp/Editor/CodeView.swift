@@ -616,6 +616,14 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
 		let length = rope.utf16Offset(fromByte: rope.byteCount)
 		document.replace(utf16Range: 0..<length, with: text, caretBefore: caret)
+		// **A wholesale replacement is not somebody typing.** The marks shift
+		// with every edit and mark what an edit put there, which is the right
+		// answer for a keystroke and the wrong one for a decrypt, a lock or a
+		// reload: replacing every line marked every line, so a SOPS file
+		// decrypted read as wholly modified in the gutter when git had nothing
+		// to say about it at all. Cleared here; the group asks git for the
+		// truth, which is the only thing that knows it.
+		setChangedLines(GitChangedLines())
 		// A buffer replaced wholesale — a decrypt, a lock, an external reload —
 		// is a new text whose habit is new, and a choice made from the
 		// footer's menu about the old one goes with it.
@@ -2261,6 +2269,19 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		breakpointLines = lines
 		needsDisplay = true
 		window?.invalidateCursorRects(for: self)
+	}
+
+	/// What the gutter is marking, for a driven run: a picture of a gutter
+	/// cannot say whether three marks are the right three.
+	var changedLinesReportForTesting: String {
+		guard !changedLines.marks.isEmpty || !changedLines.deletedAfter.isEmpty else {
+			return "no marks"
+		}
+		let marks = changedLines.marks.sorted { $0.key < $1.key }
+			.map { "\($0.key)=\($0.value)" }
+			.joined(separator: " ")
+		let deleted = changedLines.deletedAfter.sorted().map(String.init).joined(separator: ",")
+		return marks + (deleted.isEmpty ? "" : " deletedAfter=\(deleted)")
 	}
 
 	/// Which lines differ from HEAD, for the gutter's change marks.

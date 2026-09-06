@@ -415,6 +415,12 @@ final class SettingsPage: NSView, ScalingPage {
 			// next.
 			flushLoose()
 			blocks.append(sectionHeading(title, help: help))
+			// **A group with nothing in it is a heading, not an empty box.**
+			// Some sections are an explanation and no setting — what trust
+			// means, what the Finder will not let this app do — and a card
+			// drawn round no rows is a rounded rectangle with nothing in it,
+			// which was reported as exactly that.
+			guard !inside.isEmpty else { continue }
 			blocks.append(card(titled: nil, help: nil, rows: inside.map { self.row(for: $0) }))
 		}
 		flushLoose()
