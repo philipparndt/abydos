@@ -133,7 +133,7 @@ warnings: ## Every warning in this repository's own code, and every file over th
 .PHONY: timing
 timing: ## Assert the warm-render bounds, serialised, on a quiet machine
 	@TIMING=1 $(SWIFT) test $(SWIFT_JOBS) --no-parallel \
-		--filter 'MermaidLiveTests|DrawioLiveTests|PlantUMLServerLiveTests'
+		--filter 'MermaidLiveTests|DrawioLiveTests|PlantUMLServerLiveTests|DiffTextSpanCostTests'
 	@TIMING=1 ABYDOS_BENCH=1 $(SWIFT) test $(SWIFT_JOBS) -c release --no-parallel \
 		--filter 'TerminalThroughputTests/drawPathCost'
 	@TIMING=1 $(SWIFT) test $(SWIFT_JOBS) --no-parallel --filter 'PerformanceTests'
