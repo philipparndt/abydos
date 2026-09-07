@@ -56,15 +56,64 @@ public struct WrapLayout: Sendable {
 		totalRows = max(1, row)
 	}
 
-	/// UTF-16 range of one wrapped segment of a line.
+	/// Where a line's visual rows begin, in UTF-16 offsets: the first is always
+	/// 0, and every other is where a row was cut.
 	///
-	/// Cut by *display* width rather than by character count. A tab occupies up
-	/// to `tabWidth` columns on screen but one UTF-16 unit, so slicing by unit
-	/// count makes a row wider than the space it was measured for — the overflow
-	/// is then clipped away and those characters are never seen anywhere.
+	/// **Cut at words, not in them.** A row is filled by display width — a tab
+	/// is `tabWidth` columns and one unit — and when the next unit would not
+	/// fit, the cut goes back to just after the last whitespace on the row, so
+	/// a word moves down whole; the whitespace stays at the end of the row
+	/// above, where the eye does not look for it. A word longer than the row
+	/// has no such place and is cut at the edge, as it always was. Prose read
+	/// in the editor — a `README`, a commit message, a comment block — was
+	/// being broken mid-word, which is the one thing that stops the reading
+	/// flow soft wrap exists to keep.
 	///
-	/// The row count above is derived from the same display width, so the two
-	/// have to agree or the last segment of a line goes missing.
+	/// One walk for the three questions below, so the row count, the slicing
+	/// and the caret's row cannot disagree — which is the fault this file
+	/// keeps recording.
+	public static func rowStarts(in text: String, columns: Int, tabWidth: Int) -> [Int] {
+		guard columns > 0 else { return [0] }
+		let units = Array(text.utf16)
+		var starts = [0]
+		var rowStart = 0
+		var column = 0
+		var index = 0
+		/// The offset just after the last whitespace on this row that came
+		/// after a word, or nil. Whitespace at the start of a row is
+		/// indentation, and a cut there would make a row of nothing but it.
+		var wordBreak: Int?
+		var sawWord = false
+		let tab = UInt16(0x09), space = UInt16(0x20)
+
+		while index < units.count {
+			let unit = units[index]
+			let width = unit == tab ? tabWidth - (column % tabWidth) : 1
+			if column + width > columns, column > 0 {
+				// Somewhere on this row a word ended: cut there and put the
+				// rest of the row's units back to be laid out again.
+				if let cut = wordBreak, cut > rowStart, cut < index {
+					index = cut
+				}
+				starts.append(index)
+				rowStart = index
+				column = 0
+				wordBreak = nil
+				sawWord = false
+				continue
+			}
+			column += width
+			index += 1
+			if unit == space || unit == tab {
+				if sawWord { wordBreak = index }
+			} else {
+				sawWord = true
+			}
+		}
+		return starts
+	}
+
+	/// UTF-16 range of one wrapped segment of a line, by the cuts above.
 	public static func segmentRange(
 		in text: String,
 		segment: Int,
@@ -72,33 +121,11 @@ public struct WrapLayout: Sendable {
 		tabWidth: Int
 	) -> Range<Int> {
 		guard columns > 0, segment >= 0 else { return 0..<0 }
-
-		let units = Array(text.utf16)
-		var start = 0
-		var column = 0
-		var index = 0
-		var currentSegment = 0
-
-		let tab = UInt16(0x09)
-
-		while index < units.count {
-			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
-
-			// A tab that would straddle the edge moves to the next row whole,
-			// which is what the renderer does with it too.
-			if column + width > columns, column > 0 {
-				if currentSegment == segment { return start..<index }
-				currentSegment += 1
-				start = index
-				column = 0
-				continue
-			}
-
-			column += width
-			index += 1
-		}
-
-		return currentSegment == segment ? start..<units.count : units.count..<units.count
+		let starts = rowStarts(in: text, columns: columns, tabWidth: tabWidth)
+		let count = text.utf16.count
+		guard segment < starts.count else { return count..<count }
+		let end = segment + 1 < starts.count ? starts[segment + 1] : count
+		return starts[segment]..<end
 	}
 
 	/// What part of a match falls on one visual row, in that row's own offsets.
@@ -141,10 +168,11 @@ public struct WrapLayout: Sendable {
 		return (from - rowStart)..<(to - rowStart)
 	}
 
-	/// Which segment of a line a UTF-16 offset falls in.
+	/// Which segment of a line a UTF-16 offset falls in, by the same cuts.
 	///
-	/// Walks the same display widths `segmentRange` does, so the caret lands on
-	/// the row that actually shows it.
+	/// A cut can fall exactly *at* the offset — the caret then belongs on the
+	/// row that is about to start, not at the end of the one that just filled.
+	/// Not applied at end of line: there is no next row there.
 	public static func segment(
 		forOffset offset: Int,
 		in text: String,
@@ -152,56 +180,19 @@ public struct WrapLayout: Sendable {
 		tabWidth: Int
 	) -> Int {
 		guard columns > 0, offset > 0 else { return 0 }
-
-		let units = Array(text.utf16)
-		var column = 0
-		var index = 0
+		let starts = rowStarts(in: text, columns: columns, tabWidth: tabWidth)
+		let count = text.utf16.count
 		var segment = 0
-		let tab = UInt16(0x09)
-
-		let limit = min(offset, units.count)
-		while index < limit {
-			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
-			if column + width > columns, column > 0 {
-				segment += 1
-				column = 0
-				continue
-			}
-			column += width
-			index += 1
-		}
-
-		// A break can fall exactly *at* the offset — the caret then belongs on
-		// the row that is about to start, not at the end of the one that just
-		// filled. Not applied at end of line: there is no next row there.
-		if index == offset, index < units.count, column > 0 {
-			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
-			if column + width > columns { segment += 1 }
+		for (index, start) in starts.enumerated() where index > 0 {
+			if start < offset || (start == offset && offset < count) { segment = index } else { break }
 		}
 		return segment
 	}
 
-	/// Rows a line occupies, by the same walk that slices it.
+	/// Rows a line occupies, by the same cuts.
 	public static func rowCount(in text: String, columns: Int, tabWidth: Int) -> Int {
 		guard columns > 0 else { return 1 }
-
-		let units = Array(text.utf16)
-		var rows = 1
-		var column = 0
-		var index = 0
-		let tab = UInt16(0x09)
-
-		while index < units.count {
-			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
-			if column + width > columns, column > 0 {
-				rows += 1
-				column = 0
-				continue
-			}
-			column += width
-			index += 1
-		}
-		return rows
+		return rowStarts(in: text, columns: columns, tabWidth: tabWidth).count
 	}
 
 	private func unusedRowCount(forLine line: Int, columns: Int?, columnsForLine: (Int) -> Int) -> Int {

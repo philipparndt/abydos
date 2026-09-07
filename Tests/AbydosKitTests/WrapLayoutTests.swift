@@ -238,3 +238,42 @@ struct WrapRowCountTests {
 		}
 	}
 }
+
+/// Rows are cut at words, not in them.
+///
+/// Prose read in the editor — a README with word wrap on — was broken
+/// mid-word at the column edge, which is the one thing soft wrap exists to
+/// avoid. The cut goes back to just after the last whitespace that follows a
+/// word; leading indentation is not such a place, and a word longer than the
+/// row is cut at the edge as before.
+struct WrapAtWordsTests {
+	private func rows(_ text: String, columns: Int, tabWidth: Int = 4) -> [String] {
+		let units = Array(text.utf16)
+		return (0..<WrapLayout.rowCount(in: text, columns: columns, tabWidth: tabWidth)).map { segment in
+			let range = WrapLayout.segmentRange(in: text, segment: segment, columns: columns, tabWidth: tabWidth)
+			return String(utf16CodeUnits: Array(units[range]), count: range.count)
+		}
+	}
+
+	@Test func aSentenceBreaksAfterAWordAndTheSpaceStaysAbove() {
+		#expect(rows("the quick brown fox jumps", columns: 10) == ["the quick ", "brown fox ", "jumps"])
+	}
+
+	@Test func aWordLongerThanTheRowIsCutAtTheEdge() {
+		#expect(rows("abcdefghijklmnop", columns: 6) == ["abcdef", "ghijkl", "mnop"])
+		#expect(rows("ab abcdefghijkl", columns: 6) == ["ab ", "abcdef", "ghijkl"])
+	}
+
+	@Test func leadingIndentationIsNotAPlaceToCut() {
+		#expect(rows("    a long indented sentence", columns: 12) == ["    a long ", "indented ", "sentence"])
+		#expect(rows("\tabcdef", columns: 6) == ["\tab", "cdef"])
+	}
+
+	@Test func theCaretFollowsTheWordItIsIn() {
+		let text = "the quick brown fox"
+		// "the quick " is row 0; the b of brown is at 10 and on row 1.
+		#expect(WrapLayout.segment(forOffset: 10, in: text, columns: 10, tabWidth: 4) == 1)
+		#expect(WrapLayout.segment(forOffset: 9, in: text, columns: 10, tabWidth: 4) == 0)
+		#expect(WrapLayout.rowCount(in: text, columns: 10, tabWidth: 4) == 2)
+	}
+}
