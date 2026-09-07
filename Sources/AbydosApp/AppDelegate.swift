@@ -3584,77 +3584,81 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		mainMenu.addItem(agentMenuItem)
 
 		let viewMenuItem = NSMenuItem()
+		// **Grouped, because it was fifty items in one column.** A menu that
+		// long is read top to bottom every time, and the things that belong
+		// together — every terminal verb, every editor toggle, the three git
+		// pages — were separated by the order they were added in. What stays
+		// at the top level is what is pressed from memory: the four sidebar
+		// tools on ⌘1–4, the zoom, and the two secret verbs the specs name as
+		// *View ▸ Reveal Secrets* and *View ▸ Running Servers and Containers*.
+		// Everything else is a submenu named for what it is about; the palette
+		// reads the path, so "Terminal ▸ New Terminal Tab" is what it finds.
 		let viewMenu = NSMenu(title: "View")
 		viewMenu.addItem(withTitle: "Project", action: #selector(MainWindowController.showProjectView(_:)), keyEquivalent: "1")
-		// **⌘2 is the whole repository now.** Commit and History were ⌘2 and
-		// ⌘6; the commit view and the log are pages, and what the sidebar holds
-		// is one tree. Structure and Scratches move up into the gap.
 		viewMenu.addItem(withTitle: "Git", action: #selector(MainWindowController.toggleBranchesView(_:)), keyEquivalent: "2")
 		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "3")
 		viewMenu.addItem(withTitle: "Scratches", action: #selector(MainWindowController.toggleScratchesView(_:)), keyEquivalent: "4")
-		// No number of its own: ⌘5 and ⌘6 are the two keys that moved and are
-		// still answering for the release, and a seventh number would be a
-		// shortcut nobody has room for. The rail carries the button.
 		viewMenu.addItem(
 			withTitle: "Pull Requests",
 			action: #selector(MainWindowController.togglePullRequestsView(_:)),
 			keyEquivalent: ""
 		)
-		// The keys that moved, for one release: they open the tool and say
-		// which key now opens what they used to, rather than doing nothing to
-		// fingers that have been typing them for months.
+		// ⌘5 and ⌘6 used to be Commit and History; the items stay, hidden, so
+		// the old press says where the thing went rather than doing nothing.
 		viewMenu.addItem(withTitle: "Commit (moved)", action: #selector(MainWindowController.movedShortcut(_:)), keyEquivalent: "5")
 			.isHidden = true
 		viewMenu.addItem(withTitle: "History (moved)", action: #selector(MainWindowController.movedShortcut(_:)), keyEquivalent: "6")
 			.isHidden = true
-		// The log at the size a graph needs, which is not a 300 pt column.
-		let logItem = viewMenu.addItem(
+		viewMenu.addItem(.separator())
+
+		// The git pages at the size a graph or a message needs.
+		let gitPages = NSMenu(title: "Git Pages")
+		let logItem = gitPages.addItem(
 			withTitle: "Log", action: #selector(MainWindowController.showLogPage(_:)), keyEquivalent: "l"
 		)
 		logItem.keyEquivalentModifierMask = [.command, .shift]
-		// The commit view at the size a message worth reading needs.
-		let commitItem = viewMenu.addItem(
+		let commitItem = gitPages.addItem(
 			withTitle: "Commit Page", action: #selector(MainWindowController.showCommitPage(_:)),
 			keyEquivalent: "k"
 		)
 		commitItem.keyEquivalentModifierMask = [.command, .shift]
-		// The estate, for a checkout that holds submodules. Beside the log and
-		// the commit page because it is the third question about the same
-		// repository — where the work is, rather than where it has been or what
-		// is about to go in. It is offered whatever the project is: a repository
-		// with no submodules opens a page that says so in words, which is a
-		// better answer than a menu item that is there some days and not others.
-		let estateItem = viewMenu.addItem(
+		let estateItem = gitPages.addItem(
 			withTitle: "Submodules", action: #selector(MainWindowController.showEstatePage(_:)),
 			keyEquivalent: "m"
 		)
 		estateItem.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(.separator())
-		// **Two questions about every diff in the app**, so they are here rather
-		// than on the pull request page: the commit view and the log page draw
-		// the same view, and a switch that only reached one of them would be a
-		// preference with a scope nobody could guess.
-		let sideBySide = viewMenu.addItem(
+		gitPages.addItem(.separator())
+		gitPages.addItem(NSMenuItem(
+			title: "Arrange Commit Files by Folder",
+			action: #selector(MainWindowController.toggleCommitFilesByFolder(_:)),
+			keyEquivalent: ""
+		))
+		let gitPagesItem = NSMenuItem(title: "Git Pages", action: nil, keyEquivalent: "")
+		gitPagesItem.submenu = gitPages
+		viewMenu.addItem(gitPagesItem)
+
+		let diff = NSMenu(title: "Diff")
+		let sideBySide = diff.addItem(
 			withTitle: "Side by Side Diff",
 			action: #selector(MainWindowController.toggleSideBySideDiff(_:)),
 			keyEquivalent: ""
 		)
 		sideBySide.state = Settings.shared.diffIsSideBySide ? .on : .off
-		let chrome = viewMenu.addItem(
+		let chrome = diff.addItem(
 			withTitle: "Show Diff Headers",
 			action: #selector(MainWindowController.toggleDiffChrome(_:)),
 			keyEquivalent: ""
 		)
 		chrome.state = Settings.shared.diffShowsChrome ? .on : .off
+		let diffItem = NSMenuItem(title: "Diff", action: nil, keyEquivalent: "")
+		diffItem.submenu = diff
+		viewMenu.addItem(diffItem)
 		viewMenu.addItem(.separator())
-		// How a file with a rendered form is shown. In a submenu of their own
-		// because "Split Right" is also what a second editor pane is called:
-		// two commands with one name in one menu is a coin toss in the palette.
-		//
-		// ⌘1…⌘6 are the sidebar's, so these take the same numbers a modifier
-		// along, in the order the tab strip's own dropdown lists them.
-		let previewItem = NSMenuItem()
-		let previewMenu = NSMenu(title: "Preview")
+
+		// How the front tab is shown. The item used to have no title of its
+		// own and read as "NSMenuItem", the class's name, in the menu.
+		let previewItem = NSMenuItem(title: "Show As", action: nil, keyEquivalent: "")
+		let previewMenu = NSMenu(title: "Show As")
 		for (index, mode) in PreviewMode.allCases.enumerated() {
 			let item = NSMenuItem(
 				title: mode.title,
@@ -3668,123 +3672,111 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		previewItem.submenu = previewMenu
 		viewMenu.addItem(previewItem)
 
-		viewMenu.addItem(.separator())
-		let terminalItem = NSMenuItem(title: "Toggle Terminal", action: #selector(MainWindowController.toggleTerminal(_:)), keyEquivalent: "j")
-		viewMenu.addItem(terminalItem)
+		let editor = NSMenu(title: "Editor")
+		let wrapItem = NSMenuItem(
+			title: "Toggle Word Wrap",
+			action: #selector(MainWindowController.toggleWordWrap(_:)),
+			keyEquivalent: "z"
+		)
+		wrapItem.keyEquivalentModifierMask = [.command, .option]
+		editor.addItem(wrapItem)
+		let blameItem = NSMenuItem(
+			title: "Toggle Blame",
+			action: #selector(MainWindowController.toggleBlame(_:)),
+			keyEquivalent: "b"
+		)
+		blameItem.keyEquivalentModifierMask = [.command, .option]
+		editor.addItem(blameItem)
+		let preview = NSMenuItem(
+			title: "Toggle Markdown Preview",
+			action: #selector(MainWindowController.toggleMarkdownPreview(_:)),
+			keyEquivalent: "v"
+		)
+		preview.keyEquivalentModifierMask = [.command, .shift]
+		editor.addItem(preview)
+		editor.addItem(.separator())
+		let foldAll = NSMenuItem(title: "Collapse All", action: #selector(MainWindowController.collapseAllFolds(_:)), keyEquivalent: "-")
+		foldAll.keyEquivalentModifierMask = [.command, .shift]
+		editor.addItem(foldAll)
+		let unfoldAll = NSMenuItem(title: "Expand All", action: #selector(MainWindowController.expandAllFolds(_:)), keyEquivalent: "+")
+		unfoldAll.keyEquivalentModifierMask = [.command, .shift]
+		editor.addItem(unfoldAll)
+		editor.addItem(.separator())
+		let splitRight = NSMenuItem(
+			title: "Split Right",
+			action: #selector(MainWindowController.splitEditorRight(_:)),
+			keyEquivalent: "\\"
+		)
+		editor.addItem(splitRight)
+		let splitDown = NSMenuItem(
+			title: "Split Down",
+			action: #selector(MainWindowController.splitEditorDown(_:)),
+			keyEquivalent: "\\"
+		)
+		splitDown.keyEquivalentModifierMask = [.command, .shift]
+		editor.addItem(splitDown)
+		let maximizeEditor = NSMenuItem(
+			title: "Maximize Editor",
+			action: #selector(MainWindowController.toggleEditorMaximized(_:)),
+			keyEquivalent: "\r"
+		)
+		maximizeEditor.keyEquivalentModifierMask = [.command, .shift]
+		editor.addItem(maximizeEditor)
+		editor.addItem(.separator())
+		let nextTab = NSMenuItem(title: "Next Tab", action: #selector(MainWindowController.selectNextTab(_:)), keyEquivalent: "]")
+		nextTab.keyEquivalentModifierMask = [.command, .shift]
+		editor.addItem(nextTab)
+		let previousTab = NSMenuItem(title: "Previous Tab", action: #selector(MainWindowController.selectPreviousTab(_:)), keyEquivalent: "[")
+		previousTab.keyEquivalentModifierMask = [.command, .shift]
+		editor.addItem(previousTab)
+		let editorItem = NSMenuItem(title: "Editor", action: nil, keyEquivalent: "")
+		editorItem.submenu = editor
+		viewMenu.addItem(editorItem)
+
+		let terminal = NSMenu(title: "Terminal")
+		terminal.addItem(NSMenuItem(title: "Toggle Terminal", action: #selector(MainWindowController.toggleTerminal(_:)), keyEquivalent: "j"))
 		let newTerminalItem = NSMenuItem(title: "New Terminal", action: #selector(MainWindowController.newTerminal(_:)), keyEquivalent: "t")
 		newTerminalItem.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(newTerminalItem)
-
-		// Beside the ordinary one rather than anywhere else, because it is the
-		// same gesture: a shell for this project. Which machine it is on is what
-		// the title says. Greyed out for a project with no devcontainer.json,
-		// which is most of them.
-		//
-		// This is the title it has before a window has been asked: validation
-		// renames it after the container it would open, since a repository of
-		// subprojects has one each.
-		//
-		// One item, and it opens the project's preferred devcontainer. A project
-		// offering several — `.devcontainer/alpine` beside `.devcontainer/go` —
-		// has all of them in the + chevron's menu in the terminal panel, which is
-		// where a list belongs; this stays a single command that says which
-		// container it means. `MainWindowController.devContainerMenuTitle` is
-		// where the reason for not making it a submenu is written down.
-		let containerTerminalItem = NSMenuItem(
+		terminal.addItem(newTerminalItem)
+		terminal.addItem(NSMenuItem(
 			title: MainWindowController.containerTerminalTitle,
 			action: #selector(MainWindowController.newTerminalInContainer(_:)),
 			keyEquivalent: ""
-		)
-		viewMenu.addItem(containerTerminalItem)
-
-		// The same thing on ⌘T, but only while the terminal has the keyboard —
-		// where that is the key everybody's fingers already reach for.
-		// Not written against a class: the same command has to reach the main
-		// window's panel and a terminal window torn out of it, and a selector
-		// typed as `MainWindowController.newTerminalTab` reaches only the
-		// first — which is why a torn-off window's menu items were greyed out.
-		// Sent to nil, it goes down the responder chain to whichever window
-		// controller answers.
+		))
 		let terminalTabItem = NSMenuItem(
 			title: "New Terminal Tab",
 			action: Selector(("newTerminalTab:")),
 			keyEquivalent: "t"
 		)
 		terminalTabItem.keyEquivalentModifierMask = [.command]
-		viewMenu.addItem(terminalTabItem)
-
-		// ⌘D, and the same rules as ⌘T above: only while the terminal has the
-		// keyboard, and sent to nil so a torn-off terminal window answers it
-		// too. Not against a class, for the reason ⌘T's comment gives.
+		terminal.addItem(terminalTabItem)
 		let terminalTabBesideItem = NSMenuItem(
 			title: "New Terminal Tab Here",
 			action: Selector(("newTerminalTabBeside:")),
 			keyEquivalent: "d"
 		)
 		terminalTabBesideItem.keyEquivalentModifierMask = [.command]
-		viewMenu.addItem(terminalTabBesideItem)
+		terminal.addItem(terminalTabBesideItem)
+		terminal.addItem(.separator())
 		let followTerminal = NSMenuItem(
 			title: "Follow Terminal Project",
 			action: #selector(MainWindowController.toggleFollowTerminal(_:)),
 			keyEquivalent: "f"
 		)
 		followTerminal.keyEquivalentModifierMask = [.command, .control]
-		viewMenu.addItem(followTerminal)
+		terminal.addItem(followTerminal)
 		let maximizeTerminal = NSMenuItem(
 			title: "Maximize Terminal",
 			action: #selector(MainWindowController.togglePanelMaximized(_:)),
 			keyEquivalent: "j"
 		)
 		maximizeTerminal.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(maximizeTerminal)
-
-		// What is running, beside the terminal items because it is the same
-		// family of thing — a process this app started that is still going —
-		// and with an explicit target because it is the app's list rather than
-		// this window's, and has to open when no project window is up at all.
-		//
-		// No key equivalent. It is wanted the day the fan comes on, which is not
-		// often enough to spend a chord on; the command palette is generated
-		// from this menu bar, so ⇧⌘P and "running" already reaches it.
-		let runningTools = NSMenuItem(
-			title: "Running Servers and Containers…",
-			action: #selector(showRunningTools(_:)),
-			keyEquivalent: ""
-		)
-		runningTools.target = self
-		viewMenu.addItem(runningTools)
-
-		let foldAll = NSMenuItem(title: "Collapse All", action: #selector(MainWindowController.collapseAllFolds(_:)), keyEquivalent: "-")
-		foldAll.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(foldAll)
-		let unfoldAll = NSMenuItem(title: "Expand All", action: #selector(MainWindowController.expandAllFolds(_:)), keyEquivalent: "+")
-		unfoldAll.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(unfoldAll)
+		terminal.addItem(maximizeTerminal)
+		let terminalItem = NSMenuItem(title: "Terminal", action: nil, keyEquivalent: "")
+		terminalItem.submenu = terminal
+		viewMenu.addItem(terminalItem)
 		viewMenu.addItem(.separator())
-		// ⌘+ is reported as "=" on most layouts; both are registered so the key
-		// works with and without shift.
-		let zoomIn = NSMenuItem(title: "Zoom In", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "+")
-		viewMenu.addItem(zoomIn)
-		let zoomInAlt = NSMenuItem(title: "Zoom In", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "=")
-		zoomInAlt.isAlternate = true
-		zoomInAlt.isHidden = true
-		viewMenu.addItem(zoomInAlt)
-		viewMenu.addItem(withTitle: "Zoom Out", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
-		viewMenu.addItem(withTitle: "Actual Size", action: #selector(MainWindowController.resetZoom(_:)), keyEquivalent: "0")
 
-		// Its own zoom and its own palette, so a talk can be set up once and
-		// left alone — and so coming back to the desk afterwards is a menu item
-		// rather than finding the old size by hand.
-		let presentation = NSMenuItem(
-			title: "Presentation Mode",
-			action: #selector(MainWindowController.togglePresentationMode(_:)),
-			keyEquivalent: "p"
-		)
-		// Moved off ⇧⌘P, which the palette took: that is where VS Code put its
-		// own, and this is wanted once a quarter.
-		presentation.keyEquivalentModifierMask = [.command, .control]
-		viewMenu.addItem(presentation)
-		viewMenu.addItem(.separator())
 		let revealItem = NSMenuItem(
 			title: "Reveal Secrets",
 			action: #selector(MainWindowController.toggleRevealSecrets(_:)),
@@ -3796,69 +3788,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			action: #selector(MainWindowController.decryptWithSops(_:)),
 			keyEquivalent: ""
 		))
-
-		let blameItem = NSMenuItem(
-			title: "Toggle Blame",
-			action: #selector(MainWindowController.toggleBlame(_:)),
-			keyEquivalent: "b"
-		)
-		blameItem.keyEquivalentModifierMask = [.command, .option]
-		viewMenu.addItem(blameItem)
-
-		let wrapItem = NSMenuItem(
-			title: "Toggle Word Wrap",
-			action: #selector(MainWindowController.toggleWordWrap(_:)),
-			keyEquivalent: "z"
-		)
-		wrapItem.keyEquivalentModifierMask = [.command, .option]
-		viewMenu.addItem(wrapItem)
-		let preview = NSMenuItem(
-			title: "Toggle Markdown Preview",
-			action: #selector(MainWindowController.toggleMarkdownPreview(_:)),
-			keyEquivalent: "v"
-		)
-		preview.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(preview)
-
-		// Where the other view preferences are, and not in the git page's own
-		// header — the page is a split of scroll views and its own comment says
-		// why nothing else may go in one: a stack view in there argued with the
-		// terminal panel once per frame and the divider could not be dragged.
-		let maximizeEditor = NSMenuItem(
-			title: "Maximize Editor",
-			action: #selector(MainWindowController.toggleEditorMaximized(_:)),
-			keyEquivalent: "\r"
-		)
-		maximizeEditor.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(maximizeEditor)
-
-		let commitFolders = NSMenuItem(
-			title: "Arrange Commit Files by Folder",
-			action: #selector(MainWindowController.toggleCommitFilesByFolder(_:)),
+		let runningTools = NSMenuItem(
+			title: "Running Servers and Containers…",
+			action: #selector(showRunningTools(_:)),
 			keyEquivalent: ""
 		)
-		viewMenu.addItem(commitFolders)
+		runningTools.target = self
+		viewMenu.addItem(runningTools)
 		viewMenu.addItem(.separator())
-		let splitRight = NSMenuItem(
-			title: "Split Right",
-			action: #selector(MainWindowController.splitEditorRight(_:)),
-			keyEquivalent: "\\"
+
+		let zoomIn = NSMenuItem(title: "Zoom In", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "+")
+		viewMenu.addItem(zoomIn)
+		let zoomInAlt = NSMenuItem(title: "Zoom In", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "=")
+		zoomInAlt.isAlternate = true
+		zoomInAlt.isHidden = true
+		viewMenu.addItem(zoomInAlt)
+		viewMenu.addItem(withTitle: "Zoom Out", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
+		viewMenu.addItem(withTitle: "Actual Size", action: #selector(MainWindowController.resetZoom(_:)), keyEquivalent: "0")
+		let presentation = NSMenuItem(
+			title: "Presentation Mode",
+			action: #selector(MainWindowController.togglePresentationMode(_:)),
+			keyEquivalent: "p"
 		)
-		viewMenu.addItem(splitRight)
-		let splitDown = NSMenuItem(
-			title: "Split Down",
-			action: #selector(MainWindowController.splitEditorDown(_:)),
-			keyEquivalent: "\\"
-		)
-		splitDown.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(splitDown)
-		viewMenu.addItem(.separator())
-		let nextTab = NSMenuItem(title: "Next Tab", action: #selector(MainWindowController.selectNextTab(_:)), keyEquivalent: "]")
-		nextTab.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(nextTab)
-		let previousTab = NSMenuItem(title: "Previous Tab", action: #selector(MainWindowController.selectPreviousTab(_:)), keyEquivalent: "[")
-		previousTab.keyEquivalentModifierMask = [.command, .shift]
-		viewMenu.addItem(previousTab)
+		presentation.keyEquivalentModifierMask = [.command, .control]
+		viewMenu.addItem(presentation)
 		viewMenuItem.submenu = viewMenu
 		mainMenu.addItem(viewMenuItem)
 

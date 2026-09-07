@@ -5039,8 +5039,21 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		// checked against the pixels rather than assumed, after a chevron that
 		// was computed and never drawn earlier the same day. `HoverGround`
 		// keeps both weights, and the shape the rest of the chrome now draws.
+		// The + and its chevron overlap by a few points so they read as one
+		// control, and the +'s hover ground drawn over its whole frame covered
+		// the chevron's left half. Each is lit to where the other begins.
+		var ground = frame(of: hoveredControl)
+		if offersAddMenu {
+			switch hoveredControl {
+			case .add: ground.size.width = max(0, addMenuFrame.minX - ground.minX)
+			case .addMenu:
+				let start = addButtonFrame.maxX
+				ground = NSRect(x: start, y: ground.minY, width: max(0, ground.maxX - start), height: ground.height)
+			default: break
+			}
+		}
 		HoverGround.draw(
-			around: frame(of: hoveredControl),
+			around: ground,
 			ink: isMirroringTmux ? Self.onTmuxGreen : Theme.current.sidebarText,
 			overTint: hoveredControl == .sessions || hoveredControl == .mirrorTag
 		)
