@@ -227,3 +227,60 @@ struct PrintableStringsTests {
 		#expect(listing.strings.map(\.text) == ["Größe"])
 	}
 }
+
+/// Which shade the hex column draws a byte's digits in.
+///
+/// The colours are the view's business; which of the three a byte falls into
+/// is this, and it is here because a claim about that is checkable without a
+/// window — the drawing is not.
+struct HexShadeTests {
+	@Test func aLetterIsText() {
+		#expect(ByteEncoding.ascii.shade(of: 0x41) == .text)
+		#expect(ByteEncoding.ascii.shade(of: 0x20) == .text)
+		#expect(ByteEncoding.ascii.shade(of: 0x7E) == .text)
+	}
+
+	@Test func aControlByteIsQuiet() {
+		// The ends of the printable run, either side, and the two control
+		// bytes anybody reading a binary meets first.
+		#expect(ByteEncoding.ascii.shade(of: 0x1F) == .quiet)
+		#expect(ByteEncoding.ascii.shade(of: 0x7F) == .quiet)
+		#expect(ByteEncoding.ascii.shade(of: 0x0A) == .quiet)
+		#expect(ByteEncoding.ascii.shade(of: 0x09) == .quiet)
+	}
+
+	/// Zero keeps the shade it had before there was a middle one. A run of it
+	/// is padding or a hole, and that is the structure the dimming exists to
+	/// show — promoting it to `.quiet` would flatten exactly that.
+	@Test func zeroIsQuieterThanAControlByte() {
+		#expect(ByteEncoding.ascii.shade(of: 0x00) == .empty)
+		#expect(ByteEncoding.ascii.shade(of: 0x00) != ByteEncoding.ascii.shade(of: 0x01))
+	}
+
+	/// A high byte is a character in Latin-1 and is not in ASCII, so the same
+	/// byte reads differently under the two — which is the encoding doing its
+	/// job rather than two rules disagreeing.
+	@Test func aHighByteFollowsTheEncoding() {
+		#expect(ByteEncoding.latin1.shade(of: 0xE9) == .text)
+		#expect(ByteEncoding.ascii.shade(of: 0xE9) == .quiet)
+		// 0x80–0x9F are control in Latin-1 too, so they stay quiet there.
+		#expect(ByteEncoding.latin1.shade(of: 0x85) == .quiet)
+	}
+
+	/// **The two columns cannot disagree.** The text column draws a dot for
+	/// exactly the bytes this calls anything but `.text`, because both ask
+	/// `isPrintable`. Checked across every byte and every encoding rather than
+	/// at a few places, since the whole value of one predicate is that there
+	/// is no byte where the two part company.
+	@Test func everyByteAgreesWithTheTextColumn() {
+		for encoding in ByteEncoding.allCases {
+			for byte in UInt8.min...UInt8.max {
+				let isText = encoding.shade(of: byte) == .text
+				#expect(
+					isText == (encoding.isPrintable(byte) && byte != 0),
+					"\(encoding.said) disagrees at \(String(format: "0x%02X", byte))"
+				)
+			}
+		}
+	}
+}

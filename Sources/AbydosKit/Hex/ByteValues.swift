@@ -39,6 +39,23 @@ public enum ByteEncoding: String, CaseIterable, Sendable {
 		}
 	}
 
+	/// How loudly a byte's *hex* is drawn — the hex column's three shades.
+	///
+	/// Here rather than beside the drawing because it is a question about a
+	/// byte and an encoding and not about a font, which makes it a claim
+	/// somebody can check without a window. `HexEditorView.drawHex` turns each
+	/// case into a colour and does nothing else with it.
+	///
+	/// **The same predicate the text column uses**, so the two columns cannot
+	/// disagree: a byte drawn as a dot over there is a quiet pair of digits
+	/// over here, and changing `isPrintable` moves both at once. That is the
+	/// whole reason this is one function rather than a second rule written out
+	/// beside the hex.
+	public func shade(of byte: UInt8) -> HexShade {
+		if byte == 0 { return .empty }
+		return isPrintable(byte) ? .text : .quiet
+	}
+
 	/// The character that begins at `offset`, and how many bytes it took —
 	/// or nil where the bytes there are not one. For the text column, which
 	/// draws a dot in that case, and for the inspector, which says so.
@@ -77,6 +94,23 @@ public enum ByteEncoding: String, CaseIterable, Sendable {
 			return (String(scalar), 2)
 		}
 	}
+}
+
+/// Which of three shades a byte's hex digits are drawn in.
+///
+/// Three rather than two because zero was already dimmed before there was any
+/// notion of "printable", and for a good reason: a run of zeros is padding or
+/// a hole, and seeing it as one block is most of what reading a binary is. A
+/// zero is also unprintable, so without a case of its own it would have been
+/// promoted to the middle shade and that structure would have flattened.
+public enum HexShade: Equatable, Sendable {
+	/// A byte that is a character in this encoding.
+	case text
+	/// A byte that is not — a control byte, or one that no character starts
+	/// at in this encoding.
+	case quiet
+	/// Zero, quieter than either.
+	case empty
 }
 
 /// What the bytes at the caret are, read every way the inspector shows.
