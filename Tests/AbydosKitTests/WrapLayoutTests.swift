@@ -14,7 +14,9 @@ struct WrapLayoutTests {
 		var layout = WrapLayout()
 		// The fixtures describe line widths; the layout now asks for row counts,
 		// so they are converted here rather than in every test.
-		layout.rebuild(documentLineCount: lineCount, columns: columns, folding: folding) { line in
+		layout.rebuild(
+			documentLineCount: lineCount, columns: columns, folding: folding, documentRevision: 0
+		) { line in
 			let width = widths[line] ?? 10
 			guard let columns, columns > 0 else { return 1 }
 			return max(1, (width + columns - 1) / columns)
@@ -275,5 +277,247 @@ struct WrapAtWordsTests {
 		#expect(WrapLayout.segment(forOffset: 10, in: text, columns: 10, tabWidth: 4) == 1)
 		#expect(WrapLayout.segment(forOffset: 9, in: text, columns: 10, tabWidth: 4) == 0)
 		#expect(WrapLayout.rowCount(in: text, columns: 10, tabWidth: 4) == 2)
+	}
+}
+
+/// One pass over the chunks says exactly what a lookup per line said.
+///
+/// The wrap layout swapped `lineText` per line for `forEachLine`, and the only
+/// thing that makes that safe is the two agreeing on every line of every shape
+/// of file — so that is what is asserted, rather than a count.
+struct RopeLineWalkTests {
+	private func lines(of rope: Rope) -> [String] {
+		var out: [String] = []
+		rope.forEachLine { out.append($0) }
+		return out
+	}
+
+	private func perLine(of rope: Rope) -> [String] {
+		(0..<rope.lineCount).map { rope.lineText($0) }
+	}
+
+	@Test(arguments: [
+		"",
+		"\n",
+		"one",
+		"one\n",
+		"one\ntwo",
+		"one\ntwo\n",
+		"\n\n\n",
+		"a\n\nb\n",
+		"trailing spaces   \n\tand a tab\n",
+	])
+	func theWalkAgreesWithALookupPerLine(_ text: String) {
+		let rope = Rope(text)
+		#expect(lines(of: rope) == perLine(of: rope))
+		#expect(lines(of: rope).count == rope.lineCount)
+	}
+
+	/// Chunks are 512–2048 bytes, so a file this size is many of them and the
+	/// lines land across the seams — which is the case the carried buffer is
+	/// for, and the one a single-chunk fixture would never reach.
+	@Test func theWalkAgreesAcrossChunkSeams() {
+		let text = (0..<4000).map { "line \($0) with enough text on it to cross a seam" }
+			.joined(separator: "\n") + "\n"
+		let rope = Rope(text)
+		#expect(rope.byteCount > 100_000, "the fixture has to be many chunks")
+		#expect(lines(of: rope) == perLine(of: rope))
+	}
+
+	/// A multi-byte character is not cut in half by a seam.
+	@Test func theWalkKeepsCharactersWhole() {
+		let text = (0..<2000).map { "ünïcödé line \($0) — emoji 🌍 and a tab\tin it" }
+			.joined(separator: "\n") + "\n"
+		let rope = Rope(text)
+		#expect(lines(of: rope) == perLine(of: rope))
+		#expect(!lines(of: rope).contains { $0.contains("\u{FFFD}") }, "no replacement characters")
+	}
+}
+
+/// What the wrap layout will and will not rebuild for.
+///
+/// A scroll used to re-lay-out the whole file: `viewportChanged` is wired to
+/// the clip view's bounds, which move on every scroll, and nothing asked
+/// whether anything had changed. At 68,608 lines that was 100 ms a scroll.
+struct WrapLayoutCurrencyTests {
+	private var folding = FoldingState()
+
+	private func built(
+		lineCount: Int = 100, columns: Int? = 40, revision: Int = 1, folding: FoldingState
+	) -> (WrapLayout, Int) {
+		var layout = WrapLayout()
+		var counted = 0
+		layout.rebuild(
+			documentLineCount: lineCount, columns: columns,
+			folding: folding, documentRevision: revision
+		) { _ in counted += 1; return 2 }
+		return (layout, counted)
+	}
+
+	@Test func aFreshLayoutIsCurrentForNothing() {
+		let layout = WrapLayout()
+		#expect(!layout.isCurrent(
+			documentLineCount: 0, columns: nil, folding: folding, documentRevision: 0
+		))
+	}
+
+	@Test func aScrollChangesNothingTheLayoutIsBuiltFrom() {
+		let (layout, counted) = built(folding: folding)
+		#expect(counted == 100, "the first build counts every line")
+		// A scroll: same document, same width, same folds.
+		#expect(layout.isCurrent(
+			documentLineCount: 100, columns: 40, folding: folding, documentRevision: 1
+		))
+	}
+
+	@Test func aSecondBuildWithTheSameInputsCountsNothing() {
+		var (layout, _) = built(folding: folding)
+		var counted = 0
+		layout.rebuild(
+			documentLineCount: 100, columns: 40, folding: folding, documentRevision: 1
+		) { _ in counted += 1; return 2 }
+		#expect(counted == 0, "the rows were already counted")
+		#expect(layout.totalRows == 200, "and the layout still describes them")
+	}
+
+	@Test func aNarrowerViewportIsNotCurrent() {
+		let (layout, _) = built(folding: folding)
+		#expect(!layout.isCurrent(
+			documentLineCount: 100, columns: 30, folding: folding, documentRevision: 1
+		))
+	}
+
+	/// The case a width-only guard would have got wrong: typing a long word
+	/// into one line rewraps it without changing the line count.
+	@Test func anEditInsideOneLineIsNotCurrent() {
+		let (layout, _) = built(folding: folding)
+		#expect(!layout.isCurrent(
+			documentLineCount: 100, columns: 40, folding: folding, documentRevision: 2
+		))
+	}
+
+	/// The other case: `collapseAllFolds` moves the folds and touches neither
+	/// the width nor the line count.
+	@Test func aCollapsedFoldIsNotCurrent() {
+		var folding = FoldingState()
+		folding.setAvailable([FoldRange(startLine: 10, endLine: 20)])
+		let (layout, _) = built(folding: folding)
+
+		var collapsed = folding
+		collapsed.toggle(line: 10)
+		#expect(collapsed.revision != folding.revision, "folding says it moved")
+		#expect(!layout.isCurrent(
+			documentLineCount: 100, columns: 40, folding: collapsed, documentRevision: 1
+		))
+	}
+
+	@Test func wrapBeingTurnedOffIsNotCurrent() {
+		let (layout, _) = built(folding: folding)
+		#expect(!layout.isCurrent(
+			documentLineCount: 100, columns: nil, folding: folding, documentRevision: 1
+		))
+	}
+}
+
+/// What a scroll costs when soft wrap is on, and what a rebuild costs when one
+/// is really needed.
+///
+/// **Both were the same number, and that was the bug.** `viewportChanged` is
+/// wired to `frameDidChangeNotification` *and* `boundsDidChangeNotification` on
+/// the clip view, and the bounds move on every scroll — so every scroll event
+/// and every frame of a live resize re-laid-out the whole document. Measured on
+/// a 5.5 MB crash report of 68,608 lines: **103.7 ms**, release, on the main
+/// thread. That is the "slow to settle and react" a `make run` window was
+/// reported for, and in debug, where a `lineText` descent is 220 times dearer,
+/// the same work is tens of seconds.
+///
+/// Two separate claims, because two separate fixes:
+///
+///   - a scroll changes nothing the layout is built from, so it counts no rows
+///     at all — 103.7 ms became 0.041 ms;
+///   - a rebuild that is needed walks the chunks once instead of descending the
+///     tree per line — 103.7 ms became 32.5 ms.
+///
+/// **Bounds are on processor time**, as the rest of the performance suite is:
+/// this runs beside several hundred other tests and a wall clock over it would
+/// be measuring what the machine was doing instead. The absolute figures above
+/// are from a release build; the assertions below are ratios, which survive
+/// being run under load and under either configuration.
+struct WrapLayoutCostTests {
+	/// Lines shaped like the file this was found on: prose and stack frames,
+	/// averaging about eighty columns, so some wrap at 120 and most do not.
+	private static func makeRope(lines: Int) -> Rope {
+		let text = (0..<lines).map { index in
+			index % 7 == 0
+				? "    \(index) at Abydos.CodeView.rebuildWrapLayout() + \(index * 37) in CodeView.swift:811"
+				: "line \(index) of an ordinary width"
+		}.joined(separator: "\n") + "\n"
+		return Rope(text)
+	}
+
+	private static func rowCounts(of rope: Rope, columns: Int) -> [Int32] {
+		var counts: [Int32] = []
+		counts.reserveCapacity(rope.lineCount)
+		rope.forEachLine { counts.append(Int32(WrapLayout.rowCount(in: $0, columns: columns, tabWidth: 4))) }
+		return counts
+	}
+
+	/// The scroll path: the layout is asked whether it is current and says yes.
+	@Test func aScrollCostsNothingAgainstARebuild() {
+		let rope = Self.makeRope(lines: 20_000)
+		let folding = FoldingState()
+		var layout = WrapLayout()
+
+		let counts = Self.rowCounts(of: rope, columns: 120)
+		let rebuild = PerformanceTests.cpuTime("wrap rebuild, 20,000 lines") {
+			layout.rebuild(
+				documentLineCount: rope.lineCount, columns: 120,
+				folding: folding, documentRevision: 1
+			) { line in line < counts.count ? Int(counts[line]) : 1 }
+		}
+
+		// A thousand scrolls, so the figure is above the clock's noise.
+		let scrolls = PerformanceTests.cpuTime("wrap isCurrent x1000") {
+			for _ in 0..<1000 {
+				_ = layout.isCurrent(
+					documentLineCount: rope.lineCount, columns: 120,
+					folding: folding, documentRevision: 1
+				)
+			}
+		}
+
+		print(String(format: "PERF one scroll is %.0fx cheaper than a rebuild — %@",
+			scrolls > 0 ? rebuild / (scrolls / 1000) : 0, MachineLoad.said))
+
+		guard Stopwatch.maySay("PERF", "wrap scroll") else { return }
+		// A scroll must be in a different class, not merely quicker. A hundred
+		// of them should still cost less than one rebuild.
+		#expect(scrolls / 100 < rebuild, "a scroll costs like a rebuild — \(MachineLoad.said)")
+	}
+
+	/// The rebuild path: one walk over the chunks against a descent per line.
+	@Test func oneWalkBeatsALookupPerLine() {
+		let rope = Self.makeRope(lines: 20_000)
+		let lines = rope.lineCount
+
+		let perLine = PerformanceTests.cpuTime("row counts, lineText per line") {
+			var total = 0
+			for line in 0..<lines {
+				total += WrapLayout.rowCount(in: rope.lineText(line), columns: 120, tabWidth: 4)
+			}
+			_ = total
+		}
+
+		let oneWalk = PerformanceTests.cpuTime("row counts, one chunk walk") {
+			var total = 0
+			rope.forEachLine { total += WrapLayout.rowCount(in: $0, columns: 120, tabWidth: 4) }
+			_ = total
+		}
+
+		print(String(format: "PERF one walk is %.1fx the per-line lookup — %@",
+			oneWalk > 0 ? perLine / oneWalk : 0, MachineLoad.said))
+
+		guard Stopwatch.maySay("PERF", "wrap row counts") else { return }
+		#expect(oneWalk < perLine, "the walk is no cheaper than the descents — \(MachineLoad.said)")
 	}
 }

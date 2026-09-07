@@ -802,17 +802,41 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		// counted by the same walk that slices the rows.
 		let columns = availableColumns
 		let tabWidth = Theme.current.tabWidth
+
+		// **Asked before any counting.** `updateFrameSize` calls this, and
+		// `viewportChanged` calls that on both `frameDidChangeNotification` and
+		// `boundsDidChangeNotification` — and the clip view's bounds move on
+		// every scroll. So this ran on each scroll event and each frame of a
+		// live resize, and at 68,608 lines it is 100 ms of main-thread work in
+		// release. A scroll changes nothing the layout is built from.
+		guard !wrapLayout.isCurrent(
+			documentLineCount: document.lineCount,
+			columns: columns,
+			folding: folding,
+			documentRevision: document.contentRevision
+		) else { return }
+
+		// One walk over the rope's chunks rather than a tree descent per line,
+		// which is what `lineText` per line was: 68,608 descents, 92 ms in
+		// release and twenty seconds in debug. `forEachLine` is the shape
+		// `longestLineDisplayColumns` already uses for the same reason.
+		var counts: [Int32] = []
+		if let columns {
+			counts.reserveCapacity(document.lineCount)
+			document.rope.forEachLine { text in
+				counts.append(
+					Int32(WrapLayout.rowCount(in: text, columns: columns, tabWidth: tabWidth))
+				)
+			}
+		}
+
 		wrapLayout.rebuild(
 			documentLineCount: document.lineCount,
 			columns: columns,
-			folding: folding
-		) { [weak self] line in
-			guard let self, let document = self.document, let columns else { return 1 }
-			return WrapLayout.rowCount(
-				in: document.rope.lineText(line),
-				columns: columns,
-				tabWidth: tabWidth
-			)
+			folding: folding,
+			documentRevision: document.contentRevision
+		) { line in
+			line >= 0 && line < counts.count ? Int(counts[line]) : 1
 		}
 	}
 

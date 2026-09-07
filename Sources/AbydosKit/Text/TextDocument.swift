@@ -51,6 +51,15 @@ public final class TextDocument {
 	/// describes text that no longer exists and is dropped.
 	private var generation = 0
 
+	/// The edit this document is at.
+	///
+	/// The same counter the syntax parses use, read out for anything else that
+	/// caches what the text implies. `WrapLayout` is the caller: line count and
+	/// folding are not enough to know a wrap layout is still current, because
+	/// typing a long word into one line rewraps it without changing either, and
+	/// a layout kept over that maps rows to lines that have moved.
+	public var contentRevision: Int { generation }
+
 	/// Most recent highlights, with the byte range and generation they describe.
 	private var cachedTokens: [HighlightToken] = []
 	private var cachedByteRange: Range<Int> = 0..<0
