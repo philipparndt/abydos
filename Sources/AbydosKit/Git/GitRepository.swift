@@ -777,6 +777,28 @@ public actor GitRepository {
 		input: Data? = nil,
 		environment: [String: String] = [:]
 	) -> ProcessResult {
+		// **Asked before anything is assigned, because the assignment below
+		// aborts the process rather than failing.**
+		// `-[NSTask setCurrentDirectoryURL:]` raises `NSInvalidArgumentException`
+		// — "non-file URL argument" — for any URL whose `isFileURL` is false,
+		// and an Objective-C exception is not something Swift can catch. So
+		// `try process.run()` below returns a result when it fails while the
+		// assignment above it killed the app: a project rooted at a non-file
+		// URL took a window with somebody's work in it down at whichever of
+		// this function's many callers reached it first. Guarded here rather
+		// than at each of them for that reason: it is the one line they share.
+		//
+		// A path that does not exist is *not* this: `NSTask` accepts it happily
+		// and git reports it, which is a failure with an answer in it. Only the
+		// non-file URL is refused here.
+		guard directory.isFileURL else {
+			return ProcessResult(
+				stdout: "",
+				stderr: "not a file URL: \(directory.absoluteString)",
+				exitCode: -1
+			)
+		}
+
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
 		process.arguments = arguments

@@ -50,6 +50,20 @@ public enum ProjectRoot {
 	/// which is not a project switch, it is the window losing the checkout.
 	/// Those names are the scope mechanism inside a project and stay that.
 	public static func find(from directory: URL) -> URL? {
+		// **The climb below only terminates for an absolute file path**, and
+		// what arrives here is not always one. `deletingLastPathComponent` on a
+		// *relative* URL never reaches a fixed point: `notes.txt` gives `.`,
+		// which gives `..`, which gives `../..`, for ever — `standardizedFileURL`
+		// does not collapse a leading `..`, so no two turns of the loop compare
+		// equal and the guard that ends it is never true.
+		//
+		// It cost a hundred and seventy-six seconds of a wedged window and a
+		// footprint of 34 GB, spent in `fileExists` on a path growing three
+		// characters at a time. The URL came from an open-URL Apple Event,
+		// which carries whatever string the sender put in it — no scheme
+		// required, and nothing on the way here had asked.
+		guard directory.isFileURL else { return nil }
+
 		var current = directory.standardizedFileURL
 		// The highest directory of a run of old-layout Subversion metadata seen
 		// so far. See `mark(at:)` for what makes a run, and the climb below for

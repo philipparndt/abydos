@@ -2897,8 +2897,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	/// *New Terminal Here*, which the Finder shows in its Services menu.
 	@MainActor let terminalService = TerminalService()
 
+	/// Opens what the system handed over — and only what names a file.
+	///
+	/// **This arrives from an Apple Event, so the URL is whatever the sender
+	/// wrote.** A `GURL` event carries a string, and no scheme is required of
+	/// it: what reached here has been a relative path with no scheme at all.
+	/// Neither test below tells one of those apart — `hasDirectoryPath` is true
+	/// for anything ending in a slash, `https://host/a/` and `notes/` included,
+	/// so a non-file URL became a project root and every git command run
+	/// against it aborted the app on `NSTask`'s "non-file URL argument".
+	///
+	/// `DroppedFiles` has always filtered the same way for the same reason. A
+	/// URL that names no file is dropped rather than refused out loud: there is
+	/// nothing to show for it and nobody to tell, this being a message from the
+	/// system rather than something somebody typed.
 	public func application(_ application: NSApplication, open urls: [URL]) {
-		for url in urls {
+		for url in urls where url.isFileURL {
 			if url.hasDirectoryPath {
 				open(projectAt: url)
 				continue
