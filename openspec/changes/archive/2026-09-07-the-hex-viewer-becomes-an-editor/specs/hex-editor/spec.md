@@ -469,8 +469,7 @@ capped at a written count with a row saying how many more there are.
 
 ### Requirement: Any file can be opened as hex, and a text file can go back
 
-The project tree's context menu, the tab's context menu, the File menu and
-the palette SHALL offer *Open as Hex* for any file, including one open as
+The project tree's context menu, the tab's context menu, the File menu and the palette SHALL offer *Open as Hex* for any file, including one open as
 text, and a hex tab over a file that passes the binary test SHALL offer *Open
 as Text*. The binary notice SHALL keep its *Open in Hex
 Editor* button as the door for a binary. Neither choice SHALL be remembered per
@@ -521,8 +520,7 @@ Timing claims SHALL be made through `Stopwatch.maySay` and printed with
 
 ### Requirement: The inspector's sections fold
 
-Each section of the inspector — structure, values, checksums, entropy,
-strings — SHALL fold shut and open again on its heading, the whole heading
+Each section of the inspector — structure, values, checksums, entropy, strings — SHALL fold shut and open again on its heading, the whole heading
 being the switch, and which sections are shut SHALL be remembered as a
 preference across tabs and restarts rather than per file.
 
@@ -567,8 +565,7 @@ a reason to ask the question again.
 
 ### Requirement: The hex editor follows the zoom
 
-Every view of the hex editor — the bytes, the bar, the minimap, the inspector
-and its rows, the structure outline — SHALL take its fonts, its heights and
+Every view of the hex editor — the bytes, the bar, the minimap, the inspector and its rows, the structure outline — SHALL take its fonts, its heights and
 its spacing from the theme and re-take them when the zoom or the palette
 changes, through the same registry every scaled control uses. No part of it
 SHALL take its size from an AppKit `controlSize`, which has a largest value
