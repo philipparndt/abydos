@@ -27,6 +27,7 @@
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
+				<string>public.text</string>
 				<string>public.source-code</string>
 				<string>public.script</string>
 				<string>public.shell-script</string>

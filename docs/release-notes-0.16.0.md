@@ -28,5 +28,9 @@ than the row is cut at the edge as before.
 
 ## Small things
 
+- Making Abydos the default editor asks the system's own question once for
+  text, and again only for a kind another application holds by name, rather
+  than sixteen times in a row.
+
 - The terminal strip's + and its chevron each light to where the other
   begins, rather than the + covering half the chevron.

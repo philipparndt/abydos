@@ -42,13 +42,26 @@ enum DefaultEditor {
 		return !declared.isEmpty && typesThisAppOpens().count == declared.count
 	}
 
-	/// Takes the declared kinds, one system call each.
+	/// Takes the declared kinds: the roots first, then only what is still not
+	/// this app's.
 	///
-	/// The system may refuse, and may put its own confirmation in front of it;
-	/// what came back is what the page reads afterwards, rather than what was
-	/// asked for.
+	/// macOS puts a confirmation of its own in front of every call — *Do you
+	/// want all "Source Code" documents to open with Abydos?* — and one call
+	/// per declared kind was sixteen of them in a row. Launch Services resolves
+	/// a kind through its parents when nothing binds it directly, so the
+	/// bundle declares `public.text` and that one call covers the family; the
+	/// second pass asks again only for a kind another application holds by
+	/// name, which is a question worth its dialog. What came back is what the
+	/// page reads afterwards, rather than what was asked for.
 	static func makeDefault() async {
-		for type in declaredTypes {
+		let declared = declaredTypes
+		for type in TypeFamilies.roots(of: declared) {
+			try? await NSWorkspace.shared.setDefaultApplication(
+				at: Bundle.main.bundleURL, toOpen: type
+			)
+		}
+		let taken = Set(typesThisAppOpens().map(\.identifier))
+		for type in declared where !taken.contains(type.identifier) {
 			try? await NSWorkspace.shared.setDefaultApplication(
 				at: Bundle.main.bundleURL, toOpen: type
 			)
