@@ -4192,6 +4192,12 @@ final class EditorViewController: NSViewController {
 			if tab.isDirty {
 				Task { @MainActor in await self.encryptAndSave(tab) }
 			} else {
+				// ⌥ on *Lock* forgets the passphrases kept for the sitting, for
+				// somebody leaving the machine to someone else.
+				if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+					Passphrases.shared.forgetAll()
+					Toast.post("Forgot the passphrases kept for this sitting", kind: .information)
+				}
 				lockAgain(tab)
 			}
 		} else {
@@ -4199,20 +4205,62 @@ final class EditorViewController: NSViewController {
 		}
 	}
 
+	/// The bar should ask for a passphrase: the field's placeholder, gpg's
+	/// sentence for its tooltip, and what to do with the answer — nil when
+	/// the field was dismissed.
+	var onPassphraseNeeded: ((String, String, @escaping (String?) -> Void) -> Void)?
+	/// The driver's way of answering the field, set by the area while asking.
+	var passphraseAnswerForTesting: ((String?) -> Void)?
+	var passphraseAskForTesting: String?
+
+	/// What a passphrase is kept under: the key gpg named, else the project,
+	/// since one key unlocks every file in it.
+	private func passphraseKey(for tab: Tab, stderr: String) -> String {
+		Sops.keyNamed(in: stderr) ?? project?.root.path ?? tab.url.deletingLastPathComponent().path
+	}
+
 	/// `sops --decrypt`, and what comes back on stdout into the buffer as one
 	/// edit — so the caret, folds and scroll come back, and ⌘Z would give the
 	/// ciphertext back, which is a way of re-locking a buffer and harmless.
 	/// Nothing is written anywhere: no `.dec`, no temp file, no scratch.
-	private func decrypt(_ tab: Tab) async {
+	///
+	/// The first attempt is the one there was: no passphrase, so an agent
+	/// that holds it, a working pinentry and an age key see no question.
+	/// Only a failure in gpg's passphrase words leads to the kept one, then
+	/// to the field; any other failure keeps the toast.
+	private func decrypt(_ tab: Tab, passphrase: String? = nil, keptFor key: String? = nil) async {
 		guard let document = tab.document, let codeView = tab.codeView else { return }
-		let result = await Sops.decrypt(tab.url)
+		let result: GitRepository.ProcessResult
+		if let passphrase {
+			result = await Sops.decrypt(tab.url, passphrase: passphrase)
+		} else {
+			result = await Sops.decrypt(tab.url)
+		}
 		guard result.exitCode == 0 else {
-			Toast.post(
-				"Could not decrypt \(tab.url.lastPathComponent)",
-				detail: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-			)
+			let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard Sops.needsPassphrase(stderr: stderr) else {
+				Toast.post("Could not decrypt \(tab.url.lastPathComponent)", detail: stderr)
+				return
+			}
+			let keyName = Sops.keyNamed(in: stderr)
+			let key = key ?? passphraseKey(for: tab, stderr: stderr)
+			if passphrase == nil, let kept = Passphrases.shared.passphrase(for: key) {
+				// Asked once a sitting: the kept one first.
+				await decrypt(tab, passphrase: kept, keptFor: key)
+				return
+			}
+			if passphrase != nil { Passphrases.shared.forget(key) }
+			let wrong = passphrase != nil && Sops.wrongPassphrase(stderr: stderr)
+			let placeholder = wrong
+				? "Wrong passphrase — try again"
+				: "Passphrase for \(keyName.map { "key \($0)" } ?? tab.url.lastPathComponent)"
+			onPassphraseNeeded?(placeholder, stderr) { [weak self] answer in
+				guard let self, let answer, !answer.isEmpty else { return }
+				Task { @MainActor in await self.decrypt(tab, passphrase: answer, keptFor: key) }
+			}
 			return
 		}
+		if let passphrase, let key { Passphrases.shared.remember(passphrase, for: key) }
 		// The server is told the file is closed *before* the buffer changes:
 		// from here on `serverRoot(for:)` answers nil for this tab, so this is
 		// the last announcement it will ever make about it.
@@ -4446,6 +4494,11 @@ final class EditorViewController: NSViewController {
 			// second name is what it does on an encrypted file. On a plaintext
 			// file a creation rule matches, the same press encrypts it.
 			case "decrypt", "press": pressSops()
+			case "passphrase":
+				if let answer = passphraseAnswerForTesting { answer(argument) } else { print("SOPS: no passphrase was asked for") }
+			case "cancel-passphrase":
+				passphraseAnswerForTesting?(nil)
+			case "forget": Passphrases.shared.forgetAll()
 			case "encrypt": save()
 			// What git can see, asked again: `.gitignore` gained a line, or the
 			// file was added, and neither touches the file itself.
@@ -4480,6 +4533,7 @@ final class EditorViewController: NSViewController {
 		let text = tab.document.map { self.text(of: $0) } ?? ""
 		let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
 		return "file=\(tab.url.lastPathComponent) state=\(state) git=\(exposure) edited=\(tab.isDirty)"
+			+ " ask=\(passphraseAskForTesting.map { "“\($0)”" } ?? "none") kept=\(Passphrases.shared.count)"
 			+ " lines=\(tab.document?.rope.lineCount ?? 0) sha256=\(digest)"
 			+ " covers=\(tab.codeView?.showsSecretCovers ?? false)"
 			+ " revealed=\(tab.codeView?.secretsRevealedAll ?? false)"
@@ -5320,6 +5374,15 @@ final class EditorStatusView: NSView {
 	private var sopsState: EditorViewController.SopsState = .none
 	private var sopsRect = NSRect.zero
 	private var isSopsHovered = false
+	/// The passphrase field, made the first time it is asked for and laid
+	/// over the chip's place while asking. A measured member of the scaled
+	/// controls: AppKit's secure field, given its font from the theme.
+	private var passphraseField: NSSecureTextField?
+	private var passphraseAsk: (placeholder: String, tip: String)?
+	/// Return in the field, with what was typed; the field is cleared.
+	var onPassphraseEntered: ((String) -> Void)?
+	/// Escape in the field: the chip comes back and nothing is tried.
+	var onPassphraseCancelled: (() -> Void)?
 	/// The chip was pressed: decrypt, encrypt and save, or encrypt a plaintext
 	/// file the project's rules are for.
 	var onSopsPressed: (() -> Void)?
@@ -5635,7 +5698,71 @@ final class EditorStatusView: NSView {
 	/// to stand after the lock, and a decrypt brought the lock up beside it —
 	/// so the chip jumped away the moment it was pressed. Pressing it
 	/// decrypts, or encrypts and saves; ⌘S is the other way to the second.
+	// MARK: - The passphrase field
+
+	/// Puts a secure field where the chip is, named for the key or the file,
+	/// with gpg's sentence as its tooltip, and the keyboard in it.
+	func askPassphrase(placeholder: String, tip: String) {
+		passphraseAsk = (placeholder, tip)
+		let field = passphraseField ?? makePassphraseField()
+		field.placeholderString = placeholder
+		field.toolTip = tip
+		field.stringValue = ""
+		field.isHidden = false
+		field.frame = passphraseRect()
+		needsDisplay = true
+		window?.makeFirstResponder(field)
+	}
+
+	/// The chip back, the field empty and gone.
+	func endPassphraseAsk() {
+		passphraseAsk = nil
+		passphraseField?.stringValue = ""
+		passphraseField?.isHidden = true
+		needsDisplay = true
+	}
+
+	var isAskingPassphrase: Bool { passphraseAsk != nil }
+	var passphraseAskForTesting: String? { passphraseAsk?.placeholder }
+
+	private func makePassphraseField() -> NSSecureTextField {
+		let field = NSSecureTextField()
+		field.font = Theme.current.uiFont(11)
+		field.focusRingType = .none
+		field.delegate = self
+		field.target = self
+		field.action = #selector(passphraseEntered)
+		addSubview(field)
+		passphraseField = field
+		return field
+	}
+
+	/// The chip's place, widened to hold a passphrase.
+	private func passphraseRect() -> NSRect {
+		let width = Theme.current.scaled(240)
+		let height = Theme.current.scaled(19)
+		return NSRect(x: Theme.current.scaled(8), y: (bounds.height - height) / 2, width: width, height: height)
+	}
+
+	override func layout() {
+		super.layout()
+		if isAskingPassphrase { passphraseField?.frame = passphraseRect() }
+	}
+
+	@objc private func passphraseEntered() {
+		guard let field = passphraseField else { return }
+		let typed = field.stringValue
+		field.stringValue = ""
+		onPassphraseEntered?(typed)
+	}
+
 	private func drawSops() {
+		// While a passphrase is being asked for, the field stands where the
+		// chip was and the chip is not drawn under it.
+		if isAskingPassphrase {
+			sopsRect = passphraseRect()
+			return
+		}
 		guard sopsState != .none else {
 			sopsRect = .zero
 			return
@@ -5994,5 +6121,15 @@ final class EditorStatusView: NSView {
 		serverText.isEmpty
 			? "no server"
 			: "\(serverText) [\(Int(serverRect.width))×\(Int(serverRect.height))]"
+	}
+}
+
+
+extension EditorStatusView: NSTextFieldDelegate {
+	/// Escape in the passphrase field puts the chip back.
+	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+		guard control === passphraseField, selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+		onPassphraseCancelled?()
+		return true
 	}
 }

@@ -62,7 +62,7 @@ final class EditorAreaController: NSViewController {
 	/// Holds the split tree. Separate from `view` so the status bar below it
 	/// survives the tree being rebuilt.
 	private var splitHost: NSView!
-	private var statusBar: EditorStatusView!
+	var statusBar: EditorStatusView!
 	private var statusBarHeightConstraint: NSLayoutConstraint!
 
 	// Forwarded from the active group.
@@ -100,6 +100,8 @@ final class EditorAreaController: NSViewController {
 
 		statusBar.onSecretsToggled = { [weak self] in self?.toggleRevealSecrets() }
 		statusBar.onSopsPressed = { [weak self] in self?.pressSops() }
+		statusBar.onPassphraseEntered = { [weak self] text in self?.answerPassphrase(text) }
+		statusBar.onPassphraseCancelled = { [weak self] in self?.answerPassphrase(nil) }
 		statusBar.onIgnoreFile = { [weak self] in self?.activeGroup?.ignoreActiveFile() }
 		statusBar.onIndentChosen = { [weak self] style in
 			self?.activeGroup?.convertIndentation(to: style)
@@ -173,6 +175,9 @@ final class EditorAreaController: NSViewController {
 		refreshStatus(from: activeGroup)
 	}
 	func sopsForTesting(_ steps: String) { activeGroup.sopsForTesting(steps) }
+
+	/// The decrypt waiting on the passphrase field; see `+Passphrase`.
+	var pendingPassphrase: ((String?) -> Void)?
 
 	/// The indent menu's pick and the driver, the same routing the SOPS
 	/// chip's take. The pick needs no refresh of its own: the conversion
@@ -253,6 +258,7 @@ final class EditorAreaController: NSViewController {
 		group.onStatusChanged = { [weak self] reporting in
 			self?.refreshStatus(from: reporting)
 		}
+		wirePassphrase(group)
 		group.onTabDropped = { [weak self] payload, zone, target in
 			self?.handleDrop(payload: payload, zone: zone, target: target)
 		}
