@@ -1,5 +1,5 @@
 3919 Sources/AbydosApp/AppDelegate.swift
-4691 Sources/AbydosApp/Editor/CodeView.swift
+4722 Sources/AbydosApp/Editor/CodeView.swift
 5998 Sources/AbydosApp/Editor/EditorViewController.swift
 3634 Sources/AbydosApp/Editor/LanguageService.swift
 4686 Sources/AbydosApp/Git/BranchesPane.swift
@@ -13,7 +13,7 @@
 1550 Sources/AbydosApp/Panel/DebugPane.swift
 1079 Sources/AbydosApp/Panel/ResultChecklist.swift
 1249 Sources/AbydosApp/Settings/SettingsWindowController.swift
-3684 Sources/AbydosApp/Terminal/TerminalView.swift
+3701 Sources/AbydosApp/Terminal/TerminalView.swift
 2080 Sources/AbydosApp/Titlebar/ProjectSwitcherPopover.swift
 1555 Sources/AbydosKit/Debug/DebugSession.swift
 1203 Sources/AbydosKit/LSP/LSPClient.swift

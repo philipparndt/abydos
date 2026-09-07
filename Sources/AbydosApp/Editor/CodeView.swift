@@ -2259,17 +2259,48 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		window?.invalidateCursorRects(for: self)
 	}
 
-	/// A pointing hand over each play button.
+	/// An I-beam over the text, and a pointing hand over each play button.
 	///
 	/// The rest of the gutter keeps the arrow: the breakpoint column responds to
 	/// a click too, but a play button is the only part that reads as a control,
 	/// and marking everything would say nothing.
+	///
+	/// **The I-beam has to be a cursor rect, not a `set()`.** There were three
+	/// `NSCursor.iBeam.set()` calls already and the pointer was still an arrow
+	/// over the text, because every one of them is behind a *transition*:
+	/// `updateNavigableWord` returns unless the ⌘-hover word changed, and
+	/// `mouseMoved` only asks when leaving an inline value. Moving across plain
+	/// text runs none of them — and a bare `set()` would not have held anyway,
+	/// since AppKit re-applies the cursor from these rects as the pointer moves.
+	/// The hands below still win where they fire: they are set from `mouseMoved`,
+	/// which runs after the rects have been applied for that event.
+	///
+	/// Added before the play buttons, and before their `guard`, so that a file
+	/// with nothing runnable in it — most files — still gets the I-beam.
 	override func resetCursorRects() {
 		super.resetCursorRects()
-		guard !runnableLines.isEmpty else { return }
 
 		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
 		let visible = enclosingScrollView?.contentView.bounds ?? bounds
+
+		// From where the gutter ends to the right edge. The gutter floats at the
+		// scroll origin, which is why this starts there rather than at zero, and
+		// it covers the padding before the first glyph because a click there
+		// puts the caret on the line like any other.
+		let textLeft = scrollX + gutterWidth
+		if visible.maxX > textLeft {
+			addCursorRect(
+				NSRect(
+					x: textLeft,
+					y: visible.minY,
+					width: visible.maxX - textLeft,
+					height: visible.height
+				),
+				cursor: .iBeam
+			)
+		}
+
+		guard !runnableLines.isEmpty else { return }
 		for visual in visualLineRange(in: visible) {
 			let docLine = documentLine(forVisualRow: visual)
 			guard runnableLines.contains(docLine + 1), breakpointLines[docLine] == nil else { continue }

@@ -329,6 +329,23 @@ final class TerminalView: NSView, NSTextInputClient {
 		motionTracking = area
 	}
 
+	/// An I-beam over the whole grid, because all of it is selectable text.
+	///
+	/// **Not `NSCursor.iBeam.set()`, which is what was here.**
+	/// `updateHoveredLink` sets the cursor, but it returns unless the link under
+	/// the pointer *changed* — so it says I-beam on the way off a hyperlink and
+	/// never on the way across ordinary output, which is nearly all of a
+	/// terminal. The pointer stayed an arrow over text that drags into a
+	/// selection. A rect is also the only form that holds: AppKit re-applies
+	/// these as the pointer moves, over the top of any one-shot `set()`.
+	///
+	/// The pointing hand over a hyperlink still wins — `updateHoveredLink` runs
+	/// from `mouseMoved`, after the rects have been applied for that event.
+	override func resetCursorRects() {
+		super.resetCursorRects()
+		addCursorRect(bounds, cursor: .iBeam)
+	}
+
 	private var motionTracking: NSTrackingArea?
 
 	override func viewDidMoveToWindow() {

@@ -34,6 +34,21 @@ final class TerminalMetalView: NSView {
 	/// the cursor, dropping files — belongs to the view underneath.
 	override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+	/// The same I-beam the view underneath asks for.
+	///
+	/// **Said twice on purpose.** Cursor rects are not hit-testing: they are a
+	/// list the window keeps, and `hitTest` returning nil above does not put
+	/// this view's area back to whatever is beneath it. A subview that
+	/// registers no rect ought to let the one underneath show through, and if
+	/// that is so this override changes nothing — but GPU rendering is *on by
+	/// default*, so being wrong about it means the pointer is an arrow over the
+	/// terminal for nearly everybody, which is the fault this was written to
+	/// fix. Four lines against that trade is worth it.
+	override func resetCursorRects() {
+		super.resetCursorRects()
+		addCursorRect(bounds, cursor: .iBeam)
+	}
+
 	override var isFlipped: Bool { true }
 
 	var scale: CGFloat = 2 {
