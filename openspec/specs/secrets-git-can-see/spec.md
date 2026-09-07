@@ -33,6 +33,35 @@ that change it.
 - **WHEN** it is opened
 - **THEN** its values are covered and no notice is shown
 
+### Requirement: A SOPS file is not asked about at all
+
+A SOPS-encrypted file SHALL be asked nothing and SHALL show no exposure
+notice, whether its buffer is encrypted or decrypted. What is on disk is
+ciphertext and the save path puts ciphertext back, so a SOPS file git tracks is
+what SOPS is for; *Committed to git* over one would name a leak that is not
+there, and the notice's one offer — a `.gitignore` line — would take the
+encrypted file out of the repository it belongs in. A decrypted buffer is
+plaintext in memory only, which is the one place git cannot reach, and so is
+not the `.dec` case: a `.dec` is plaintext on disk and SHALL keep its notice.
+
+#### Scenario: a committed SOPS file says nothing
+
+- **GIVEN** a SOPS-encrypted `secrets.yaml` committed in an earlier commit
+- **WHEN** it is opened
+- **THEN** no exposure notice is shown
+
+#### Scenario: decrypting a committed SOPS file still says nothing
+
+- **GIVEN** that same file, its buffer decrypted by the SOPS chip
+- **WHEN** the status bar is read
+- **THEN** the values are covered and no exposure notice is shown
+
+#### Scenario: a plaintext .dec keeps its notice
+
+- **GIVEN** `secrets.yaml.dec`, plaintext on disk and neither ignored nor tracked
+- **WHEN** it is opened
+- **THEN** the status bar reads *Not in .gitignore*
+
 ### Requirement: The status bar says that git can see the file, and which case it is
 
 The editor's status bar SHALL show, beside the secrets lock, *Not in

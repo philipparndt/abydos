@@ -52,6 +52,28 @@ public enum SecretExposure {
 		}
 	}
 
+	/// Whether git is worth asking about a file at all.
+	///
+	/// In the engine for the reason `words(for:)` is: the editor, the driven
+	/// report and the spec's scenarios have to agree on which files this is
+	/// about, and the answer is not "everything the editor covers".
+	///
+	/// **A SOPS file is excluded, decrypted buffer included.** This once asked
+	/// about a decrypted buffer, on the reading that it is a `.dec` that never
+	/// touched a disk. The analogy inverts: a `.dec` is plaintext *on disk*,
+	/// and a decrypted SOPS buffer is plaintext in memory only — the one place
+	/// git cannot reach. What is on disk is ciphertext, and the save path puts
+	/// ciphertext back, so a SOPS file git tracks is what SOPS is for. Over one
+	/// *Committed to git — its values are in the history* names a leak that is
+	/// not there, and the notice's one offer, a `.gitignore` line, would take
+	/// the encrypted file out of the repository it belongs in.
+	///
+	/// - Parameter isSops: that the file is SOPS's — ciphertext on disk —
+	///   whether or not its buffer is decrypted right now.
+	public static func asksGit(fileNamed name: String, isSops: Bool) -> Bool {
+		!isSops && DotenvSecrets.conceals(fileNamed: name)
+	}
+
 	/// Asks git about one path: ignored (nothing to say), tracked, or neither.
 	///
 	/// `git check-ignore -q` exits 0 when a path is ignored and 1 when it is

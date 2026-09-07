@@ -4123,14 +4123,14 @@ final class EditorViewController: NSViewController {
 	var exposureState: SecretExposure.State { activeTab?.exposure ?? .fine }
 
 	/// Asks git about a file whose values are covered, off the main thread, and
-	/// tells the bar when the answer comes back.
-	///
-	/// Only for a file that conceals — a decrypted SOPS buffer among them,
-	/// which is a `.dec` that never touched a disk — and only inside a project:
-	/// two `git` runs of one path each, and none at all for the ordinary file
-	/// somebody is editing.
+	/// tells the bar when the answer comes back. Which files those are — and
+	/// why a SOPS file, decrypted buffer included, is not one — is
+	/// `SecretExposure.asksGit(fileNamed:isSops:)`; either flag answers its
+	/// `isSops`. Only inside a project: two `git` runs of one path each, and
+	/// none at all for the ordinary file somebody is editing.
 	private func askWhatGitCanSee(of tab: Tab) {
-		let conceals = DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent) || tab.isDecrypted
+		let sops = tab.isSopsFile || tab.isDecrypted
+		let conceals = SecretExposure.asksGit(fileNamed: tab.url.lastPathComponent, isSops: sops)
 		guard conceals, let root = project?.root else {
 			guard tab.exposure != .fine else { return }
 			tab.exposure = .fine

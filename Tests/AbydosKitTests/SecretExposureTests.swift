@@ -92,4 +92,31 @@ struct SecretExposureTests {
 
 		#expect(await SecretExposure.state(of: file, in: root, conceals: true) == .fine)
 	}
+
+	/// A SOPS file is ciphertext on disk and the save path puts ciphertext
+	/// back, so git tracking it is what SOPS is for. It is not asked about, and
+	/// a decrypted buffer does not change that: the plaintext is in memory,
+	/// which is the one place git cannot reach.
+	@Test func aSopsFileIsNotAskedAbout() {
+		#expect(SecretExposure.asksGit(fileNamed: "secrets.yaml", isSops: true) == false)
+		#expect(SecretExposure.asksGit(fileNamed: "secrets-dev-local.yaml", isSops: true) == false)
+		// A SOPS-encrypted dotenv is still SOPS's: the name would have said
+		// yes on its own, and what is on disk decides.
+		#expect(SecretExposure.asksGit(fileNamed: ".env", isSops: true) == false)
+	}
+
+	/// The `.dec` case is the one the analogy belongs to — plaintext on disk,
+	/// and still asked about.
+	@Test func aPlaintextDecIsStillAskedAbout() {
+		#expect(SecretExposure.asksGit(fileNamed: "secrets.yaml.dec", isSops: false))
+		#expect(SecretExposure.asksGit(fileNamed: ".env", isSops: false))
+		#expect(SecretExposure.asksGit(fileNamed: ".env.local", isSops: false))
+	}
+
+	/// A file that conceals nothing is not asked about however it is labelled:
+	/// the ordinary file somebody is editing costs no `git` runs.
+	@Test func anOrdinaryFileIsNotAskedAbout() {
+		#expect(SecretExposure.asksGit(fileNamed: "README.md", isSops: false) == false)
+		#expect(SecretExposure.asksGit(fileNamed: "secrets.yaml", isSops: false) == false)
+	}
 }
