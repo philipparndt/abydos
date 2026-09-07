@@ -183,6 +183,18 @@
   `ProjectSessionTests` round-trips it; `--hex "…,session"` reports the
   capture and restores it into the same tab.
 
+- [x] 8a.7 The curve reads a window, not a block (found on 2026-09-07 from a
+  screenshot: the hover said *3.88 bits* over a file the note called *7.86
+  bits a byte*, both correct — sixteen-byte blocks cannot read above four
+  bits). The pass keeps a running kilobyte window behind each block, warmed
+  from the blocks before a mid-file pass; the curve, the minimap's entropy
+  mode, the hover and the driver's mean read it. Two tests pin it.
+
+- [x] 8a.8 Every inspector section folds on its heading (asked for on
+  2026-09-07: "all sections should be collapsible (structure, values,
+  ...)"), the shut ones kept in `Settings.hexInspectorShutSections` as a
+  preference. `fold:<section>` drives it.
+
 ## 9. Proving it
 
 - [x] 9.1 `LaunchOptions` — `--hex <steps>` and its report, in
@@ -250,8 +262,7 @@
   digest over a selection an edit did not touch is kept rather than marked
   stale, and the "byte mode" is the hex tab's own bar rather than a mode of
   the editor's find bar, for the reason `HexBar` gives.
-- [x] 10.4 Green by their exit codes on 2026-09-06, after the hover, the
-  keyboard, the curve's scroll and the session: `make test` 4215 tests in
-  534 suites, exit 0 with the suite's two standing known issues, load 36.0
-  over 10 cores; `make warnings` exit 0, *No warnings in this repository's
-  Swift*.
+- [x] 10.4 Green by their exit codes on 2026-09-07, after the curve's window
+  and the folds: `make test` 4217 tests in 534 suites, exit 0 with the
+  suite's two standing known issues, load 49.3 over 10 cores; `make
+  warnings` exit 0, *No warnings in this repository's Swift*.

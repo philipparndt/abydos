@@ -60,6 +60,35 @@ struct ByteStatisticsTests {
 		#expect(notes.first?.said.contains("likely compressed or encrypted") == true)
 	}
 
+	/// A sixteen-byte block cannot read above four bits; the curve reads the
+	/// kilobyte behind each block, and says 7.8 over noise as the note does.
+	/// Before this, the curve sat at 3.9 over a file the note called 7.86.
+	@Test func theCurveReadsAWindowAndNotABlock() {
+		let table = ByteStatistics.computed(over: ByteDocument(bytes: Data(noise(8192))).snapshot())
+		#expect(table.blockSize == 16)
+		#expect(table.blocksPerWindow == 64)
+		#expect((table.blocks[100]!).entropy < 4.1)
+		#expect(table.curve(at: 100)! > 7.6)
+		#expect(table.windowRange(ofBlock: 100) == (37 * 16)..<(101 * 16))
+		// The first blocks have less than a window behind them and say so by
+		// reading lower; by the sixty-fourth the window is whole.
+		#expect(table.curve(at: 0)! < 4.1)
+		#expect(table.curve(at: 63)! > 7.6)
+	}
+
+	/// A pass that starts mid-file warms its window with the blocks before
+	/// it, so a recomputed stretch reads as it would have in the first pass.
+	@Test func aPassStartingMidFileHasWholeWindows() async {
+		let snapshot = ByteDocument(bytes: Data(noise(8192))).snapshot()
+		let whole = ByteStatistics.computed(over: snapshot)
+		var partial = ByteStatistics(count: 8192)
+		for await delivery in ByteStatistics.pass(over: snapshot, blockSize: 16, indices: 256..<320) {
+			partial.set(delivery)
+		}
+		#expect(partial.curve(at: 256) == whole.curve(at: 256))
+		#expect(partial.curve(at: 319) == whole.curve(at: 319))
+	}
+
 	/// The curve may show sixteen-byte blocks; the note may not read them.
 	@Test func aNoteIsNeverMadeFromBlocksTooSmallToJudge() {
 		let table = ByteStatistics.computed(over: ByteDocument(bytes: Data(noise(600))).snapshot())

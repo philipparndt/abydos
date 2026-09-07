@@ -17,7 +17,8 @@ byte. Now it opens one.
   is never auto-saved.
 - **Copy as hex, text, a C array or base64**; paste hex text or raw bytes.
   ⌘L goes to an offset, hex or decimal, absolute or relative.
-- **An inspector beside the bytes**: integers of every width in either byte
+- **An inspector beside the bytes**, every section of it folding on its
+  heading and the folds remembered: integers of every width in either byte
   order, floats, a character, Unix times, LEB128, binary — and a value typed
   into a field is written back as bytes.
 - **Checksums** on demand — CRC-32, Adler-32, MD5, SHA-1, SHA-256, SHA-512 —

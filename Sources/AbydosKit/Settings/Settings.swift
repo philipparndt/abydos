@@ -137,6 +137,7 @@ public final class Settings {
 	}
 
 	private enum Key {
+		static let hexInspectorShut = "hexInspectorShut"
 		static let autoSaveEnabled = "autoSaveEnabled"
 		static let pullRebases = "pullRebases"
 		static let pullStashes = "pullStashes"
@@ -307,6 +308,16 @@ public final class Settings {
 
 	/// On by default: this is a browser first, and losing edits to a file you
 	/// tweaked while reading is the worst possible surprise.
+	/// The hex inspector's sections somebody has folded shut, by name.
+	///
+	/// A preference and not a session entry: which of structure, values,
+	/// checksums, entropy and strings someone wants open is about them, not
+	/// about a project, and it should hold across every file they open.
+	public var hexInspectorShutSections: [String] {
+		get { defaults.stringArray(forKey: Key.hexInspectorShut) ?? [] }
+		set { defaults.set(newValue, forKey: Key.hexInspectorShut) }
+	}
+
 	public var autoSaveEnabled: Bool {
 		get { defaults.bool(forKey: Key.autoSaveEnabled) }
 		set { set(newValue, Key.autoSaveEnabled) }

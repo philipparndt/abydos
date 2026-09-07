@@ -86,15 +86,28 @@ final class HexInspectorPane: NSView, ScaleFollowing {
 	/// the top of something rather than a line in the middle of it.
 	private func heading(_ text: String) -> SectionHeading { SectionHeading(text) }
 
+	/// Each heading and what it folds, in order.
+	private var folds: [(heading: SectionHeading, content: NSView)] = []
+
 	private func build() {
 		let theme = Theme.current
-		sections = NSStackView(views: [
-			heading("Structure"), structure,
-			heading("Values"), buildValues(),
-			heading("Checksums"), buildChecksums(),
-			heading("Entropy"), buildEntropy(),
-			heading("Strings"), buildStrings(),
-		])
+		folds = [
+			(heading("Structure"), structure),
+			(heading("Values"), buildValues()),
+			(heading("Checksums"), buildChecksums()),
+			(heading("Entropy"), buildEntropy()),
+			(heading("Strings"), buildStrings()),
+		]
+		sections = NSStackView(views: folds.flatMap { [$0.heading, $0.content] })
+		// Every section folds on its heading, and the folds are a preference:
+		// somebody who never wants the strings open should not have to shut
+		// them in every tab.
+		let shut = Set(Settings.shared.hexInspectorShutSections)
+		for fold in folds {
+			fold.heading.onToggle = { [weak self] in self?.toggle(fold.heading.name) }
+			fold.heading.isShut = shut.contains(fold.heading.name)
+			fold.content.isHidden = fold.heading.isShut
+		}
 		sections.orientation = .vertical
 		sections.alignment = .leading
 		// A heading belongs to what is under it, so the air goes above it
@@ -128,6 +141,21 @@ final class HexInspectorPane: NSView, ScaleFollowing {
 			sections.topAnchor.constraint(equalTo: document.topAnchor),
 			sections.bottomAnchor.constraint(equalTo: document.bottomAnchor),
 		])
+	}
+
+	/// Folds or unfolds a section by its name, and remembers it.
+	func toggle(_ name: String) {
+		guard let fold = folds.first(where: { $0.heading.name == name }) else { return }
+		fold.heading.isShut.toggle()
+		fold.content.isHidden = fold.heading.isShut
+		var shut = Settings.shared.hexInspectorShutSections.filter { $0 != name }
+		if fold.heading.isShut { shut.append(name) }
+		Settings.shared.hexInspectorShutSections = shut
+	}
+
+	/// Which sections are shut, and whether their content is hidden with them.
+	var foldsForTesting: String {
+		folds.map { "\($0.heading.name)=\($0.heading.isShut ? "shut" : "open")\($0.content.isHidden == $0.heading.isShut ? "" : "?")" }.joined(separator: " ")
 	}
 
 	// MARK: - Values
@@ -497,11 +525,13 @@ final class EntropyCurveView: NSView {
 		let last = max(first + 1, (column + 1) * blocks.count / columns)
 		var sum = 0.0, measured = 0
 		for index in first..<min(blocks.count, last) {
-			guard let block = blocks[index] else { continue }
-			sum += block.entropy; measured += 1
+			guard let value = statistics.curve(at: index) else { continue }
+			sum += value; measured += 1
 		}
 		guard measured > 0 else { return nil }
-		let range = statistics.range(ofBlock: first).lowerBound..<statistics.range(ofBlock: min(blocks.count, last) - 1).upperBound
+		// The bytes the number is about: the window behind the last block
+		// under this column, which is a kilobyte at least.
+		let range = statistics.windowRange(ofBlock: min(blocks.count, last) - 1)
 		return (sum / Double(measured), range)
 	}
 
@@ -547,8 +577,8 @@ final class EntropyCurveView: NSView {
 			let last = max(first + 1, (column + 1) * blocks.count / columns)
 			var sum = 0.0, measured = 0
 			for index in first..<min(blocks.count, last) {
-				guard let block = blocks[index] else { continue }
-				sum += block.entropy; measured += 1
+				guard let value = statistics.curve(at: index) else { continue }
+				sum += value; measured += 1
 			}
 			guard measured > 0 else { started = false; continue }
 			let point = NSPoint(x: CGFloat(column), y: bounds.height * (1 - CGFloat(sum / Double(measured) / 8)))
@@ -597,14 +627,25 @@ final class EntropyCurveView: NSView {
 
 /// A section's name, with a rule running off it to the pane's edge.
 private final class SectionHeading: NSView, ScaleFollowing {
+	/// The section's name in lower case, which is its key in the preference.
+	let name: String
+	var onToggle: (() -> Void)?
+	var isShut = false {
+		didSet { chevron.stringValue = isShut ? "▸" : "▾" }
+	}
+
+	private let chevron = NSTextField(labelWithString: "▾")
 	private let label = NSTextField(labelWithString: "")
 	private let rule = NSView()
 	private let stack: NSStackView
 
 	init(_ text: String) {
-		stack = NSStackView(views: [label, rule])
+		name = text.lowercased()
+		stack = NSStackView(views: [chevron, label, rule])
 		super.init(frame: .zero)
 		label.stringValue = text.uppercased()
+		chevron.setContentHuggingPriority(.required, for: .horizontal)
+		toolTip = "Fold or unfold \(text.lowercased())"
 		rule.wantsLayer = true
 		rule.translatesAutoresizingMaskIntoConstraints = false
 		rule.heightAnchor.constraint(equalToConstant: 1).isActive = true
@@ -629,8 +670,16 @@ private final class SectionHeading: NSView, ScaleFollowing {
 		let theme = Theme.current
 		label.font = theme.uiFont(10, weight: .semibold)
 		label.textColor = theme.gitIgnored
+		chevron.font = theme.uiFont(10)
+		chevron.textColor = theme.gitIgnored
 		rule.layer?.backgroundColor = theme.separator.cgColor
-		stack.spacing = theme.scaled(8)
+		stack.spacing = theme.scaled(6)
+	}
+
+	/// The whole heading is the switch, rule included: a chevron ten points
+	/// wide is a target for nobody.
+	override func mouseDown(with event: NSEvent) {
+		onToggle?()
 	}
 }
 

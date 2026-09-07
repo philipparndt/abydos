@@ -95,14 +95,25 @@ public struct ByteStatistics: Sendable, Equatable {
 	/// the note reads groups, which never are.
 	public static let groupBytes = 4096
 
+	/// The window the curve is drawn from. A block may be sixteen bytes, and
+	/// sixteen samples over two hundred and fifty-six values read as under
+	/// four bits however random they are — a curve of those sat at 3.9 over
+	/// a file the note called 7.86. A kilobyte reads noise as about 7.8 and
+	/// text as about 4.5, which is the difference the curve is for.
+	public static let windowBytes = 1024
+
 	public let blockSize: Int
 	public let count: Int
 	/// Nil until the pass has reached it.
 	public private(set) var blocks: [Block?]
 	/// Entropy per group of `blocksPerGroup` blocks, nil until reached.
 	public private(set) var groups: [Double?]
+	/// Entropy over the window ending at each block, nil until reached: what
+	/// the curve, the minimap's entropy mode and the hover read.
+	public private(set) var windows: [Double?]
 
 	public var blocksPerGroup: Int { max(1, Self.groupBytes / blockSize) }
+	public var blocksPerWindow: Int { max(1, Self.windowBytes / blockSize) }
 
 	public init(count: Int, blockSize: Int? = nil) {
 		self.count = count
@@ -112,6 +123,21 @@ public struct ByteStatistics: Sendable, Equatable {
 		blocks = Array(repeating: nil, count: blockCount)
 		let perGroup = max(1, Self.groupBytes / size)
 		groups = Array(repeating: nil, count: (blockCount + perGroup - 1) / perGroup)
+		windows = Array(repeating: nil, count: blockCount)
+	}
+
+	/// The entropy to draw for a block: its window's, or its own until the
+	/// window has been delivered.
+	public func curve(at index: Int) -> Double? {
+		guard blocks.indices.contains(index) else { return nil }
+		return windows[index] ?? blocks[index]?.entropy
+	}
+
+	/// The bytes a block's window covers: the window ends at the block and
+	/// reaches back `blocksPerWindow` blocks, or to the start of the file.
+	public func windowRange(ofBlock index: Int) -> Range<Int> {
+		let first = max(0, index - blocksPerWindow + 1)
+		return range(ofBlock: first).lowerBound..<range(ofBlock: index).upperBound
 	}
 
 	public func range(ofGroup index: Int) -> Range<Int> {
@@ -149,6 +175,7 @@ public struct ByteStatistics: Sendable, Equatable {
 
 	public mutating func set(_ delivery: Delivery) {
 		set(delivery.block, at: delivery.index)
+		if windows.indices.contains(delivery.index) { windows[delivery.index] = delivery.window }
 		if let group = delivery.group, groups.indices.contains(group.index) {
 			groups[group.index] = group.entropy
 		}
@@ -172,7 +199,10 @@ public struct ByteStatistics: Sendable, Equatable {
 		let lastGroup = min(groups.count, (max(stale.lowerBound, stale.upperBound - 1)) / blocksPerGroup + 1)
 		for index in firstGroup..<lastGroup { groups[index] = nil }
 		let widened = (firstGroup * blocksPerGroup)..<min(blocks.count, lastGroup * blocksPerGroup)
-		for index in widened { blocks[index] = nil }
+		for index in widened {
+			blocks[index] = nil
+			windows[index] = nil
+		}
 		return widened
 	}
 
@@ -212,6 +242,8 @@ public struct ByteStatistics: Sendable, Equatable {
 	public struct Delivery: Sendable, Equatable {
 		public let index: Int
 		public let block: Block
+		/// Entropy over the window ending at this block.
+		public let window: Double
 		public let group: Group?
 
 		public struct Group: Sendable, Equatable {
@@ -260,8 +292,33 @@ public struct ByteStatistics: Sendable, Equatable {
 		deliver: (Delivery) -> Bool
 	) {
 		let perGroup = max(1, groupBytes / blockSize)
+		let perWindow = max(1, windowBytes / blockSize)
 		let lastBlock = snapshot.count == 0 ? -1 : (snapshot.count - 1) / blockSize
 		var group = Histogram()
+
+		// The window is a running sum of the last `perWindow` block
+		// histograms; the ring holds them so the oldest can be taken out. A
+		// pass that starts mid-file — after an edit — warms the ring with the
+		// blocks before it, so its first windows are whole.
+		var window = Histogram()
+		var ring: [Histogram] = []
+		func push(_ histogram: Histogram) {
+			ring.append(histogram)
+			for value in 0..<256 { window.counts[value] += histogram.counts[value] }
+			window.total += histogram.total
+			if ring.count > perWindow {
+				let gone = ring.removeFirst()
+				for value in 0..<256 { window.counts[value] -= gone.counts[value] }
+				window.total -= gone.total
+			}
+		}
+		for index in max(0, indices.lowerBound - perWindow + 1)..<indices.lowerBound {
+			var histogram = Histogram()
+			let start = index * blockSize
+			histogram.add(snapshot.bytes(in: start..<min(snapshot.count, start + blockSize)))
+			push(histogram)
+		}
+
 		for index in indices {
 			let start = index * blockSize
 			guard start < snapshot.count else { break }
@@ -269,13 +326,14 @@ public struct ByteStatistics: Sendable, Equatable {
 			histogram.add(snapshot.bytes(in: start..<min(snapshot.count, start + blockSize)))
 			for value in 0..<256 { group.counts[value] += histogram.counts[value] }
 			group.total += histogram.total
+			push(histogram)
 
 			var finished: Delivery.Group?
 			if (index + 1) % perGroup == 0 || index == lastBlock {
 				finished = Delivery.Group(index: index / perGroup, entropy: group.entropy)
 				group = Histogram()
 			}
-			guard deliver(Delivery(index: index, block: Block(histogram), group: finished)) else { return }
+			guard deliver(Delivery(index: index, block: Block(histogram), window: window.entropy, group: finished)) else { return }
 		}
 	}
 }

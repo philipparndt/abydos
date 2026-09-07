@@ -109,7 +109,7 @@ extension HexEditorController {
 				await statisticsTask?.value
 				await Task.yield()
 				let done = statistics.completedBlocks
-				let mean = statistics.blocks.compactMap { $0 }.map(\.entropy).reduce(0, +) / Double(max(1, done))
+				let mean = statistics.blocks.indices.compactMap { statistics.curve(at: $0) }.reduce(0, +) / Double(max(1, done))
 				report.append(String(
 					format: "entropy: %d/%d blocks of %d bytes, mean %.2f bits",
 					done, statistics.blocks.count, statistics.blockSize, mean
@@ -137,6 +137,9 @@ extension HexEditorController {
 				report.append("structure-focus: " + inspector.structure.focusForTesting())
 			case "structure-key":
 				report.append("structure-key \(argument): " + inspector.structure.pressForTesting(argument) + " · \(statusText)")
+			case "fold":
+				inspector.toggle(argument.lowercased())
+				report.append("fold \(argument): \(inspector.foldsForTesting) · remembered=\(Settings.shared.hexInspectorShutSections)")
 			case "show-entropy":
 				// Scrolls the inspector so the curve is in the picture.
 				inspector.layoutSubtreeIfNeeded()

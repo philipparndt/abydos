@@ -280,7 +280,12 @@ The document SHALL compute Shannon entropy per block in one background pass
 over the file, with the block size chosen so the file yields at most about
 four thousand blocks. The inspector SHALL draw the result as a curve from zero
 to eight bits a byte with the viewport marked on it, filling as the pass
-arrives rather than after it. A run of blocks above 7.5 bits SHALL be named
+arrives rather than after it. The curve, the minimap's entropy mode and the
+number under the pointer SHALL read entropy over a window of at least a
+kilobyte ending at each block and never over one block alone: sixteen
+samples over two hundred and fifty-six values read as under four bits however
+random they are, and a curve at 3.9 beside a note saying 7.86 was both
+correct and wrong. A run of blocks above 7.5 bits SHALL be named
 in words as likely compressed or encrypted, with its offset range, and
 choosing it SHALL select those bytes. The pointer over the curve SHALL show a
 line where it is and the entropy there as a number, with the byte range it
@@ -302,7 +307,13 @@ only those.
 - **GIVEN** the curve drawn
 - **WHEN** the pointer rests two thirds of the way along it
 - **THEN** a line stands there and the label reads the entropy at that point
-  in bits, with the offsets of the blocks under it
+  in bits, with the offsets of the kilobyte it was read over
+
+#### Scenario: a small random file
+
+- **GIVEN** an 8 KB file of noise, whose blocks are sixteen bytes
+- **THEN** the curve and the hover read about 7.8 bits, as the note does, and
+  not the four bits sixteen samples can reach
 
 #### Scenario: a click on the curve
 
@@ -507,6 +518,25 @@ Timing claims SHALL be made through `Stopwatch.maySay` and printed with
   gigabyte
 - **THEN** scrolling and selecting are at full speed, and closing the tab
   stops all three
+
+### Requirement: The inspector's sections fold
+
+Each section of the inspector — structure, values, checksums, entropy,
+strings — SHALL fold shut and open again on its heading, the whole heading
+being the switch, and which sections are shut SHALL be remembered as a
+preference across tabs and restarts rather than per file.
+
+#### Scenario: folding the strings
+
+- **GIVEN** the strings section open
+- **WHEN** its heading is clicked
+- **THEN** the list is hidden and the chevron points along the heading
+
+#### Scenario: the fold holds in the next tab
+
+- **GIVEN** the strings folded shut
+- **WHEN** another file is opened as bytes
+- **THEN** its inspector opens with the strings shut and the rest open
 
 ### Requirement: A hex tab comes back as it was left
 

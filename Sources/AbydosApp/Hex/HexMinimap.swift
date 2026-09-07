@@ -126,7 +126,7 @@ final class HexMinimap: NSView, ScaleFollowing {
 					guard let block = blocks[index] else { continue }
 					zero += block.zero; printable += block.printable; control += block.control; high += block.high
 					total += block.length
-					entropy += block.entropy; measured += 1
+					entropy += statistics.curve(at: index) ?? block.entropy; measured += 1
 				}
 				guard total > 0 else { continue }
 				let colour: NSColor
