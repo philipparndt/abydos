@@ -110,10 +110,17 @@
 
 ## What is left, and what it needs
 
-Four items are unticked because they cannot be run on this machine, not because
-the code is missing. `gh` here is signed in to an internal enterprise host and
-not to github.com, so the pull request page — the one place a *remark* lives in
-a diff — cannot answer:
+Five items are unticked, and none of them is missing code. What follows is the
+state at the archive rather than the state they were written in, because the
+reason first recorded here has since stopped being true.
+
+**The blocker named in this section is gone.** It said `gh` was signed in to an
+internal enterprise host and not to github.com, so the pull request page — the
+one place a *remark* lives in a diff — could not answer. `gh` now holds an
+active github.com login alongside the enterprise one, and `gh pr view` reaches
+this change's own pull request. So **4.2, 5.3, 5.4 and 7.3 were not run**, which
+is a different claim from the one archived here before, and a weaker one: the
+page can be driven, and nobody has driven it.
 
 - **4.2** ⌘C is verified from the Edit menu in the commit page and in the
   history pane's read-only diff, at the real menu bar. The pull request page's
@@ -126,13 +133,25 @@ a diff — cannot answer:
   diff tab and the stash page all construct the same `DiffView` and were not
   driven.
 
-**7.4** is half done and says so in `evidence.md`: `make warnings` exits 0, and
-`make test` exits 1 on two suites this change cannot reach —
-`ExternalDependenciesTests` (an expectation that depends on this machine's
-`~/.gradle` cache) and `MermaidEveryKindLiveTests` (22 diagrams that the live
-renderer did not draw here). Both are in `Tests/AbydosKitTests` against
-`AbydosKit`; the only thing this change adds there is one file nothing else
-references.
+**7.4** was run at the archive, exit codes read rather than output skimmed.
+`make warnings` exits 0 — no warning in this repository's Swift, and
+`DiffView.swift` at 1,010 lines is under the limit. `make test` exits 2: 3,908
+tests in 501 suites, 38 issues over six suites, every one of them a question
+about the machine rather than about this change —
+
+- `ExternalDependenciesTests`, on a version read out of this machine's Gradle
+  cache;
+- `MermaidEveryKindLiveTests`, diagrams the live renderer did not draw here;
+- `ContainerImageTests`, on a runtime that prefixes its output with a warning;
+- `ClaudeHookLiveTests`, whose badge is empty without a live session;
+- `CadovaExampleLiveTests`, on an examples checkout that has grown an
+  executable since the expectation was written;
+- `ShellPathTests`, on a login `PATH` carrying `~/.dotnet/tools` unexpanded.
+
+This change's own suites — `DiffTextSpanTests` and `DiffTextSpanCostTests` —
+both pass. It adds one file to `Tests/AbydosKitTests` and nothing else there
+references it, so none of the six is reachable from it. **The suite is red, and
+saying otherwise is what the exit code is read for.**
 
 The `--pull-requests` steps for all of it are wired and documented (`text:`,
 `text-left:`, `word:`, `row-text:`, `all`, `copied`, `copy`, `diff-menu`,
