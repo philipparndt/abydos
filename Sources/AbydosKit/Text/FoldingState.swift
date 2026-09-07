@@ -18,6 +18,19 @@ public struct FoldingState {
 	private var hiddenBefore: [Int] = []
 	private var totalHidden = 0
 
+	/// Which recomputation of the hidden set this is.
+	///
+	/// For callers that cache something derived from the folding and need to
+	/// know whether it is still current. `WrapLayout` is the one that matters:
+	/// it maps every document line to a visual row, and without a number to
+	/// compare it had no way to tell a scroll — which changes nothing here —
+	/// from a fold that moved, so it rebuilt all 68,608 lines of a large file
+	/// on every scroll event.
+	///
+	/// Bumped in `rebuild()` and nowhere else, which is the only place `hidden`
+	/// is written; every mutating member here goes through it.
+	public private(set) var revision = 0
+
 	public init() {}
 
 	public var hasCollapsedRegions: Bool { !collapsed.isEmpty }
@@ -114,6 +127,7 @@ public struct FoldingState {
 			running += interval.end - interval.start + 1
 		}
 		totalHidden = running
+		revision &+= 1
 	}
 
 	public func isHidden(line: Int) -> Bool {

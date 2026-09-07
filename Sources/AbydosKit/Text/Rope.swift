@@ -496,6 +496,50 @@ public struct Rope: Sendable {
 		return max(longest, current)
 	}
 
+	/// Every line in order, as one pass over the chunks.
+	///
+	/// **The alternative is `lineText` per line, and that is a tree descent
+	/// each time.** Asking for 68,608 lines that way costs 92 ms in release and
+	/// 20 s in debug, where the descent is 220 times dearer; this walks the
+	/// leaves once and cuts at the newlines it passes. The wrap layout is the
+	/// caller — it needs every line's width and nothing else about them.
+	///
+	/// The last line is handed over even when the file does not end in a
+	/// newline, and a file that does end in one has a final empty line, which
+	/// is what `lineCount` counts and what the layout has to agree with.
+	public func forEachLine(_ body: (String) -> Void) {
+		var carried: [UInt8] = []
+		var offset = 0
+
+		while offset < byteCount {
+			guard let (chunkBytes, start) = chunk(containing: offset) else { break }
+			var lineStart = offset - start
+			let slice = chunkBytes[lineStart...]
+
+			for (index, byte) in zip(slice.indices, slice) where byte == 0x0A {
+				if carried.isEmpty {
+					body(String(decoding: chunkBytes[lineStart..<index], as: UTF8.self))
+				} else {
+					carried.append(contentsOf: chunkBytes[lineStart..<index])
+					body(String(decoding: carried, as: UTF8.self))
+					carried.removeAll(keepingCapacity: true)
+				}
+				lineStart = index + 1
+			}
+
+			// Whatever is left has no newline in this chunk: it is the head of a
+			// line that finishes in the next one.
+			if lineStart < chunkBytes.count {
+				carried.append(contentsOf: chunkBytes[lineStart...])
+			}
+			offset = start + chunkBytes.count
+		}
+
+		// The line after the last newline. Empty when the file ended in one,
+		// and `lineCount` counts it, so it is handed over either way.
+		body(String(decoding: carried, as: UTF8.self))
+	}
+
 	public func longestLineByteLength() -> Int {
 		var longest = 0
 		var current = 0

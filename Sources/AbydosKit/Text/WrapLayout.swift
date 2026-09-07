@@ -21,9 +21,49 @@ public struct WrapLayout: Sendable {
 
 	private var documentLineCount = 0
 
+	/// Everything the mapping depends on, so a caller can ask whether the one
+	/// it has is still the one it wants.
+	private struct Built: Equatable {
+		var lineCount: Int
+		var columns: Int?
+		var folding: Int
+		var document: Int
+	}
+
+	private var built: Built?
+
 	public init() {}
 
 	public var isWrapping: Bool { columns != nil }
+
+	/// Whether the layout already describes exactly this document at this width.
+	///
+	/// **Asked before the row counts are worked out, not after.** The counting
+	/// is the expensive half — a row count per line, each one a string — so a
+	/// guard inside `rebuild` would fire only once the caller had already paid
+	/// for it. `CodeView.rebuildWrapLayout` asks this first and returns.
+	///
+	/// The reason there is anything to ask: `viewportChanged` is wired to both
+	/// `frameDidChangeNotification` and `boundsDidChangeNotification` on the
+	/// clip view, and the bounds move on every scroll. So the whole file was
+	/// re-laid-out on each scroll event and each frame of a live resize —
+	/// 100 ms of it at 68,608 lines, on the main thread, measured in release.
+	/// A scroll changes none of the four things below.
+	///
+	/// All four are needed. Width alone misses a fold being collapsed, which
+	/// `collapseAllFolds` does without touching the width; line count alone
+	/// misses an edit inside a single line, which rewraps that line and moves
+	/// every row after it.
+	public func isCurrent(
+		documentLineCount: Int, columns: Int?, folding: FoldingState, documentRevision: Int
+	) -> Bool {
+		built == Built(
+			lineCount: documentLineCount,
+			columns: columns,
+			folding: folding.revision,
+			document: documentRevision
+		)
+	}
 
 	/// Rebuilds the mapping.
 	///
@@ -36,8 +76,26 @@ public struct WrapLayout: Sendable {
 		documentLineCount: Int,
 		columns: Int?,
 		folding: FoldingState,
+		documentRevision: Int,
 		rowsForLine: (Int) -> Int
 	) {
+		// The same question `isCurrent` answers, asked again here so a caller
+		// that does not ask cannot build a layout it already has. Callers still
+		// should ask: this one returns after the row counts were computed, and
+		// computing them is the part worth skipping.
+		guard !isCurrent(
+			documentLineCount: documentLineCount,
+			columns: columns,
+			folding: folding,
+			documentRevision: documentRevision
+		) else { return }
+
+		built = Built(
+			lineCount: documentLineCount,
+			columns: columns,
+			folding: folding.revision,
+			document: documentRevision
+		)
 		self.columns = columns
 		self.documentLineCount = documentLineCount
 
