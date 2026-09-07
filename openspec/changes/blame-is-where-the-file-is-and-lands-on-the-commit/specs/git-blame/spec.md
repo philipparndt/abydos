@@ -20,7 +20,10 @@ whoever last committed there.
 Blame SHALL be reachable from the file's context menu in the project tree,
 from the tab's menu, and from the palette by name, as well as from the
 editor's gutter menu and ⌥⌘B. From the tree and the tab, *Blame* SHALL open
-the file if it is not open and turn the column on.
+the file if it is not open and turn the column on. A right-click anywhere
+in the gutter — the blame column, the numbers, the blank beside them — SHALL
+offer *Show Blame* or *Hide Blame*; on a breakpoint's marker the
+breakpoint's own menu wins.
 
 A colleague could not find it: the tree and the tab are where a question
 about a file is asked, and both IDEs he knows put blame there.
@@ -31,6 +34,11 @@ about a file is asked, and both IDEs he knows put blame there.
 - **WHEN** *Blame* is chosen on its row
 - **THEN** the file opens, pinned, with the blame column on
 
+#### Scenario: a right-click on the numbers
+
+- **WHEN** a line number is right-clicked, with no breakpoint on the line
+- **THEN** the gutter's menu offers Show Blame or Hide Blame
+
 #### Scenario: from the palette
 
 - **WHEN** `blame` is typed into the palette
@@ -40,14 +48,35 @@ about a file is asked, and both IDEs he knows put blame there.
 
 Clicking a blame entry SHALL open the log page scoped to the file, at that
 commit, with the commit's row selected, so its message and its diff of the
-file are on screen. Clicking an uncommitted line SHALL say it is not
-committed yet and go nowhere.
+file are on screen. The scope SHALL be the path the line had in that commit,
+which blame names per line: a file moved since has no history under today's
+path back then, and the page came up empty. Clicking an uncommitted line
+SHALL say it is not committed yet and go nowhere.
+
+The pointer over an entry SHALL light the run of lines the entry stands
+for and show the pointing hand, and resting on it SHALL show a tip with the
+commit's summary, author, date and hash and the words that a click opens
+the commit in the log — a page opening is more than a click on a gutter
+usually does, and is announced before it happens.
 
 #### Scenario: a click
 
 - **GIVEN** the blame column on
 - **WHEN** an entry with a commit is clicked
 - **THEN** the log page shows that commit's row selected, scoped to the file
+
+#### Scenario: a file moved since the commit
+
+- **GIVEN** a line whose commit wrote the file under another path
+- **WHEN** its entry is clicked
+- **THEN** the log page is scoped to that path and shows the commit
+
+#### Scenario: resting on an entry
+
+- **GIVEN** the blame column on
+- **WHEN** the pointer rests on an entry
+- **THEN** its commit's lines are lit and a tip names the commit and says a
+  click opens it in the log
 
 #### Scenario: an uncommitted line
 

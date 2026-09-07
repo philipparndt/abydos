@@ -13,17 +13,22 @@ public enum GitBlame {
 		public let author: String
 		public let date: Date
 		public let summary: String
+		/// The path the line had in that commit, relative to the root — the
+		/// file may have been moved since, and a log of today's path at that
+		/// commit is empty. Empty where blame did not say.
+		public let path: String
 
 		/// Written but not committed: git says so with a commit of all zeroes.
 		public var isUncommitted: Bool { commit.allSatisfy { $0 == "0" } }
 
 		public var shortCommit: String { String(commit.prefix(8)) }
 
-		public init(commit: String, author: String, date: Date, summary: String) {
+		public init(commit: String, author: String, date: Date, summary: String, path: String = "") {
 			self.commit = commit
 			self.author = author
 			self.date = date
 			self.summary = summary
+			self.path = path
 		}
 
 		/// What the column shows: a name and how long ago, kept short because
@@ -104,6 +109,7 @@ public enum GitBlame {
 		var commit = ""
 		var author = ""
 		var summary = ""
+		var path = ""
 		var timestamp: TimeInterval = 0
 
 		for raw in output.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -114,11 +120,13 @@ public enum GitBlame {
 					commit: commit,
 					author: author,
 					date: Date(timeIntervalSince1970: timestamp),
-					summary: summary
+					summary: summary,
+					path: path
 				))
 				commit = ""
 				author = ""
 				summary = ""
+				path = ""
 				timestamp = 0
 				continue
 			}
@@ -130,6 +138,7 @@ public enum GitBlame {
 			switch keyword {
 			case "author": author = value
 			case "summary": summary = value
+			case "filename": path = value
 			case "author-time": timestamp = TimeInterval(value) ?? 0
 			default:
 				// A header line: `<sha> <original> <final> [count]`, which is

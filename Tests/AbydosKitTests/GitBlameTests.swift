@@ -48,6 +48,7 @@ struct GitBlameTests {
 		#expect(lines.first?.summary == "the first line")
 		#expect(lines.first?.commit.hasPrefix("3fa1b2c4") == true)
 		#expect(lines.first?.date == Date(timeIntervalSince1970: 1_750_000_000))
+		#expect(lines.first?.path == "main.swift")
 	}
 
 	/// The line being typed right now belongs to nobody yet, and saying it

@@ -25,6 +25,13 @@ extension MainWindowController {
 			return
 		}
 		sidebar.showLogPage(scopedTo: entry.commit)
+		// Scoped to the path the line had *in that commit*: a file moved since
+		// — an archived change, a renamed module — has no history under
+		// today's path back then, and the page came up empty.
+		if !entry.path.isEmpty {
+			sidebar.logPage?.setScope(path: entry.path)
+			return
+		}
 		let base = FilePath.canonical(root)
 		let path = FilePath.canonical(file)
 		if path.hasPrefix(base + "/") {

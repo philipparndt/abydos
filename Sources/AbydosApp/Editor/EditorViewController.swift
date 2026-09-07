@@ -4114,6 +4114,11 @@ final class EditorViewController: NSViewController {
 				print("EDITOR-MENU gutter: \(codeView.contextMenuReportForTesting(atGutter: true))")
 			case "text":
 				print("EDITOR-MENU text: \(codeView.contextMenuReportForTesting(atGutter: false))")
+			case let step where step.hasPrefix("gutter-right:"):
+				// A right-click at the gutter's left edge on a line, through
+				// the same decision the real one takes.
+				let line = Int(step.dropFirst("gutter-right:".count)) ?? 1
+				print("EDITOR-MENU gutter-right \(line): \(codeView.gutterRightClickReportForTesting(line: line - 1))")
 			case "blame":
 				toggleBlame()
 			case let step where step.hasPrefix("blame-click:"):
@@ -4125,6 +4130,10 @@ final class EditorViewController: NSViewController {
 				} else {
 					print("EDITOR-MENU blame-click \(line): no entry")
 				}
+			case let step where step.hasPrefix("blame-hover:"):
+				// The pointer on a line's entry, for the lit run and the tip's words.
+				let line = Int(step.dropFirst("blame-hover:".count)) ?? 1
+				print("EDITOR-MENU blame-hover \(line): \(codeView.hoverBlameForTesting(line: line - 1))")
 			case "blame-report":
 				print("EDITOR-MENU blame: visible=\(codeView.isBlameVisible) authors=\(codeView.blameEntriesForTesting.map(\.author).joined(separator: ","))")
 			default:

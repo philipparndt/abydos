@@ -456,6 +456,9 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	/// with what is on screen for everything above the edit.
 	private var blame: [GitBlame.Line] = []
 	private(set) var isBlameVisible = false
+	/// The line whose entry the pointer is over, lit with the rest of its
+	/// commit's run, since the run is what the one label stands for.
+	private var hoveredBlameLine: Int?
 	/// The width of the blame column, in characters.
 	private static let blameColumns = 18
 
@@ -1615,6 +1618,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 			at: hoverPoint,
 			commandHeld: event.modifierFlags.contains(.command)
 		)
+		updateBlameHover(at: hoverPoint)
 
 		guard hasDiagnostics, let document else {
 			if toolTip != nil { toolTip = nil }
@@ -1653,6 +1657,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		super.mouseExited(with: event)
 		toolTip = nil
 		updateNavigableWord(at: nil, commandHeld: false)
+		updateBlameHover(at: nil)
 	}
 
 	/// Where the matches on one line fall, split by the depth each is painted at.
@@ -1842,7 +1847,10 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	func setBlameVisible(_ visible: Bool) {
 		guard visible != isBlameVisible else { return }
 		isBlameVisible = visible
-		if !visible { blame = [] }
+		if !visible {
+			blame = []
+			updateBlameHover(at: nil)
+		}
 		updateFrameSize()
 		needsDisplay = true
 	}
@@ -1869,6 +1877,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		guard isBlameVisible, !blame.isEmpty else { return }
 
 		let width = blameWidth
+		drawBlameHover(rows: rows, scrollX: scrollX, width: width)
 		for visual in rows {
 			let docLine = documentLine(forVisualRow: visual)
 			guard docLine < blame.count else { break }
@@ -1905,6 +1914,88 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		).fill()
 	}
 
+	/// The lit run under the pointer: one rounded fill over every row of the
+	/// commit's contiguous lines, so what will be clicked is what is lit.
+	private func drawBlameHover(rows: Range<Int>, scrollX: CGFloat, width: CGFloat) {
+		guard let hovered = hoveredBlameLine, let run = blameRun(containing: hovered) else { return }
+		var top: CGFloat?, bottom: CGFloat?
+		for visual in rows {
+			let docLine = documentLine(forVisualRow: visual)
+			guard docLine < blame.count else { break }
+			guard run.contains(docLine) else { continue }
+			let y = yPosition(forVisualLine: visual)
+			top = min(top ?? y, y)
+			bottom = max(bottom ?? y + lineHeight, y + lineHeight)
+		}
+		guard let top, let bottom else { return }
+		Theme.current.gutterText.withAlphaComponent(0.14).setFill()
+		NSBezierPath(
+			roundedRect: NSRect(x: scrollX + 2, y: top + 1, width: width - 5, height: bottom - top - 2),
+			xRadius: 4, yRadius: 4
+		).fill()
+	}
+
+	/// The contiguous lines sharing a line's commit — what one label stands
+	/// for, and what a click on any of them goes to.
+	private func blameRun(containing line: Int) -> ClosedRange<Int>? {
+		guard blame.indices.contains(line) else { return nil }
+		let commit = blame[line].commit
+		var first = line, last = line
+		while first > 0, blame[first - 1].commit == commit { first -= 1 }
+		while last + 1 < blame.count, blame[last + 1].commit == commit { last += 1 }
+		return first...last
+	}
+
+	/// The pointer over the column, or not: the run under it lights, the
+	/// pointing hand says it can be clicked, and after a rest the tip says
+	/// where the click goes — the log page is a bigger thing than a click on
+	/// a gutter usually does, so it is announced before it happens.
+	private func updateBlameHover(at point: NSPoint?) {
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		var line: Int?
+		if let point, isBlameVisible, let document, point.x < scrollX + blameWidth {
+			let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
+			let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
+			if blame.indices.contains(docLine) { line = docLine }
+		}
+		guard line != hoveredBlameLine else { return }
+		hoveredBlameLine = line
+		needsDisplay = true
+		guard let line, let tip = blameTip(forLine: line) else {
+			StyledTip.shared.hide()
+			if !isOverInlineValue { NSCursor.iBeam.set() }
+			return
+		}
+		NSCursor.pointingHand.set()
+		let visual = firstVisualRow(forDocumentLine: line)
+		let row = NSRect(x: scrollX, y: yPosition(forVisualLine: visual), width: blameWidth, height: lineHeight)
+		StyledTip.shared.show(tip, from: row, of: self)
+	}
+
+	/// What resting on an entry says: the commit, and that a click goes to it.
+	func blameTip(forLine line: Int) -> StyledTip.Tip? {
+		guard let entry = blameEntry(forLine: line) else { return nil }
+		if entry.isUncommitted {
+			return StyledTip.Tip(title: "Not committed yet", detail: "This line has no commit to go to.")
+		}
+		let when = DateFormatter.localizedString(from: entry.date, dateStyle: .medium, timeStyle: .short)
+		return StyledTip.Tip(
+			title: entry.summary.isEmpty ? entry.shortCommit : entry.summary,
+			detail: "\(entry.author) · \(when) · \(entry.shortCommit). "
+				+ "Click to open the commit in the log, scoped to this file."
+		)
+	}
+
+	/// The pointer put on a line's entry, and what that lit and said.
+	func hoverBlameForTesting(line: Int) -> String {
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		let visual = firstVisualRow(forDocumentLine: line)
+		updateBlameHover(at: NSPoint(x: scrollX + 4, y: yPosition(forVisualLine: visual) + lineHeight / 2))
+		guard let hovered = hoveredBlameLine, let run = blameRun(containing: hovered) else { return "nothing lit" }
+		let tip = blameTip(forLine: hovered)?.reportForTesting ?? "no tip"
+		return "lit \(run.lowerBound + 1)–\(run.upperBound + 1) · \(tip)"
+	}
+
 	/// Every line's entry, for a driven run to read the authors off.
 	var blameEntriesForTesting: [GitBlame.Line] { blame }
 
@@ -1917,7 +2008,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	var onShowBlameDetail: ((GitBlame.Line) -> Void)?
 
 	private func showBlameDetail(forLine line: Int) {
-		guard let entry = blameEntry(forLine: line), !entry.isUncommitted else { return }
+		guard let entry = blameEntry(forLine: line) else { return }
 		onShowBlameDetail?(entry)
 	}
 
@@ -2897,11 +2988,8 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
 		// A right-click on a marker offers what can be done to it. It is where
 		// the breakpoint is, so it is where somebody aims to change it.
-		if point.x < scrollX + gutterWidth - Self.foldColumnWidth, let document {
-			let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
-			let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
-			guard let mark = breakpointLines[docLine] else { return }
-			showBreakpointMenu(for: docLine, mark: mark, event: event)
+		if let menu = gutterMenu(at: point, scrollX: scrollX, event: event) {
+			NSMenu.popUpContextMenu(menu, with: event, for: self)
 			return
 		}
 
@@ -2914,8 +3002,37 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		super.rightMouseDown(with: event)
 	}
 
+	/// What a right-click in the gutter opens, or nil past it: a breakpoint's
+	/// own menu on its marker, and everywhere else — the blame column, the
+	/// numbers, the blank left of them — the gutter's menu, with the caret
+	/// left where it is, since a right-click on a number is not a click on
+	/// text. It used to be nothing, and only the fold strip at the gutter's
+	/// edge reached the menu, which nobody could have known to aim for.
+	private func gutterMenu(at point: NSPoint, scrollX: CGFloat, event: NSEvent) -> NSMenu? {
+		guard point.x < scrollX + gutterWidth - Self.foldColumnWidth, let document else { return nil }
+		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
+		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
+		if let mark = breakpointLines[docLine] {
+			return breakpointMenu(for: docLine, mark: mark)
+		}
+		return menu(for: event)
+	}
+
+	/// What a right-click at a line's leftmost gutter pixel opens, by title.
+	func gutterRightClickReportForTesting(line docLine: Int) -> String {
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		let visual = firstVisualRow(forDocumentLine: docLine)
+		let point = NSPoint(x: scrollX + 2, y: yPosition(forVisualLine: visual) + lineHeight / 2)
+		guard let event = NSEvent.mouseEvent(
+			with: .rightMouseDown, location: convert(point, to: nil), modifierFlags: [],
+			timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil,
+			eventNumber: 0, clickCount: 1, pressure: 1
+		), let menu = gutterMenu(at: point, scrollX: scrollX, event: event) else { return "no menu" }
+		return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }.joined(separator: " · ")
+	}
+
 	/// What can be done to the breakpoint that was right-clicked.
-	private func showBreakpointMenu(for docLine: Int, mark: BreakpointMark, event: NSEvent) {
+	private func breakpointMenu(for docLine: Int, mark: BreakpointMark) -> NSMenu {
 		let menu = NSMenu()
 		func add(_ title: String, _ action: @escaping () -> Void) {
 			let item = NSMenuItem(title: title, action: #selector(runBlock(_:)), keyEquivalent: "")
@@ -2936,8 +3053,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		}
 		menu.addItem(.separator())
 		add("Delete Breakpoint") { [weak self] in self?.onDeleteBreakpoint?(docLine) }
-
-		NSMenu.popUpContextMenu(menu, with: event, for: self)
+		return menu
 	}
 
 	/// A closure a menu item can carry, since `NSMenuItem` takes a selector.

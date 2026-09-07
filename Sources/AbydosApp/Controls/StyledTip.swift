@@ -159,9 +159,26 @@ private final class TipView: NSView {
 	private var keyFont: NSFont { Theme.current.uiFont(10, weight: .medium) }
 
 	private func title(_ tip: StyledTip.Tip) -> NSAttributedString {
-		NSAttributedString(string: tip.title, attributes: [
+		// Wrapped like the body: a commit summary is a title here, and one
+		// that ran past the edge was simply cut.
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byWordWrapping
+		return NSAttributedString(string: tip.title, attributes: [
 			.font: titleFont, .foregroundColor: Theme.current.sidebarText,
+			.paragraphStyle: paragraph,
 		])
+	}
+
+	/// The room the title has beside its cap, and the height it takes in it.
+	private func titleBounds(_ tip: StyledTip.Tip) -> NSRect {
+		var room = widest - inset * 2
+		if let shortcut = tip.shortcut {
+			room -= Theme.current.scaled(10) + capSize(for: shortcut).width
+		}
+		return title(tip).boundingRect(
+			with: NSSize(width: room, height: .greatestFiniteMagnitude),
+			options: [.usesLineFragmentOrigin, .usesFontLeading]
+		)
 	}
 
 	private func detail(_ text: String) -> NSAttributedString {
@@ -191,9 +208,9 @@ private final class TipView: NSView {
 	var wantedSize: NSSize {
 		guard let tip else { return .zero }
 		let room = widest - inset * 2
-		let titled = title(tip)
-		var width = ceil(titled.size().width)
-		var height = ceil(titled.size().height)
+		let titled = titleBounds(tip)
+		var width = ceil(titled.width)
+		var height = ceil(titled.height)
 
 		if let shortcut = tip.shortcut {
 			// The cap, beside the title: a key is a thing rather than a word,
@@ -241,14 +258,15 @@ private final class TipView: NSView {
 		shape.stroke()
 
 		let titled = title(tip)
-		let titleSize = titled.size()
-		titled.draw(at: NSPoint(x: inset, y: inset))
+		let titleSize = titleBounds(tip).size
+		titled.draw(in: NSRect(x: inset, y: inset, width: ceil(titleSize.width), height: ceil(titleSize.height)))
 
 		if let shortcut = tip.shortcut {
 			let size = capSize(for: shortcut)
 			let cap = NSRect(
 				x: bounds.maxX - inset - size.width,
-				y: inset + (titleSize.height - size.height) / 2,
+				// On the title's first line, where the title has more than one.
+				y: inset + (min(titleSize.height, ceil(titleFont.ascender - titleFont.descender)) - size.height) / 2,
 				width: size.width, height: size.height
 			)
 			let capShape = NSBezierPath(
