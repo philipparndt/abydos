@@ -14,8 +14,39 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		NSApp.orderFrontStandardAboutPanel(options: [
 			.applicationVersion: Self.buildDescription
 				.replacingOccurrences(of: "Abydos ", with: ""),
+			.credits: Self.aboutCredits,
 		])
 		NSApp.activate(ignoringOtherApps: true)
+	}
+
+	/// Where the documentation is served from.
+	///
+	/// Its own repository and its own Pages site, for the reason the `README`
+	/// gives, so it is spelled out rather than derived from anything in the
+	/// bundle. **Lower case**: Pages paths are case-sensitive and the
+	/// capitalised spelling answers 404.
+	static let documentationURL = "https://philipparndt.github.io/abydos-docs/"
+
+	/// The documentation, as something clickable under the version.
+	///
+	/// `.credits` rather than a panel of this app's own: the standard one
+	/// already answers the menu item and carries the icon and the version, and
+	/// it renders an attributed string — so a `.link` in it opens the browser
+	/// with nothing here to handle the click. There is no `Credits.rtf` in the
+	/// bundle, so this displaces nothing.
+	static var aboutCredits: NSAttributedString {
+		let centred = NSMutableParagraphStyle()
+		centred.alignment = .center
+
+		var attributes: [NSAttributedString.Key: Any] = [
+			.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+			.paragraphStyle: centred,
+		]
+		// Not force-unwrapped. `URL(string:)` is optional, and the obvious `!`
+		// would turn a typo in the literal above into a crash on every ⌘? —
+		// text nobody can click is the better of the two failures.
+		if let url = URL(string: Self.documentationURL) { attributes[.link] = url }
+		return NSAttributedString(string: "Documentation", attributes: attributes)
 	}
 
 	/// Which build this is: the version, the commit count, and the commit.
@@ -2683,6 +2714,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			fflush(stdout)
 		}
 
+		// Beside `--settings`, and for the same reason: a panel nothing can open
+		// from a script is a panel no run can photograph, and what the About
+		// panel says — the version, the build, the documentation link — is
+		// exactly the sort of claim worth a screenshot.
+		if options.openAbout {
+			showAbout(nil)
+		}
+
 		if options.openSettings {
 			controller?.settingsSectionForTesting = options.settingsSection
 			controller?.settingsFoldForTesting = options.settingsFold
@@ -2769,24 +2808,47 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			scheduleScreenshot(
 				path: path,
 				delay: options.screenshotDelay,
-				controller: controller,
+				controller: controller
+			) { [weak controller] in
 				// The list is a window of its own, so it is nowhere in the main
 				// window's frame. Photographed directly when it is the subject.
-				window: options.runningTools ? RunningToolsWindowController.shared.window : nil
-			)
+				if options.runningTools { return RunningToolsWindowController.shared.window }
+
+				// **The About panel is AppKit's own window** — nothing here
+				// holds a reference to one — so it is found as the frontmost
+				// window that is not the project's. Asked at capture time
+				// rather than when the run was set up, because at that point it
+				// has not been opened yet. `scheduleScreenshot` prints the
+				// title it photographed, which is what says it found the
+				// right one.
+				// **`NSApp.windows`, not `orderedWindows`.** The panel is an
+				// `NSPanel` with no title, and the ordered list does not carry
+				// it — asking that way found nothing and the capture silently
+				// photographed the project window instead, which is the same
+				// afternoon-losing failure the "captured …" line above exists
+				// to catch. It caught this one.
+				if options.openAbout {
+					return NSApp.windows.first { $0.isVisible && $0 !== controller?.window }
+				}
+				return nil
+			}
 		}
 	}
 
 	/// Captures the window after async work (git status, parsing, folds) settles,
 	/// then exits with a status reflecting whether the file was written.
+	/// - Parameter subject: which window to photograph, asked for at capture
+	///   time rather than when the run was set up. A panel the run opens for
+	///   itself does not exist yet at that point, and one AppKit owns — the
+	///   About panel — is never held here at all.
 	private func scheduleScreenshot(
 		path: String,
 		delay: TimeInterval,
 		controller: MainWindowController?,
-		window explicitWindow: NSWindow? = nil
+		subject: @escaping () -> NSWindow? = { nil }
 	) {
 		DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-			guard let window = explicitWindow ?? controller?.window ?? NSApp.windows.first else {
+			guard let window = subject() ?? controller?.window ?? NSApp.windows.first else {
 				FileHandle.standardError.write(Data("no window to capture\n".utf8))
 				exit(2)
 			}

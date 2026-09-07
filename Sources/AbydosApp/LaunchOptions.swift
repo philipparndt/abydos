@@ -49,6 +49,8 @@ struct LaunchOptions {
 	var markdownPreview = false
 	/// Open the Settings window, and capture it instead of the project window.
 	var openSettings = false
+	/// Open the About panel before capture, so what it says can be photographed.
+	var openAbout = false
 	/// UI zoom applied before capture.
 	var zoom: Double?
 	/// Open the terminal panel before capture.
@@ -1046,6 +1048,7 @@ struct LaunchOptions {
 			case "--settings-fold": options.settingsFold = next()
 			case "--settings-keys": options.settingsKeys = next()
 			case "--settings":   options.openSettings = true
+			case "--about":      options.openAbout = true
 			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			case "--terminal":   options.openTerminal = true
 			case "--run":        if let line = next() { options.terminalInput.append(line) }
