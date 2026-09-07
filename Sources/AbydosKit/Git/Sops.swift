@@ -24,6 +24,32 @@ public enum Sops {
 
 	public static var isAvailable: Bool { locate() != nil }
 
+	/// The environment to run `sops` in.
+	///
+	/// Finding `sops` is only half of it: for a PGP recipient `sops` is a front
+	/// end for `gpg`, and it shells out to the one on its `PATH`. An app
+	/// launched from the Dock has `/usr/bin:/bin` and the two sbins, and no
+	/// Homebrew — so `sops` starts, reads the file, and then cannot run `gpg`.
+	///
+	/// What it says then is not that. The exec failure leaves `gpg`'s stderr
+	/// empty, so the binary half of the message ends at the colon —
+	/// "GnuPG binary error: failed to decrypt sops data key with pgp:" — and
+	/// the half that does carry text comes from the Go OpenPGP fallback, which
+	/// reads the *legacy* keyring: "could not load secring: open
+	/// ~/.gnupg/pubring.gpg: no such file or directory". Under GnuPG 2.4 and
+	/// later with `use-keyboxd`, that file does not exist on purpose — public
+	/// keys live in `public-keys.d` behind `keyboxd`. So the whole report reads
+	/// as a missing or broken key, and the key is fine; the same `sops -d`
+	/// typed into a terminal pane beside it succeeds.
+	///
+	/// The same directories `sops` itself was found in, appended rather than
+	/// prepended: a `PATH` somebody set deliberately still chooses the tool.
+	public static var toolEnvironment: [String: String] {
+		var environment = ProcessInfo.processInfo.environment
+		environment["PATH"] = Executables.searchPaths.joined(separator: ":")
+		return environment
+	}
+
 	/// `sops --decrypt <file>`: the plaintext on stdout.
 	public static func decryptArguments(for file: URL) -> [String] {
 		["--decrypt", file.path]
@@ -103,11 +129,13 @@ public enum Sops {
 		process.executableURL = URL(fileURLWithPath: tool)
 		process.arguments = arguments
 		process.currentDirectoryURL = directory
-		// The process's own environment: `sops` finds an age key where it always
-		// does on this platform — `~/Library/Application Support/sops/age/keys.txt`
-		// — and a `SOPS_AGE_KEY_FILE` set in a shell profile is not seen by a
-		// GUI app, which is said in the notes rather than worked around here.
-		process.environment = ProcessInfo.processInfo.environment
+		// The process's own environment but for `PATH`, which has to carry the
+		// directories `gpg` lives in — see `toolEnvironment`. `sops` finds an
+		// age key where it always does on this platform —
+		// `~/Library/Application Support/sops/age/keys.txt` — and a
+		// `SOPS_AGE_KEY_FILE` set in a shell profile is not seen by a GUI app,
+		// which is said in the notes rather than worked around here.
+		process.environment = toolEnvironment
 
 		let out = Pipe(), err = Pipe(), stdin = Pipe()
 		process.standardOutput = out

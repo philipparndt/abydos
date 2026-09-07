@@ -78,6 +78,35 @@ struct SopsFileTests {
 		#expect(result.exitCode == -1)
 		#expect(result.stderr == "sops is not installed")
 	}
+
+	/// For a PGP recipient `sops` is a front end for `gpg`, and a Dock-launched
+	/// app's four directories hold no `gpg`. The failure that comes of it names
+	/// a keyring rather than a `PATH`, so the bound is on the `PATH` itself.
+	@Test func sopsIsGivenAPathThatCanHoldGpg() {
+		let directories = (Sops.toolEnvironment["PATH"] ?? "")
+			.split(separator: ":").map(String.init)
+
+		#expect(directories.contains("/opt/homebrew/bin"))
+		#expect(directories.contains("/usr/local/bin"))
+	}
+
+	/// A `PATH` somebody set deliberately still chooses the `gpg`: the
+	/// directories added here go after it, not in front of it.
+	@Test func sopsKeepsTheInheritedPathFirst() {
+		let inherited = ProcessInfo.processInfo.environment["PATH"]?
+			.split(separator: ":").map(String.init) ?? []
+		let resolved = (Sops.toolEnvironment["PATH"] ?? "")
+			.split(separator: ":").map(String.init)
+
+		guard let first = inherited.first else { return }
+		#expect(resolved.first == first)
+	}
+
+	/// Everything else is carried across untouched. `sops` reads an age key out
+	/// of `HOME`, and a run with only a `PATH` is a run with no `HOME`.
+	@Test func sopsCarriesTheRestOfTheEnvironment() {
+		#expect(Sops.toolEnvironment["HOME"] == ProcessInfo.processInfo.environment["HOME"])
+	}
 }
 
 /// A decrypted buffer parked while its project is not in the window.
