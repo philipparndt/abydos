@@ -941,6 +941,10 @@ final class EditorAreaController: NSViewController {
 
 	/// Opens the file as a tab of its own and turns that tab into the hex
 	/// editor, whatever the file would otherwise have opened as.
+	func openArchiveEntry(at url: URL, origin: ArchiveOrigin, focusEditor: Bool) {
+		activeGroup.openArchiveEntry(at: url, origin: origin, focusEditor: focusEditor)
+	}
+
 	func openAsHex(fileURL: URL) {
 		activeGroup.open(fileURL: fileURL, focusEditor: true)
 		activeGroup.openActiveAsHex()

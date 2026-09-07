@@ -11,6 +11,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// A file should open as bytes, whatever it is: the tree's door into the
 	/// hex editor, beside the notice's button and the tab's menu.
 	var onOpenAsHex: ((URL) -> Void)?
+	/// An entry inside a shown archive should open, from the file the cache
+	/// holds it in, read only and named for where it came from; the flag says
+	/// whether the tab is pinned.
+	var onOpenArchiveEntry: ((URL, ArchiveOrigin, Bool) -> Void)?
+	/// The archives somebody asked to see into. See `+Archives`.
+	let archives = ArchiveSupport()
 	/// Asked to open a terminal in the given directory.
 	var onOpenTerminal: ((URL) -> Void)?
 	/// Asked to work on part of the project, or on the whole of it again.
@@ -48,8 +54,8 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// showing anything is what made the tree look broken.
 	private var isSelectingSilently = false
 
-	private var project: Project?
-	private var rootNode: FileNode?
+	var project: Project?
+	var rootNode: FileNode?
 	/// What the project depends on, as the second root beside the tree.
 	///
 	/// Nil for a project of no recognised kind, and then there is no section at
@@ -85,7 +91,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// part of a repository the run button belongs to.
 	private(set) var subprojectRoot: URL?
 	private var watcher: FileSystemWatcher?
-	private var outlineView: NavigatorOutlineView!
+	var outlineView: NavigatorOutlineView!
 	private var headerView: NavigatorHeaderView!
 
 	/// Puts the pointer on one of the header's three buttons and says whether
@@ -1120,6 +1126,9 @@ final class ProjectNavigatorViewController: NSViewController {
 				paths.insert("session:" + node.identity)
 			}
 		}
+		// And the archives somebody opened up, with the directories open
+		// inside them — see `+Archives`.
+		paths.formUnion(archiveFoldKeys())
 		return paths
 	}
 
@@ -1156,7 +1165,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		set {
 			guard let root = project?.root.standardizedFileURL.path else { return }
 			restore(expandedPaths: Set(newValue.opened.map { key in
-				key.hasPrefix("dep:") || key.hasPrefix("session:")
+				key.hasPrefix("dep:") || key.hasPrefix("session:") || key.hasPrefix("archive:")
 					? key
 					: root + "/" + key
 			}))
@@ -1175,6 +1184,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		// never reached them either, because nothing here walked them at all.
 		if let dependencies { expand(dependency: dependencies.root, matching: paths) }
 		if let sessions { expand(session: sessions, matching: paths) }
+		restoreArchives(matching: paths)
 	}
 
 	/// The same for the Claude Sessions root and its own rows, and then on into
@@ -1224,6 +1234,10 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	@objc private func rowDoubleClicked() {
 		let clicked = outlineView.item(atRow: outlineView.clickedRow)
+		if let archiveNode = clicked as? ArchiveNode {
+			if archiveNode.isExpandable { toggle(archiveNode) } else { openArchiveEntry(archiveNode, pinned: true) }
+			return
+		}
 		if let dependency = clicked as? DependencyNode {
 			toggle(dependency)
 			return
@@ -1376,6 +1390,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		// The same two the header offers, for anybody who looks for them here.
 		menu.addItem(item("Select Opened File", #selector(contextSelectOpenFile)))
 		menu.addItem(item("Collapse All", #selector(contextCollapseAll)))
+		installArchiveMenuItems(in: menu)
 		return menu
 	}
 
@@ -3034,6 +3049,12 @@ final class ProjectNavigatorViewController: NSViewController {
 			toggle(dependency)
 			return
 		}
+		if let archiveNode = outlineView.item(atRow: row) as? ArchiveNode {
+			// Return opens an entry and pins it, as it does a file; on a
+			// directory inside the archive it opens the row.
+			if archiveNode.isExpandable { toggle(archiveNode) } else { openArchiveEntry(archiveNode, pinned: focusEditor) }
+			return
+		}
 		guard let node = outlineView.item(atRow: row) as? FileNode else { return }
 
 		if node.isDirectory {
@@ -3292,10 +3313,11 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// The selection by the project-relative paths it is remembered by.
 	func selectedPathsForTesting() -> [String] {
-		selectedPaths().map { path in
+		let files = selectedPaths().map { path -> String in
 			guard let root = project?.root.path, path.hasPrefix(root) else { return path }
 			return String(path.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 		}
+		return files + (selectedArchivePathForTesting().map { [$0] } ?? [])
 	}
 
 	func rowsForTesting() -> [String] {
@@ -3684,6 +3706,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			// Up to three, and each is there only when it holds something.
 			return 1 + (dependencies == nil ? 0 : 1) + (sessions == nil ? 0 : 1)
 		}
+		if let count = archiveChildCount(of: item) { return count }
 		if let node = item as? SessionNode {
 			// A session row *is* a directory, the same as a package row: from
 			// here down the rows are ordinary files.
@@ -3735,6 +3758,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			if let dependencies { return index == 1 ? dependencies.root : sessions! }
 			return sessions!
 		}
+		if let child = archiveChild(of: item, at: index) { return child }
 		if let node = item as? SessionNode {
 			if let fileRoot = node.fileRoot { return rows(under: fileRoot)[index] }
 			return node.childNodes[index]
@@ -3752,6 +3776,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+		if let expandable = archiveIsExpandable(item) { return expandable }
 		if let node = item as? SessionNode { return node.isExpandable }
 		if let node = item as? DependencyNode { return node.isExpandable }
 		guard let node = item as? FileNode else { return false }
@@ -3765,6 +3790,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+		if let cell = archiveCell(for: item) { return cell }
 		if let node = item as? SessionNode {
 			let cell = NavigatorCellView()
 			cell.configure(session: node)
@@ -3824,6 +3850,11 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		guard outlineView.numberOfSelectedRows == 1 else { return }
 
 		let row = outlineView.selectedRow
+		if row >= 0, let archiveNode = outlineView.item(atRow: row) as? ArchiveNode {
+			// An entry shows provisionally, as a file does.
+			openArchiveEntry(archiveNode, pinned: false)
+			return
+		}
 		guard row >= 0, let node = outlineView.item(atRow: row) as? FileNode, !node.isDirectory else { return }
 		// The row for a file that does not exist yet opens nothing: it is a name
 		// being typed, not a file to show.
@@ -4048,6 +4079,10 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				item.isEnabled = node != nil
 			}
 		}
+		// Last, after the loop above has put every item back: the archive rows'
+		// own items, and *Show Contents* on an archive file. Inside an archive
+		// the menu is those items and nothing else.
+		_ = updateArchiveMenu(menu, fileNode: node)
 	}
 
 	/// Keeps what `menuNeedsUpdate` decided.

@@ -179,6 +179,9 @@ final class EditorViewController: NSViewController {
 			self.isPreview = isPreview
 		}
 
+		/// Where the file came from when it is an entry inside an archive,
+		/// opened from the cache: the tab says so and never writes.
+		var archiveOrigin: ArchiveOrigin?
 		/// The file as bytes, when the tab is a hex editor; its controller
 		/// owns the view and every task behind it. A tab has one of
 		/// `document` and `hex`, never both.
@@ -3653,6 +3656,17 @@ final class EditorViewController: NSViewController {
 		onStatusChanged?(self)
 	}
 
+	/// An entry inside an archive, from the file the cache holds it in: an
+	/// ordinary tab in every way but two — it is read only, and its grey half
+	/// names the archive rather than a directory.
+	func openArchiveEntry(at url: URL, origin: ArchiveOrigin, focusEditor: Bool) {
+		open(fileURL: url, focusEditor: focusEditor, preview: !focusEditor)
+		guard let tab = tabs.first(where: { $0.url.path == url.path }) else { return }
+		tab.archiveOrigin = origin
+		tab.document?.isReadOnly = true
+		refreshTabBar()
+	}
+
 	/// *Open as Hex* for the tab in front, whatever it holds.
 	func openActiveAsHex() {
 		guard let tab = activeTab else { return }
@@ -3795,9 +3809,9 @@ final class EditorViewController: NSViewController {
 				isPreview: tab.isPreview,
 				subtitle: tab.pageTitle != nil
 					? ""
-					: tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))),
+					: tab.archiveOrigin?.said ?? tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))),
 				pageSymbol: tab.pageSymbol,
-				isExternal: tab.pageTitle == nil && !scratch && !tab.isDiff && isOutsideProject(tab.url)
+				isExternal: tab.pageTitle == nil && !scratch && !tab.isDiff && tab.archiveOrigin == nil && isOutsideProject(tab.url)
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)
@@ -3948,6 +3962,17 @@ final class EditorViewController: NSViewController {
 
 	func save() {
 		guard let tab = activeTab else { return }
+		// An entry inside an archive is read only, and ⌘S is where somebody
+		// finds that out — so it says where the file is and how to get one
+		// that can be changed, rather than writing into the cache.
+		if let origin = tab.archiveOrigin {
+			Toast.post(
+				"\(tab.url.lastPathComponent) is inside \(origin.archive.lastPathComponent)",
+				detail: "Use Extract… on it in the project tree to make a file you can change.",
+				kind: .information
+			)
+			return
+		}
 		// A decrypted buffer is never written as it is: ⌘S sends it through the
 		// encrypt path — which runs `sops` over the file when something was
 		// edited into it, and only locks it back when nothing was — and the
@@ -4783,7 +4808,12 @@ final class EditorViewController: NSViewController {
 	/// What the tab bar shows, in order. A provisional tab is marked, because
 	/// "one tab for the whole list" is a claim about which kind of tab it is.
 	var tabTitlesForTesting: [String] {
-		tabs.map { ($0.pageTitle ?? $0.url.lastPathComponent) + ($0.isPreview ? "~" : "") }
+		tabs.map { tab in
+			(tab.pageTitle ?? tab.url.lastPathComponent) + (tab.isPreview ? "~" : "")
+				// An entry inside an archive says so, and that it is read only,
+				// which is the whole of what makes its tab different.
+				+ (tab.archiveOrigin.map { " [\($0.said)\(tab.document?.isReadOnly == true ? ", read only" : "")]" } ?? "")
+		}
 	}
 
 	/// Closes every tab, for swapping one project's editors for another's.

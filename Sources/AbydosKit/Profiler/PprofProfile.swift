@@ -137,58 +137,16 @@ public enum PprofDecoder {
 		data.count > 2 && data[data.startIndex] == 0x1F && data[data.startIndex + 1] == 0x8B
 	}
 
-	/// Inflates a gzip stream.
-	///
-	/// Apple's `COMPRESSION_ZLIB` is raw DEFLATE, not the zlib container and
-	/// not gzip, so the header has to be stepped over by hand — including the
-	/// optional filename and comment, which Go does not write but other
-	/// producers do.
+	/// `Gzip.inflate`, in this type's own failure vocabulary. The inflate
+	/// moved beside `Gzip.compress` when archives became its second caller.
 	static func gunzip(_ data: Data) throws -> Data {
-		let bytes = [UInt8](data)
-		guard bytes.count > 18, bytes[0] == 0x1F, bytes[1] == 0x8B, bytes[2] == 8 else {
+		do {
+			return try Gzip.inflate(data)
+		} catch Gzip.Failure.notGzipped {
 			throw Failure.notGzipped
+		} catch {
+			throw Failure.corrupt
 		}
-
-		let flags = bytes[3]
-		var start = 10
-		if flags & 0x04 != 0 {
-			// An extra field, whose own length comes first.
-			guard start + 2 <= bytes.count else { throw Failure.corrupt }
-			let extra = Int(bytes[start]) | Int(bytes[start + 1]) << 8
-			start += 2 + extra
-		}
-		for flag in [UInt8(0x08), UInt8(0x10)] where flags & flag != 0 {
-			// A NUL-terminated name or comment.
-			while start < bytes.count, bytes[start] != 0 { start += 1 }
-			start += 1
-		}
-		if flags & 0x02 != 0 { start += 2 }
-		guard start < bytes.count - 8 else { throw Failure.corrupt }
-
-		// The last four bytes of a gzip stream are the uncompressed size, which
-		// is exactly the buffer needed — with a floor, since it is taken modulo
-		// 2^32 and a profile can in principle exceed that.
-		let tail = bytes.count - 4
-		let declared = Int(bytes[tail]) | Int(bytes[tail + 1]) << 8
-			| Int(bytes[tail + 2]) << 16 | Int(bytes[tail + 3]) << 24
-		let capacity = max(declared, (bytes.count - start) * 8, 64 * 1024)
-
-		let compressed = [UInt8](bytes[start..<(bytes.count - 8)])
-		var output = Data(count: capacity)
-		let written = output.withUnsafeMutableBytes { destination -> Int in
-			compressed.withUnsafeBufferPointer { source in
-				compression_decode_buffer(
-					destination.bindMemory(to: UInt8.self).baseAddress!,
-					capacity,
-					source.baseAddress!,
-					compressed.count,
-					nil,
-					COMPRESSION_ZLIB
-				)
-			}
-		}
-		guard written > 0 else { throw Failure.corrupt }
-		return output.prefix(written)
 	}
 
 	// Field numbers from profile.proto.

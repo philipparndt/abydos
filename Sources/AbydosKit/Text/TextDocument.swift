@@ -18,6 +18,11 @@ public final class TextDocument {
 	public private(set) var rope: Rope
 	public private(set) var languageId: String?
 	public private(set) var isDirty = false
+	/// A document nobody may change: an entry inside an archive, opened from
+	/// the copy the cache holds. Every edit the view makes comes through
+	/// `replace(utf16Range:with:caretBefore:)`, and it declines them all
+	/// here rather than in each of the view's nine callers.
+	public var isReadOnly = false
 
 	/// Fold regions for the whole document. Recomputed after each parse settles.
 	public private(set) var folds: [FoldRange] = []
@@ -224,6 +229,7 @@ public final class TextDocument {
 	/// Replaces a UTF-16 range with `text`, the unit the view works in.
 	@discardableResult
 	public func replace(utf16Range: Range<Int>, with text: String, caretBefore: Int) -> Int {
+		guard !isReadOnly else { return caretBefore }
 		let startByte = rope.byteOffset(fromUTF16: utf16Range.lowerBound)
 		let endByte = rope.byteOffset(fromUTF16: utf16Range.upperBound)
 		let replaced = rope.bytes(in: startByte..<endByte)

@@ -3291,6 +3291,14 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	}
 
 	override func keyDown(with event: NSEvent) {
+		// A keystroke that would type into a read-only document says so out
+		// loud, once per key, rather than being swallowed in silence; the
+		// document itself declines the edit, this only makes the refusal heard.
+		if document?.isReadOnly == true, let typed = event.characters, !typed.isEmpty,
+		   !event.modifierFlags.contains(.command), typed.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7F }) {
+			NSSound.beep()
+			return
+		}
 		noteSecretsTouch()
 		// Routes through the input system so dead keys, IME, and the standard
 		// key bindings all behave as they do in a native text view.

@@ -394,6 +394,11 @@ extension MainWindowController {
 			// source file; one previewed by arrowing past it does not.
 			if focusEditor { DefaultEditor.considerAsking(about: url, in: self.window) }
 		}
+		navigator.onOpenArchiveEntry = { [weak self] url, origin, pinned in
+			guard let self else { return }
+			if pinned { self.leaveTerminalFullScreen() }
+			self.editor.openArchiveEntry(at: url, origin: origin, focusEditor: pinned)
+		}
 		navigator.onOpenAsHex = { [weak self] url in
 			guard let self else { return }
 			self.leaveTerminalFullScreen()

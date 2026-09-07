@@ -284,6 +284,18 @@ extension MainWindowController {
 			// about: ⌥⌘V is in no menu, so `handleKeyDown` is the only thing
 			// standing between the keystroke and the move.
 			case "alt-cmd-v": navigator.pressKeyForTesting(9, modifiers: [.command, .option])
+			case "show-contents":
+				print("TREE " + navigator.showContentsForTesting())
+				continue
+			case "hide-contents":
+				print("TREE " + navigator.hideContentsForTesting())
+				continue
+			case "archive-rows":
+				print("TREE archive rows:\n" + navigator.archiveRowsForTesting())
+				continue
+			case "extract":
+				print("TREE " + navigator.extractForTesting())
+				continue
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
 			// How far the text in front can be scrolled sideways. Here rather
