@@ -11,6 +11,8 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// A file should open as bytes, whatever it is: the tree's door into the
 	/// hex editor, beside the notice's button and the tab's menu.
 	var onOpenAsHex: ((URL) -> Void)?
+	/// A file row's *Blame*: open it and show who last touched each line.
+	var onBlame: ((URL) -> Void)?
 	/// An entry inside a shown archive should open, from the file the cache
 	/// holds it in, read only and named for where it came from; the flag says
 	/// whether the tab is pinned.
@@ -1303,6 +1305,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(.separator())
 		menu.addItem(item("Open", #selector(contextOpen)))
 		menu.addItem(item("Open Externally", #selector(contextOpenExternally)))
+		menu.addItem(item("Blame", #selector(contextBlame)))
 		menu.addItem(item("Open as Hex", #selector(contextOpenAsHex)))
 		// Space does this too. Written down here because a key with nothing
 		// naming it is a key nobody finds — and hidden per click, like the
@@ -1508,6 +1511,20 @@ final class ProjectNavigatorViewController: NSViewController {
 	@objc private func contextOpenExternally() {
 		guard let node = contextNode else { return }
 		NSWorkspace.shared.open(node.url)
+	}
+
+	@objc private func contextBlame() {
+		guard let node = contextNode, !node.isDirectory else { return }
+		onBlame?(node.url)
+	}
+
+	/// *Blame* on the selected file row, for the driver.
+	func blameSelectedForTesting() -> String {
+		guard let node = outlineView.item(atRow: outlineView.selectedRow) as? FileNode, !node.isDirectory else {
+			return "blame: no file row selected"
+		}
+		onBlame?(node.url)
+		return "blame: \(node.name)"
 	}
 
 	@objc private func contextOpenAsHex() {
@@ -4027,6 +4044,9 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			switch item.action {
 			case #selector(contextOpenExternally), #selector(contextOpenAsHex):
 				item.isHidden = node?.isDirectory ?? true
+			case #selector(contextBlame):
+				// A file's question, and only in a repository.
+				item.isHidden = (node?.isDirectory ?? true) || project?.git == nil
 			case #selector(contextQuickLook):
 				// Only where the system would actually render something. A
 				// menu item that opens a panel showing a large grey icon is an

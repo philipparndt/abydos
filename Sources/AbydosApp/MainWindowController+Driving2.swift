@@ -284,6 +284,9 @@ extension MainWindowController {
 			// about: ⌥⌘V is in no menu, so `handleKeyDown` is the only thing
 			// standing between the keystroke and the move.
 			case "alt-cmd-v": navigator.pressKeyForTesting(9, modifiers: [.command, .option])
+			case "blame":
+				print("TREE " + navigator.blameSelectedForTesting())
+				continue
 			case "show-contents":
 				print("TREE " + navigator.showContentsForTesting())
 				continue

@@ -96,3 +96,70 @@ struct GitBlameTests {
 		#expect(GitBlame.Line.shorten("Philipp Arndt", to: 8) == "P. Arndt")
 	}
 }
+
+
+/// What git is asked, over a repository made here: moved code keeps its
+/// author, and a formatting commit listed in the ignore file owns nothing.
+struct GitBlameArgumentsTests {
+	private func repository() throws -> URL {
+		let root = FileManager.default.temporaryDirectory.appendingPathComponent("blame-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		_ = GitRepository.runSync(["init", "-q", "-b", "main", "."], in: root)
+		_ = GitRepository.runSync(["config", "user.email", "a@example.org"], in: root)
+		_ = GitRepository.runSync(["config", "user.name", "Ada"], in: root)
+		return root
+	}
+
+	private func commit(_ message: String, as author: String, in root: URL) {
+		_ = GitRepository.runSync(["add", "-A"], in: root)
+		_ = GitRepository.runSync(
+			["-c", "user.name=\(author)", "-c", "user.email=\(author.lowercased())@example.org", "commit", "-q", "-m", message],
+			in: root
+		)
+	}
+
+	@Test func theArgumentsFollowMovesAndNameTheIgnoreFileOnlyWhenItIsThere() throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let file = root.appendingPathComponent("main.swift")
+		#expect(GitBlame.arguments(for: file, in: root) == ["blame", "--line-porcelain", "-M", "-C", "--", "main.swift"])
+		try "".write(to: root.appendingPathComponent(".git-blame-ignore-revs"), atomically: true, encoding: .utf8)
+		#expect(GitBlame.arguments(for: file, in: root) == [
+			"blame", "--line-porcelain", "-M", "-C", "--ignore-revs-file", ".git-blame-ignore-revs", "--", "main.swift",
+		])
+	}
+
+	@Test func aMovedBlockKeepsTheAuthorWhoWroteIt() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let file = root.appendingPathComponent("main.swift")
+		let block = (1...6).map { "let value\($0) = \($0) * \($0) + \($0)" }.joined(separator: "\n")
+		try ("import Foundation\n\n" + block + "\n\nprint(value1)\n").write(to: file, atomically: true, encoding: .utf8)
+		commit("the block", as: "Ada", in: root)
+		try ("import Foundation\n\nprint(value1)\n\n" + block + "\n").write(to: file, atomically: true, encoding: .utf8)
+		commit("moved the block down", as: "Grace", in: root)
+
+		let lines = await GitBlame.lines(for: file, in: root)
+		#expect(lines.count == 10)
+		// The block is now lines 5 to 10, and still Ada's.
+		#expect(lines[4...9].allSatisfy { $0.author == "Ada" }, "\(lines.map(\.author))")
+	}
+
+	@Test func aFormattingCommitInTheIgnoreFileOwnsNothing() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let file = root.appendingPathComponent("main.swift")
+		try "func a() {\nreturn 1\n}\n".write(to: file, atomically: true, encoding: .utf8)
+		commit("the function", as: "Ada", in: root)
+		try "func a() {\n\treturn 1\n}\n".write(to: file, atomically: true, encoding: .utf8)
+		commit("indented", as: "Formatter", in: root)
+		let formatting = GitRepository.runSync(["rev-parse", "HEAD"], in: root).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+
+		let without = await GitBlame.lines(for: file, in: root)
+		#expect(without[1].author == "Formatter")
+
+		try (formatting + "\n").write(to: root.appendingPathComponent(".git-blame-ignore-revs"), atomically: true, encoding: .utf8)
+		let with = await GitBlame.lines(for: file, in: root)
+		#expect(with[1].author == "Ada", "\(with.map(\.author))")
+	}
+}

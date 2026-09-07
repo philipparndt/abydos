@@ -456,6 +456,10 @@ final class EditorViewController: NSViewController {
 			guard let self, let tab = tabs[safe: index] else { return }
 			showHexEditor(for: tab)
 		}
+		tabBar.onBlame = { [weak self] index in
+			guard let self, let tab = tabs[safe: index] else { return }
+			onBlameRequested?(tab.url)
+		}
 		tabBar.onRevealInFinder = { [weak self] index in
 			guard let url = self?.tabs[safe: index]?.url else { return }
 			NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1521,16 +1525,21 @@ final class EditorViewController: NSViewController {
 		tab.cadova = CadovaModel.find(for: fileURL, stoppingAt: project?.root)
 		askWhatGitCanSee(of: tab)
 
-		// Clicking a name in the blame column says what that commit was.
-		codeView.onShowBlameDetail = { entry in
-			let when = DateFormatter.localizedString(
-				from: entry.date, dateStyle: .medium, timeStyle: .short
-			)
-			Toast.post(
-				entry.summary.isEmpty ? entry.shortCommit : entry.summary,
-				detail: "\(entry.shortCommit) · \(entry.author) · \(when)",
-				kind: .information
-			)
+		// Clicking a name in the blame column goes to that commit — the log
+		// page, scoped to this file — which is the answer to "what was this
+		// change" that a toast only named.
+		codeView.onShowBlameDetail = { [weak self, weak codeView] entry in
+			guard let self, let url = tabs.first(where: { $0.codeView === codeView })?.url,
+				  let onRevealCommit else {
+				let when = DateFormatter.localizedString(from: entry.date, dateStyle: .medium, timeStyle: .short)
+				Toast.post(
+					entry.summary.isEmpty ? entry.shortCommit : entry.summary,
+					detail: "\(entry.shortCommit) · \(entry.author) · \(when)",
+					kind: .information
+				)
+				return
+			}
+			onRevealCommit(entry, url)
 		}
 
 		codeView.onCaretMoved = { [weak self] line, column in
@@ -4072,12 +4081,34 @@ final class EditorViewController: NSViewController {
 	/// print the menu a right-click builds on each side of the boundary,
 	/// `blame` presses the toggle the gutter's entry presses.
 	func editorMenuForTesting(_ steps: String) {
-		guard let codeView = activeTab?.codeView else {
-			print("EDITOR-MENU: no editor")
-			fflush(stdout)
-			return
-		}
-		for step in steps.split(separator: ",").map(String.init) {
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			// `settle` waits, as the sops driver's does: blame arrives from git
+			// a moment after the toggle, and a report taken before it says nothing.
+			if step.hasPrefix("settle") {
+				let seconds = step.hasPrefix("settle:") ? Double(step.dropFirst("settle:".count)) ?? 1.5 : 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.editorMenuForTesting(rest)
+				}
+				return
+			}
+			// The two reports that need no editor come first: after a click on
+			// a blame entry the log page is the front tab, and that is what
+			// they are there to say.
+			if step == "pages" {
+				print("EDITOR-MENU pages: \(tabTitlesForTesting.joined(separator: ", "))")
+				continue
+			}
+			if step == "log-report" {
+				(view.window?.windowController as? MainWindowController)?.sidebarForTesting.logPageForTesting("report")
+				continue
+			}
+			guard let codeView = activeTab?.codeView else {
+				print("EDITOR-MENU: no editor for \(step)")
+				continue
+			}
 			switch step {
 			case "gutter":
 				print("EDITOR-MENU gutter: \(codeView.contextMenuReportForTesting(atGutter: true))")
@@ -4085,6 +4116,17 @@ final class EditorViewController: NSViewController {
 				print("EDITOR-MENU text: \(codeView.contextMenuReportForTesting(atGutter: false))")
 			case "blame":
 				toggleBlame()
+			case let step where step.hasPrefix("blame-click:"):
+				// The click on a line's entry, through the same callback.
+				let line = Int(step.dropFirst("blame-click:".count)) ?? 1
+				if let entry = codeView.blameEntry(forLine: line - 1) {
+					print("EDITOR-MENU blame-click \(line): \(entry.shortCommit) \(entry.author)\(entry.isUncommitted ? " uncommitted" : "")")
+					codeView.onShowBlameDetail?(entry)
+				} else {
+					print("EDITOR-MENU blame-click \(line): no entry")
+				}
+			case "blame-report":
+				print("EDITOR-MENU blame: visible=\(codeView.isBlameVisible) authors=\(codeView.blameEntriesForTesting.map(\.author).joined(separator: ","))")
 			default:
 				print("EDITOR-MENU: unknown step \(step)")
 			}
@@ -4204,6 +4246,13 @@ final class EditorViewController: NSViewController {
 			Task { @MainActor in await self.decrypt(tab) }
 		}
 	}
+
+	/// *Blame* on a tab: the window opens the file pinned and turns the
+	/// column on, the same path the tree's row takes.
+	var onBlameRequested: ((URL) -> Void)?
+	/// A blame entry was clicked, with the file it is in; the window opens
+	/// the log page at that commit.
+	var onRevealCommit: ((GitBlame.Line, URL) -> Void)?
 
 	/// The bar should ask for a passphrase: the field's placeholder, gpg's
 	/// sentence for its tooltip, and what to do with the answer — nil when
@@ -4686,6 +4735,13 @@ final class EditorViewController: NSViewController {
 	var secretsState: (conceals: Bool, revealed: Bool) {
 		guard let codeView = activeTab?.codeView else { return (false, false) }
 		return (codeView.showsSecretCovers, codeView.secretsRevealedAll)
+	}
+
+	/// The column on, from a row that only ever turns it on: *Blame* on the
+	/// tree and the tab. Nothing when it is on already.
+	func showBlame() {
+		guard let codeView = activeTab?.codeView, !codeView.isBlameVisible else { return }
+		toggleBlame()
 	}
 
 	func toggleBlame() {

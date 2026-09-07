@@ -1905,6 +1905,9 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		).fill()
 	}
 
+	/// Every line's entry, for a driven run to read the authors off.
+	var blameEntriesForTesting: [GitBlame.Line] { blame }
+
 	/// The commit on a line, for the menu and the tooltip.
 	func blameEntry(forLine line: Int) -> GitBlame.Line? {
 		blame.indices.contains(line) ? blame[line] : nil

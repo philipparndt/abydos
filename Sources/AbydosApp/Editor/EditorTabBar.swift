@@ -42,6 +42,8 @@ final class EditorTabBar: NSView {
 	var onCopyPath: ((Int) -> Void)?
 	/// The tab should show its file as bytes.
 	var onOpenAsHex: ((Int) -> Void)?
+	/// The tab's file should show who last touched each line.
+	var onBlame: ((Int) -> Void)?
 	/// Double-click promotes a preview tab to a permanent one.
 	var onPromote: ((Int) -> Void)?
 	/// Double-clicking a tab that is already permanent: give the editor the
@@ -448,6 +450,7 @@ final class EditorTabBar: NSView {
 		add("Reveal in Finder", #selector(revealFromMenu(_:)))
 		menu.addItem(.separator())
 		add("Open as Hex", #selector(openAsHexFromMenu(_:)))
+		add("Blame", #selector(blameFromMenu(_:)))
 		return menu
 	}
 
@@ -509,6 +512,10 @@ final class EditorTabBar: NSView {
 
 	@objc private func openAsHexFromMenu(_ sender: NSMenuItem) {
 		if let index = index(of: sender) { onOpenAsHex?(index) }
+	}
+
+	@objc private func blameFromMenu(_ sender: NSMenuItem) {
+		if let index = index(of: sender) { onBlame?(index) }
 	}
 
 	@objc private func revealFromMenu(_ sender: NSMenuItem) {

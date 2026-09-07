@@ -67,12 +67,29 @@ public enum GitBlame {
 	/// The file as it stands on disk, so uncommitted lines are marked as such
 	/// rather than silently attributed to whoever last committed there.
 	public static func lines(for file: URL, in root: URL) async -> [Line] {
-		let path = relativePath(of: file, in: root)
-		let result = await GitRepository.run(
-			["blame", "--line-porcelain", "--", path], in: root
-		)
+		let result = await GitRepository.run(arguments(for: file, in: root), in: root)
 		guard result.exitCode == 0 else { return [] }
 		return parse(result.stdout)
+	}
+
+	/// The file git reads ignored revisions from, when a repository keeps
+	/// one: the name GitHub and both IDEs look for.
+	public static let ignoreRevisionsFile = ".git-blame-ignore-revs"
+
+	/// What git is asked.
+	///
+	/// `-M -C`, so a block moved or copied within a file keeps the author who
+	/// wrote it rather than the one who moved it — which is the only reading
+	/// under which "who wrote this" is answered, and what every other blame
+	/// view shows. `--ignore-revs-file` only when the file is there: git
+	/// refuses a missing one, and a repository that names its file in
+	/// `blame.ignoreRevsFile` is read by git itself and is not repeated here.
+	public static func arguments(for file: URL, in root: URL) -> [String] {
+		var arguments = ["blame", "--line-porcelain", "-M", "-C"]
+		if FileManager.default.fileExists(atPath: root.appendingPathComponent(ignoreRevisionsFile).path) {
+			arguments += ["--ignore-revs-file", ignoreRevisionsFile]
+		}
+		return arguments + ["--", relativePath(of: file, in: root)]
 	}
 
 	/// Reads `--line-porcelain` output.

@@ -259,6 +259,8 @@ final class EditorAreaController: NSViewController {
 			self?.refreshStatus(from: reporting)
 		}
 		wirePassphrase(group)
+		group.onBlameRequested = { [weak self] url in self?.onBlameRequested?(url) }
+		group.onRevealCommit = { [weak self] entry, url in self?.onRevealCommit?(entry, url) }
 		group.onTabDropped = { [weak self] payload, zone, target in
 			self?.handleDrop(payload: payload, zone: zone, target: target)
 		}
@@ -995,6 +997,10 @@ final class EditorAreaController: NSViewController {
 	func expandAllFolds() { activeGroup.expandAllFolds() }
 	func toggleWordWrap() { for group in groups { group.toggleWordWrap() } }
 	func toggleBlame() { activeGroup.toggleBlame() }
+	func showBlame() { activeGroup.showBlame() }
+	/// A tab asked for blame, or a blame entry was clicked; the window answers.
+	var onBlameRequested: ((URL) -> Void)?
+	var onRevealCommit: ((GitBlame.Line, URL) -> Void)?
 	func toggleRevealSecrets() {
 		activeGroup.toggleRevealSecrets()
 		// The lock has to turn the moment it is pressed, not at the next
