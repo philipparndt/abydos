@@ -262,10 +262,34 @@ final class HexEditorView: NSView, ScaleFollowing {
 		let plain: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: theme.editorText]
 		// Dimming zero bytes makes structure in binary data far easier to see.
 		let dim: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: theme.gutterText]
+		// **A byte with no character, told apart without a second hue.** The
+		// text column beside this one already says which bytes are text —
+		// printable in `gitAdded`, a grey dot for the rest — so giving the hex
+		// a colour of its own would say the same thing twice and turn a wall
+		// of digits into a wall of stripes. Instead the axis the zero dimming
+		// already uses, one step short of it.
+		//
+		// **Most of the way to the gutter, not a little.** There is only so
+		// much room here — the default scheme runs from `#E8D9C0` to `#6E5B45`,
+		// about 120 of luma — and a third shade put near the top of it was
+		// measured at 164 against text at 214 and could not be told apart at
+		// a glance, which is the whole job. So the big gap goes where the
+		// question is (text against not-text, 93 apart) and the small one
+		// where a run of zeros gives the answer away anyway (31 apart).
+		let quiet: [NSAttributedString.Key: Any] = [
+			.font: font,
+			.foregroundColor: theme.editorText.blended(withFraction: 0.75, of: theme.gutterText)
+				?? theme.editorText,
+		]
 		for (index, byte) in bytes.enumerated() {
 			var text = String(format: "%02X", byte)
 			if index + 1 < bytes.count { text += index % 8 == 7 ? "   " : " " }
-			var attributes = byte == 0 ? dim : plain
+			var attributes: [NSAttributedString.Key: Any]
+			switch encoding.shade(of: byte) {
+			case .text:  attributes = plain
+			case .quiet: attributes = quiet
+			case .empty: attributes = dim
+			}
 			if let pendingNibble, start + index == caret, insertMode == false {
 				// Half a byte typed: the high nibble shown as typed, the low
 				// as what is still there, and the whole cell marked.
