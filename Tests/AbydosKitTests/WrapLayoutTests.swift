@@ -520,4 +520,52 @@ struct WrapLayoutCostTests {
 		guard Stopwatch.maySay("PERF", "wrap row counts") else { return }
 		#expect(oneWalk < perLine, "the walk is no cheaper than the descents — \(MachineLoad.said)")
 	}
+
+	/// **The walk must not cost more than the bytes it reads.** A resize
+	/// changes the wrap width, so unlike a scroll it has to re-count every
+	/// line, and what it costs is what one line costs. That walk was 49 times
+	/// dearer than reading the same bytes — `zip` over an `ArraySlice`'s
+	/// indices is generic machinery a release build takes apart and a debug
+	/// build does not, and `make run` builds debug. On a 68,608-line file the
+	/// scan was 1,949 ms a frame and the counting it existed for was 53 ms.
+	///
+	/// A ratio and not a bound, for the reason at the top of `PerformanceTests`:
+	/// both figures are taken on the same machine seconds apart, which is the
+	/// one form load does not move.
+	@Test func walkingTheLinesCostsAboutWhatReadingTheBytesDoes() {
+		let rope = Self.makeRope(lines: 20_000)
+
+		let walk = PerformanceTests.cpuTime("forEachLine, 20,000 lines") {
+			var total = 0
+			rope.forEachLine { total += $0.utf8.count }
+			#expect(total > 0)
+		}
+
+		// The floor: the same bytes, counted, with nothing built from them.
+		let read = PerformanceTests.cpuTime("newline scan, the same bytes") {
+			var newlines = 0
+			var offset = 0
+			while offset < rope.byteCount {
+				guard let (chunkBytes, start) = rope.chunk(containing: offset) else { break }
+				let from = offset - start
+				chunkBytes.withUnsafeBufferPointer { buffer in
+					var index = from
+					while index < buffer.count {
+						if buffer[index] == 0x0A { newlines += 1 }
+						index += 1
+					}
+				}
+				offset = start + chunkBytes.count
+			}
+			#expect(newlines > 0)
+		}
+
+		print(String(format: "PERF the walk is %.1fx a bare read — %@",
+			read > 0 ? walk / read : 0, MachineLoad.said))
+
+		guard Stopwatch.maySay("PERF", "wrap line walk") else { return }
+		// Handing over a String per line is real work and may cost several
+		// times a bare read. Fifty times over is the generic machinery back.
+		#expect(walk < read * 12, "the line walk is generic again — \(MachineLoad.said)")
+	}
 }
