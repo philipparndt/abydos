@@ -197,6 +197,33 @@ public final class Project {
 	/// which is staging that simply does not work while a subproject is open.
 	public private(set) var gitRoot: URL?
 
+	/// Which repository a file's git verbs are aimed at, and what that
+	/// repository calls it.
+	///
+	/// **One answer, because every verb that got it wrong got it wrong the same
+	/// way.** A superproject holds a submodule as a gitlink and knows no file
+	/// inside it, so `diff`, `log` and `blame` aimed at `gitRoot` for such a
+	/// file come back empty or fail outright — and empty reads as *nothing
+	/// changed*, *no history*, *never committed*. Compare, History, the diff
+	/// tab, the line-level apply and discard, blame and the gutter's change
+	/// marks each had it, and each had its own copy of the arithmetic.
+	///
+	/// The estate knows; `GitEstate.place(of:)` is where the knowing lives.
+	/// Before the first `loadGit` there is no estate to ask, and this project's
+	/// own root is the answer it always was — which is also the answer for a
+	/// repository with no submodules, down the same path and not as a special
+	/// case.
+	@MainActor
+	public func place(of url: URL) -> GitEstate.Place? {
+		if let place = estate.place(of: url) { return place }
+		let root = (gitRoot ?? self.root).standardizedFileURL
+		let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+		let path = url.standardizedFileURL.path
+		guard path.hasPrefix(prefix) else { return nil }
+		let relative = String(path.dropFirst(prefix.count))
+		return GitEstate.Place(root: root, path: relative, estatePath: relative)
+	}
+
 	/// The project a file belongs to.
 	///
 	/// The repository around it, since that is what anybody means by "the

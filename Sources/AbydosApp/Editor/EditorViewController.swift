@@ -4203,6 +4203,25 @@ final class EditorViewController: NSViewController {
 		for tab in tabs { askWhatGitCanSee(of: tab) }
 	}
 
+	/// The change marks again, now that the repository is known.
+	///
+	/// **Because the first ask happens before there is an estate.** A tab is
+	/// opened and its gutter asks at once, and `Project.loadGit` — which reads
+	/// the submodule inventory — finishes a second or two later. Until it does,
+	/// `place(of:)` has nothing to place a file with and falls back to the
+	/// project's own root, which is the right answer for a repository with no
+	/// submodules and the wrong one for every file inside a submodule: the
+	/// superproject answers that diff with nothing, and the gutter drew no
+	/// marks at all. Nothing re-asked, because
+	/// `.abydosRepositoryChanged` is posted by things people do — a branch
+	/// switch, a pull, a stage — and not by the first read finishing.
+	///
+	/// So the window says when it knows. A plain project runs this and gets
+	/// the same answer twice, which is one `git diff` per open tab, once.
+	func refreshChangeMarks() {
+		for tab in tabs { refreshChangedLines(for: tab) }
+	}
+
 	/// The notice's one action: the front tab's file written into the
 	/// project's `.gitignore`.
 	///
@@ -4760,7 +4779,16 @@ final class EditorViewController: NSViewController {
 		codeView.setBlameVisible(showing)
 		guard showing else { return }
 
-		guard let root = project?.root else { return }
+		// **In the repository that has the file's history.** `git blame` run in
+		// the superproject over a path inside a submodule fails outright —
+		// `no such path in HEAD`, because the superproject holds the gitlink
+		// and not the file — and an empty answer reads here as "never
+		// committed". So blame said there was nothing to blame for every file
+		// in an estate. `GitEstate.place(of:)` is the same helper Compare and
+		// History use, and it gives the root git is asked in; `GitBlame` takes
+		// the path relative to that root itself.
+		guard let place = repositoryPlace(of: url) else { return }
+		let root = place.root
 		Task { @MainActor in
 			let lines = await GitBlame.lines(for: url, in: root)
 			// The tab may have been closed, or blame turned off again, while
@@ -4778,6 +4806,12 @@ final class EditorViewController: NSViewController {
 	}
 
 	var isBlameVisible: Bool { activeTab?.codeView?.isBlameVisible ?? false }
+
+	/// Which repository a file's git verbs are aimed at. `Project.place(of:)`
+	/// is the one answer; this is only the name the two call sites here use.
+	private func repositoryPlace(of url: URL) -> GitEstate.Place? {
+		project?.place(of: url)
+	}
 
 	/// Flips soft wrap for every open editor and remembers the choice.
 	func toggleWordWrap() {
@@ -5271,20 +5305,18 @@ final class EditorViewController: NSViewController {
 		tab.changedLinesGeneration += 1
 		let generation = tab.changedLinesGeneration
 		let url = tab.url.standardizedFileURL
-		let root = project?.gitRoot
+		// The repository that owns the file, not the project's own: a
+		// `git diff HEAD` in the superproject over a path inside a submodule
+		// answers nothing and exits 0, so a file in an estate had no change
+		// marks in its gutter at all — no bar, ever, whatever was edited.
+		let place = repositoryPlace(of: url)
 
 		Task { @MainActor [weak self, weak tab] in
-			guard let self, let root else {
+			guard let self, let place else {
 				tab?.codeView?.setChangedLines(GitChangedLines())
 				return
 			}
-			let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-			guard url.path.hasPrefix(prefix) else {
-				tab?.codeView?.setChangedLines(GitChangedLines())
-				return
-			}
-			let relative = String(url.path.dropFirst(prefix.count))
-			let diff = await GitWorkingCopy.diffAgainstHead(for: relative, in: root)
+			let diff = await GitWorkingCopy.diffAgainstHead(for: place.path, in: place.root)
 			guard let tab, tab.changedLinesGeneration == generation else { return }
 			_ = self
 			let changed = diff.map { GitChangedLines.read(GitPatch.parse($0)) } ?? GitChangedLines()

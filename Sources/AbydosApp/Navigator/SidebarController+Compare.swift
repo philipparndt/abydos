@@ -27,14 +27,7 @@ extension SidebarController {
 	/// did not. See `GitEstate.place(of:)`. Before the first git read the
 	/// estate has no root, and the arithmetic it replaced still serves.
 	func repositoryPlace(of url: URL) -> GitEstate.Place? {
-		guard let project = project() else { return nil }
-		if let place = project.estate.place(of: url) { return place }
-		let root = (project.gitRoot ?? project.root).standardizedFileURL
-		let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-		let path = url.standardizedFileURL.path
-		guard path.hasPrefix(prefix) else { return nil }
-		let relative = String(path.dropFirst(prefix.count))
-		return GitEstate.Place(root: root, path: relative, estatePath: relative)
+		project()?.place(of: url)
 	}
 
 	/// The repository a change belongs to, and the path it knows the change

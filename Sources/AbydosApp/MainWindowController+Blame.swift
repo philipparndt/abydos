@@ -20,22 +20,27 @@ extension MainWindowController {
 			Toast.post("Not committed yet", detail: "This line has no commit to go to.", kind: .information)
 			return
 		}
-		guard let root = project?.root else {
+		// **The log of the repository the commit is in.** Blame is read in the
+		// repository that owns the file, so for a file inside a submodule the
+		// hash on the row is a commit of *that* repository and the
+		// superproject has never heard of it. The project's log page, opened at
+		// it, showed nothing. `sidebar.repositoryPlace(of:)` gives the owner,
+		// and the page it opens is the submodule's own — beside the project's,
+		// named for it, exactly as Compare ▸ History… opens it.
+		guard let place = sidebar.repositoryPlace(of: file) else {
 			Toast.post(entry.summary.isEmpty ? entry.shortCommit : entry.summary, detail: "\(entry.shortCommit) · \(entry.author)", kind: .information)
 			return
 		}
-		sidebar.showLogPage(scopedTo: entry.commit)
+		let page = sidebar.showLogPage(scopedTo: entry.commit, in: place.root)
 		// Scoped to the path the line had *in that commit*: a file moved since
 		// — an archived change, a renamed module — has no history under
-		// today's path back then, and the page came up empty.
+		// today's path back then, and the page came up empty. Blame's porcelain
+		// names it relative to the repository blame ran in, which is the one
+		// this page is about.
 		if !entry.path.isEmpty {
-			sidebar.logPage?.setScope(path: entry.path)
+			page?.setScope(path: entry.path)
 			return
 		}
-		let base = FilePath.canonical(root)
-		let path = FilePath.canonical(file)
-		if path.hasPrefix(base + "/") {
-			sidebar.logPage?.setScope(path: String(path.dropFirst(base.count + 1)))
-		}
+		page?.setScope(path: place.path)
 	}
 }
