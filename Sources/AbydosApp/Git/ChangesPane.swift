@@ -3171,10 +3171,17 @@ private final class ChangeFolderRowView: NSView {
 		// The count is small and the arithmetic behind it is not obvious, so
 		// the sentence is on the row rather than in a release note.
 		let side = isStaged ? "staged" : "not staged"
-		toolTip = node.isPartial
+		let counts = node.isPartial
 			? "\(node.count) of the \(node.total) changes under \(node.path) are \(side). "
 				+ "\(isStaged ? "Unstaging" : "Staging") the folder takes all of them."
 			: "\(node.count) change\(node.count == 1 ? "" : "s") under \(node.path), all \(side)."
+		// **Which repository, when it is not this one.** Said in words as well
+		// as in the glyph, because "is this my project or a submodule" is the
+		// question the row was answering wrongly and a box is only a hint.
+		toolTip = node.isRepository
+			? "\(node.path) is a submodule — its own repository. \(counts) "
+				+ "They are committed in \(node.name), and the superproject records where it now points."
+			: counts
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -3188,9 +3195,23 @@ private final class ChangeFolderRowView: NSView {
 		// as it is tall, and squeezed into a square it stops looking like a
 		// folder at all — a rounded box with a notch, next to a tree of real
 		// folders in the same window.
-		FileIcon.folder()?.drawFitted(
-			in: NSRect(x: x, y: bounds.midY - glyph / 2, width: glyph, height: glyph)
-		)
+		//
+		// **Unless the row is a repository**, which is a different thing and
+		// now looks like one. See `BranchesPaneChangeRow` for the report: a
+		// change inside a submodule read as a change to the project that is
+		// open, because the submodule was drawn as one more folder in its path.
+		if node.isRepository,
+		   let box = Theme.symbol(
+		   	"shippingbox", size: glyph, color: Theme.current.gitModified
+		   ) {
+			box.drawFitted(
+				in: NSRect(x: x, y: bounds.midY - glyph / 2, width: glyph, height: glyph)
+			)
+		} else {
+			FileIcon.folder()?.drawFitted(
+				in: NSRect(x: x, y: bounds.midY - glyph / 2, width: glyph, height: glyph)
+			)
+		}
 		x += glyph + Theme.current.scaled(6)
 
 		// **The name and nothing else**, as on the file rows under it. The
