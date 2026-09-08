@@ -203,9 +203,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 	private struct Side {
 		var roots: [GitChangeNode] = []
 		var byPath: [String: GitChangeNode] = [:]
-		/// Where the numbers on the right of every row on this side begin. See
-		/// `ChangeColumns` — measured once per reload, not once per row.
-		var columns = ChangeColumns()
 		/// Folders somebody folded shut. Held the negative way round because a
 		/// changes tree wants to arrive open: a pane that shows five folder
 		/// names where the flat list showed twenty files has told you less than
@@ -945,7 +942,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 				// read here are whichever ones are on screen now.
 				for root in self.side(for: outline).roots { root.applyLineCounts(counts) }
 				self.lineCounts[staged] = counts
-				self.refreshColumns(for: outline)
 				// **A reload throws the selection away too.** This knew about
 				// the expansion — its comment said so — and not about the
 				// selection, so the `--numstat` counts landing a moment after a
@@ -988,20 +984,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// Nothing here takes the side as `inout`. `reloadData` asks the data source
 	/// for the rows while it runs, and the data source reads the very property
 	/// that would be exclusively held — which Swift traps on, and did.
-	/// Re-measures where the numbers on the right start, for one side.
-	///
-	/// Called before every reload rather than from `viewFor`: the view is asked
-	/// for once per visible row, and the measurement walks the whole side.
-	private func refreshColumns(for outline: ChangesOutlineView) {
-		let measured = ChangeColumns.measure(side(for: outline).roots) { node in
-			// Only folders carry a tally; a file row's right-hand end is its
-			// counts. `ChangeFolderRowView` spells it the same way.
-			guard node.change == nil else { return nil }
-			return node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)"
-		}
-		if outline === stagedTable { stagedSide.columns = measured }
-		else { unstagedSide.columns = measured }
-	}
 
 	private func rebuild(
 		_ outline: ChangesOutlineView,
@@ -1033,7 +1015,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 		// time the view asks for them.
 		refill(side(for: outline), in: outline, staged: staged)
 
-		refreshColumns(for: outline)
 		isRestoring = true
 		outline.reloadData()
 		expand(roots, in: outline, collapsed: collapsed)
@@ -1268,7 +1249,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 			if let counts = self.lineCounts[staged] { current.applyLineCounts(counts) }
 			// An opened untracked directory brings its own counts with it, and
 			// they can be wider than anything measured before.
-			self.refreshColumns(for: outline)
 			// **The selection is kept across this**, and two reports are the
 			// one fault here. `reloadData()` clears an outline view's
 			// selection; this call is asynchronous, so it lands *after* the
@@ -2583,32 +2563,16 @@ final class ChangesPane: NSView, ScaleFollowing {
 			+ ["staged:"] + lines(stagedSide.roots, depth: 1)).joined(separator: "\n")
 	}
 
-	/// How much changed, for a driven report — and nothing at all when git gave
-	/// no answer, which is the distinction the whole thing turns on.
-	private func said(_ lines: GitLineCount?) -> String {
-		guard let lines else { return "" }
-		return "  +\(lines.added)/-\(lines.removed)"
-	}
-
-	/// The x each of the three number columns is right-aligned on.
-	private func columnReportForTesting(_ outline: ChangesOutlineView) -> String {
-		let bounds = NSRect(x: 0, y: 0, width: outline.bounds.width, height: 22)
-		let edges = side(for: outline).columns.edges(in: bounds)
-		return "name until \(Int(edges.limit))"
-			+ " · + at \(Int(edges.added))"
-			+ " · − at \(Int(edges.removed))"
-			+ " · count at \(Int(edges.tally))"
-	}
-
+	/// **What is on screen, so it says only what is drawn.** The rows carried
+	/// `+3/-1` here while they still carried it on screen; the counters are
+	/// gone from the pane, and a report that kept them would pass over the
+	/// change it exists to catch. `rowsForTesting` is the other report and
+	/// still says them, because that one is about the tree this pane built
+	/// rather than about the pane.
 	func changesTreeForTesting() -> String {
 		var lines: [String] = []
 		for (title, outline) in [("Unstaged", unstagedTable!), ("Staged", stagedTable!)] {
 			lines.append("\(title) (\(outline.numberOfRows) rows)")
-			// **Where each number starts, not just what it says.** The columns
-			// are the claim — one x for every plus sign down the pane — and a
-			// report of the values alone would have read the same before they
-			// lined up as after.
-			lines.append("  columns: " + columnReportForTesting(outline))
 			for row in 0..<outline.numberOfRows {
 				guard let node = outline.item(atRow: row) as? GitChangeNode else { continue }
 				let indent = String(repeating: "  ", count: outline.level(forRow: row) + 1)
@@ -2622,9 +2586,12 @@ final class ChangesPane: NSView, ScaleFollowing {
 						? (node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)")
 						: (node.isFilled ? "untracked folder" : "untracked folder, not opened")
 					let shut = outline.isItemExpanded(node) ? "" : " [shut]"
-					lines.append("\(indent)\(node.name)/  \(tally)\(said(node.lines))\(shut)\(selected)")
+					// The tally is the pane's own arithmetic and still reads
+					// here: it is what the folder's tool tip says, and a driven
+					// run is the only way to ask for it.
+					lines.append("\(indent)\(node.name)/  \(tally)\(shut)\(selected)")
 				} else {
-					lines.append("\(indent)\(node.name)\(said(node.lines))\(selected)")
+					lines.append("\(indent)\(node.name)\(selected)")
 				}
 			}
 		}
@@ -2904,7 +2871,6 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 		// session — so a rebuild does not blink.
 		if let known = side(for: outline).untrackedContents[node.path] {
 			node.fill(with: known)
-			refreshColumns(for: outline)
 			// `reloadItem` rather than `reloadData` keeps the selection by
 			// itself — it is the one node's children being replaced, not the
 			// row map — which is why the synchronous path was never the
@@ -2930,17 +2896,13 @@ extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	func outlineView(_ outlineView: NSOutlineView, viewFor column: NSTableColumn?, item: Any) -> NSView? {
 		guard let node = item as? GitChangeNode else { return nil }
 		guard let change = node.change else {
-			return ChangeFolderRowView(
-				node: node,
-				isStaged: outlineView === stagedTable,
-				columns: side(for: outlineView).columns
-			)
+			return ChangeFolderRowView(node: node, isStaged: outlineView === stagedTable)
 		}
 		// A change that is a whole directory keeps its badge — it is untracked,
 		// and that is what the badge says — and gains a folder beside it, rather
 		// than becoming a folder row: a folder row says how much of it is on
 		// this side, and this one is a single entry to git.
-		return ChangeRowView(node: node, change: change, columns: side(for: outlineView).columns)
+		return ChangeRowView(node: node, change: change)
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor column: NSTableColumn?, item: Any) -> String? {
@@ -3123,14 +3085,12 @@ extension ChangesPane: NSTextFieldDelegate {
 private final class ChangeRowView: NSView {
 	private let node: GitChangeNode
 	private let change: GitChange
-	private let columns: ChangeColumns
 
 	override var isFlipped: Bool { true }
 
-	init(node: GitChangeNode, change: GitChange, columns: ChangeColumns) {
+	init(node: GitChangeNode, change: GitChange) {
 		self.node = node
 		self.change = change
-		self.columns = columns
 		super.init(frame: .zero)
 	}
 
@@ -3170,32 +3130,19 @@ private final class ChangeRowView: NSView {
 			x += badgeSize + Theme.current.scaled(5)
 		}
 
-		// **The counts are measured first and the name is given what is left.**
-		// A long path and `+1234 −567` do not both fit in a sidebar, and of the
-		// two it is the name that can be cut and still be recognised — the
-		// counts are three characters and the answer to the question the row is
-		// being read for.
-		//
-		// The columns come from the whole side, so this row's numbers sit under
-		// the numbers of the folder above it rather than under whatever its own
-		// name happened to leave room for.
-		let edges = columns.edges(in: bounds)
+		// **The whole row is the name.** It used to end in `+1234 −567`,
+		// right-aligned in columns measured across the side — three numbers
+		// per row, and the deepest paths cut to make room for them. In a pane
+		// that is read to find *which* file changed, that was width spent on
+		// an answer nobody was looking for; how much changed is one click away
+		// in the diff, and the folder rows say it in their tool tip.
 		RowMetrics.draw(
 			change.name,
 			font: Theme.current.uiFont(12),
 			colour: Theme.current.sidebarText,
 			at: x, in: bounds,
-			limit: edges.limit - Theme.current.scaled(2)
+			limit: bounds.maxX - RowMetrics.trailingInset - Theme.current.scaled(2)
 		)
-		draw(LineCountLabel.added(node.lines), rightAt: edges.added, in: bounds)
-		draw(LineCountLabel.removed(node.lines), rightAt: edges.removed, in: bounds)
-	}
-
-	/// One column's text, right-aligned on the column's own edge.
-	private func draw(_ text: NSAttributedString?, rightAt right: CGFloat, in bounds: NSRect) {
-		guard let text else { return }
-		let size = text.size()
-		text.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
 	}
 
 	private func letter(for kind: GitChange.Kind) -> String {
@@ -3239,20 +3186,11 @@ private final class ChangeRowView: NSView {
 /// one with ticks, which is what lets it show a file that is in both.
 private final class ChangeFolderRowView: NSView {
 	private let node: GitChangeNode
-	private let columns: ChangeColumns
 
 	override var isFlipped: Bool { true }
 
-	/// One column's text, right-aligned on the column's own edge.
-	private func draw(_ text: NSAttributedString?, rightAt right: CGFloat, in bounds: NSRect) {
-		guard let text else { return }
-		let size = text.size()
-		text.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
-	}
-
-	init(node: GitChangeNode, isStaged: Bool, columns: ChangeColumns) {
+	init(node: GitChangeNode, isStaged: Bool) {
 		self.node = node
-		self.columns = columns
 		super.init(frame: .zero)
 
 		// The count is small and the arithmetic behind it is not obvious, so
@@ -3280,27 +3218,16 @@ private final class ChangeFolderRowView: NSView {
 		)
 		x += glyph + Theme.current.scaled(6)
 
-		let tally = NSAttributedString(
-			string: node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)",
-			attributes: [
-				.font: Theme.current.uiFont(10.5, weight: node.isPartial ? .semibold : .regular),
-				.foregroundColor: node.isPartial ? Theme.current.gitModified : Theme.current.gitIgnored,
-			]
-		)
-		// The sum of what is under it, beside the tally: how many changed, and
-		// then how much. Two numbers that answer different questions, which is
-		// why the folder keeps both — and both sit in the columns the files
-		// under it use, so a nested tree reads down rather than in and out.
-		let edges = columns.edges(in: bounds)
-		draw(tally, rightAt: edges.tally, in: bounds)
-		draw(LineCountLabel.added(node.lines), rightAt: edges.added, in: bounds)
-		draw(LineCountLabel.removed(node.lines), rightAt: edges.removed, in: bounds)
-
+		// **The name and nothing else**, as on the file rows under it. The
+		// tally and the `+69 −16` beside it are gone; what remains of them is
+		// the tool tip set above, which says how many of how many are on this
+		// side and what staging the folder would take.
 		RowMetrics.draw(
 			node.name,
 			font: Theme.current.uiFont(12, weight: .medium),
 			colour: Theme.current.sidebarText,
-			at: x, in: bounds, limit: edges.limit - Theme.current.scaled(2)
+			at: x, in: bounds,
+			limit: bounds.maxX - RowMetrics.trailingInset - Theme.current.scaled(2)
 		)
 	}
 }
