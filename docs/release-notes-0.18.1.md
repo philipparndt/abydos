@@ -32,6 +32,21 @@ symptom: finding nothing to diff, it fell back to comparing the file against
 nothing and drew every line as added. It reads the real diff now, and staging
 or discarding selected lines from it goes to the right repository too.
 
+## Blame and the change marks work inside a submodule
+
+The same thing again, in the editor. *Blame* on a file inside a submodule said
+there was nothing to blame — `git blame` in the superproject over such a path
+fails rather than answering, and an empty answer reads as a file that has
+never been committed. And the gutter drew no change marks at all for those
+files, whatever was edited, because a diff against the superproject comes back
+empty and empty means nothing changed.
+
+Both ask the repository that owns the file now, and a click on a blame entry
+opens that repository's own log at the commit, rather than the project's log
+at a commit it has never heard of. The marks are also asked for again once the
+repository has been read, because a tab opens before the submodule inventory
+exists and nothing used to re-ask.
+
 ## A submodule looks like a repository
 
 A file changed inside a submodule appeared once under *Working copy* and
