@@ -548,15 +548,3 @@ the fenced section.
 The bundled font and every dependency permit redistribution in an open-source
 project. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the details
 and obligations.
-
-## Known gaps
-
-- No go-to-definition or rename.
-- The left tool strip is decorative apart from the project toggle.
-- The theme is a fixed dark palette; there is no light mode or theme picker.
-- The titlebar pills sit inside macOS 26's rounded toolbar-item capsule. There
-  is no opt-out: `NSToolbarItemStyle` offers only plain and prominent. Removing
-  the toolbar removes the capsule but also drops the window to the old, smaller
-  corner radius, and an empty toolbar plus a titlebar accessory reserves a
-  second titlebar row. The capsule is the least-bad option.
-- The hex viewer is read-only.
