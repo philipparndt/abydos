@@ -213,8 +213,17 @@ public enum GitEstateReader {
 	/// inventory itself moves. It is not what runs on a filesystem event: that
 	/// re-reads the one repository the event named, at 0.01 s. See
 	/// `status(of:only:)`.
-	public static func status(of estate: GitEstate) async -> GitEstateStatus {
-		await status(of: estate, only: estate.submodules.filter(\.isCheckedOut).map(\.path))
+	/// - Parameter onProgress: told how many repositories have answered and
+	///   how many were asked, as each one lands. See `status(of:only:onProgress:)`.
+	public static func status(
+		of estate: GitEstate,
+		onProgress: (@Sendable (Int, Int) -> Void)? = nil
+	) async -> GitEstateStatus {
+		await status(
+			of: estate,
+			only: estate.submodules.filter(\.isCheckedOut).map(\.path),
+			onProgress: onProgress
+		)
 	}
 
 	/// Reads the superproject and the named submodules, and nothing else.
@@ -225,9 +234,22 @@ public enum GitEstateReader {
 	/// of three hundred repositories leaves the ones already running to finish
 	/// and never asks the rest, which is the whole of what "stop" can honestly
 	/// mean here.
+	/// - Parameter onProgress: told `(answered, asked)` as each repository
+	///   lands, on whatever thread the answer arrives on — hop to your own
+	///   before touching anything.
+	///
+	///   **Because this sweep is not always quick.** Warm, two hundred
+	///   repositories answer in 0.48 s and nobody needs a count. Cold — a
+	///   checkout nothing has read since the machine started — the same sweep
+	///   took 89 s at 9 % processor, every one of those seconds spent waiting
+	///   on the disk for the `lstat` of each tracked file. A spinner is an
+	///   honest shape for a `git status` whose progress cannot be known; it is
+	///   the wrong shape for a queue of two hundred, where the count is exactly
+	///   what somebody wants and the pane knew it all along.
 	public static func status(
 		of estate: GitEstate,
-		only submodulePaths: [String]
+		only submodulePaths: [String],
+		onProgress: (@Sendable (Int, Int) -> Void)? = nil
 	) async -> GitEstateStatus {
 		async let superproject = GitWorkingCopy.status(in: estate.root)
 
@@ -255,6 +277,7 @@ public enum GitEstateReader {
 				for _ in 0..<min(concurrency, wanted.count) { _ = addWork() }
 				while let (path, status) = await group.next() {
 					collected[path] = status
+					onProgress?(collected.count, wanted.count)
 					_ = addWork()
 				}
 				return collected

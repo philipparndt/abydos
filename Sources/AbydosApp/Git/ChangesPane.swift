@@ -864,7 +864,19 @@ final class ChangesPane: NSView, ScaleFollowing {
 		// remote since the last look.
 		refreshPushState()
 		Task { @MainActor in
-			let fresh = await submodules.refresh(read)
+			// **The count goes to the strip that is already up.** A cold sweep
+			// of an estate is minutes of waiting that used to look identical to
+			// a hung pane; this is the same wait with the number in it. Nil
+			// once the first read is done, so a later sweep — a checkout, a
+			// pull — moves nothing on a pane that has rows on it.
+			let fresh = await submodules.refresh(read) { [weak self] done, total in
+				Task { @MainActor in
+					self?.activity?.count(
+						done, of: total,
+						saying: "Reading \(done) of \(total) repositories…"
+					)
+				}
+			}
 			let statusReturned = Date()
 			// Taken down before the comparison below, not after it. An
 			// unchanged status is still an answer, and a spinner that only
@@ -887,8 +899,24 @@ final class ChangesPane: NSView, ScaleFollowing {
 
 	/// Puts the spinner up. Called once, as the pane is built, because that is
 	/// when there is nothing on screen and the wait is longest.
+	/// **The words start as the one repository's and change when there turn
+	/// out to be many.** The inventory is read inside the sweep, so nothing
+	/// here knows yet whether this is one repository or two hundred; the count
+	/// arrives with its own sentence and replaces this one when it does.
 	private func beginFirstRead() {
 		activity = PaneActivityView.install(over: self, message: "Reading changes…")
+	}
+
+	/// Puts the sweep's progress strip up with numbers of somebody's choosing,
+	/// for a driven run — and says what it reads, because a bar in a
+	/// photograph cannot be grepped.
+	///
+	/// A warm estate answers in half a second and a cold one is what this is
+	/// about, so the strip cannot be caught by waiting for it.
+	func showProgressForTesting(done: Int, of total: Int) -> String {
+		if activity == nil { beginFirstRead() }
+		activity?.count(done, of: total, saying: "Reading \(done) of \(total) repositories…")
+		return activity?.reportForTesting ?? "no strip"
 	}
 
 	private func finishFirstRead() {
@@ -906,13 +934,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 	private func reloadMarked() {
 		rebuild(unstagedTable, staged: false, changes: status.unstaged, against: status.staged)
 		rebuild(stagedTable, staged: true, changes: status.staged, against: status.unstaged)
-		// **Once per set of changes, and only when the set has moved.** `refresh`
-		// above returns early on a status equal to the last one, which is every
-		// answer over a clean working copy and most of them during a build — so
-		// this is not on the per-filesystem-event path even though `reload` is
-		// what that path calls. One `--numstat` per side, not one diff per row:
-		// the row count is the size of somebody's commit.
-		askForLineCounts()
 		// Files, not rows: "Commit 7 Files" has to keep meaning seven files
 		// however many folders they are spread over.
 		unstagedHeader.setCount(status.unstaged.count)
@@ -920,61 +941,15 @@ final class ChangesPane: NSView, ScaleFollowing {
 		updateCommitButton()
 	}
 
-	/// How much each changed file changed, from one `git diff --numstat` a side.
+	/// **The pane no longer asks how much changed.** It ran one
+	/// `git diff --numstat` a side and then one more per submodule that had
+	/// changes, all to fill the `+192 −46` at the end of every row — and those
+	/// numbers are gone from the rows. On an estate of two hundred services
+	/// that was a second fan-out of git processes behind the panel opening, for
+	/// something nothing draws. The commit page's own file list still shows
+	/// counts and reads them its own way, per commit, through
+	/// `GitEstateLineCounts` — which is why that stays.
 	///
-	/// After the trees are built and drawn rather than before: the counts are
-	/// something a row says about itself, not something that decides whether the
-	/// row exists, and waiting for them would hold the whole pane behind a
-	/// second git call.
-	private func askForLineCounts() {
-		for staged in [false, true] {
-			let outline = staged ? stagedTable! : unstagedTable!
-			Task { @MainActor in
-				// Per repository that has changes, and none for the rest: the
-				// superproject's `--numstat` says nothing about a file inside a
-				// submodule, so every service's rows carried no counts at all.
-				let counts = await GitEstateLineCounts.workingCopy(
-					staged: staged,
-					in: self.submodules.estate,
-					status: self.submodules.status
-				)
-				// The tree may have been rebuilt while this was out; the roots
-				// read here are whichever ones are on screen now.
-				for root in self.side(for: outline).roots { root.applyLineCounts(counts) }
-				self.lineCounts[staged] = counts
-				// **A reload throws the selection away too.** This knew about
-				// the expansion — its comment said so — and not about the
-				// selection, so the `--numstat` counts landing a moment after a
-				// stage wiped whatever the rebuild had just restored. That is
-				// the staging report: the right row was chosen, and this
-				// arrived afterwards and cleared it. Found by driving it, after
-				// two other reloads had been fixed for the same reason.
-				self.isRestoring = true
-				TreeSelectionKeeper.keepingSelection(
-					in: outline,
-					path: { (outline.item(atRow: $0) as? GitChangeNode)?.path },
-					row: { path in
-						guard let node = self.side(for: outline).byPath[path] else { return -1 }
-						return outline.row(forItem: node)
-					},
-					during: {
-						outline.reloadData()
-						self.expand(
-							self.side(for: outline).roots, in: outline,
-							collapsed: self.side(for: outline).collapsed
-						)
-					}
-				)
-				self.stopRestoring()
-			}
-		}
-	}
-
-	/// What the last `--numstat` said, by side, so a row filled later — an
-	/// untracked directory somebody opens — can be given its counts without
-	/// asking git again.
-	private var lineCounts: [Bool: [String: GitLineCount]] = [:]
-
 	/// Builds one side's tree again and puts back what was on screen.
 	///
 	/// `refreshGitStatus` runs on every filesystem event, so this is the path a
@@ -1246,9 +1221,6 @@ final class ChangesPane: NSView, ScaleFollowing {
 				&& current.children.map(\.path) == rows.map(\.path)
 			guard !unchanged else { return }
 			current.fill(with: rows)
-			if let counts = self.lineCounts[staged] { current.applyLineCounts(counts) }
-			// An opened untracked directory brings its own counts with it, and
-			// they can be wider than anything measured before.
 			// **The selection is kept across this**, and two reports are the
 			// one fault here. `reloadData()` clears an outline view's
 			// selection; this call is asynchronous, so it lands *after* the
@@ -2550,9 +2522,12 @@ final class ChangesPane: NSView, ScaleFollowing {
 				var marks: [String] = []
 				if node.isRepository { marks.append("[repo]") }
 				if node.gitlink != nil { marks.append("[moved]") }
+				// A folder's tally is the pane's own arithmetic and still
+				// reads. A file's `+n/-n` does not: nothing asks git for it
+				// any more, so it would be nil on every row.
 				let tally = node.isFolder
 					? (node.isPartial ? " \(node.count) of \(node.total)" : " \(node.count)")
-					: (node.lines.map { " +\($0.added)/-\($0.removed)" } ?? "")
+					: ""
 				let line = String(repeating: "  ", count: depth)
 					+ node.name + tally
 					+ (marks.isEmpty ? "" : " " + marks.joined(separator: " "))

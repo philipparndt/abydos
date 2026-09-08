@@ -10,10 +10,15 @@ import AbydosKit
 /// from a broken one. Somebody opening the changes view on a repository with a
 /// hundred thousand untracked files saw an empty box and clicked again.
 ///
-/// Deliberately not a modal or a progress bar. There is no total to count
-/// against — `git status` does not say how far through the work tree it is — so
-/// the honest shape is "still going", which is what an indeterminate spinner
-/// says.
+/// Deliberately not a modal, and indeterminate by default: `git status` does
+/// not say how far through the work tree it is, so for one repository the
+/// honest shape is "still going".
+///
+/// **A queue of repositories is the case where there is a total.** An estate
+/// sweep asks two hundred of them and knows the number before it starts, and
+/// the answer somebody wants while a cold one takes a minute and a half is how
+/// many are left. `count(_:of:)` turns the spinner into a bar and says so; a
+/// pane that never calls it is the pane it always was.
 final class PaneActivityView: NSView {
 	private let wheel = NSProgressIndicator()
 	private let caption: NSTextField
@@ -91,7 +96,12 @@ final class PaneActivityView: NSView {
 		// An empty visible rect — a view not on screen yet — falls back to the
 		// bounds, which is the same answer whenever the two agree.
 		let area = visibleRect.isEmpty ? bounds : visibleRect
-		let wheelSize = wheel.fittingSize
+		// A determinate bar's `fittingSize` has no width in it, so the width
+		// set when the bar was made is the one to lay out against.
+		var wheelSize = wheel.fittingSize
+		if !wheel.isIndeterminate {
+			wheelSize.width = min(wheel.frame.width, max(0, area.width - Theme.current.scaled(24)))
+		}
 		let gap = Theme.current.scaled(8)
 		let captionSize = caption.fittingSize
 		let stack = wheelSize.height + gap + captionSize.height
@@ -148,6 +158,42 @@ final class PaneActivityView: NSView {
 		])
 		view.wheel.startAnimation(nil)
 		return view
+	}
+
+	/// How far through a queue of work this is.
+	///
+	/// The first call turns the spinner into a determinate bar; later ones move
+	/// it. The numbers are the caller's own arithmetic, and so are the words:
+	/// this view knows what a bar is and nothing about what is being counted,
+	/// which is why `saying` is a finished sentence rather than a noun to be
+	/// pasted into one here.
+	///
+	/// A total of one is left as a spinner: "1 of 1" is a bar that fills in one
+	/// step and tells nobody anything.
+	func count(_ done: Int, of total: Int, saying: String) {
+		guard total > 1 else { return }
+		if wheel.isIndeterminate {
+			wheel.stopAnimation(nil)
+			wheel.isIndeterminate = false
+			wheel.style = .bar
+			wheel.controlSize = .small
+			wheel.minValue = 0
+			wheel.maxValue = Double(total)
+			// A bar has no width of its own to fit to, unlike a spinner.
+			wheel.frame.size.width = Theme.current.scaled(160)
+		}
+		wheel.maxValue = Double(total)
+		wheel.doubleValue = Double(min(done, total))
+		caption.stringValue = saying
+		needsLayout = true
+	}
+
+	/// The words and how far the bar has gone, for a driven run.
+	var reportForTesting: String {
+		let shape = wheel.isIndeterminate
+			? "spinner"
+			: "bar \(Int(wheel.doubleValue)) of \(Int(wheel.maxValue))"
+		return "\(shape) · \(caption.stringValue)"
 	}
 
 	/// Takes it down. Stopping the animation first, because a `NSProgressIndicator`
