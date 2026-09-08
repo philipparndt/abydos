@@ -134,6 +134,35 @@ struct ProjectTrustTests {
 		#expect(trust.isTrusted(project))
 	}
 
+	/// **"Not trusted" is not an answer until the remote has been asked.** The
+	/// strip went up on every switch to a project trusted by its remote, for
+	/// the length of the git call that would have said so, and came down again.
+	/// A gate still refuses in that gap; only the strip waits.
+	@Test func aProjectWhoseRemoteHasNotBeenAskedIsUndecided() {
+		let (trust, file) = store()
+		defer { try? FileManager.default.removeItem(at: file) }
+		let clone = URL(fileURLWithPath: "/Users/me/dev/clone")
+		let local = URL(fileURLWithPath: "/Users/me/dev/local")
+		let folder = URL(fileURLWithPath: "/Users/me/dev/folder")
+		trust.trust(remoteHost: "git.company.com")
+
+		#expect(!trust.isDecided(clone))
+		#expect(!trust.isTrusted(clone), "a gate refuses on a guess; only the strip waits")
+
+		trust.noteRemote(host: "git.company.com", owner: "platform", for: clone)
+		#expect(trust.isDecided(clone))
+		#expect(trust.isTrusted(clone))
+
+		// No remote at all is an answer too, and it is "untrusted".
+		trust.noteRemote(host: nil, owner: nil, for: local)
+		#expect(trust.isDecided(local))
+		#expect(!trust.isTrusted(local))
+
+		// A folder entry decides on its own, before git is asked.
+		trust.trust(folder)
+		#expect(trust.isDecided(folder))
+	}
+
 	/// **`github.com` is the world and an organisation on it is a place**, so
 	/// the owner is its own entry and the host's does not follow from it.
 	@Test func aTrustedOwnerIsNotTheWholeHost() {

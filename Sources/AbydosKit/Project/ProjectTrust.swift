@@ -158,6 +158,9 @@ public final class ProjectTrust {
 	/// keypress and a refusal; asking it once, when the window takes the
 	/// project, is one call for the answer everything else reads.
 	private var remoteIdentities: [String: (host: String, owner: String?)] = [:]
+	/// The projects whose remote has been asked at all, with or without an
+	/// answer — what tells "no remote" from "not asked yet". See `isDecided`.
+	private var askedRemotes: Set<String> = []
 
 	public init(storeURL: URL? = nil, driven: Bool = DrivenRun.isActive) {
 		let support = FileManager.default
@@ -192,10 +195,24 @@ public final class ProjectTrust {
 		return remotes.contains { $0.matches(host: identity.host, owner: identity.owner) }
 	}
 
+	/// Whether `isTrusted` is an answer yet, or only a default.
+	///
+	/// **A gate and a strip want different things from "not known".** A gate
+	/// refuses until it knows, and that is right: nothing runs on a guess. The
+	/// strip that says *not trusted* must not go up on the same guess — a
+	/// project trusted by its remote is "untrusted" for the length of a
+	/// `git remote get-url`, and the strip came up and went away again on every
+	/// switch. Reported as exactly that. Decided means a folder covers it, or
+	/// its remote has been asked and the answer, whatever it was, is in.
+	public func isDecided(_ root: URL) -> Bool {
+		isTrusted(root) || askedRemotes.contains(Self.resolved(root))
+	}
+
 	/// Where this project's `origin` says it came from, told to the store by
 	/// whoever asked git — the window, when it loads a project.
 	public func noteRemote(host: String?, owner: String?, for root: URL) {
 		let path = Self.resolved(root)
+		askedRemotes.insert(path)
 		guard let host else {
 			remoteIdentities.removeValue(forKey: path)
 			return
