@@ -95,6 +95,9 @@ extension MainWindowController {
 			// The capsule only gets its width once it has a name to show.
 			self.titlebar.relayout()
 			self.navigator.refreshGitStatus()
+			// The gutter's marks were asked for before the inventory existed,
+			// so a file inside a submodule had none. See `refreshChangeMarks`.
+			self.editor.refreshChangeMarks()
 
 			// Changes, history and branches hold on to one repository, so a
 			// *different* work tree needs them built again — which is what

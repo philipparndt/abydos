@@ -36,6 +36,46 @@ struct ProjectEstateTests {
 		)
 	}
 
+	/// **One answer for every verb that got it wrong.** Compare, History, the
+	/// diff tab, the line-level apply and discard, blame and the gutter's
+	/// change marks all aimed git at the superproject for a file inside a
+	/// submodule, where a diff, a log and a blame come back empty or fail — and
+	/// empty reads as "nothing changed", "no history", "never committed".
+	@Test func aFileIsPlacedInTheRepositoryThatOwnsIt() async throws {
+		let built = try SyntheticEstate.make(count: 2, named: "projectplace")
+		defer { built.remove() }
+
+		let project = Project(root: built.root)
+		await project.loadGit()
+
+		let inside = project.place(of: built.root.appendingPathComponent("svc-2/src/Main.java"))
+		#expect(inside?.root == built.root.standardizedFileURL.appendingPathComponent("svc-2"))
+		#expect(inside?.path == "src/Main.java")
+		#expect(inside?.estatePath == "svc-2/src/Main.java")
+
+		// The superproject's own file is the superproject's, under one name.
+		let own = project.place(of: built.root.appendingPathComponent("README.md"))
+		#expect(own?.root == built.root.standardizedFileURL)
+		#expect(own?.path == "README.md")
+
+		#expect(project.place(of: URL(fileURLWithPath: "/elsewhere/README.md")) == nil)
+	}
+
+	/// **Before the inventory exists there is nothing to place with**, and the
+	/// project's own root is the answer — right for a repository with no
+	/// submodules, and wrong for a file inside one. It is why the window asks
+	/// the gutter again once `loadGit` has finished: the first ask happens as
+	/// the tab opens, seconds earlier, and nothing else would re-ask.
+	@Test func beforeGitIsReadTheProjectsOwnRootIsTheAnswer() throws {
+		let built = try SyntheticEstate.make(count: 1, named: "projectplacecold")
+		defer { built.remove() }
+
+		let project = Project(root: built.root)
+		let cold = project.place(of: built.root.appendingPathComponent("svc-1/src/Main.java"))
+		#expect(cold?.root == built.root.standardizedFileURL)
+		#expect(cold?.path == "svc-1/src/Main.java")
+	}
+
 	/// A repository with no submodules is an estate of one, on the same code
 	/// path rather than around it.
 	@Test func aProjectWithNoSubmodulesIsAnEstateOfOne() async throws {

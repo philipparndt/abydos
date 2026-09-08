@@ -142,6 +142,10 @@ final class EditorAreaController: NSViewController {
 		for group in groups { group.refreshWhatGitCanSee() }
 	}
 
+	/// Every pane's marks again, once git is known. See
+	/// `EditorViewController.refreshChangeMarks`.
+	func refreshChangeMarks() { for group in groups { group.refreshChangeMarks() } }
+
 	private func refreshStatus(from group: EditorViewController?) {
 		guard let group, group === activeGroup else { return }
 		statusBar.isHidden = group.isEmpty
