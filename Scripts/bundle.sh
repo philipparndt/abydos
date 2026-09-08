@@ -240,9 +240,42 @@ cp Resources/Info.plist "$CONTENTS/Info.plist"
 # it, and should pass PIN_UUID=0 with it: a build under the real identifier with
 # an unpinned UUID is the one combination that can take the grant away from the
 # installed app.
+SHIPPING_ID="de.rnd7.ideai"
 if [ -n "${BUNDLE_ID:-}" ]; then
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS/Info.plist" >/dev/null
 	echo "    bundle id: $BUNDLE_ID"
+fi
+
+# A build under a throwaway identifier claims no file kinds and no URLs.
+#
+# **Because Launch Services remembers every identifier it has ever seen.** The
+# house rules tell an agent to build under `de.rnd7.abydos.itemNNNN`, and
+# nothing ever unregisters one — so each throwaway build leaves an entry
+# claiming `public.source-code`, `public.html` and thirty more, pointing at a
+# `build/Abydos.app` that will be a different program tomorrow. One was still
+# registered from item 0501 weeks later. A stale claim can win a content type,
+# which is how `open` comes to hand a file to a build somebody threw away.
+#
+# So a throwaway build declares nothing to claim with. The *Open With* menu and
+# the default-editor offer are the real app's business; a copy built to be
+# driven has no business in either, and `DefaultEditor` reads these keys from
+# the bundle, so with them gone it offers nothing and takes nothing. The
+# declarations in `Resources/Info.plist` are untouched — `DeclaredFileTypesTests`
+# reads that file, not this copy.
+if [ -n "${BUNDLE_ID:-}" ] && [ "$BUNDLE_ID" != "$SHIPPING_ID" ]; then
+	for KEY in CFBundleDocumentTypes UTImportedTypeDeclarations UTExportedTypeDeclarations; do
+		/usr/libexec/PlistBuddy -c "Delete :$KEY" "$CONTENTS/Info.plist" >/dev/null 2>&1 || true
+	done
+	echo "    claims nothing: no document types under a throwaway identifier"
+
+	# And the identifiers earlier throwaway builds left behind at this path,
+	# which no rebuild replaces because each one registered a different id.
+	# Unregistering a path is undone by opening the app there again, so this
+	# takes nothing away that a build does not put straight back.
+	LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+	if [ -x "$LSREGISTER" ] && [ -d "$APP" ]; then
+		"$LSREGISTER" -u "$APP" >/dev/null 2>&1 || true
+	fi
 fi
 
 # Stamped with the commit it was built from, so "did my build actually get
