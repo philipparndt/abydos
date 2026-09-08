@@ -4304,9 +4304,19 @@ private final class WorkingCopyChangeRowView: NSView {
 		// colour its own kind is drawn in, which is what tells it apart from a
 		// folder this tree invented. There is one column and it cannot hold both
 		// a folder and a letter, so the tint carries the `?`.
+		//
+		// **A repository is not a folder**, and this row is where that was
+		// invisible. The tree is built from superproject-relative paths, so a
+		// submodule arrives as an ordinary folder — `repos` then `vehub-api`
+		// then the file — and a change inside one read as a change to the
+		// repository somebody has open. It was reported that way: the same
+		// file, in Working copy and again under Submodules, with nothing
+		// saying the first was a submodule's. `isRepository` knew all along
+		// and only the driven report ever said it. The box is the glyph the
+		// Submodules section already uses for the same thing.
 		if node.holdsFiles {
 			RowMetrics.glyph(
-				"folder",
+				node.isRepository ? "shippingbox" : "folder",
 				colour: node.isFolder ? Theme.current.gitIgnored : colour,
 				in: bounds
 			)
