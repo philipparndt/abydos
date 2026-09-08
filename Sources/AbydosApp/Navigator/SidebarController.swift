@@ -19,7 +19,9 @@ import AbydosKit
 /// been reaching for through two closures since it was written.
 @MainActor
 final class SidebarController: NSObject {
-	private let editor: EditorAreaController
+	/// Not private: `SidebarController+Compare` opens the diff tab and the log
+	/// page, and Swift's `private` is file-scoped.
+	let editor: EditorAreaController
 	private let navigator: ProjectNavigatorViewController
 
 	// What the window knows and this object asks for.
@@ -1034,24 +1036,40 @@ final class SidebarController: NSObject {
 	///   whole window the editor is *hidden*, so a page opened into it could
 	///   not be seen — and a page being restored with a project asked for
 	///   nothing. See `reopen(page:)`, which is the other caller.
-	func showLogPage(scopedTo ref: String?, asked: Bool = true) {
+	/// - Parameter owner: the repository whose log this is, when it is not the
+	///   project's own — a submodule, for the history of a file inside one.
+	///   Its page is its own, beside the project's, and is not written into
+	///   the session: a page whose identity is a directory that may not be
+	///   there next time is left closed rather than guessed at, which is what
+	///   `reopen(page:)` does with every identifier it does not know.
+	@discardableResult
+	func showLogPage(scopedTo ref: String?, asked: Bool = true, in owner: URL? = nil) -> HistoryPane? {
 		if asked { leaveTerminalFullScreen() }
-		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return }
+		guard let project = project(), project.git != nil, let group = editor.activeGroup else { return nil }
 
-		let page = (group.page(identifier: "log") as? HistoryPane)
-			?? HistoryPane(root: gitCommandRoot() ?? project.root, layout: .page)
-		logPage = page
+		let estateRoot = gitCommandRoot() ?? project.root
+		let root = owner ?? estateRoot
+		let isProjects = root.standardizedFileURL.path == estateRoot.standardizedFileURL.path
+		let identifier = isProjects ? "log" : "log:" + root.standardizedFileURL.path
+		let page = (group.page(identifier: identifier) as? HistoryPane)
+			?? HistoryPane(root: root, layout: .page)
+		// The project's own log is the one the blame column, the editor's
+		// "This File" and the session all reach for; a submodule's is not
+		// theirs to scope.
+		if isProjects { logPage = page }
 		page.onOpenWorkingCopyDiff = { [weak self] change, root, text in
 			self?.editor.openDiff(for: change, root: root, text: text)
 		}
 
 		// Named for what it is showing: two log tabs both called "Log" would be
 		// the tab strip saying nothing, and a log scoped to a branch is a
-		// different question from the one about where you are standing.
+		// different question from the one about where you are standing. A
+		// submodule's log says whose it is, for the same reason.
+		let name = isProjects ? nil : root.lastPathComponent
 		group.openPage(
 			page,
-			title: ref.map { "Log · \($0)" } ?? "Log",
-			identifier: "log",
+			title: (["Log", name, ref].compactMap { $0 }).joined(separator: " · "),
+			identifier: identifier,
 			symbol: "clock.arrow.circlepath"
 		)
 		// **It does not take the window.** It used to, on the argument that a
@@ -1069,6 +1087,7 @@ final class SidebarController: NSObject {
 		// still in whatever opened it needs a click before it can be walked.
 		DispatchQueue.main.async { [weak page] in page?.focusList() }
 		page.setRef(ref)
+		return page
 	}
 
 	/// The log page, while one is open, for the driver to read.
@@ -1639,8 +1658,10 @@ final class SidebarController: NSObject {
 		change: GitChange, diff: String, lines: Set<Int>,
 		in root: URL? = nil, from origin: DiffOrigin = .tab
 	) {
-		guard let project = project(), !lines.isEmpty else { return }
-		let root = root ?? project.root
+		guard project() != nil, !lines.isEmpty else { return }
+		// The diff came from the repository that owns the change, and its
+		// headers name paths relative to it; applying it anywhere else fails.
+		let root = root ?? owner(of: change.path).root
 		Task { @MainActor in
 			let result = change.isStaged
 				? await GitWorkingCopy.unstage(lines: lines, ofDiff: diff, in: root)
@@ -1696,8 +1717,8 @@ final class SidebarController: NSObject {
 		change: GitChange, diff: String, lines: Set<Int>,
 		in owner: URL? = nil, from origin: DiffOrigin = .tab
 	) {
-		guard let project = project(), !lines.isEmpty else { return }
-		let root = owner ?? project.root
+		guard project() != nil, !lines.isEmpty else { return }
+		let root = owner ?? self.owner(of: change.path).root
 
 		// Discarding is the one operation here that destroys work, so it asks.
 		let alert = NSAlert()
@@ -1757,57 +1778,14 @@ final class SidebarController: NSObject {
 		}
 	}
 
-	/// Opens the diff for a change as an editor tab.
-	/// Where a file stands in its repository, for the compare verbs: the git
-	/// root and the path git knows the file by. Nil outside the repository,
-	/// where there is nothing to compare against.
-	private func repositoryPlace(of url: URL) -> (root: URL, path: String)? {
-		guard let project = project() else { return nil }
-		let root = (project.gitRoot ?? project.root).standardizedFileURL
-		let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-		let path = url.standardizedFileURL.path
-		guard path.hasPrefix(prefix) else { return nil }
-		return (root, String(path.dropFirst(prefix.count)))
-	}
-
-	/// Compare ▸ Against Last Commit: the file's diff against HEAD — staged
-	/// and unstaged edits in one answer, the question the gutter's change
-	/// marks answer — as a diff tab.
-	func compareFileAgainstHead(_ url: URL) {
-		guard let place = repositoryPlace(of: url) else { return }
-		Task { @MainActor in
-			let text = await GitWorkingCopy.diffAgainstHead(for: place.path, in: place.root)
-			guard let text, !text.isEmpty else {
-				Toast.post(
-					"Nothing to compare",
-					detail: "\(url.lastPathComponent) matches the last commit.",
-					kind: .information
-				)
-				return
-			}
-			editor.openDiff(
-				for: GitChange(path: place.path, kind: .modified, isStaged: false),
-				root: place.root, text: text
-			)
-		}
-	}
-
-	/// Compare ▸ History…: the log page the "This File" segment reaches,
-	/// arrived at from the file's own row.
-	func showFileHistory(of url: URL) {
-		guard let place = repositoryPlace(of: url) else { return }
-		showLogPage(scopedTo: nil)
-		logPage?.offerScope(path: place.path)
-		logPage?.setScope(path: place.path)
-	}
-
 	private func showDiff(for change: GitChange) {
 		guard let project = project() else { return }
+		let owner = owner(of: change.path)
 		Task { @MainActor in
 			let text = await GitWorkingCopy.diff(
-				for: change.path,
+				for: owner.path,
 				staged: change.isStaged,
-				in: project.root,
+				in: owner.root,
 				isDirectory: change.isDirectory
 			)
 			editor.openDiff(for: change, root: project.root, text: text)
