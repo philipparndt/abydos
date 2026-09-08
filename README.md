@@ -12,7 +12,8 @@ Two things follow from that, and they are what this is for:
 - **Agents are first-class.** A session is a PTY the app owns, not something a
   view owns, so it can be hidden, shown, or handed over for manual takeover
   while its process keeps running. Findings arrive over MCP as typed data
-  rather than scraped from a rendered screen.
+  rather than scraped from a rendered screen, and a hook tells the window what
+  every Claude Code session on the machine is doing.
 - **The cluster is where the program runs — and where you debug it.** Build
   here, push into a development pod that has the real chart's config, secrets,
   service account and sidecars, and run it there: about a second, against the
@@ -72,45 +73,77 @@ brew uninstall --zap --cask abydos    # and its settings and saved state
 
 ## What it does
 
-- **Terminal** — a real PTY with a VT100/xterm emulator: full colour, mouse
-  reporting, the alternate screen, kitty graphics, and a bundled Nerd Font so
-  powerline prompts render without installing anything. ⌘J opens one; ⌘⏎ gives
-  it the whole window. The panel's tabs can *be* tmux's windows, so the strip
-  and `tmux list-windows` are the same list.
-- **Agents** — ⇧⌘R has an agent review the branch and report findings over a
-  local MCP server, so they arrive as typed data — file, line, severity — and
-  a click jumps to the line. Chat takes the same live session over. The session
-  is a PTY the app owns, so hiding it does not kill it.
+- **Terminal** — a real PTY with a VT100/xterm emulator of its own, and
+  libghostty-vt as an optional second engine under the same panel: full colour,
+  mouse reporting, the alternate screen, kitty graphics, ligatures, a Metal
+  renderer, and a bundled JetBrains Mono Nerd Font so powerline prompts render
+  without installing anything. ⌘J opens one. The panel's tabs can *be* tmux's
+  windows, so the strip and `tmux list-windows` are the same list, and the
+  panel's title bar counts the sessions working and the ones waiting on you.
+- **Agents** — ⇧⌘R has an agent review the branch (⇧⌘U the uncommitted
+  changes) and report findings over a local MCP server, so they arrive as typed
+  data — file, line, severity — and a click jumps to the line. `abydos-hook`
+  is a Claude Code hook that tells the window what every session on the machine
+  is doing; ⇧⌘A lists them, and a session that needs you is a toast that takes
+  one click to reach. A session is a PTY the app owns, so hiding it does not
+  kill it.
 - **In a cluster** — a launch configuration with one extra key builds for the
   cluster's architecture, pushes into a development pod and runs there, with
   the pod's output in a panel tab. Press debug instead and the debugger stops
-  on your breakpoints, in your sources. Go, Java, Rust, C, C++, Zig and Odin.
-- **Run and debug** — launch configurations in `.Abydos/run`, `.vscode/launch.json`
-  imported, Makefile goals, Maven goals, Gradle tasks, and entry points found by
-  scanning. Breakpoints with conditions, hit counts and log points; stack,
-  variables and watches, over DAP.
-- **Language servers** — completion, problems, hover, go-to-declaration and
-  find-usages for the languages that have one installed. Nothing is bundled;
-  what is missing is named in a bar with the one command that installs it.
-- **Editor** — tree-sitter syntax highlighting and code folding for 23
-  languages, with editing, undo/redo, IME support, and a fixed gutter. Cost
-  scales with the viewport, not the file.
+  on your breakpoints, in your sources. A project's own Helm chart can be run
+  with one of its containers put into development mode.
+- **Run and debug** — launch configurations in `.abydos/run`, `.vscode/launch.json`
+  imported, Makefile goals, Maven goals, Gradle tasks, Swift package
+  executables and tests, Xcode schemes, Bazel targets, Conan commands, and
+  entry points found by scanning. Breakpoints with conditions, hit counts and
+  log points; stack, variables, inline values and watches, over DAP. A project
+  is trusted before anything of its own is executed.
+- **Language servers** — completion with detail and parameter hints, problems,
+  hover, go-to-declaration, find-usages, rename and code actions for the
+  languages that have one. Nothing is bundled; what is missing is named in a
+  bar with the one command that installs it — or the server runs in a
+  container, from a tool image this repository builds, or inside the project's
+  own devcontainer.
+- **Editor** — tree-sitter syntax highlighting and code folding for 24
+  languages, with editing, an undo tree, IME support, a fixed gutter that
+  marks the lines git would see as changed, blame beside the file, the file's
+  own indentation, and other occurrences of the selection. Cost scales with
+  the viewport, not the file. ⇧⌘P is a palette over every menu action and
+  every file path.
 - **Project navigator** — bold project root with its `~`-relative path,
-  lazily-loaded directories, per-type file icons, version-control colours, and
-  a warm tint on build-output directories. Fully keyboard-navigable. FSEvents
-  keeps it live, so a `git checkout` in a terminal recolours it.
+  lazily-loaded directories, a second root for the resolved dependencies,
+  per-type file icons, version-control colours, and a warm tint on
+  build-output directories. An archive opens like a folder. Fully
+  keyboard-navigable; FSEvents keeps it live, so a `git checkout` in a
+  terminal recolours it.
 - **Tabs with preview semantics** — a single click in the tree opens a
   provisional tab (shown in italic) that the next click replaces; a
   double-click, Return, or editing pins it.
-- **Git** — status colours, changes, history, blame, branches, worktrees, stash
-  and push, with a titlebar switcher carrying the project badge and branch.
+- **Git** — status colours, changes, a log page and a commit page, blame,
+  branches, tags, worktrees, stash, fetch, pull and push, with a titlebar
+  capsule carrying the project and branch. A checkout of submodules is read as
+  many repositories and committed across as one act. Pull requests are read
+  and reviewed where the code is, through `gh`. A changed picture diffs as two
+  pictures. Anything destructive asks first and leaves a backup ref.
+- **Secrets** — values in a dotenv file are drawn under a cover from the
+  moment it opens; a SOPS file decrypts from the status bar and encrypts on
+  save, and a plaintext secret git can see says so.
+- **Previews** — Markdown (⇧⌘V), Mermaid, PlantUML and draw.io diagrams,
+  Cadova models, 3D models, pictures, video and PDF, beside or instead of
+  their source, built only once somebody has looked.
 - **Profiler** — CPU, heap, goroutine, block and mutex profiles with a flame
   graph, pointed at a program here or at a pod in the cluster.
-- **Binary and oversized files** — open as a tab explaining themselves, with a
-  built-in hex viewer that memory-maps the file and draws only visible rows, so
-  a 100 MB STL opens instantly.
-- **Word wrap** (⌥⌘Z), **markdown preview** (⇧⌘V), and **zoom** (⌘+ / ⌘− / ⌘0)
-  that scales the whole interface rather than only text.
+- **Hex editor** — a binary or oversized file opens as bytes: a caret and a
+  selection over them, a find bar that searches bytes, an inspector that says
+  what the bytes at the caret are, an outline of the format for the ones it
+  knows (Mach-O, ELF, PE, PNG, ZIP, SQLite, Java class, WebAssembly and more)
+  and an entropy curve. It memory-maps the file and draws only visible rows,
+  so a 100 MB STL opens instantly.
+- **Scratches** (⇧⌘N), **word wrap** (⌥⌘Z), and **zoom** (⌘+ / ⌘− / ⌘0) that
+  scales the whole interface — every control — rather than only text.
+- **The backlog** (⇧⌘B) — what is left to do, as files beside the code, shown
+  as a list and a board; an OpenSpec `changes/` directory is shown on the same
+  board.
 
 ## What is supported
 
@@ -122,19 +155,24 @@ tick is something with a test behind it.
 
 | | what it does | what it needs |
 |---|---|---|
-| **Navigator** | project tree, version-control colours, keyboard-driven, FSEvents-live | — |
-| **Editor** | tree-sitter highlighting, folding, word wrap, hex viewer, markdown preview | — |
-| **Search** | find in file (⌘F), project-wide streaming search (⇧⌘F) | — |
+| **Navigator** | project tree with a dependencies root, archives as folders, version-control colours, keyboard-driven, FSEvents-live | — |
+| **Editor** | tree-sitter highlighting, folding, word wrap, change marks, blame, indentation, hex editor, markdown preview | — |
+| **Search** | find and replace in file (⌘F, ⌘R), project-wide streaming search (⇧⌘F), go to anything (⇧⌘P) | — |
 | **Outline** | ⇧⌘O over a file; symbols from the language server, or from the build file's own parser | a server, for source files |
-| **Language servers** | completion, problems, hover, go-to-declaration, find-usages | the server for that language |
-| **Run** | launch configurations in `.Abydos/run`, `.vscode/launch.json` imported, Makefile goals, Maven goals, Gradle tasks, entry points found by scanning | the language's own toolchain |
-| **Debug** | breakpoints (conditional, hit counts, log points), stack, variables, watches — over DAP | Delve, LLDB, or jdtls's java-debug |
+| **Language servers** | completion, problems, hover, go-to-declaration, find-usages, rename, code actions | the server for that language, on the PATH, in a tool image, or in a devcontainer |
+| **Run** | launch configurations in `.abydos/run`, `.vscode/launch.json` imported, Makefile goals, Maven goals, Gradle tasks, Swift packages, Xcode schemes, Bazel targets, Conan, Helm charts, entry points found by scanning | the language's own toolchain, and trust |
+| **Debug** | breakpoints (conditional, hit counts, log points), stack, variables, inline values, watches — over DAP | Delve, lldb-dap, or jdtls's java-debug |
 | **Run in a cluster** | build here, push into a development pod, run it there, follow its output | kubectl, a cluster |
 | **Debug in a cluster** | the same pod, held at the first instruction until the debugger arrives | the above, and the pod image for that language |
 | **Profiler** | CPU, heap, goroutine, block, mutex and allocation profiles; flame graph; pod profiling | a Go program serving pprof |
-| **Git** | status colours, changes, history, blame, branches, worktrees, stash, push | git |
-| **Terminal** | real PTY, VT100/xterm, tmux windows as tabs, bundled Nerd Font | — |
-| **Agent review** | ⇧⌘R — an agent reviews the branch and reports findings over MCP as typed data | Claude Code |
+| **Git** | status colours, changes, log and commit pages, blame, branches, tags, worktrees, stash, fetch, pull, push, submodules as one working copy, picture diffs, a backup ref before anything destructive | git |
+| **Pull requests** | the list of what waits on you, a page of diffs with ticks that die when the file changes, comments against their lines, a review written from the page, a worktree checkout | `gh`, logged in |
+| **Secrets** | dotenv values concealed, SOPS files decrypted and re-encrypted in place, a warning when git can see plaintext | sops, for SOPS files |
+| **Previews** | Markdown, Mermaid, PlantUML, draw.io, Cadova, 3D models, pictures, video, PDF | — (PlantUML needs its server image) |
+| **Terminal** | real PTY, VT100/xterm, optional libghostty-vt engine, Metal renderer, tmux windows as tabs, kitty graphics, bundled Nerd Font | — |
+| **Agent review** | ⇧⌘R / ⇧⌘U — an agent reviews the branch or the uncommitted changes and reports findings over MCP as typed data | Claude Code |
+| **Running sessions** | ⇧⌘A — every Claude Code session on the machine, what it is doing, and a way to it | `abydos-hook install` |
+| **Backlog** | ⇧⌘B — a list and a board over `.abydos/backlog/` or an OpenSpec `changes/` directory | — |
 
 ### Languages
 
@@ -145,14 +183,14 @@ same thing in a development pod.
 
 | language | highlight | fold | outline | server | run | debug | cluster |
 |---|:--:|:--:|:--:|---|---|---|:--:|
-| **Java** | ✓ | ✓ | ✓ | jdtls | Maven, Gradle, `main` methods | java-debug | ✓ |
+| **Java** | ✓ | ✓ | ✓ | jdtls, or kmp-lsp | Maven, Gradle, `main` methods | java-debug | ✓ |
 | **Kotlin** | ✓ | ✓ | — | jdtls¹ | Gradle, `main` functions | java-debug | ✓ |
 | **Go** | ✓ | structural | ✓ | gopls | `go run`, Makefile | Delve | ✓ |
-| **Swift** | ✓ | ✓ | ✓ | sourcekit-lsp | Makefile, launch config | LLDB | via a make step |
-| **Rust** | ✓ | structural | ✓ | rust-analyzer | Makefile, launch config | LLDB | ✓ |
-| **C / C++** | ✓ | structural | ✓ | clangd | Makefile, launch config | LLDB | ✓ |
-| **Zig** | ✓ | ✓ | — | — | Makefile, launch config | LLDB | ✓ |
-| **Odin** | ✓ | ✓ | — | — | Makefile, launch config | LLDB | ✓ |
+| **Swift** | ✓ | ✓ | ✓ | sourcekit-lsp | Swift package, Xcode scheme, Makefile, launch config | lldb-dap | via a make step |
+| **Rust** | ✓ | structural | ✓ | rust-analyzer | Makefile, launch config | lldb-dap | ✓ |
+| **C / C++** | ✓ | structural | ✓ | clangd | Makefile, Conan, Bazel, launch config | lldb-dap | ✓ |
+| **Zig** | ✓ | ✓ | — | — | Makefile, launch config | lldb-dap | ✓ |
+| **Odin** | ✓ | ✓ | — | — | Makefile, launch config | lldb-dap | ✓ |
 | **Python** | ✓ | structural | ✓ | pyright | Makefile | — | — |
 | **TypeScript / TSX** | ✓ | structural | ✓ | typescript-language-server | Makefile | — | — |
 | **JavaScript** | ✓ | structural | ✓ | typescript-language-server | Makefile | — | — |
@@ -162,6 +200,7 @@ same thing in a development pod.
 | **Makefile** | as shell | structural | ✓ targets | — | every goal | Go goals | ✓ |
 | **HTML / XML** | ✓ | structural | — | — | — | — | — |
 | **OpenSCAD** | ✓ | structural | server | openscad-lsp | — | — | — |
+| **PlantUML**³ | — | — | — | plantuml-lsp | — | — | — |
 | **CSS**, **YAML**, **TOML**, **Markdown**, **Svelte** | ✓ | structural | — | — | — | — | — |
 
 ¹ jdtls answers for `.java`; a Kotlin file is highlighted and folded but not
@@ -172,6 +211,9 @@ does not care which language produced the class.
 nothing about modules, so ⇧⌘O over one is answered by that build file's own
 parser: modules, plugins, dependencies, properties, tasks.
 
+³ PlantUML has no grammar here — the ones that exist are stale — so a `.puml`
+file is plain text with a server behind it and a preview beside it.
+
 "Structural" folding derives regions from any multi-line node in the parse
 tree, which covers braces, brackets and indentation. Every language folds; a
 `folds.scm` only makes it tidier.
@@ -179,12 +221,15 @@ tree, which covers braces, brackets and indentation. Every language folds; a
 Nothing here is bundled: a language server, a debugger and a build tool are
 each large programs with opinions about your toolchain, and the ones already on
 the machine are the right ones. What is missing is said in a bar at the top of
-the editor, with the one command that installs it.
+the editor, with the one command that installs it. Every language server the
+editor offers also has a container image under `ToolImages/`, built here from
+its recipe and never fetched from a registry, for a machine that has the
+container runtime and not the toolchain.
 
 ## Performance
 
 The design goal was that cost scales with the *viewport*, not the file. Measured
-on Apple silicon, release build (`swift test -c release --filter PerformanceTests`):
+on Apple silicon, release build (`make perf`):
 
 | Operation | File | Time |
 |---|---|---|
@@ -215,11 +260,13 @@ Three decisions do most of that work:
 ```sh
 make            # build and launch
 make dev        # debug build, run in foreground with logs
-make test       # the suite
+make test       # the suite (FILTER=name for part of it)
+make warnings   # every warning in this repository's own code, and every file over the length ceiling
+make timing     # the render bounds, serialised, on a quiet machine
 make perf       # performance suite with timings
 make profile    # an .app a profiler can actually symbolicate
 make install    # copy to /Applications
-make install-cli # put the `Abydos` command on the PATH
+make install-cli # put the `abydos` commands on the PATH
 make help       # all targets
 ```
 
@@ -235,6 +282,10 @@ Scripts/bundle.sh [debug|release]   # assembles build/Abydos.app
 a toolchain manager such as swiftly puts its own in front, pinned to a release
 older than the SDK, and every target then fails with "this SDK is not supported
 by the compiler" rather than anything about this program.
+
+`make warnings` is a verb of its own and not part of `make build` on purpose: an
+incremental build reports only the files it recompiled, so a warning is seen
+once by whoever happens to be watching and then never again.
 
 ### Profiling
 
@@ -290,9 +341,11 @@ xcrun notarytool store-credentials notarytool \
     --apple-id <Apple ID> --team-id <team> --password <app-specific password>
 ```
 
+Each release has its notes in `docs/release-notes-<version>.md`.
+
 ### The website
 
-[philipparndt.github.io/Abydos-docs](https://philipparndt.github.io/Abydos-docs/),
+[philipparndt.github.io/abydos-docs](https://philipparndt.github.io/abydos-docs/),
 served from its own public repository —
 [philipparndt/abydos-docs](https://github.com/philipparndt/abydos-docs) — because
 Pages will not serve a site from a private repository without a paid plan.
@@ -301,48 +354,68 @@ Pages will not serve a site from a private repository without a paid plan.
 code it describes. It is not what is served: copy it across and push to publish.
 
 ```sh
-cp docs/index.html ../Abydos-docs/ && git -C ../Abydos-docs commit -am "…" && git -C ../Abydos-docs push
+cp docs/index.html ../abydos-docs/ && git -C ../abydos-docs commit -am "…" && git -C ../abydos-docs push
 ```
 
 One self-contained file — no build step, no dependencies, no external requests
-— so `open docs/index.html` renders exactly what visitors get.
+— so `open docs/index.html` renders exactly what visitors get. `make
+screenshots` takes the pictures in `docs/images/`.
 
 ### Opening from a terminal
 
 ```sh
-Abydos                  # this directory
-Abydos ~/dev/thing      # that project
-Abydos cmd/app/main.go  # that file, in the repository around it
+abydos                     # this directory, as a project
+abydos ~/dev/thing         # that directory, as a project
+abydos notes.md            # that file, in the editor
+abydos main.go:214         # …with the cursor on line 214
+abydos a.go b.go           # several tabs, the keyboard in the last
 ```
 
 An instance that is already running takes the path and raises its window
-rather than starting a second copy.
+rather than starting a second copy. Typed in one of Abydos's own terminals, the
+file opens in the editor of *that* window and the keyboard goes with it — the
+pane asks the terminal it is in, over an escape sequence, and falls back to
+`open -a` everywhere else.
+
+`abydos-icat picture.png` prints a picture on the terminal's character grid
+over the kitty graphics protocol, and `abydos-bench` is the DOOM-fire terminal
+stress test. `make install-cli` installs all three; `abydos-hook install` wires
+the Claude Code hook into `~/.claude/settings.json`.
 
 ### Command-line options
 
-Useful for development; `--screenshot` renders the window in-process, so it
-works without Screen Recording permission.
+Driving the app from a script, for screenshots and for tests: `--screenshot`
+renders the window in-process, so it works without Screen Recording
+permission.
 
 ```sh
-Abydos --open <project-dir> [--file <path>] [--expand]
+Abydos --open <project-dir> [--file <path>] [--trust] [--expand]
       [--screenshot <out.png>] [--delay <seconds>]
       [--type <text>] [--collapse] [--backlog list|board]
 ```
 
-### The .Abydos folder
+That is the beginning of a long list — the whole of it is the parser in
+`Sources/AbydosApp/LaunchOptions.swift`, and what a driven run is forbidden to
+touch on the machine it runs on is `openspec/specs/screenshots`. Drive against
+a copy of a project, never a real checkout: the verbs write real preferences
+and real files.
+
+### The .abydos folder
 
 A project Abydos has been opened in keeps one folder beside its code:
 
 ```
-.Abydos/
+.abydos/
   .gitignore     # commits run/ and backlog/, ignores the rest
   run/           # one file per launch configuration — shared
   backlog/       # what is left to do, and what the project does — shared
   session.json   # which files were open here — this machine only
 ```
 
-`.vscode/launch.json` is read but never written: what it holds is imported
-once, and after that the two go their own ways.
+It used to be called `.ideai`; a project that still has one is read from it and
+moved across the first time anything is written. `.vscode/launch.json` is read
+but never written: what it holds is imported once, and after that the two go
+their own ways.
 
 ### Make goals
 
@@ -384,12 +457,12 @@ Kotlin, Groovy, HTML, XML, CSS, YAML, TOML, Markdown, Svelte, OpenSCAD, Odin,
 Zig.
 
 Adding one is a package dependency plus a line in
-`Sources/IdeaiKit/Syntax/LanguageRegistry.swift`. Grammars ship their own
+`Sources/AbydosKit/Syntax/LanguageRegistry.swift`. Grammars ship their own
 `highlights.scm`; folding uses `folds.scm` when present and otherwise derives
 regions structurally from the tree, so every language folds.
 
 A grammar that ships no `folds.scm` at all can be given one here, under
-`Sources/IdeaiKit/Queries/<language>/`. Java and Kotlin have theirs that way —
+`Sources/AbydosKit/Queries/<language>/`. Java and Kotlin have theirs that way —
 neither upstream ships one, and structural folding on a Java file offers to
 fold every parenthesised expression in it. The grammar's own always wins, so
 this never shadows an upstream that catches up.
@@ -401,12 +474,15 @@ Java support is the whole of a project rather than a grammar:
 - **jdtls** for completion, problems, go-to-declaration and find-usages, with a
   data directory per project and the JDKs on this machine reported to it, so a
   module targeting 17 is compiled against 17 rather than against whatever the
-  server runs on. `brew install jdtls`.
+  server runs on. `brew install jdtls`. **kmp-lsp** is offered as the other
+  choice — no build tool is run, so it is up in seconds, and the menu says what
+  that trades away.
 - **Maven and Gradle** are read directly — `pom.xml` for its modules, plugins
   and dependencies, a Gradle build for the tasks it declares — so their goals
   appear as run configurations and ⇧⌘O over a build file lists what is in it.
   The wrapper wins over anything on the path: a project that pins its build
-  tool means it.
+  tool means it. A project of a thousand modules has its package directories
+  compacted in the tree.
 - **Debugging** goes through java-debug, which is not a program but a bundle
   the language server loads: jdtls is asked to start a debug session, answers
   with a port, and the rest is ordinary DAP. The classpath comes from the same
@@ -419,12 +495,13 @@ Java support is the whole of a project rather than a grammar:
 The debug bundle is the one piece with nowhere standard to live. Any of these
 is found: `~/.local/share/java-debug/`, Mason's
 `java-debug-adapter/extension/server/`, VS Code's `vscjava.vscode-java-debug`
-extension, or the jar named by `IDEAI_JAVA_DEBUG_PLUGIN`.
+extension, or the jar named by `ABYDOS_JAVA_DEBUG_PLUGIN`.
 
 ### Vendored grammars
 
-Four grammars live in `Sources/Grammars/` instead of being package
-dependencies. Their upstream manifests gate the external scanner behind:
+Five grammars — CSS, JavaScript, Make, Python and YAML — live in
+`Sources/Grammars/` instead of being package dependencies. Their upstream
+manifests gate the external scanner behind:
 
 ```swift
 if FileManager.default.fileExists(atPath: "src/scanner.c") { … }
@@ -435,29 +512,57 @@ checkout as the working directory, so the check is always false, the scanner is
 silently dropped, and the grammar fails to link with undefined
 `tree_sitter_<lang>_external_scanner_*` symbols. Vendoring lets the source list
 be stated explicitly — which also matters for YAML, whose scanner spans five
-`.c` files. Run `Scripts/vendor-grammars.sh` to refresh them.
+`.c` files. `make grammars` refreshes them.
+
+Three more things are vendored for the same reason — there is nothing to depend
+on. `Vendor/ghostty-vt.xcframework` is libghostty-vt, built from a named ghostty
+commit by `Scripts/build-libghostty-vt.sh`, because it has no release and no
+package. Mermaid's browser bundle and draw.io's renderer live under
+`Sources/AbydosKit/Preview/`, refreshed by `Scripts/vendor-mermaid.sh` and
+`Scripts/vendor-drawio.sh`: every command-line Mermaid carries a headless
+Chromium, and a 3.6 MB file loaded into a web view does not.
 
 ## Layout
 
 ```
-Sources/IdeaiKit/     engine — no view code, so all of it is testable headless
-  Text/               Rope, TextDocument, FoldingState, WrapLayout
-  Syntax/             LanguageRegistry, SyntaxEngine, HighlightKind
-  Terminal/           PseudoTerminal, TerminalEmulator, TerminalScreen
-  Agent/              MCPServer, ReviewSession, AgentLauncher
+Sources/AbydosKit/    engine — no view code, so all of it is testable headless
+  Text/               Rope, TextDocument, UndoTree, FoldingState, WrapLayout
+  Syntax/             LanguageRegistry, SyntaxEngine, SymbolOutline
+  Terminal/           PseudoTerminal, TerminalEmulator, GhosttyTerminalEngine, TmuxMirror, ClaudeHook
+  Agent/              MCPServer, ReviewSession
   Backlog/            Backlog, BacklogItem, BacklogSpec, BacklogRunner
-  Search/             TextSearch, ProjectSearch
-  Go/                 GoTooling
-  Java/               JavaTooling, MavenProject, GradleBuild
-  Git/                GitRepository
-  Project/            Project, FileNode, RecentProjects, FileSystemWatcher
-  Settings/           Settings
-Sources/Abydos/        AppKit — window, navigator, titlebar, editor, terminal, panel
+  OpenSpec/           OpenSpecChange — a change directory read as a card
+  Search/             TextSearch, ProjectSearch, SelectionOccurrences
+  LSP/                LSPClient, LanguageServers, WorkspaceEdit, Snippet
+  Debug/              DAPClient, DebugSession, DebugAdapters, JavaDebug
+  Run/                LaunchConfiguration, Makefile, SwiftPackage, XcodeProject, BazelBuild, ConanProject,
+                      HelmRelease, DevPod, DevContainers, ToolImages
+  Go/, Java/          GoTooling; JavaTooling, MavenProject, GradleBuild
+  Git/                GitRepository, GitEstate (submodules), GitBlame, GitDestructive, GitBackup, Sops, DotenvSecrets
+  Forge/              GitHubPullRequests, PullRequestCheckout, PendingReview
+  Hex/                ByteDocument, ByteSearch, Formats/ (Mach-O, ELF, PE, PNG, ZIP, …)
+  Preview/            Mermaid, Drawio, PlantUML, MarkdownSource, and the vendored renderers
+  Profiler/           PprofProfile, FlameGraph, Kubernetes
+  Archive/            ArchiveIndex — a zip or tar read as a folder
+  Project/            Project, FileNode, FileIndex, DependencyTree, FileSystemWatcher, AgentSessions
+  Settings/           Settings, Scheme, Schemes/ (the colour schemes)
+  Support/            DrivenRun, ClaudeCommand, StallWatch, …
+Sources/AbydosApp/    AppKit — window, navigator, titlebar, editor, terminal, panel, git, review, hex
+Sources/AbydosMain/   main
+Sources/AbydosHook/   abydos-hook, the Claude Code hook as a binary of its own
+Sources/AbydosBacklog/ abydos-backlog, the backlog from a terminal
+Sources/FireBench/    abydos-bench, the terminal stress test
 Sources/Grammars/     vendored tree-sitter grammars
-Resources/Fonts/      bundled Hack Nerd Font (MIT / Bitstream Vera)
+Vendor/               libghostty-vt as an xcframework
+Resources/Fonts/      bundled JetBrains Mono Nerd Font (OFL)
+DevPod/               the development pod: supervisor, chart, image
+ToolImages/           a Dockerfile per language server
+openspec/             what the program does (specs/) and what is proposed (changes/)
+docs/                 the website's page, its pictures, and the release notes
 ```
 
-`IdeaiKit` is free of view code so the engine is testable without a window.
+`AbydosKit` is free of view code so the engine is testable without a window;
+`Tests/AbydosKitTests` is the suite.
 
 ## Agent integration
 
@@ -479,6 +584,23 @@ this is a contract instead.
 Loopback is not access control, so every request must carry a per-session bearer
 token.
 
+### The hook
+
+The sessions you did not start from here matter too — the one in tmux from
+yesterday, the three an agent fanned out. `abydos-hook` is a Claude Code hook,
+a binary of its own because Claude Code runs it several times per tool call and
+what it costs to start is most of what it costs. Each event becomes a
+distributed notification, and the window turns those into the pill in the
+panel's title bar — how many sessions are working, how many are waiting on you
+— the list behind ⇧⌘A, and a toast when a session needs an answer, with one
+click to get there.
+
+```sh
+abydos-hook install    # wire it into ~/.claude/settings.json
+abydos-hook status     # say whether it is wired up
+abydos-hook remove     # take it back out
+```
+
 ### The backlog
 
 The other half of working with an agent is having something to hand it. A
@@ -488,7 +610,7 @@ same folder is read by the app, by the command line and by whatever assistant is
 installed.
 
 ```
-.Abydos/backlog/
+.abydos/backlog/
   AGENTS.md      the workflow, one page — every tool's own file points here
   project.md     what this project is, for something that has never seen it
   spec/          what the project does today, one file per capability
@@ -515,7 +637,7 @@ moves the item to `in-progress` on both sides, and starts the assistant there �
 a checkout each, because two agents in one working tree is two agents editing
 each other's half-finished files.
 
-`spec/` is the part borrowed from [openspec](https://github.com/Fission-AI/OpenSpec):
+`spec/` is the part borrowed from [OpenSpec](https://github.com/Fission-AI/OpenSpec):
 a backlog forgets, and once enough items are in `completed/` the only remaining
 description of what the program does is the program. An item that changes
 behaviour carries a delta — `ADDED`, `MODIFIED`, `REMOVED` — and folding it in
@@ -523,10 +645,15 @@ is a step of the work rather than a tidy-up afterwards, so the spec and the code
 change in the same commit.
 
 ⇧⌘B opens the dashboard: the same folder as a list to read and a board to move
-things on, with a card's state shown by the stripe down its left edge.
+things on, with a card's state shown by the stripe down its left edge. The pane
+shows whichever records of work a project keeps: a project that uses OpenSpec
+itself, as this repository now does, gets its `openspec/changes/` on the same
+board, each change read from its directory — its ticked tasks are its progress,
+its state is derived from what is on disk — with the command that starts work
+on it offered on the card.
 
 `abydos-backlog` is the same model from a terminal, which is where an agent
-works. It ships in the app bundle and `make install-cli` puts it on the PATH.
+works. It ships in the app bundle.
 
 ```
 abydos-backlog init            make one here, and ask which assistant works it
