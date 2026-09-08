@@ -131,6 +131,63 @@ struct GitEstateStatusTests {
 		#expect(status.submodules.isEmpty)
 	}
 
+	/// **The sweep says how far through it is.** Warm, two hundred repositories
+	/// answer in half a second and nobody asks. Cold, the same sweep took 89 s
+	/// at 9 % processor — all of it waiting on the disk — and a spinner over
+	/// that is indistinguishable from a pane that has hung. The count is the
+	/// pane's answer, and it can only be honest if it comes from the sweep.
+	@Test func theSweepSaysHowFarThroughItIs() async throws {
+		let estate = try SyntheticEstate.make(count: 4, named: "progress")
+		defer { estate.remove() }
+		let read = await GitEstate.read(from: estate.root)
+
+		// Collected off whatever thread each answer lands on, so the lock is
+		// the test's own rather than an assumption about which one that is.
+		let seen = Progress()
+		let status = await GitEstateReader.status(of: read) { done, total in
+			seen.record(done: done, total: total)
+		}
+
+		#expect(status.submodules.count == 4)
+		// One report per repository, counting up, and the total never moves.
+		#expect(seen.dones == [1, 2, 3, 4])
+		#expect(seen.totals == [4, 4, 4, 4])
+	}
+
+	/// A partial read reports nothing: it is a handful of repositories at
+	/// 0.01 s each, and a count that appears and vanishes says less than a
+	/// spinner does.
+	@Test func aPartialReadDoesNotCount() async throws {
+		let estate = try SyntheticEstate.make(count: 3, named: "progresspartial")
+		defer { estate.remove() }
+		let read = await GitEstate.read(from: estate.root)
+
+		let seen = Progress()
+		_ = await GitEstateReader.status(of: read, only: ["svc-2"]) { done, total in
+			seen.record(done: done, total: total)
+		}
+		// It does report, being the same call — what does not report is the
+		// pane's partial refresh, which passes no callback. Here the claim is
+		// that the total is the number actually asked for and not the estate's.
+		#expect(seen.totals == [1])
+		#expect(seen.dones == [1])
+	}
+
+	/// Somewhere to put the reports from whatever thread they arrive on.
+	private final class Progress: @unchecked Sendable {
+		private let lock = NSLock()
+		private var pairs: [(Int, Int)] = []
+
+		func record(done: Int, total: Int) {
+			lock.lock()
+			pairs.append((done, total))
+			lock.unlock()
+		}
+
+		var dones: [Int] { lock.withLock { pairs.map(\.0) } }
+		var totals: [Int] { lock.withLock { pairs.map(\.1) } }
+	}
+
 	/// Unbounded is three hundred processes against ten cores while a build is
 	/// running. The ceiling is the point; the measured plateau is where it sits.
 	@Test func theNumberOfGitProcessesAtOnceIsCapped() {

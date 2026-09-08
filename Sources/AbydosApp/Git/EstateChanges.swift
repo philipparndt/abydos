@@ -66,7 +66,14 @@ final class EstateChanges {
 
 	/// Reads what `read` asked for, and gives back the estate's changes as one
 	/// pair of lists with every path relative to the superproject.
-	func refresh(_ read: Read) async -> GitWorkingCopyStatus {
+	/// - Parameter onProgress: told how many repositories have answered out of
+	///   how many, while a whole-estate read is under way. Only the whole-estate
+	///   read reports: a partial one is a handful of repositories at 0.01 s
+	///   each, and a count that appears and vanishes says less than nothing.
+	func refresh(
+		_ read: Read,
+		onProgress: (@Sendable (Int, Int) -> Void)? = nil
+	) async -> GitWorkingCopyStatus {
 		guard read != .nothing else { return status.flattened(in: estate) }
 
 		if case .only(let paths) = read {
@@ -85,7 +92,7 @@ final class EstateChanges {
 		// so it is re-read whenever the whole estate is rather than being
 		// tracked for staleness.
 		estate = await GitEstate.read(from: root)
-		status = await GitEstateReader.status(of: estate)
+		status = await GitEstateReader.status(of: estate, onProgress: onProgress)
 		return status.flattened(in: estate)
 	}
 

@@ -538,6 +538,13 @@ final class SidebarController: NSObject {
 			switch step.prefix(while: { $0 != ":" }) {
 			case "report":
 				print("CHANGES:\n\(pane.changesTreeForTesting())")
+			// The sweep's own progress strip, put up on demand: a warm estate
+			// answers before anything could be photographed, and the whole
+			// point of the strip is what a *cold* one looks like. `43/170`.
+			case "progress":
+				let parts = argument.split(separator: "/").compactMap { Int($0) }
+				guard parts.count == 2 else { break }
+				print("CHANGES progress: " + pane.showProgressForTesting(done: parts[0], of: parts[1]))
 			// Selects the row the way a first click does, deferred diff and
 			// all, so the double-click shape can be driven: select, then stage.
 			case "select":
