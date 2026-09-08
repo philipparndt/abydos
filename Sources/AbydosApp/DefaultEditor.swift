@@ -37,9 +37,20 @@ enum DefaultEditor {
 		}
 	}
 
+	/// Of the kinds declared, the ones this app may take the default of. See
+	/// `TypeFamilies.belongToAnotherKindOfApp`, which is why the two lists
+	/// differ.
+	static var claimableTypes: [UTType] {
+		TypeFamilies.claimable(declaredTypes)
+	}
+
+	/// Against what it may claim, not against everything it declares —
+	/// otherwise this is never true, and the offer is made again every time.
 	static var isDefaultForEverythingDeclared: Bool {
-		let declared = declaredTypes
-		return !declared.isEmpty && typesThisAppOpens().count == declared.count
+		let claimable = Set(claimableTypes.map(\.identifier))
+		guard !claimable.isEmpty else { return false }
+		return typesThisAppOpens().filter { claimable.contains($0.identifier) }.count
+			== claimable.count
 	}
 
 	/// Takes the declared kinds: the roots first, then only what is still not
@@ -53,8 +64,12 @@ enum DefaultEditor {
 	/// second pass asks again only for a kind another application holds by
 	/// name, which is a question worth its dialog. What came back is what the
 	/// page reads afterwards, rather than what was asked for.
+	/// **`public.html` is not among what it takes**, only among what it
+	/// declares: taking that one makes this the default browser, and the
+	/// scheme handlers follow. `TypeFamilies.belongToAnotherKindOfApp` has the
+	/// whole of it.
 	static func makeDefault() async {
-		let declared = declaredTypes
+		let declared = claimableTypes
 		for type in TypeFamilies.roots(of: declared) {
 			try? await NSWorkspace.shared.setDefaultApplication(
 				at: Bundle.main.bundleURL, toOpen: type
@@ -80,6 +95,51 @@ enum DefaultEditor {
 			guard let next = others.first else { continue }
 			try? await NSWorkspace.shared.setDefaultApplication(at: next, toOpen: type)
 		}
+	}
+
+	/// Gives back a claim this app should never have taken, once, at launch.
+	///
+	/// **An older build made this machine's default browser an editor.** The
+	/// second pass of `makeDefault` claimed every declared type by name,
+	/// `public.html` among them, and taking HTML is how macOS is told which
+	/// application is the browser — so `open https://…` went to a program with
+	/// no URL handling at all, which dropped the link and exited 0. The taking
+	/// is fixed above; this is for the machines it already happened on, which
+	/// cannot be reached by fixing it.
+	///
+	/// Narrow on purpose. It hands back only the types
+	/// `TypeFamilies.belongToAnotherKindOfApp` names, only when this app
+	/// actually holds one, and it never touches the source-code kinds somebody
+	/// chose deliberately. Nothing happens on the overwhelming majority of
+	/// launches, and what it costs then is one Launch Services lookup.
+	static func handBackWhatWasNeverOurs() async {
+		guard !DrivenRun.isActive else { return }
+		let mine = Bundle.main.bundleURL.standardizedFileURL
+		let wrong = TypeFamilies.belongToAnotherKindOfApp
+			.compactMap(UTType.init)
+			.filter { NSWorkspace.shared.urlForApplication(toOpen: $0)?.standardizedFileURL == mine }
+		guard !wrong.isEmpty else { return }
+
+		for type in wrong {
+			let others = NSWorkspace.shared.urlsForApplications(toOpen: type)
+				.filter { $0.standardizedFileURL != mine }
+			guard let next = others.first else { continue }
+			try? await NSWorkspace.shared.setDefaultApplication(at: next, toOpen: type)
+		}
+
+		// Said, because it changes something about the machine rather than
+		// about this app, and somebody who has been wondering why links stopped
+		// opening deserves the sentence.
+		let handler = NSWorkspace.shared
+			.urlForApplication(toOpen: URL(string: "https://example.com")!)?
+			.deletingPathExtension().lastPathComponent
+		Toast.post(
+			"Links open in your browser again",
+			detail: "An earlier version of this app had taken the default for web pages, "
+				+ "which is how macOS is told which application is the browser. "
+				+ (handler.map { "They go to \($0) now." } ?? "It has been handed back."),
+			kind: .information
+		)
 	}
 
 	// MARK: - The ask
