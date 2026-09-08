@@ -215,6 +215,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// writing to ~/.tmux.conf. It is per session now, so that line goes.
 		TmuxSettings.migrateAwayFromConfigEdit()
 
+		// And an earlier version took the default for web pages, which is how
+		// macOS is told which application is the browser — so links opened in
+		// an editor that dropped them. Given back where it happened.
+		Task { @MainActor in await DefaultEditor.handBackWhatWasNeverOurs() }
+
 		// And an earlier version started every pane with `PAGER=cat`, which a
 		// tmux server that was up at the time is still handing out — off the
 		// main thread, because it runs `tmux` twice and a launch waits for
