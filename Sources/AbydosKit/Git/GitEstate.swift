@@ -136,6 +136,60 @@ public struct GitEstate: Sendable {
 		return String(path.dropFirst(submodule.path.count + 1))
 	}
 
+	// MARK: - Files
+
+	/// Where a file stands for git.
+	public struct Place: Sendable, Equatable {
+		/// The repository the command runs in: the submodule the file is
+		/// inside, or the superproject.
+		public let root: URL
+		/// The path that repository knows the file by.
+		public let path: String
+		/// The path the estate knows it by — what a `GitChange` carries, and
+		/// what a diff tab's URL is built from against the estate's root.
+		public let estatePath: String
+
+		public init(root: URL, path: String, estatePath: String) {
+			self.root = root
+			self.path = path
+			self.estatePath = estatePath
+		}
+	}
+
+	/// The repository that owns a file and the path it knows the file by, or
+	/// nil for a file outside the estate.
+	///
+	/// **The compare verbs were the case.** `git diff HEAD -- repos/api/README.md`
+	/// run in the superproject exits 0 with nothing to say: the superproject
+	/// holds `repos/api` as a gitlink and knows no file inside it. So Compare ▸
+	/// Against Last Commit reported that a changed file matched the last commit,
+	/// and History… opened an empty log — for every file in every submodule,
+	/// with no error anywhere. `repositoryRoot(containing:)` and
+	/// `relativePath(of:)` already answered the question for an estate-relative
+	/// path; this asks it for a URL, which is what a tree row and a tab hold.
+	///
+	/// Symlinks are resolved on both sides: `/tmp` and `/private/tmp` are one
+	/// place, and a file handed over by one name must be found under the other.
+	/// An estate that has not been read has no root to be under, and answers
+	/// nil.
+	public func place(of url: URL) -> Place? {
+		let base = Self.canonical(root)
+		let file = Self.canonical(url)
+		guard file.hasPrefix(base + "/") else { return nil }
+		let estatePath = String(file.dropFirst(base.count + 1))
+		return Place(
+			root: repositoryRoot(containing: estatePath),
+			path: relativePath(of: estatePath),
+			estatePath: estatePath
+		)
+	}
+
+	private static func canonical(_ url: URL) -> String {
+		var path = url.standardizedFileURL.resolvingSymlinksInPath().path
+		while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+		return path
+	}
+
 	// MARK: - Grouping
 
 	/// A set of paths, and the one repository they are all to be handed to.
