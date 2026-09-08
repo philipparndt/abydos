@@ -12,9 +12,18 @@ extension MainWindowController {
 	// MARK: - Trust
 
 	/// Puts the strip up or takes it down for whatever project this window has.
+	///
+	/// **Up only once the answer is in.** `load(project:)` refreshes before it
+	/// has asked git where the project came from, and a project trusted by its
+	/// remote is untrusted until that answer lands — so the strip flashed on
+	/// every switch to one. An undecided project shows nothing; the refresh
+	/// after the remote is noted is the one that puts the strip up, a few tens
+	/// of milliseconds later, for a project that is really untrusted.
 	func refreshTrustBanner() {
 		let root = project?.root
-		let untrusted = root.map { !ProjectTrust.shared.isTrusted($0) } ?? false
+		let untrusted = root.map {
+			ProjectTrust.shared.isDecided($0) && !ProjectTrust.shared.isTrusted($0)
+		} ?? false
 		let hidden = root.map { hiddenTrustBanners.contains(ProjectTrust.resolvedForTesting($0)) } ?? false
 		let shows = untrusted && !hidden
 		trustBanner.show(project: shows ? root : nil)
