@@ -292,9 +292,9 @@ extension AppDelegate {
 			}
 		}
 
-		if options.devContainerTerminal {
+		if options.pills.terminal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				switch options.devContainerWhich {
+				switch options.pills.which {
 				case "all": controller?.exerciseEveryDevContainerTerminalForTesting()
 				case let which?: controller?.exerciseDevContainerTerminalForTesting(
 					which: Int(which)
@@ -304,21 +304,21 @@ extension AppDelegate {
 			}
 		}
 
-		for at in options.devContainerPillAt {
+		for at in options.pills.devContainerAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.titlebarForTesting.devContainerPillForTesting() ?? "PILL: no window")")
 				fflush(stdout)
 			}
 		}
 
-		for at in options.worktreePillAt {
+		for at in options.pills.worktreeAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.titlebarForTesting.worktreePillForTesting() ?? "WORKTREE: no window")")
 				fflush(stdout)
 			}
 		}
 
-		if let at = options.worktreeMenuAt {
+		if let at = options.pills.worktreeMenuAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.titlebarForTesting.worktreeMenuForTesting() ?? "WORKTREEMENU: no window")")
 				fflush(stdout)
@@ -334,14 +334,14 @@ extension AppDelegate {
 			}
 		}
 
-		if let at = options.devContainerMenuAt {
+		if let at = options.pills.devContainerMenuAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print(controller?.titlebarForTesting.devContainerMenuForTesting() ?? "PILLMENU: no window")
 				fflush(stdout)
 			}
 		}
 
-		for spec in options.pressDevContainerMenu {
+		for spec in options.pills.pressDevContainer {
 			let parts = spec.split(separator: "@")
 			let title = String(parts.first ?? "")
 			let at = parts.count > 1 ? Double(parts[1]) ?? 8 : 8
@@ -377,21 +377,21 @@ extension AppDelegate {
 			}
 		}
 
-		for at in options.runningSessionsAt {
+		for at in options.running.at {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.runningSessionsReportForTesting() ?? "SESSIONS: no window")")
 				fflush(stdout)
 			}
 		}
-		if let at = options.runningSessionsMenuAt {
+		if let at = options.running.menuAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print("\(Int(at))s \(controller?.openRunningSessionsForTesting(filter: options.runningSessionsFilter) ?? "SESSIONS: no window")")
+				print("\(Int(at))s \(controller?.openRunningSessionsForTesting(filter: options.running.filter) ?? "SESSIONS: no window")")
 				fflush(stdout)
 			}
 		}
-		for at in options.runningSessionsPaletteAt {
+		for at in options.running.paletteAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print("\(Int(at))s \(controller?.openRunningSessionsPaletteForTesting(filter: options.runningSessionsFilter) ?? "SESSIONS: no window")")
+				print("\(Int(at))s \(controller?.openRunningSessionsPaletteForTesting(filter: options.running.filter) ?? "SESSIONS: no window")")
 				fflush(stdout)
 			}
 		}
@@ -408,14 +408,14 @@ extension AppDelegate {
 				fflush(stdout)
 			}
 		}
-		if let keys = options.runningSessionsKeys {
-			let opened = options.runningSessionsMenuAt ?? options.runningSessionsPaletteAt.first ?? 6
+		if let keys = options.running.keys {
+			let opened = options.running.menuAt ?? options.running.paletteAt.first ?? 6
 			DispatchQueue.main.asyncAfter(deadline: .now() + opened + 0.6) {
 				print("SESSIONS keys: \(controller?.pressInRunningSessionsForTesting(keys) ?? "no window")")
 				fflush(stdout)
 			}
 		}
-		if let at = options.runningSessionsChooseAt {
+		if let at = options.running.chooseAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("\(Int(at))s \(controller?.chooseFirstRunningSessionForTesting() ?? "SESSIONS: no window")")
 				fflush(stdout)

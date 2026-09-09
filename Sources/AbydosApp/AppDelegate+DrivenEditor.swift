@@ -146,19 +146,19 @@ extension AppDelegate {
 			}
 		}
 
-		if options.trustsRemoteHost || options.trustsRemoteOwner {
+		if options.trust.remoteHost || options.trust.remoteOwner {
 			// Later than the folder's: the remote is read from git after the
 			// project loads, and trusting where a clone came from needs the
 			// answer to have arrived.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-				controller?.trustRemoteForTesting(owner: options.trustsRemoteOwner)
+				controller?.trustRemoteForTesting(owner: options.trust.remoteOwner)
 			}
 		}
-		if options.trustsProject || options.trustsParent {
+		if options.trust.project || options.trust.parent {
 			// Before anything else asks: the point of the flag is a run that
 			// starts where a person would be after pressing Trust.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-				controller?.trustProjectForTesting(coveringChildren: options.trustsParent)
+				controller?.trustProjectForTesting(coveringChildren: options.trust.parent)
 			}
 		}
 		if let path = options.terminalServicePath {
@@ -178,17 +178,17 @@ extension AppDelegate {
 				}
 			}
 		}
-		if options.trustDismiss {
+		if options.trust.dismiss {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.hideTrustBanner()
 			}
 		}
-		if options.trustHeldBack {
+		if options.trust.heldBack {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.heldBackForTesting()
 			}
 		}
-		if options.trustReport {
+		if options.trust.report {
 			// Late enough to be *after* whatever the run asked for: the useful
 			// question is what the window says once a refusal has happened, and
 			// a report before the press only ever says "idle".

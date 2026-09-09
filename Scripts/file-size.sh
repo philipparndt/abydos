@@ -35,10 +35,15 @@
 # switched off teaches that the checks in this repository are advisory — which is
 # a more expensive lesson than any one file.
 #
-# So `Scripts/file-size-allowed.txt` is that debt, written down, at the lengths
+# So `Scripts/file-size-allowed.txt` was that debt, written down, at the lengths
 # those files were. A listed file may shrink freely; it may not grow. When it
 # comes under the aim it is struck from the list and cannot go back on.
-# The list is empty when the work is done, and this script then needs no list.
+#
+# **The list is now empty**, and every file in `Sources` is under the aim. It is
+# kept — an empty file rather than no file — because that is what the check
+# reads, and because an empty debt is worth being able to see: the next entry
+# added to it would be a decision somebody made, in a diff, rather than a
+# ceiling quietly rising.
 #
 # A file that is shorter but still over the aim passes silently and its
 # recorded number is left alone, so that somebody shortening a file is not also
