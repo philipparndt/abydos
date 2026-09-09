@@ -1,178 +1,5 @@
 import Foundation
 
-/// A breakpoint the user set, independent of any running session.
-public struct Breakpoint: Equatable, Hashable, Sendable {
-	public let file: String
-	public let line: Int
-	public var isEnabled: Bool
-	/// Set once the adapter confirms it; an unverified breakpoint is drawn
-	/// hollow, because a filled marker where execution can never stop is a lie.
-	public var isVerified: Bool
-
-	/// An expression that must be true to stop here.
-	///
-	/// The difference between a breakpoint you can use and one you have to sit
-	/// and press Continue at four hundred times because the interesting case is
-	/// the last one.
-	public var condition: String?
-
-	/// Stop only after this many hits — `> 5`, or just `5` meaning the same.
-	public var hitCondition: String?
-
-	/// Print this and carry on rather than stopping.
-	///
-	/// A print statement that needs no rebuild and leaves no mess behind.
-	public var logMessage: String?
-
-	/// Where in the code this was put, rather than at which line number.
-	///
-	/// A line number stops meaning anything once something rewrites the file
-	/// without saying what it changed — an agent, a `git checkout`, a formatter.
-	/// The anchor is what survives that: the symbol the breakpoint was inside,
-	/// how far into it, and what was written on the line. Nil until the file has
-	/// been parsed, and for files with no grammar to parse them.
-	public var anchor: BreakpointAnchors.Anchor?
-
-	/// Whether this breakpoint does anything beyond stopping every time.
-	public var isConditional: Bool {
-		condition?.isEmpty == false || hitCondition?.isEmpty == false || logMessage?.isEmpty == false
-	}
-
-	public init(
-		file: String,
-		line: Int,
-		isEnabled: Bool = true,
-		isVerified: Bool = false,
-		condition: String? = nil,
-		hitCondition: String? = nil,
-		logMessage: String? = nil,
-		anchor: BreakpointAnchors.Anchor? = nil
-	) {
-		self.file = file
-		self.line = line
-		self.isEnabled = isEnabled
-		self.isVerified = isVerified
-		self.condition = condition
-		self.hitCondition = hitCondition
-		self.logMessage = logMessage
-		self.anchor = anchor
-	}
-
-	/// How the protocol wants it.
-	public var wireFormat: [String: Any] {
-		var entry: [String: Any] = ["line": line]
-		if let condition, !condition.isEmpty { entry["condition"] = condition }
-		if let hitCondition, !hitCondition.isEmpty { entry["hitCondition"] = hitCondition }
-		if let logMessage, !logMessage.isEmpty { entry["logMessage"] = logMessage }
-		return entry
-	}
-}
-
-/// One goroutine, or one thread in anything that is not Go.
-public struct DebugThread: Equatable, Sendable, Identifiable {
-	public let id: Int
-	public let name: String
-
-	public init(id: Int, name: String) {
-		self.id = id
-		self.name = name
-	}
-}
-
-/// An expression being watched, and what it last came to.
-public struct WatchExpression: Equatable, Sendable, Identifiable {
-	public let id: UUID
-	public var expression: String
-	/// What it evaluated to where execution is now, or the error if it could
-	/// not be evaluated there.
-	public var value: String?
-	public var failed: Bool
-	/// Set when the value can be opened up, as a struct or a slice can.
-	public var variablesReference: Int
-
-	/// Whether it has been opened. Kept across a refresh: a watch somebody
-	/// opened at one stop should still be open at the next, showing that stop's
-	/// values rather than closing itself every time execution moves.
-	public var isExpanded: Bool
-
-	/// What is inside it, once asked for. Nil means not asked.
-	///
-	/// Thrown away by every refresh, because `variablesReference` is a handle
-	/// into one stopped state and means nothing at the next one — a tree still
-	/// showing the fields it had two stops ago is exactly the fault
-	/// `refreshWatches` exists to prevent, one level down.
-	public var children: [Variable]?
-
-	/// Whether it is worth offering a triangle beside.
-	public var isExpandable: Bool { variablesReference != 0 }
-
-	public init(
-		id: UUID = UUID(),
-		expression: String,
-		value: String? = nil,
-		failed: Bool = false,
-		variablesReference: Int = 0,
-		isExpanded: Bool = false,
-		children: [Variable]? = nil
-	) {
-		self.id = id
-		self.expression = expression
-		self.value = value
-		self.failed = failed
-		self.variablesReference = variablesReference
-		self.isExpanded = isExpanded
-		self.children = children
-	}
-}
-
-public struct StackFrame: Identifiable, Equatable, Sendable {
-	public let id: Int
-	public let name: String
-	public let file: String?
-	public let line: Int
-
-	public init(id: Int, name: String, file: String?, line: Int) {
-		self.id = id
-		self.name = name
-		self.file = file
-		self.line = line
-	}
-}
-
-public struct Variable: Identifiable, Equatable, Sendable {
-	public let id = UUID()
-	public let name: String
-	public let value: String
-	public let type: String?
-	/// Non-zero when the value can be expanded; the handle to ask with.
-	public let variablesReference: Int
-	public var children: [Variable]?
-	public var isExpanded = false
-
-	public var isExpandable: Bool { variablesReference > 0 }
-
-	public init(name: String, value: String, type: String?, variablesReference: Int) {
-		self.name = name
-		self.value = value
-		self.type = type
-		self.variablesReference = variablesReference
-	}
-}
-
-public struct Scope: Equatable, Sendable {
-	public let name: String
-	public let variablesReference: Int
-	public var variables: [Variable] = []
-	public var isExpanded = true
-
-	public init(name: String, variablesReference: Int) {
-		self.name = name
-		self.variablesReference = variablesReference
-	}
-}
-
-/// Drives a debug adapter: breakpoints, stepping, stack and variables.
-///
 /// The session owns the debugger state and publishes it; views render whatever
 /// it currently holds. Keeping it free of view code means the protocol
 /// choreography — which requests must precede which, what has to be re-fetched
@@ -213,20 +40,20 @@ public final class DebugSession {
 	public var location: String?
 
 	/// Breakpoints by file, kept across runs so they survive restarting.
-	public private(set) var breakpoints: [String: [Breakpoint]] = [:]
+	public internal(set) var breakpoints: [String: [Breakpoint]] = [:]
 
-	public private(set) var stackFrames: [StackFrame] = []
-	public private(set) var scopes: [Scope] = []
+	public internal(set) var stackFrames: [StackFrame] = []
+	public internal(set) var scopes: [Scope] = []
 	/// What the editor should draw beside the code, or nil while nothing is
 	/// stopped.
 	///
 	/// Built once per stop and per frame change rather than asked for per line:
 	/// the names of a frame's variables are a dictionary, and a row's drawing is
 	/// then a scan of that row's tokens against it. See `InlineValues`.
-	public private(set) var inlineValues: InlineValueSet?
+	public internal(set) var inlineValues: InlineValueSet?
 
 	/// Frame whose variables are shown.
-	public private(set) var selectedFrameID: Int?
+	public internal(set) var selectedFrameID: Int?
 
 	/// Told whenever the state changes.
 	///
@@ -249,7 +76,7 @@ public final class DebugSession {
 	public var onOutput: ((String) -> Void)?
 	/// Fired when execution stops somewhere with a source location.
 	/// Told where execution stopped. A list, for the same reason as above.
-	private var stoppedObservers: [(String, Int) -> Void] = []
+	var stoppedObservers: [(String, Int) -> Void] = []
 
 	public func observeStopped(_ observer: @escaping (String, Int) -> Void) {
 		stoppedObservers.append(observer)
@@ -268,7 +95,7 @@ public final class DebugSession {
 	}
 
 	/// Everything that wants to know the variables changed, told at once.
-	private func sayVariablesChanged() {
+	func sayVariablesChanged() {
 		onMain { [weak self] in
 			guard let self else { return }
 			self.onVariablesChanged?()
@@ -276,9 +103,9 @@ public final class DebugSession {
 		}
 	}
 
-	private let client: DAPClient
+	let client: DAPClient
 	private let projectRoot: URL
-	private var currentThreadID: Int?
+	var currentThreadID: Int?
 	/// Which debugger is behind this session, once one has been started.
 	public private(set) var adapter: DebugAdapter?
 
@@ -289,6 +116,15 @@ public final class DebugSession {
 	public private(set) var exitCode: Int?
 	/// Bumped per launch so a stale watchdog cannot fire on a newer session.
 	private var launchGeneration = 0
+
+	/// How many times children have been asked for, for a driver to print.
+	///
+	/// **The claim this exists to check is a negative one**: scrolling a stopped
+	/// file, with values beside every line that names one, asks the adapter for
+	/// nothing. A request per hint per repaint is what would make a stopped
+	/// editor unusable, and the only honest way to say it does not happen is to
+	/// count.
+	public internal(set) var childrenRequestsForTesting = 0
 
 	/// Delivers a callback on the main thread.
 	///
@@ -301,7 +137,7 @@ public final class DebugSession {
 		onMain { [weak self] in self?.onLaunchStalled?(message) }
 	}
 
-	private func onMain(_ body: @escaping @Sendable () -> Void) {
+	func onMain(_ body: @escaping @Sendable () -> Void) {
 		if Thread.isMainThread {
 			body()
 		} else {
@@ -315,197 +151,6 @@ public final class DebugSession {
 		wireEvents()
 	}
 
-	// MARK: - Breakpoints
-
-	/// Toggles a breakpoint, syncing to the adapter when one is attached.
-	public func toggleBreakpoint(file: String, line: Int) {
-		// Keyed by the real path, which is how the adapter names files.
-		let file = FilePath.canonical(file)
-		var list = breakpoints[file] ?? []
-		if let index = list.firstIndex(where: { $0.line == line }) {
-			list.remove(at: index)
-		} else {
-			list.append(Breakpoint(file: file, line: line))
-			list.sort { $0.line < $1.line }
-		}
-		breakpoints[file] = list.isEmpty ? nil : list
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-
-		if isActive { Task { await syncBreakpoints(for: file) } }
-	}
-
-	/// Takes over a set of breakpoints whole, before anything is running.
-	///
-	/// Replaying them as toggles loses everything a `Breakpoint` carries beyond
-	/// its line: `toggleBreakpoint` builds a fresh one, which is enabled, so a
-	/// breakpoint somebody had switched off came back on the moment a session
-	/// started — and it was sent to the adapter, and it stopped there.
-	///
-	/// Nothing is verified here. Whether a line can be bound is a fact about a
-	/// program that is not running yet; the adapter says so when the
-	/// breakpoints are sent.
-	public func adopt(_ incoming: [String: [Breakpoint]]) {
-		var adopted: [String: [Breakpoint]] = [:]
-		for (file, list) in incoming {
-			let canonical = FilePath.canonical(file)
-			adopted[canonical] = list
-				.sorted { $0.line < $1.line }
-				.map { breakpoint in
-					var copy = breakpoint
-					copy.isVerified = false
-					return copy
-				}
-		}
-		breakpoints = adopted
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-	}
-
-	/// Turns a breakpoint off without losing it, or on again.
-	///
-	/// A disabled breakpoint stays where it was put, and is not sent to the
-	/// adapter: it is a breakpoint somebody wants back later, not one they want
-	/// now. Xcode's click on the marker means exactly this.
-	public func setBreakpoint(file: String, line: Int, enabled: Bool) {
-		let file = FilePath.canonical(file)
-		guard var list = breakpoints[file], let index = list.firstIndex(where: { $0.line == line })
-		else { return }
-
-		guard list[index].isEnabled != enabled else { return }
-		list[index].isEnabled = enabled
-		// Nothing is bound while it is off; saying otherwise would draw it as
-		// though execution could still stop there.
-		if !enabled { list[index].isVerified = false }
-		breakpoints[file] = list
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-
-		if isActive { Task { await syncBreakpoints(for: file) } }
-	}
-
-	/// Records where a file's breakpoints sit in the code, keyed by line.
-	///
-	/// Nothing the adapter needs to hear about: the anchor is how a breakpoint
-	/// finds its line again after something else rewrites the file, which is
-	/// this side's problem entirely. Nothing on screen changes either, so no
-	/// redraw is asked for.
-	public func setBreakpointAnchors(
-		inFile file: String,
-		_ anchors: [Int: BreakpointAnchors.Anchor]
-	) {
-		let file = FilePath.canonical(file)
-		guard var list = breakpoints[file] else { return }
-		for index in list.indices {
-			guard let anchor = anchors[list[index].line] else { continue }
-			list[index].anchor = anchor
-		}
-		breakpoints[file] = list
-	}
-
-	/// Puts a file's breakpoints where the text moved them.
-	public func replaceBreakpoints(inFile file: String, with list: [Breakpoint]) {
-		let file = FilePath.canonical(file)
-		breakpoints[file] = list.isEmpty ? nil : list
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-		if isActive { Task { await syncBreakpoints(for: file) } }
-	}
-
-	/// Takes a breakpoint away — what dragging one out of the gutter means.
-	public func removeBreakpoint(file: String, line: Int) {
-		let file = FilePath.canonical(file)
-		guard var list = breakpoints[file], let index = list.firstIndex(where: { $0.line == line })
-		else { return }
-
-		list.remove(at: index)
-		breakpoints[file] = list.isEmpty ? nil : list
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-
-		if isActive { Task { await syncBreakpoints(for: file) } }
-	}
-
-	/// Turns every breakpoint off except the one named, or every one back on.
-	///
-	/// "Disable other breakpoints" is the thing somebody reaches for when one
-	/// of thirty is the interesting one and stopping at the rest is in the way.
-	public func setOtherBreakpoints(file: String, line: Int, enabled: Bool) {
-		let keep = FilePath.canonical(file)
-		for (path, list) in breakpoints {
-			var updated = list
-			for index in updated.indices where !(path == keep && updated[index].line == line) {
-				updated[index].isEnabled = enabled
-				if !enabled { updated[index].isVerified = false }
-			}
-			breakpoints[path] = updated
-		}
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-
-		guard isActive else { return }
-		let files = Array(breakpoints.keys)
-		Task { for path in files { await syncBreakpoints(for: path) } }
-	}
-
-	/// Gives a breakpoint a condition, a hit count, or a message to log.
-	///
-	/// Passing nil for everything makes it an ordinary breakpoint again.
-	public func setBreakpointOptions(
-		file: String,
-		line: Int,
-		condition: String?,
-		hitCondition: String?,
-		logMessage: String?
-	) {
-		let file = FilePath.canonical(file)
-		guard var list = breakpoints[file], let index = list.firstIndex(where: { $0.line == line })
-		else { return }
-
-		list[index].condition = condition?.isEmpty == true ? nil : condition
-		list[index].hitCondition = hitCondition?.isEmpty == true ? nil : hitCondition
-		list[index].logMessage = logMessage?.isEmpty == true ? nil : logMessage
-		breakpoints[file] = list
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-
-		if isActive { Task { await syncBreakpoints(for: file) } }
-	}
-
-	public func breakpoint(file: String, line: Int) -> Breakpoint? {
-		breakpoints[FilePath.canonical(file)]?.first { $0.line == line }
-	}
-
-	public func breakpoints(inFile file: String) -> [Breakpoint] {
-		breakpoints[file] ?? []
-	}
-
-	public func hasBreakpoint(file: String, line: Int) -> Bool {
-		breakpoints[file]?.contains { $0.line == line } ?? false
-	}
-
-	public var isActive: Bool {
-		switch state {
-		case .idle, .terminated: return false
-		default: return true
-		}
-	}
-
-	/// Sends the breakpoints for one file. DAP replaces the whole set per file,
-	/// so they are always sent together rather than incrementally.
-	private func syncBreakpoints(for file: String) async {
-		let lines = (breakpoints[file] ?? []).filter(\.isEnabled).map(\.wireFormat)
-		let response = try? await client.request("setBreakpoints", arguments: [
-			"source": ["path": file],
-			"breakpoints": lines,
-			"sourceModified": false,
-		])
-
-		// The adapter reports which it could actually bind — one entry per
-		// breakpoint that was sent, so the answers line up with the enabled
-		// ones rather than with the whole list.
-		guard let verified = response?["breakpoints"] as? [[String: Any]] else { return }
-		var list = breakpoints[file] ?? []
-		let sent = list.indices.filter { list[$0].isEnabled }
-		for (position, index) in sent.enumerated() where position < verified.count {
-			list[index].isVerified = verified[position]["verified"] as? Bool ?? false
-		}
-		breakpoints[file] = list
-		onMain { [weak self] in self?.onBreakpointsChanged?() }
-	}
 
 	// MARK: - Session
 
@@ -1163,7 +808,7 @@ public final class DebugSession {
 	/// The goroutines, or threads in anything that is not Go.
 	public private(set) var threads: [DebugThread] = []
 	/// Which one the stack is being shown for.
-	public private(set) var selectedThreadID: Int?
+	public internal(set) var selectedThreadID: Int?
 
 	public var onThreadsChanged: (() -> Void)?
 
@@ -1230,8 +875,8 @@ public final class DebugSession {
 		return storedWatches
 	}
 
-	private var storedWatches: [WatchExpression] = []
-	private let watchLock = NSLock()
+	var storedWatches: [WatchExpression] = []
+	let watchLock = NSLock()
 
 	/// Changes the watch with this id, if it is still there.
 	///
@@ -1239,7 +884,7 @@ public final class DebugSession {
 	/// and waits for the debugger between them, and a watch removed while it
 	/// waits leaves every index after it pointing at the wrong row — or past the
 	/// end.
-	private func updateWatch(id: UUID, _ change: (inout WatchExpression) -> Void) {
+	func updateWatch(id: UUID, _ change: (inout WatchExpression) -> Void) {
 		watchLock.lock()
 		if let index = storedWatches.firstIndex(where: { $0.id == id }) {
 			change(&storedWatches[index])
@@ -1247,7 +892,7 @@ public final class DebugSession {
 		watchLock.unlock()
 	}
 
-	private func withWatches(_ change: (inout [WatchExpression]) -> Void) {
+	func withWatches(_ change: (inout [WatchExpression]) -> Void) {
 		watchLock.lock()
 		change(&storedWatches)
 		watchLock.unlock()
@@ -1255,301 +900,4 @@ public final class DebugSession {
 
 	public var onWatchesChanged: (() -> Void)?
 
-	public func addWatch(_ expression: String) {
-		let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !trimmed.isEmpty else { return }
-		withWatches { $0.append(WatchExpression(expression: trimmed)) }
-		onMain { [weak self] in self?.onWatchesChanged?() }
-		Task { await refreshWatches() }
-	}
-
-	public func removeWatch(id: UUID) {
-		withWatches { $0.removeAll { $0.id == id } }
-		onMain { [weak self] in self?.onWatchesChanged?() }
-	}
-
-	public func removeAllWatches() {
-		withWatches { $0.removeAll() }
-		onMain { [weak self] in self?.onWatchesChanged?() }
-	}
-
-	/// Re-evaluates every watch in the selected frame.
-	///
-	/// After every stop and every frame change, because a watch that still
-	/// shows the value from two stops ago is worse than no watch at all.
-	public func refreshWatches() async {
-		// A snapshot, since the list can be added to or emptied while this runs.
-		// What comes back is applied to the watch it was asked about, by id, and
-		// dropped if that watch has gone.
-		let current = watches
-		guard !current.isEmpty else { return }
-		guard let frame = selectedFrameID else {
-			withWatches {
-				for index in $0.indices {
-					$0[index].value = nil
-					$0[index].failed = false
-					// Nothing is stopped, so the handle is about nothing. The
-					// row stays open and fills in again at the next stop.
-					$0[index].variablesReference = 0
-					$0[index].children = nil
-				}
-			}
-			onMain { [weak self] in self?.onWatchesChanged?() }
-			return
-		}
-
-		for watch in current {
-			let response = try? await client.request("evaluate", arguments: [
-				"expression": watch.expression,
-				"frameId": frame,
-				"context": "watch",
-			])
-			if let result = response?["result"] as? String {
-				updateWatch(id: watch.id) {
-					$0.value = result
-					$0.failed = false
-					$0.variablesReference = response?["variablesReference"] as? Int ?? 0
-					// The handle is new, so anything held under the old one is
-					// no longer about anything. Still open, and asked again on
-					// the way back up.
-					$0.children = nil
-				}
-			} else {
-				// An expression that does not compile here is not an error to
-				// report; it is simply out of scope in this frame, which is
-				// worth saying quietly rather than clearing the row.
-				updateWatch(id: watch.id) {
-					$0.failed = true
-					$0.value = "not available here"
-					$0.variablesReference = 0
-					$0.children = nil
-				}
-			}
-		}
-		onMain { [weak self] in self?.onWatchesChanged?() }
-	}
-
-	// MARK: - Stack and variables
-
-	/// Re-reads the stack after a stop, then the top frame's variables.
-	private func refreshStack() async {
-		guard let thread = currentThreadID else { return }
-		selectedThreadID = thread
-		await refreshThreads()
-		await refreshStack(thread: thread, reportStop: true)
-	}
-
-	/// Reads one thread's stack.
-	///
-	/// `reportStop` is false when the user picked another goroutine: the editor
-	/// should follow the stack, but nothing has stopped, so the execution
-	/// marker must not move as though it had.
-	private func refreshStack(thread: Int, reportStop: Bool) async {
-		let response = try? await client.request("stackTrace", arguments: [
-			"threadId": thread,
-			"startFrame": 0,
-			"levels": 50,
-		])
-		let frames = (response?["stackFrames"] as? [[String: Any]]) ?? []
-
-		stackFrames = frames.map { frame in
-			let source = frame["source"] as? [String: Any]
-			return StackFrame(
-				id: frame["id"] as? Int ?? 0,
-				name: frame["name"] as? String ?? "?",
-				file: source?["path"] as? String,
-				line: frame["line"] as? Int ?? 0
-			)
-		}
-		let top = stackFrames.first
-		onMain { [weak self] in
-			guard let self else { return }
-			self.onStackChanged?()
-			// Opening the file is AppKit work, so it belongs on this side of
-			// the hop with everything else.
-			if reportStop, let file = top?.file, let line = top?.line {
-				for observer in self.stoppedObservers { observer(file, line) }
-			}
-		}
-
-		if let top { await selectFrame(id: top.id) }
-	}
-
-	/// Loads the scopes and top-level variables for a frame.
-	public func selectFrame(id: Int) async {
-		selectedFrameID = id
-		// A watch means something different in each frame, so it is re-read
-		// whenever the frame changes rather than only when execution stops.
-		defer { Task { await refreshWatches() } }
-
-		let response = try? await client.request("scopes", arguments: ["frameId": id])
-		let raw = (response?["scopes"] as? [[String: Any]]) ?? []
-
-		var loaded: [Scope] = []
-		for entry in raw {
-			var scope = Scope(
-				name: entry["name"] as? String ?? "Scope",
-				variablesReference: entry["variablesReference"] as? Int ?? 0
-			)
-			// Registers are noise in a Go session; skip them by default.
-			if scope.name.lowercased().contains("registers") { continue }
-			scope.variables = await variables(reference: scope.variablesReference)
-			loaded.append(scope)
-		}
-
-		scopes = loaded
-		// The frame's own file and line: a variable is in scope in the frame it
-		// belongs to, so every other file gets nothing — the same rule the
-		// execution marker follows.
-		let frame = stackFrames.first { $0.id == id }
-		if let file = frame?.file, let line = frame?.line {
-			inlineValues = InlineValueSet(
-				file: file, line: line, values: InlineValues.byName(loaded)
-			)
-		} else {
-			inlineValues = nil
-		}
-		sayVariablesChanged()
-	}
-
-	/// How many times children have been asked for, for a driver to print.
-	///
-	/// **The claim this exists to check is a negative one**: scrolling a stopped
-	/// file, with values beside every line that names one, asks the adapter for
-	/// nothing. A request per hint per repaint is what would make a stopped
-	/// editor unusable, and the only honest way to say it does not happen is to
-	/// count.
-	public private(set) var childrenRequestsForTesting = 0
-
-	/// Children of a variable container.
-	public func variables(reference: Int) async -> [Variable] {
-		childrenRequestsForTesting += 1
-		guard reference > 0 else { return [] }
-		let response = try? await client.request("variables", arguments: ["variablesReference": reference])
-		let raw = (response?["variables"] as? [[String: Any]]) ?? []
-
-		return raw.map { entry in
-			Variable(
-				name: entry["name"] as? String ?? "",
-				value: entry["value"] as? String ?? "",
-				type: entry["type"] as? String,
-				variablesReference: entry["variablesReference"] as? Int ?? 0
-			)
-		}
-	}
-
-	/// Expands or collapses a variable, loading children on first expand.
-	/// Opens or closes a watched value, or something inside one.
-	///
-	/// **An empty path is the watch itself**, which is what a scope's variables
-	/// never need: a variable is always reached through its scope, so its path
-	/// has at least one step in it. A watch is a root of its own, and the whole
-	/// reason its values could not be browsed is that there was nothing to
-	/// address that root with.
-	///
-	/// Below the root it is the same walk as a scope's, so it is the same code:
-	/// `evaluate` hands back a `variablesReference` exactly as a variable does,
-	/// and everything under it is ordinary variables.
-	public func toggleWatchExpansion(id: UUID, path: [Int] = []) async {
-		guard let watch = watches.first(where: { $0.id == id }) else { return }
-
-		if path.isEmpty {
-			guard watch.isExpandable else { return }
-			let opening = !watch.isExpanded
-			// Fetched outside the lock: this is a request to the debugger and
-			// waiting for one with the watch list held would stop every other
-			// refresh in the session.
-			var fetched: [Variable]?
-			if opening, watch.children == nil, watch.isExpandable {
-				fetched = await variables(reference: watch.variablesReference)
-			}
-			updateWatch(id: id) {
-				$0.isExpanded = opening
-				if let fetched { $0.children = fetched }
-			}
-		} else {
-			let updated = await toggle(in: watch.children ?? [], path: path)
-			updateWatch(id: id) { $0.children = updated }
-		}
-		onMain { [weak self] in self?.onWatchesChanged?() }
-	}
-
-	/// Fills in a watch that is open but has nothing under it yet.
-	///
-	/// After a refresh: the values are new, the handle is new, and the tree is
-	/// still showing the row opened. Separate from the toggle above because it
-	/// must not close anything — it is not somebody pressing a triangle, it is
-	/// the tree catching up.
-	public func loadOpenWatchChildren() async {
-		for watch in watches where watch.isExpanded && watch.children == nil && watch.isExpandable {
-			let fetched = await variables(reference: watch.variablesReference)
-			updateWatch(id: watch.id) { $0.children = fetched }
-		}
-		onMain { [weak self] in self?.onWatchesChanged?() }
-	}
-
-	/// Puts in a watch as a stopped debugger would have answered it.
-	///
-	/// The expansion rules are about state, not about the wire: what they have
-	/// to get right is that a row stays open across a refresh and that the
-	/// values under it do not. Driving a real adapter to assert that would be a
-	/// live test of something that is not live.
-	///
-	/// **Deliberately not `addWatch`, and that is not tidiness.** `addWatch`
-	/// starts a refresh of its own, and with nothing running that refresh clears
-	/// every reference — so a test that added a watch and then said what it
-	/// evaluated to was racing a task it did not know it had started. It passed
-	/// alone and failed in the suite, which is the worst way for a test to be
-	/// wrong.
-	public func seedWatchForTesting(
-		expression: String, reference: Int = 0, children: [Variable]? = nil
-	) -> UUID {
-		let watch = WatchExpression(
-			expression: expression, value: "…", variablesReference: reference, children: children
-		)
-		withWatches { $0.append(watch) }
-		return watch.id
-	}
-
-	public func setWatchChildrenForTesting(id: UUID, children: [Variable]) {
-		updateWatch(id: id) { $0.children = children }
-	}
-
-	public func toggleExpansion(scopeIndex: Int, path: [Int]) async {
-		guard scopes.indices.contains(scopeIndex) else { return }
-		var scope = scopes[scopeIndex]
-		scope.variables = await toggle(in: scope.variables, path: path)
-		scopes[scopeIndex] = scope
-		sayVariablesChanged()
-	}
-
-	private func toggle(in variables: [Variable], path: [Int]) async -> [Variable] {
-		guard let index = path.first, variables.indices.contains(index) else { return variables }
-		var updated = variables
-		var variable = updated[index]
-
-		if path.count == 1 {
-			variable.isExpanded.toggle()
-			// Children are fetched once, on first expansion.
-			if variable.isExpanded, variable.children == nil {
-				variable.children = await self.variables(reference: variable.variablesReference)
-			}
-		} else {
-			variable.children = await toggle(in: variable.children ?? [], path: Array(path.dropFirst()))
-		}
-
-		updated[index] = variable
-		return updated
-	}
-
-	/// Evaluates an expression in the selected frame.
-	public func evaluate(_ expression: String) async -> String? {
-		guard let frame = selectedFrameID else { return nil }
-		let response = try? await client.request("evaluate", arguments: [
-			"expression": expression,
-			"frameId": frame,
-			"context": "watch",
-		])
-		return response?["result"] as? String
-	}
 }
