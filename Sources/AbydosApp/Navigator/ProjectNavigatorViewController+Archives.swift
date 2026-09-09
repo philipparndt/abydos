@@ -344,6 +344,91 @@ extension ProjectNavigatorViewController {
 		return outlineView.row(forItem: node)
 	}
 
+	// MARK: - Finding an entry from the file it was written to
+
+	/// The archive row a cache file stands for, or nil when no archive this
+	/// window is showing wrote it.
+	///
+	/// **The way back, because the way out is one-directional.** An entry that
+	/// is opened is written into the cache under a folder keyed to a digest of
+	/// the archive's path, size and modification time — so the file the editor
+	/// holds is a path with nothing of the archive left in its name, and
+	/// nothing anywhere maps it back. Every lookup the tree does is by path,
+	/// and this path is outside the project, so revealing an open entry said
+	/// the file was not in the tree while its row sat in the archive it came
+	/// out of, two rows further down.
+	///
+	/// Asked of each shown archive rather than parsed out of the path: the
+	/// digest is not reversible, but it is cheap to recompute, and an archive
+	/// that can answer is one whose index is loaded and whose rows therefore
+	/// exist. An archive that has since been hidden answers nothing, which is
+	/// the honest result — the row really is gone.
+	func archiveEntry(forCacheFile url: URL) -> ArchiveNode? {
+		let path = FilePath.canonical(url)
+		for root in archives.roots.values {
+			guard let index = root.index else { continue }
+			let directory = FilePath.canonical(ArchiveCache.directory(for: index)) + "/"
+			guard path.hasPrefix(directory) else { continue }
+			return root.node(forPath: String(path.dropFirst(directory.count)))
+		}
+		return nil
+	}
+
+	/// Whether a path is in the archive cache at all, whoever wrote it.
+	///
+	/// Separate from the lookup above so that "no archive claims this" and
+	/// "this was never an archive entry" can be told apart, which is the
+	/// difference between an archive that was hidden and a file that has
+	/// nothing to do with any of this.
+	func isArchiveCacheFile(_ url: URL) -> Bool {
+		FilePath.canonical(url).hasPrefix(FilePath.canonical(ArchiveCache.root()) + "/")
+	}
+
+	/// What the tree says about an entry whose archive has since been hidden.
+	///
+	/// Its own sentence, because the three the tree ends with would each be
+	/// true of this file and none of them useful: the file is real, it had a
+	/// row when it was opened, and the way back to one is to show the archive
+	/// again. Held here rather than written at the point of use so that the
+	/// tree file, which is at its recorded length, does not carry it.
+	static let archiveNoLongerShownSaid =
+		"it was opened from inside an archive, and that archive is no longer "
+		+ "shown in the tree."
+
+	/// Opens every row above an entry: the folders holding the archive file,
+	/// the archive's own row, then the directories inside it.
+	///
+	/// **Both halves, and in that order.** After a collapse-all the archive
+	/// file has no row of its own, and `expandItem` on a row the outline has
+	/// never been handed does nothing — silently, which is the failure
+	/// `expandAncestors` is annotated for. So the first version of this found
+	/// its entry and then selected nothing at all, which reads from outside
+	/// exactly like the reveal that did nothing before any of this.
+	///
+	/// No row is asked for here, for the reason `expandAncestors` gives:
+	/// expanding renumbers everything beneath it, so an index taken on the way
+	/// down names the wrong row by the time the last folder is open.
+	func expandForArchiveEntry(_ node: ArchiveNode) {
+		if let rootNode, let file = rootNode.node(for: node.root.url) {
+			let target = row(for: file)
+			expandAncestors(of: target, under: rootNode)
+			outlineView.expandItem(target)
+		}
+		expandArchiveAncestors(of: node)
+	}
+
+	/// The directories *inside* the archive, outermost first — the second half
+	/// of `expandForArchiveEntry`, which is where the order is argued.
+	private func expandArchiveAncestors(of node: ArchiveNode) {
+		var ancestors: [ArchiveNode] = []
+		var current = node.parent
+		while let ancestor = current {
+			ancestors.append(ancestor)
+			current = ancestor.parent
+		}
+		for ancestor in ancestors.reversed() { outlineView.expandItem(ancestor) }
+	}
+
 	/// Shows the archives a session had open, and remembers which of their
 	/// directories to open once each index arrives.
 	func restoreArchives(matching keys: Set<String>) {

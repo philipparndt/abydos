@@ -6,7 +6,7 @@
 3232 Sources/AbydosApp/Git/ChangesPane.swift
 1562 Sources/AbydosApp/Git/HistoryPane.swift
 1701 Sources/AbydosApp/LaunchOptions.swift  # +16 on main's 1685: --compare and --compare-steps, --command
-4741 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift  # +75: Compare Selected over two rows, Compare ▸ With…, and archive rows in the selection the tree keeps
+4753 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift  # +87: Compare Selected over two rows, Compare ▸ With…, archive rows in the selection the tree keeps, and archives as a fourth claimant in the reveal — the lookup, the message and the row-opening are all in +Archives.swift
 1857 Sources/AbydosApp/Navigator/SidebarController.swift  # +10: revealSidebarTool, for a menu command that must not toggle the tool away
 2877 Sources/AbydosApp/Panel/BacklogPane.swift
 5871 Sources/AbydosApp/Panel/BottomPanel.swift

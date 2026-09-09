@@ -10,6 +10,19 @@ import Foundation
 /// archive never serves a stale copy. The system clears its caches when it
 /// likes; nothing here manages them beyond that.
 public enum ArchiveCache {
+	/// The folder every archive's cache sits under.
+	///
+	/// Named here rather than spelled out twice, because telling a cache file
+	/// from any other path is a question asked without knowing which archive
+	/// wrote it — the tree asks it to say why a file it cannot place is one it
+	/// nonetheless has a row for.
+	public static func root(
+		caches: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+			?? FileManager.default.temporaryDirectory
+	) -> URL {
+		caches.appendingPathComponent("abydos/archives", isDirectory: true)
+	}
+
 	public static func directory(
 		for index: ArchiveIndex,
 		caches: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
@@ -17,7 +30,7 @@ public enum ArchiveCache {
 	) -> URL {
 		let seed = "\(index.url.path)\n\(index.key.size)\n\(index.key.modified.timeIntervalSince1970)"
 		let digest = SHA256.hash(data: Data(seed.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-		return caches.appendingPathComponent("abydos/archives/\(digest)", isDirectory: true)
+		return root(caches: caches).appendingPathComponent(digest, isDirectory: true)
 	}
 
 	/// The entry as a file, written the first time and reused after.

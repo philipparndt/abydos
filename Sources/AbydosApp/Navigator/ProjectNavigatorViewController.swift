@@ -3223,6 +3223,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		if dependencies?.locate(url) != nil { return nil }
 		if sessions?.session(containing: url) != nil { return nil }
 		if rootNode?.node(for: url) != nil { return nil }
+		if archiveEntry(forCacheFile: url) != nil { return nil }
+		if isArchiveCacheFile(url) { return Self.archiveNoLongerShownSaid }
 		guard let project else { return "no project is open in this window." }
 		let path = FilePath.canonical(url)
 		guard !path.hasPrefix(FilePath.canonical(project.root) + "/") else {
@@ -3621,6 +3623,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		noteToolchains(for: urls)
 
 		var found: [FileNode] = []
+		var foundEntries: [ArchiveNode] = []
 		for url in urls {
 			// **The Dependencies section wins.** A file under
 			// `.build/checkouts/Cadova` is reachable both ways — the section, and
@@ -3651,14 +3654,23 @@ final class ProjectNavigatorViewController: NSViewController {
 				found.append(target)
 				continue
 			}
+			// **And archives, a fourth claimant.** See `expandForArchiveEntry`,
+			// which is where what this one takes is written down.
+			if let entry = archiveEntry(forCacheFile: url) {
+				expandForArchiveEntry(entry)
+				foundEntries.append(entry)
+				continue
+			}
 			guard let rootNode, let node = rootNode.node(for: url) else { continue }
 			let target = row(for: node)
 			expandAncestors(of: target, under: rootNode)
 			found.append(target)
 		}
-		guard !found.isEmpty else { return }
+		guard !found.isEmpty || !foundEntries.isEmpty else { return }
 
-		let rows = found.map { outlineView.row(forItem: $0) }.filter { $0 >= 0 }.sorted()
+		let rows = (found.map { outlineView.row(forItem: $0) }
+			+ foundEntries.map { outlineView.row(forItem: $0) })
+			.filter { $0 >= 0 }.sorted()
 		guard let first = rows.first else { return }
 		outlineView.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
 		outlineView.scrollRowToVisible(first)
@@ -3669,7 +3681,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Outermost first, and the rows are asked for only once everything is open
 	/// — expanding renumbers the rows beneath it, so an index collected on the
 	/// way would name the wrong file by the time the last folder opened.
-	private func expandAncestors(of node: FileNode, under root: FileNode) {
+	func expandAncestors(of node: FileNode, under root: FileNode) {
 		var ancestors: [FileNode] = []
 		var current: FileNode? = node
 		while let parent = current?.parentNode(in: root) {
@@ -3690,7 +3702,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	///
 	/// A file is always its own row, so this only ever moves a *directory* — the
 	/// reveal of a folder inside a chain, which would otherwise select nothing.
-	private func row(for node: FileNode) -> FileNode {
+	func row(for node: FileNode) -> FileNode {
 		compactsPackages ? node.compactedRow : node
 	}
 

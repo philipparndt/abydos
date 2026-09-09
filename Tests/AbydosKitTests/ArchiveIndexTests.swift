@@ -178,4 +178,38 @@ struct ArchiveIndexTests {
 		let folder = try ArchiveCache.extract(templates, from: index, into: root.appendingPathComponent("caches"), overwrite: false)
 		#expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("deployment.yaml").path))
 	}
+
+	/// The way back: a cache file names the entry it was written from.
+	///
+	/// **Which is a one-directional path being walked backwards, so it is
+	/// asked about here.** The tree reveals an open entry by taking the file
+	/// the editor holds, stripping the archive's own cache folder off the
+	/// front, and asking the archive for what is left — there is nothing in a
+	/// cache path that says which archive wrote it, the digest being a digest.
+	/// Both halves of that are invariants of this file rather than of the tree:
+	/// that every archive's folder sits under one root, so a path can be told
+	/// to have come out of *an* archive at all, and that what follows the
+	/// folder is exactly the entry's path. A layout change here would leave
+	/// the reveal saying a file is not in the tree, which is the report this
+	/// answers, and nothing in the window layer can be tested to catch it.
+	@Test func aCachedEntryNamesTheEntryItCameFrom() throws {
+		let root = try fixture()
+		defer { try? FileManager.default.removeItem(at: root) }
+		try run("/usr/bin/tar", ["czf", "chart.tgz", "chart"], in: root)
+		let index = try ArchiveIndex.read(root.appendingPathComponent("chart.tgz"))
+		let caches = root.appendingPathComponent("caches")
+
+		let directory = ArchiveCache.directory(for: index, caches: caches)
+		#expect(directory.path.hasPrefix(ArchiveCache.root(caches: caches).path + "/"))
+
+		// A file at the top and one nested, because the remainder is a path
+		// rather than a name and a single-level entry would not show it.
+		for path in ["chart/values.yaml", "chart/templates/deployment.yaml"] {
+			let entry = try #require(index.entry(at: path))
+			let cached = try ArchiveCache.file(for: entry, in: index, caches: caches)
+			let prefix = directory.path + "/"
+			#expect(cached.path.hasPrefix(prefix))
+			#expect(String(cached.path.dropFirst(prefix.count)) == entry.path)
+		}
+	}
 }
