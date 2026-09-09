@@ -162,7 +162,6 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 		// show through, with the sidebar's colour meeting the editor's part
 		// way along a row that belongs to neither.
 		let backdrop = ColoredView(color: Theme.current.windowBackground)
-		backdrop.actsAsTitlebar = true
 		backdrop.translatesAutoresizingMaskIntoConstraints = false
 		contentView.addSubview(backdrop, positioned: .above, relativeTo: nil)
 

@@ -7,8 +7,9 @@ import AbydosKit
 /// that a double-click on the title bar zooms the window and it returns to the
 /// size it was — so a run that reads the frame once after the gesture cannot
 /// tell "it did not zoom" from "it zoomed and something put it back". Before,
-/// immediately after, and a beat later; `isZoomed` beside each, because that is
-/// AppKit's own opinion of the same question and the two can disagree.
+/// once the zoom animation has had time to finish, and a beat later; `isZoomed`
+/// beside each, because that is AppKit's own opinion of the same question and
+/// the two can disagree.
 ///
 /// In a file of its own: the two driving files are at the length aim, and this
 /// is one instrument with one subject.
@@ -27,48 +28,96 @@ extension MainWindowController {
 			return
 		}
 
+		// **The largest frame the window passed through, beside where it is.**
+		// Both toggles of a springback finish inside the first reading's wait —
+		// each zoom animates for a fifth of a second and blocks the run loop
+		// while it does — so a window zoomed and put back reads exactly like a
+		// window nothing happened to. The resize notifications are the
+		// difference: a springback passes through the visible frame and back,
+		// and a gesture that did nothing passes through nothing.
+		let largest = LargestFrame(window.frame)
+		let watching = NotificationCenter.default.addObserver(
+			forName: NSWindow.didResizeNotification, object: window, queue: nil
+		) { [largest] note in
+			guard let resized = note.object as? NSWindow else { return }
+			largest.note(resized.frame)
+		}
+
 		func say(_ when: String) {
 			let frame = window.frame
 			let visible = window.screen?.visibleFrame ?? .zero
 			print(String(
-				format: "ZOOM %@: frame=(%.0f,%.0f %.0f×%.0f) zoomed=%@ visible=(%.0f,%.0f %.0f×%.0f)",
+				format: "ZOOM %@: frame=(%.0f,%.0f %.0f×%.0f) zoomed=%@ largest=%.0f×%.0f visible=(%.0f,%.0f %.0f×%.0f)",
 				when, frame.minX, frame.minY, frame.width, frame.height,
 				window.isZoomed ? "yes" : "no",
+				largest.frame.width, largest.frame.height,
 				visible.minX, visible.minY, visible.width, visible.height
 			))
 			fflush(stdout)
 		}
 
-		say("before")
-		if how.hasPrefix("click") {
-			print("ZOOM click: \(doubleClickTitleBar(of: window))")
-			fflush(stdout)
-		} else {
-			window.zoom(nil)
-		}
-		say("after")
-		// A beat, because the springback in the report is visible: the window
-		// goes large and comes back, which is a second frame change on a later
-		// turn of the run loop.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-			say("settled")
-			// `click+back` or `zoom+back`: the same gesture again, which is a
-			// toggle and has to give the window the size it had.
-			guard how.hasSuffix("+back") else { return }
+		func gesture() {
 			if how.hasPrefix("click") {
-				print("ZOOM click: \(self.doubleClickTitleBar(of: window))")
+				print("ZOOM click: \(doubleClickTitleBar(of: window))")
 				fflush(stdout)
 			} else {
 				window.zoom(nil)
 			}
-			say("back")
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { say("back settled") }
+		}
+
+		// The zoom animates for about a fifth of a second, and a click is four
+		// events the run loop delivers on its own turns — so the first reading
+		// after the gesture waits for both, and the second is far enough behind
+		// it that a window put back on a later turn has been put back.
+		say("before")
+		gesture()
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { say("after") }
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+			say("settled")
+			// `click+back` or `zoom+back`: the same gesture again, which is a
+			// toggle and has to give the window the size it had.
+			guard how.hasSuffix("+back") else {
+				NotificationCenter.default.removeObserver(watching)
+				return
+			}
+			gesture()
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { say("back") }
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				say("back settled")
+				NotificationCenter.default.removeObserver(watching)
+			}
 		}
 	}
 
-	/// Posts a double-click in the title bar, through the window's own event
-	/// queue rather than the system tap — see `TreeKeys.click` for what the tap
-	/// costs a driven run.
+	/// The biggest frame a window has had since the reading began: a resize
+	/// notification arrives with the window already resized, so what it passed
+	/// through is only known to somebody who was listening.
+	private final class LargestFrame: @unchecked Sendable {
+		private(set) var frame: NSRect
+		init(_ frame: NSRect) { self.frame = frame }
+		func note(_ candidate: NSRect) {
+			if candidate.width * candidate.height > frame.width * frame.height { frame = candidate }
+		}
+	}
+
+	/// Posts a double-click in the title bar, through the application's own
+	/// event queue rather than the system tap — see `TreeKeys.click` for what
+	/// the tap costs a driven run.
+	///
+	/// **All four events, in the order a mouse sends them.** A double-click is a
+	/// press and release counted once, then a press and release counted twice,
+	/// and the first pair is not decoration: forwarded by the strip as any view
+	/// forwards a click, it reaches AppKit's own frame view and arms the
+	/// title-bar handling that acts on the second release. An instrument that
+	/// sent only the second pair — which this one did, and measured the zoom as
+	/// correct with it — never armed that path, and so never saw the second
+	/// toggle it produced while the strip still zoomed on the press. The
+	/// reported springback was that toggle, reproduced only once the first
+	/// click was sent too.
+	///
+	/// Posted rather than sent, so the run loop delivers them one turn at a time
+	/// as it would a real click, and so a press that runs a tracking loop finds
+	/// its release already in the queue.
 	///
 	/// The point is above the content the app draws and left of the run
 	/// control: a click that lands on a control of ours is the instrument
@@ -76,29 +125,22 @@ extension MainWindowController {
 	private func doubleClickTitleBar(of window: NSWindow) -> String {
 		let point = NSPoint(x: window.frame.width * 0.42, y: window.frame.height - 14)
 		let under = window.contentView?.hitTest(point).map { String(describing: type(of: $0)) } ?? "nothing"
-		func event(_ type: NSEvent.EventType) -> NSEvent? {
+		func event(_ type: NSEvent.EventType, count: Int) -> NSEvent? {
 			NSEvent.mouseEvent(
 				with: type, location: point, modifierFlags: [],
 				timestamp: ProcessInfo.processInfo.systemUptime,
 				windowNumber: window.windowNumber, context: nil,
-				eventNumber: 0, clickCount: 2, pressure: type == .leftMouseDown ? 1 : 0
+				eventNumber: 0, clickCount: count, pressure: type == .leftMouseDown ? 1 : 0
 			)
 		}
-		guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else {
-			return "no event"
-		}
+		let sequence: [(NSEvent.EventType, Int)] = [
+			(.leftMouseDown, 1), (.leftMouseUp, 1), (.leftMouseDown, 2), (.leftMouseUp, 2),
+		]
+		let events = sequence.compactMap { event($0.0, count: $0.1) }
+		guard events.count == sequence.count else { return "no event" }
 		NSApp.activate(ignoringOtherApps: true)
 		window.makeKeyAndOrderFront(nil)
-		// **Down then up, in that order, and not the queued-release trick
-		// `TreeKeys` needs.** A table's `mouseDown` runs a tracking loop that
-		// asks the window for the release, so there the release is queued
-		// first; a title bar runs no such loop. Queued here, the release
-		// arrived on a later turn with no press in front of it, and AppKit read
-		// an up carrying `clickCount: 2` as a double-click of its own — so
-		// every gesture zoomed twice. That looked exactly like the springback
-		// this change is about, and was this instrument.
-		window.sendEvent(down)
-		window.sendEvent(up)
+		for event in events { NSApp.postEvent(event, atStart: false) }
 		return "at (\(Int(point.x)),\(Int(point.y))) on \(under)"
 	}
 }

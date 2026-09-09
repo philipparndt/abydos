@@ -10,13 +10,17 @@ import AbydosKit
 /// A view that fills itself with a flat colour. Used instead of relying on
 /// `NSBox` or vibrancy so the palette matches the theme exactly.
 class ColoredView: NSView {
-	/// Whether a double-click here means what one in a titlebar means.
-	///
-	/// The strip across the top of this window is a view of this app's, drawn
-	/// where the titlebar would be — `fullSizeContentView` puts the content
-	/// there. A view swallows a double-click, so the one gesture every macOS
-	/// window has, and which people use without thinking, did nothing at all.
-	var actsAsTitlebar = false
+	// No mouse handling of its own, and that is deliberate. The strip drawn
+	// where the titlebar would be used to answer a double-click with
+	// `performZoom`, because the gesture appeared to do nothing there. Every
+	// other mouse event was forwarded to AppKit's frame view as usual, and
+	// under the SDK marker the installed binary carries AppKit handles the
+	// title-bar double-click for such a view itself, on the second release —
+	// so each double-click zoomed on the press and un-zoomed on the release,
+	// which is the springback that was reported for weeks. Measured with real
+	// mouse events and the window server's account of the bounds, 2026-09-09:
+	// with this view forwarding everything, AppKit zooms once and it stays,
+	// under either SDK marker.
 
 	private var color: NSColor
 
@@ -35,14 +39,6 @@ class ColoredView: NSView {
 	func refreshColour() {
 		guard let colourSource else { return }
 		setColor(colourSource())
-	}
-
-	override func mouseDown(with event: NSEvent) {
-		guard actsAsTitlebar, event.clickCount == 2 else {
-			super.mouseDown(with: event)
-			return
-		}
-		TitlebarDoubleClick.perform(on: window)
 	}
 
 	/// Repaints in another colour, for a strip that means something by it.

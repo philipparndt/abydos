@@ -1,10 +1,12 @@
-# window-frame Specification
+# Window Frame
 
 ## Purpose
 
 What the window does with its own size: what a zoom does, whose the standard
 frame is, and what is remembered between sittings.
-## Requirements
+
+## MODIFIED Requirements
+
 ### Requirement: A zoom stays until it is undone
 
 Double-clicking the title bar SHALL zoom the window and leave it zoomed, and
@@ -46,25 +48,7 @@ events, counted 1, 1, 2, 2.
 - **WHEN** its title bar is double-clicked
 - **THEN** it returns to the size it had before the zoom, and stays there
 
-### Requirement: The standard frame is AppKit's to choose
-
-The app SHALL NOT implement `windowWillUseStandardFrame`, and SHALL leave the
-frame a zoom aims at to AppKit.
-
-**Tried, and it broke the other half of the gesture.** Returning the visible
-frame of the window's own screen looks like the safer answer for a window with
-`fullSizeContentView` and a title bar the app draws itself — and with it in
-place a zoomed window could not be un-zoomed at all, reported from outside
-within minutes. AppKit's own guess was already that visible frame; taking the
-decision over broke the comparison `isZoomed` makes, and an un-zoom is a zoom
-that knows it is zoomed.
-
-#### Scenario: Un-zooming a window the app did not size
-
-- **GIVEN** a zoomed window
-- **WHEN** the gesture is repeated
-- **THEN** it un-zooms, because AppKit is still the one deciding what zoomed
-  means
+## ADDED Requirements
 
 ### Requirement: The title-bar gesture is AppKit's to handle
 
@@ -89,4 +73,3 @@ off, AppKit zooms once and stays, under the 14 SDK marker and the 26 alike.
 - **WHEN** the title strip is double-clicked
 - **THEN** the window does what the setting says, because AppKit read it, and
   the app did nothing of its own
-
