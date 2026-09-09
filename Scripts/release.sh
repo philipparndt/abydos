@@ -121,11 +121,26 @@ if [ "$FAILED" -ne 0 ]; then
 fi
 echo "    every executable is signed and hardened"
 
+# --- Notarise the app ------------------------------------------------------
+#
+# The app is notarised and stapled *before* it is packaged, so that the ticket
+# travels inside the bundle a user drags out of the image. Stapling the image
+# does not staple what is in it. An app that leaves here without its own ticket
+# makes Gatekeeper ask Apple over the network on first launch, and a machine
+# that is offline, behind a captive portal or a filtering proxy gets no verdict
+# back — which macOS reports to the user as "could not verify" that the app is
+# "free of malware", for the app and for every helper it spawns.
+echo "==> Notarising the app (this waits for Apple)"
+ditto -c -k --keepParent "$APP" "$APP.zip"
+xcrun notarytool submit "$APP.zip" --keychain-profile "$PROFILE" --wait
+rm -f "$APP.zip"
+xcrun stapler staple "$APP"
+
 # --- Package ---------------------------------------------------------------
 #
-# The disk image is what is notarised and what people download: notarising the
-# .app alone leaves the ticket nowhere to be stapled for the thing that
-# actually crosses the network.
+# The disk image is notarised as well: it is the thing that actually crosses
+# the network, and it needs a ticket of its own for Gatekeeper to admit it
+# before anything has been copied out of it.
 echo "==> Making $DMG"
 rm -f "$DMG"
 STAGE=$(mktemp -d)
@@ -135,18 +150,39 @@ hdiutil create -quiet -volname "Abydos" -srcfolder "$STAGE" -ov -format UDZO "$D
 rm -rf "$STAGE"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
-# --- Notarise --------------------------------------------------------------
-echo "==> Notarising (this waits for Apple)"
+# --- Notarise the image ----------------------------------------------------
+echo "==> Notarising the disk image (this waits for Apple)"
 xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
 
 # Stapled so it opens on a machine that is offline, or behind a captive
 # portal, where Gatekeeper cannot ask Apple about it.
 xcrun stapler staple "$DMG"
-xcrun stapler staple "$APP"
 
 # --- Prove it ---------------------------------------------------------------
 #
 # What Gatekeeper itself will say, rather than what the build hopes.
+#
+# The tickets are checked because their absence is invisible to everything
+# else here: an image packaged before the app was stapled still signs, still
+# notarises, and still passes both `spctl` lines below.
+echo "==> Tickets:"
+xcrun stapler validate "$APP"
+xcrun stapler validate "$DMG"
+
+# And the one that actually went wrong once — the app *inside* the image, which
+# is the copy a user drags to /Applications and the only one whose ticket they
+# ever depend on.
+MOUNT=$(mktemp -d)
+hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
+if xcrun stapler validate "$MOUNT/Abydos.app"; then STAPLED=0; else STAPLED=1; fi
+hdiutil detach -quiet "$MOUNT" || true
+rmdir "$MOUNT" 2>/dev/null || true
+if [ "$STAPLED" -ne 0 ]; then
+	echo "Stopping: the app inside $DMG carries no ticket, so it will ask Apple"
+	echo "on first launch and be refused on any machine that cannot reach them."
+	exit 1
+fi
+
 echo "==> Gatekeeper:"
 spctl --assess --type open --context context:primary-signature -vv "$DMG"
 spctl --assess --type execute -vv "$APP"
