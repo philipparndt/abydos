@@ -184,6 +184,14 @@ extension MainWindowController {
 			return editor.activeTabIsHex
 		}
 
+		if item.action == #selector(newProjectFile(_:))
+			|| item.action == #selector(newProjectFolder(_:)) {
+			// There has to be a tree to put the row in. A window with no
+			// project has one anyway — empty — and the field would go on
+			// nothing.
+			return project != nil
+		}
+
 		if item.action == #selector(trustThisProject(_:)) {
 			// **Enabled once the project is trusted, too.** A greyed-out item
 			// is how somebody learns the app has forgotten the question; this

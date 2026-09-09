@@ -355,6 +355,19 @@ extension MainWindowController {
 			case "rename-begin":
 				navigator.beginRename()
 				print("TREE rename-begin: \(navigator.renameFieldReportForTesting)")
+			// The same report without the gesture in front of it: for a field
+			// something *else* in the run put there, which is how the File
+			// menu's New File is proved — `--command` presses the menu item and
+			// this says whether a field arrived in the tree because of it.
+			case "field": print("TREE field: \(navigator.renameFieldReportForTesting)")
+			// `command:New Folder` — a menu-bar command pressed from inside a
+			// script, so the press and the question about what it did are in
+			// one run and in that order. `--command` on its own ends the run
+			// as soon as it has pressed, which is no use when the proof is a
+			// field that has to be looked at afterwards.
+			case let step where step.hasPrefix("command:"):
+				let query = String(step.dropFirst("command:".count))
+				print("TREE command: \(performCommandForTesting(query: query))")
 			default:
 				// What is on disk under the project root, so "Escape left nothing
 				// behind" is answered by the file system rather than by the tree
@@ -838,6 +851,47 @@ extension MainWindowController {
 			"  \(command.qualifiedTitle)\(command.shortcut.map { "  [\($0)]" } ?? "")"
 		}
 		return "\(commands.count) commands\n" + lines.joined(separator: "\n")
+	}
+
+	/// Does what picking the first match in the palette would do.
+	///
+	/// The palette performs a *menu item* — validation, target and the
+	/// responder chain included — so this is the only way to drive a menu-bar
+	/// command as somebody using one, rather than by calling what it calls.
+	/// The distinction is the whole question for an item added to the File
+	/// menu: whether the chain carries it from the menu to the window that can
+	/// do it, from wherever the keyboard happens to be.
+	func performCommandForTesting(query: String) -> String {
+		// The same reason `paletteCommandsForTesting` does it: validation
+		// answers about the key window, and a run still behind everything else
+		// sees every item disabled.
+		//
+		// **And waited for, which that one does not.** Coming to the front is
+		// the window server's answer to a request, not a return value: asking
+		// and then reading the menus in the same turn is a race, and it was
+		// won on one run and lost on the next — the same command reported
+		// "no command matches" with nothing about it changed but which app
+		// happened to be in front. So the run loop is turned until the window
+		// says it is key, which is what the request was for.
+		NSApp.activate(ignoringOtherApps: true)
+		window?.makeKeyAndOrderFront(nil)
+		let deadline = Date().addingTimeInterval(2)
+		while window?.isKeyWindow != true, Date() < deadline {
+			RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+		}
+		guard window?.isKeyWindow == true else {
+			return "the window never came to the front, so every command is disabled"
+		}
+
+		let entries = MenuCommands.all()
+		let matches = CommandSearch.match(entries.map(\.descriptor), query: query)
+		guard let wanted = matches.first,
+		      let entry = entries.first(where: {
+			      $0.descriptor.qualifiedTitle == wanted.qualifiedTitle
+		      })
+		else { return "no command matches \(query)" }
+		entry.perform()
+		return wanted.qualifiedTitle
 	}
 
 	func showBranchMenuForTesting() { showBranchMenu() }

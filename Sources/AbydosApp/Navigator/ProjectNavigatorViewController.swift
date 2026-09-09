@@ -1768,6 +1768,20 @@ final class ProjectNavigatorViewController: NSViewController {
 		beginNew(kind: .file, named: NewFileKinds.name(EntryName.draftName(kind: .file), endingIn: kind))
 	}
 
+	/// The same gesture as the context menu's New ▸ File, asked for from the
+	/// menu bar.
+	///
+	/// Muscle memory goes to the File menu first, and for as long as the tree
+	/// has been able to make files there was nothing there — the gesture
+	/// existed only under a right-click, which is a place you have to already
+	/// know to look. Nothing is decided differently here: the row lands in the
+	/// selected folder, or beside the selected file, or in the project root
+	/// when nothing is selected, which is the answer `beginNew` already gives a
+	/// right-click on empty space.
+	func beginNewEntry(kind: EntryName.Kind) {
+		beginNew(kind: kind)
+	}
+
 	@objc private func contextNewFile() {
 		beginNew(kind: .file)
 	}

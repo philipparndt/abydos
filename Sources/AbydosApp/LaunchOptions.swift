@@ -245,6 +245,13 @@ struct LaunchOptions {
 	/// Print the palette's commands for this query.
 	var paletteQuery: String?
 
+	/// Perform the first command the palette offers for this query.
+	///
+	/// `--palette` says what is *there*; this presses it, through the menu item
+	/// and the responder chain, which is how a menu-bar command is proved to
+	/// reach the thing that does it.
+	var performCommand: String?
+
 	/// Open the palette, type this query a character at a time, and report what
 	/// the file list cost.
 	///
@@ -1311,6 +1318,7 @@ struct LaunchOptions {
 			case "--click-below": options.clickBelowLastLine = true
 			case "--tab-menu": options.tabMenu = true
 			case "--palette": options.paletteQuery = next() ?? ""
+			case "--command": options.performCommand = next()
 			case "--palette-files": options.paletteFiles = next() ?? ""
 			case "--run-configs": options.listRunConfigurations = true
 			case "--run-config": options.runConfigNamed = next()

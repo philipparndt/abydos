@@ -972,6 +972,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let query = options.performCommand {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				print("COMMAND \(controller?.performCommandForTesting(query: query) ?? "no window")")
+				fflush(stdout)
+				if options.writesACapture { return }
+				exit(0)
+			}
+		}
+
 		if options.tabMenu {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				for over in [true, false] {
@@ -3269,6 +3278,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		newWindow.target = self
 		fileMenu.addItem(newWindow)
+
+		// **The two the tree could only be right-clicked for.** Both put the
+		// naming field on a row in the project tree, which is what New ▸ File
+		// does there — this is the same gesture from where hands look for it
+		// first. No key equivalent: ⌘N is the window and ⇧⌘N the scratch file,
+		// and inventing a third is worse than a menu item that is found by
+		// reading. The palette gets both for nothing, being built from this menu.
+		let newFile = NSMenuItem(
+			title: "New File",
+			action: #selector(MainWindowController.newProjectFile(_:)),
+			keyEquivalent: ""
+		)
+		fileMenu.addItem(newFile)
+		let newFolder = NSMenuItem(
+			title: "New Folder",
+			action: #selector(MainWindowController.newProjectFolder(_:)),
+			keyEquivalent: ""
+		)
+		fileMenu.addItem(newFolder)
 
 		let openItem = NSMenuItem(title: "Open…", action: #selector(openProjectPanel(_:)), keyEquivalent: "o")
 		openItem.target = self

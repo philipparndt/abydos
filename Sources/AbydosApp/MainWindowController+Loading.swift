@@ -530,4 +530,32 @@ extension MainWindowController {
 	@objc func newScratchFile(_ sender: Any?) {
 		editor.newScratch()
 	}
+
+	/// **New File and New Folder, from the menu bar.**
+	///
+	/// The tree has offered both since it could make files at all, under a
+	/// right-click and nowhere else — and a gesture that lives only in a
+	/// context menu is one you have to already know is there. Hands go to the
+	/// File menu first, which is where every other Mac app keeps it.
+	///
+	/// It is the same gesture, not a second one: the naming field goes on a row
+	/// in the tree exactly as it does from the right-click, and nothing is
+	/// written until Return.
+	@objc func newProjectFile(_ sender: Any?) { beginNewProjectEntry(.file) }
+
+	@objc func newProjectFolder(_ sender: Any?) { beginNewProjectEntry(.folder) }
+
+	/// The tree has to be on screen before a field can be put on a row in it.
+	///
+	/// Two ways it might not be, and both are ordinary: the sidebar is showing
+	/// git or the backlog instead, or it is closed altogether. Either way the
+	/// field would go on a row nobody can see, and the keystrokes would go with
+	/// it — so the tool is revealed first, and the window laid out before the
+	/// geometry is measured, since a container unhidden this instant still has
+	/// last layout's frame.
+	private func beginNewProjectEntry(_ kind: EntryName.Kind) {
+		sidebar.revealSidebarTool(.project)
+		window?.contentView?.layoutSubtreeIfNeeded()
+		navigator.beginNewEntry(kind: kind)
+	}
 }

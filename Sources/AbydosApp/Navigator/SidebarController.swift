@@ -681,6 +681,23 @@ final class SidebarController: NSObject {
 		updateSidebarSelection()
 	}
 
+	/// Brings a tool on screen, with none of the strip button's toggling.
+	///
+	/// `showSidebarTool` is a tab: asking for the one already showing puts the
+	/// sidebar away, which is right for a button somebody is clicking and wrong
+	/// for a menu command that is about to put a text field in that tool. "New
+	/// File" cannot be the thing that hides the tree it is creating the file
+	/// in — so this one only ever ends with the tool visible.
+	func revealSidebarTool(_ tool: SidebarToolKind) {
+		// A maximised terminal hides the sidebar and the editor together, so
+		// the tool would arrive in a view that is not on screen — the same
+		// silence `showList` describes, and the same way out of it.
+		if isPanelMaximized() { leaveMaximised() }
+		install(tool: tool)
+		if !isNavigatorVisible() { showNavigator() }
+		updateSidebarSelection()
+	}
+
 	/// Shows a sidebar tool over the terminal, hanging off its own button.
 	///
 	/// The same views the sidebar would hold — built the same way, and put back
