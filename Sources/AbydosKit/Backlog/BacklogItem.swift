@@ -204,6 +204,42 @@ public struct BacklogItem: Identifiable, Sendable, Equatable {
 		Self.progress(in: text())
 	}
 
+	/// One step still to do, and where it is in the file.
+	///
+	/// **The line number is the point.** `remainingSteps` gives the words, which
+	/// is all `done` needs to print them; ticking one needs to say *which* line,
+	/// and a `tasks.md` whose steps say `- [ ] Tests` under three headings has
+	/// three lines that match those words. Ticking by text picks the first, which
+	/// is the wrong one two times in three.
+	///
+	/// Counted from zero over `split(separator: "\n", omittingEmptySubsequences:
+	/// false)`, which is the split every reader of this markdown uses and the one
+	/// `ticking(line:in:)` writes back through.
+	public struct OpenStep: Equatable, Sendable {
+		public let line: Int
+		/// The step as it is written, with the bullet and the box taken off.
+		public let text: String
+
+		public init(line: Int, text: String) {
+			self.line = line
+			self.text = text
+		}
+	}
+
+	/// The steps still unticked, with their lines.
+	public func openSteps() -> [OpenStep] {
+		Self.openSteps(in: text())
+	}
+
+	public static func openSteps(in markdown: String) -> [OpenStep] {
+		markdown.split(separator: "\n", omittingEmptySubsequences: false)
+			.enumerated()
+			.compactMap { index, line in
+				guard let step = Self.step(in: line), !step.isDone else { return nil }
+				return OpenStep(line: index, text: step.text)
+			}
+	}
+
 	/// The steps still unticked, as they are written.
 	///
 	/// Printed by `done`, because "you said this item was finished and five
@@ -215,13 +251,34 @@ public struct BacklogItem: Identifiable, Sendable, Equatable {
 	}
 
 	static func remainingSteps(in markdown: String) -> [String] {
-		markdown.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line in
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			guard let bullet = trimmed.first, "-*+".contains(bullet) else { return nil }
-			let rest = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-			guard rest.hasPrefix("[ ]") else { return nil }
-			let text = rest.dropFirst(3).trimmingCharacters(in: .whitespaces)
-			return text.isEmpty ? nil : text
+		openSteps(in: markdown).map(\.text)
+	}
+
+	/// What one line is, if it is a checklist line at all.
+	///
+	/// **One reader for three questions**, and that is the whole of why it is
+	/// here: the fraction on a card, the steps `done` prints and the rows the
+	/// task tip offers to tick all have to mean the same thing by "a step". They
+	/// were three loops over the same grammar, and two of them already disagreed
+	/// — `remainingSteps` dropped a `- [ ]` with no words after it and
+	/// `progress` counted it, so an item ending in a blank box was one short in
+	/// the list and one open in the fraction for ever.
+	///
+	/// `- [ ]`, `* [x]`, `+ [X]`. Anything else with square brackets in it is
+	/// prose or a link, and counting those would make the number meaningless in
+	/// exactly the items that have the most words.
+	static func step(in line: Substring) -> (isDone: Bool, text: String)? {
+		let trimmed = line.trimmingCharacters(in: .whitespaces)
+		guard let bullet = trimmed.first, "-*+".contains(bullet) else { return nil }
+		let rest = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+		guard rest.count >= 3, rest.hasPrefix("[") else { return nil }
+		let mark = rest[rest.index(rest.startIndex, offsetBy: 1)]
+		guard rest[rest.index(rest.startIndex, offsetBy: 2)] == "]" else { return nil }
+		let text = rest.dropFirst(3).trimmingCharacters(in: .whitespaces)
+		switch mark {
+		case " ": return (false, text)
+		case "x", "X": return (true, text)
+		default: return nil
 		}
 	}
 
@@ -232,27 +289,99 @@ public struct BacklogItem: Identifiable, Sendable, Equatable {
 	/// `## Steps`. One function on purpose: two that agree today are two that
 	/// can disagree later, and a fraction on a card would then mean one thing
 	/// for an item and another for a change.
-	static func progress(in markdown: String) -> Progress? {
+	public static func progress(in markdown: String) -> Progress? {
 		var done = 0
 		var total = 0
 		for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			// `- [ ]`, `* [x]`, `+ [X]`. Anything else with square brackets in
-			// it is prose or a link, and counting those would make the number
-			// meaningless in exactly the items that have the most words.
-			guard let bullet = trimmed.first, "-*+".contains(bullet) else { continue }
-			let rest = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-			guard rest.count >= 3, rest.hasPrefix("[") else { continue }
-			let mark = rest[rest.index(rest.startIndex, offsetBy: 1)]
-			guard rest[rest.index(rest.startIndex, offsetBy: 2)] == "]" else { continue }
-
-			switch mark {
-			case " ": total += 1
-			case "x", "X": done += 1; total += 1
-			default: continue
-			}
+			guard let step = step(in: line) else { continue }
+			total += 1
+			if step.isDone { done += 1 }
 		}
 		return total == 0 ? nil : Progress(done: done, total: total)
+	}
+
+	// MARK: - Ticking one of them
+
+	/// What the markdown becomes when one line's box is ticked, or nothing when
+	/// that line is not an unticked step.
+	///
+	/// **Everything else is kept byte for byte** — the bullet character, the
+	/// indentation, the continuation lines under the step, the final newline or
+	/// its absence — because these files are committed, and a tick somebody
+	/// made on a card should show in a diff as the one character it was. The
+	/// split and the join are exact inverses over `\n`, so a file ending
+	/// without one still ends without one.
+	///
+	/// **The `nil` is the guard against a stale list.** The tip read its rows
+	/// when it opened; an agent in a worktree may have rewritten the file
+	/// since, and the line a box stood for may now be a different task, or
+	/// already ticked, or gone. Checked here, at the moment of writing, rather
+	/// than trusted from when it was read.
+	///
+	/// Lower case `[x]`, which is what `openspec` and every hand here writes.
+	public static func ticking(line index: Int, in markdown: String) -> String? {
+		var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+		guard lines.indices.contains(index) else { return nil }
+		guard let step = step(in: Substring(lines[index])), !step.isDone else { return nil }
+		// The first `[ ]` on the line is the box: `step` has already
+		// established that what comes before it is whitespace and a bullet.
+		guard let box = lines[index].range(of: "[ ]") else { return nil }
+		lines[index].replaceSubrange(box, with: "[x]")
+		return lines.joined(separator: "\n")
+	}
+
+	/// Why a tick could not be written, naming the file so a sentence can.
+	///
+	/// A refusal is not one of these: a line that no longer reads as an
+	/// unticked step is `false` from `tick(line:)`, because nothing went wrong
+	/// — the file moved on, and whoever is looking should be shown what it says
+	/// now. These are the cases where the disk would not answer, of which the
+	/// real one is a worktree deleted while its card was still on the board.
+	public struct ChecklistWriteError: LocalizedError, Equatable {
+		public let file: URL
+		public let reason: String
+
+		public init(file: URL, reason: String) {
+			self.file = file
+			self.reason = reason
+		}
+
+		public var errorDescription: String? { "\(file.path) \u{2014} \(reason)" }
+	}
+
+	/// Ticks one line of the item's own markdown.
+	///
+	/// `false` where the line no longer reads as an unticked step, and nothing
+	/// is written. Throws where the file could not be read or written, naming
+	/// it.
+	@discardableResult
+	public func tick(line: Int) throws -> Bool {
+		try Self.tick(line: line, in: file)
+	}
+
+	/// The write itself, over any checklist file.
+	///
+	/// Shared with `OpenSpecChange.tick(line:)` for the same reason the
+	/// counting is: a tick means one thing under `## Steps` and under `## 1.
+	/// Reading a change`, and two writers are two answers to what ticking is.
+	@discardableResult
+	public static func tick(line: Int, in file: URL) throws -> Bool {
+		let markdown: String
+		do {
+			markdown = try String(contentsOf: file, encoding: .utf8)
+		} catch {
+			throw ChecklistWriteError(file: file, reason: "could not be read")
+		}
+		guard let written = ticking(line: line, in: markdown) else { return false }
+		do {
+			// Atomic, because the watcher on this directory fires while the
+			// write is happening: a board woken by a tick must never walk a
+			// half-written file.
+			try written.write(to: file, atomically: true, encoding: .utf8)
+		} catch {
+			throw ChecklistWriteError(file: file, reason: "could not be written")
+		}
+		return true
 	}
 
 	// MARK: - How much longer it has

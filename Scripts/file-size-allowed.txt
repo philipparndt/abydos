@@ -1,14 +1,14 @@
-3969 Sources/AbydosApp/AppDelegate.swift  # +16: the --compare driving verbs dispatched, the abydos:// scheme routed
+3992 Sources/AbydosApp/AppDelegate.swift  # +16 on main's 3976: the --compare driving verbs dispatched, the abydos:// scheme routed
 4841 Sources/AbydosApp/Editor/CodeView.swift
 6263 Sources/AbydosApp/Editor/EditorViewController.swift  # +31: a page can be retitled and carry a subtitle; the drop view can ask which tab is in front
 3634 Sources/AbydosApp/Editor/LanguageService.swift
 4696 Sources/AbydosApp/Git/BranchesPane.swift
-3229 Sources/AbydosApp/Git/ChangesPane.swift
+3232 Sources/AbydosApp/Git/ChangesPane.swift
 1562 Sources/AbydosApp/Git/HistoryPane.swift
-1655 Sources/AbydosApp/LaunchOptions.swift  # +8: --compare and --compare-steps
+1693 Sources/AbydosApp/LaunchOptions.swift  # +8 on main's 1685: --compare and --compare-steps
 4705 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift  # +39: Compare Selected over two rows, and Compare ▸ With…
 1847 Sources/AbydosApp/Navigator/SidebarController.swift
-2606 Sources/AbydosApp/Panel/BacklogPane.swift
+2877 Sources/AbydosApp/Panel/BacklogPane.swift
 5871 Sources/AbydosApp/Panel/BottomPanel.swift
 1550 Sources/AbydosApp/Panel/DebugPane.swift
 1079 Sources/AbydosApp/Panel/ResultChecklist.swift

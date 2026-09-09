@@ -544,4 +544,63 @@ struct OpenSpecChangeTests {
 		// Whatever the answer to this is, the two expectations above hold.
 		_ = OpenSpec.commandLine()
 	}
+
+	// MARK: - Ticking a task
+
+	/// What a box ticked on a card has to do: move the fraction the card is
+	/// drawn from, and move it by one.
+	@Test func aTickedTasksFileCountsOneMore() throws {
+		let sandbox = Sandbox()
+		sandbox.change("tick-one", files: ["proposal.md": "why", "tasks.md": tasks(done: 4, left: 26)])
+
+		let before = try #require(sandbox.openSpec.changes().first)
+		#expect(before.progress()?.summary == "4/30")
+		let open = before.openTasks()
+		#expect(open.count == 26)
+
+		#expect(try before.tick(line: open[0].line) == true)
+
+		// Re-read from the disk, because that is how the board learns of it.
+		let after = try #require(sandbox.openSpec.changes().first)
+		#expect(after.progress()?.summary == "5/30")
+		#expect(after.openTasks().count == 25)
+		#expect(after.state(progress: after.progress()) == .inProgress)
+	}
+
+	/// The last one moves the card out of In progress, which is what closes the
+	/// tip: there is nothing left to list.
+	@Test func tickingTheLastTaskMakesTheChangeComplete() throws {
+		let sandbox = Sandbox()
+		sandbox.change("nearly-done", files: ["proposal.md": "why", "tasks.md": tasks(done: 1, left: 1)])
+
+		let change = try #require(sandbox.openSpec.changes().first)
+		let open = change.openTasks()
+		#expect(open.count == 1)
+		#expect(try change.tick(line: open[0].line) == true)
+
+		let after = try #require(sandbox.openSpec.changes().first)
+		#expect(after.progress()?.summary == "2/2")
+		#expect(after.state(progress: after.progress()) == .complete)
+		#expect(after.openTasks().isEmpty)
+	}
+
+	/// The stale case, which is an agent in a terminal having rewritten the
+	/// file since the tip read it: nothing is written and nothing throws.
+	@Test func aTaskLineThatMovedIsRefusedRatherThanWritten() throws {
+		let sandbox = Sandbox()
+		let folder = sandbox.change(
+			"moved-under-us", files: ["proposal.md": "why", "tasks.md": tasks(done: 0, left: 3)]
+		)
+
+		let change = try #require(sandbox.openSpec.changes().first)
+		let open = change.openTasks()
+		#expect(open.count == 3)
+
+		// Rewritten to prose where the third task was.
+		try "## 1. Doing it\n\nAll of it was dropped.\n"
+			.write(to: folder.appendingPathComponent("tasks.md"), atomically: true, encoding: .utf8)
+
+		#expect(try change.tick(line: open[2].line) == false)
+		#expect(sandbox.openSpec.changes().first?.progress() == nil)
+	}
 }
