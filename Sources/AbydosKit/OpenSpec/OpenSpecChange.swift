@@ -19,6 +19,16 @@ public enum OpenSpecArtifact: String, CaseIterable, Sendable {
 		}
 	}
 
+	/// What it is called in a sentence asking somebody to write it.
+	public var prose: String {
+		switch self {
+		case .proposal: return "the proposal"
+		case .design:   return "the design"
+		case .specs:    return "the spec delta"
+		case .tasks:    return "the tasks"
+		}
+	}
+
 	/// The file it is, inside a change's directory. `specs` is a folder rather
 	/// than a file: one per capability the change touches.
 	var fileName: String { self == .specs ? "specs" : "\(rawValue).md" }
@@ -515,20 +525,61 @@ public struct OpenSpec: Sendable {
 		]
 	}
 
+	/// The change's name, to copy, which every command and every sentence about
+	/// a change takes and which the card showed but did not hand over.
+	///
+	/// The title is the one entry whose copy differs from it in kind rather than
+	/// in length, and the menu draws it as *Copy name* rather than quoting it.
+	public static func nameCommand(for change: OpenSpecChange) -> CardCommand {
+		CardCommand(title: "name", command: change.name)
+	}
+
+	/// What to say about a change still being written: which documents it lacks.
+	///
+	/// A card in Writing was the one column with no entry, because it cannot be
+	/// applied and the CLI says so. It can be *finished*, and the card knows what
+	/// is missing — the artifacts not on disk, in the order the schema wants them
+	/// written. There is no `/opsx:continue` in this project, so the way out is
+	/// what the In-progress column already does: a sentence a person pastes into
+	/// an assistant, naming the change and what it still lacks. Nil for a change
+	/// missing nothing, which is not a Writing change at all.
+	public static func writingCommand(for change: OpenSpecChange) -> CardCommand? {
+		let missing = OpenSpecArtifact.allCases.filter { !change.artifacts.contains($0) }
+		guard !missing.isEmpty else { return nil }
+		let list: String
+		switch missing.count {
+		case 1: list = missing[0].prose
+		case 2: list = "\(missing[0].prose) and \(missing[1].prose)"
+		default:
+			list = missing.dropLast().map(\.prose).joined(separator: ", ")
+				+ " and " + missing[missing.count - 1].prose
+		}
+		return CardCommand(
+			title: "write \(list)",
+			command: "write \(list) for \(change.name), so it is ready to apply"
+		)
+	}
+
 	/// Everything a card offers to copy, in the order it offers them.
 	///
 	/// One place rather than a branch in the menu, so what a state offers can be
 	/// read — and tested — without a view. The archive command is not here: it
 	/// is a shell command and wants the CLI found first, which is a question
 	/// about the machine rather than about the change.
+	///
+	/// **The name comes last, in every state.** The entry that starts or carries
+	/// on the work stays first, where the eye lands; the name is for whoever
+	/// wants to talk about the change somewhere else.
 	public static func commands(for change: OpenSpecChange, in state: OpenSpecState) -> [CardCommand] {
+		let own: [CardCommand]
 		switch state {
 		case .ready:
-			guard let apply = applyCommand(for: change, in: state) else { return [] }
-			return [CardCommand(title: "/opsx:apply", command: apply)]
-		case .inProgress: return inProgressCommands(for: change)
-		case .writing, .complete, .archived: return []
+			own = applyCommand(for: change, in: state).map { [CardCommand(title: "/opsx:apply", command: $0)] } ?? []
+		case .inProgress: own = inProgressCommands(for: change)
+		case .writing: own = writingCommand(for: change).map { [$0] } ?? []
+		case .complete, .archived: own = []
 		}
+		return own + [nameCommand(for: change)]
 	}
 
 	/// What an entry says, and what it copies.

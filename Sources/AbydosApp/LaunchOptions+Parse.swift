@@ -103,6 +103,7 @@ extension LaunchOptions {
 					options.backlogTick = (card: String(spec[spec.startIndex..<colon]), index: index)
 				}
 			case "--backlog-tasks-shot": options.backlogTasksShot = next()
+			case "--backlog-untick": options.backlogUntick = next()
 			case "--backlog-new":  options.backlogNew = next()
 			case "--backlog-init": options.backlogInit = true
 			case "--review-uncommitted": options.reviewUncommitted = true

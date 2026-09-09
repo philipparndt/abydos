@@ -511,6 +511,38 @@ struct BacklogTests {
 		""")
 	}
 
+	/// The way back from a tick: one character again, and only that one.
+	@Test func untickingAStepIsTheTicksMirror() throws {
+		let ticked = "- [x] Done\n- [x] Not done\n"
+		let after = try #require(BacklogItem.unticking(line: 1, text: "Not done", in: ticked))
+		#expect(after == "- [x] Done\n- [ ] Not done\n")
+		#expect(after.count == ticked.count)
+	}
+
+	@Test func untickingKeepsTheContinuationLinesAndTheMissingFinalNewline() throws {
+		let before = """
+		  * [x] 3.2 The list: a heading in the title weight,
+		        a scrolling table of drawn rows, and the step's
+		        first line cut to two.
+		  * [ ] 3.3 Opening reads the file once.
+		"""
+		let after = try #require(BacklogItem.unticking(
+			line: 0, text: "3.2 The list: a heading in the title weight,", in: before
+		))
+		#expect(after.hasPrefix("  * [ ] 3.2 The list"))
+		#expect(after.dropFirst(9) == before.dropFirst(9))
+		#expect(!after.hasSuffix("\n"))
+	}
+
+	/// The safety of offering an undo at all: a line that no longer reads as
+	/// the ticked step with those words is not the line that was ticked.
+	@Test func anUntickIsRefusedWhenTheLineHasMovedOn() {
+		#expect(BacklogItem.unticking(line: 0, text: "Open", in: "- [ ] Open\n") == nil)
+		#expect(BacklogItem.unticking(line: 0, text: "Other words", in: "- [x] Open\n") == nil)
+		#expect(BacklogItem.unticking(line: 0, text: "Open", in: "## A heading\n") == nil)
+		#expect(BacklogItem.unticking(line: 3, text: "Open", in: "- [x] Open\n") == nil)
+	}
+
 	@Test func aLineThatIsNoLongerAnOpenStepIsRefused() {
 		let markdown = "- [x] Already ticked\n## A heading\n- [ ] Open\n"
 		// Ticked since the list was read.

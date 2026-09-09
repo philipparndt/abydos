@@ -670,7 +670,7 @@ extension AppDelegate {
 		if options.backlogMenu != nil || options.backlogMenuChange != nil
 			|| options.backlogNew != nil || options.backlogInit
 			|| options.backlogTasks != nil || options.backlogTasksChange != nil
-			|| options.backlogTick != nil || options.backlogTasksShot != nil {
+			|| options.backlogTick != nil || options.backlogUntick != nil || options.backlogTasksShot != nil {
 			// **Waited for rather than slept through.** Three seconds was enough
 			// for the backlog, whose state is which folder a file is in; the
 			// OpenSpec record asks the CLI about every change, and a board still
@@ -702,6 +702,12 @@ extension AppDelegate {
 					print("BACKLOG tick \(asked.card):\(asked.index): "
 						+ (controller?.backlogTickForTesting(card: asked.card, index: asked.index)
 							?? "no window"))
+				}
+				// And back, through the row the tip keeps with *Undo* on it: the
+				// pair is the round trip the change is about.
+				if let card = options.backlogUntick {
+					print("BACKLOG untick \(card): "
+						+ (controller?.backlogUntickForTesting(card: card) ?? "no window"))
 				}
 				if let number = options.backlogTasks {
 					print("BACKLOG tasks \(String(format: "%04d", number)):")

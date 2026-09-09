@@ -289,7 +289,11 @@ struct OpenSpecChangeTests {
 		sandbox.change("half-done", files: ["tasks.md": tasks(done: 2, left: 3)])
 		let change = try #require(sandbox.openSpec.changes().first)
 
-		let offered = OpenSpec.commands(for: change, in: .inProgress)
+		// The name rides last on every card since 2026-09-09; the three are what
+		// comes before it.
+		let all = OpenSpec.commands(for: change, in: .inProgress)
+		#expect(all.last?.command == "half-done")
+		let offered = Array(all.dropLast())
 		#expect(offered.map(\.command) == [
 			"archive half-done as it is",
 			"complete half-done, I have verified it",
@@ -314,12 +318,59 @@ struct OpenSpecChangeTests {
 		sandbox.change("a-change", files: ["tasks.md": tasks(done: 1, left: 1)])
 		let change = try #require(sandbox.openSpec.changes().first)
 
-		#expect(OpenSpec.commands(for: change, in: .ready).map(\.command) == ["/opsx:apply a-change"])
-		#expect(OpenSpec.commands(for: change, in: .ready).map(\.title) == ["/opsx:apply"])
-		#expect(OpenSpec.commands(for: change, in: .inProgress).count == 3)
-		#expect(OpenSpec.commands(for: change, in: .writing).isEmpty)
-		#expect(OpenSpec.commands(for: change, in: .complete).isEmpty)
-		#expect(OpenSpec.commands(for: change, in: .archived).isEmpty)
+		#expect(OpenSpec.commands(for: change, in: .ready).map(\.command) == ["/opsx:apply a-change", "a-change"])
+		#expect(OpenSpec.commands(for: change, in: .ready).map(\.title) == ["/opsx:apply", "name"])
+		#expect(OpenSpec.commands(for: change, in: .inProgress).count == 4)
+		// The sentence for Writing is tested below; here only that the name is
+		// last wherever the state puts nothing of its own before it.
+		#expect(OpenSpec.commands(for: change, in: .writing).last?.command == "a-change")
+		#expect(OpenSpec.commands(for: change, in: .complete).map(\.command) == ["a-change"])
+		#expect(OpenSpec.commands(for: change, in: .archived).map(\.command) == ["a-change"])
+	}
+
+	/// The name, last, in every state: what every command and sentence about a
+	/// change takes, and what the card showed but did not hand over.
+	@Test func everyCardCopiesItsName() throws {
+		let sandbox = Sandbox()
+		sandbox.change("a-change", files: ["tasks.md": tasks(done: 1, left: 1)])
+		let change = try #require(sandbox.openSpec.changes().first)
+		for state in OpenSpecState.allCases {
+			#expect(OpenSpec.commands(for: change, in: state).last?.command == "a-change", "\(state)")
+		}
+	}
+
+	/// The one column with no entry offers the way out of it: a sentence naming
+	/// what is missing, in the schema's order, because there is no
+	/// `/opsx:continue` here and an assistant is what finishes a change.
+	@Test func aChangeStillBeingWrittenOffersWhatItLacks() throws {
+		let sandbox = Sandbox()
+		sandbox.change("half-written", files: ["proposal.md": "## Why\n\nBecause.\n"])
+		let change = try #require(sandbox.openSpec.changes().first)
+		let offered = OpenSpec.commands(for: change, in: .writing)
+		#expect(offered.map(\.title) == ["write the design, the spec delta and the tasks", "name"])
+		#expect(offered.first?.command
+			== "write the design, the spec delta and the tasks for half-written, so it is ready to apply")
+
+		let nearly = Sandbox()
+		nearly.change("nearly", files: [
+			"proposal.md": "## Why\n", "design.md": "## Context\n", "specs/thing/spec.md": "# Thing\n",
+		])
+		let almost = try #require(nearly.openSpec.changes().first)
+		#expect(OpenSpec.writingCommand(for: almost)?.title == "write the tasks")
+		#expect(OpenSpec.writingCommand(for: almost)?.command == "write the tasks for nearly, so it is ready to apply")
+
+		// Two missing read as prose, not as a list.
+		let two = Sandbox()
+		two.change("two", files: ["proposal.md": "## Why\n", "design.md": "## Context\n"])
+		let both = try #require(two.openSpec.changes().first)
+		#expect(OpenSpec.writingCommand(for: both)?.title == "write the spec delta and the tasks")
+		// And a change missing nothing has no sentence: it is not in Writing.
+		let whole = Sandbox()
+		whole.change("whole", files: [
+			"proposal.md": "## Why\n", "design.md": "## Context\n",
+			"specs/thing/spec.md": "# Thing\n", "tasks.md": tasks(done: 0, left: 1),
+		])
+		#expect(OpenSpec.writingCommand(for: try #require(whole.openSpec.changes().first)) == nil)
 	}
 
 	// MARK: - The archive

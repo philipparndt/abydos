@@ -117,6 +117,9 @@ struct LaunchOptions {
 	/// `--backlog-tick <name|number>:<n>`, one-based as the report numbers its
 	/// rows.
 	var backlogTick: (card: String, index: Int)?
+	/// Take the last tick back through the tip, and say what the line reads:
+	/// `--backlog-untick <name|number>`, after a `--backlog-tick`.
+	var backlogUntick: String?
 	/// Draw the tip to a PNG, because a child window is invisible to a capture
 	/// of the main one.
 	///

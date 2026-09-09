@@ -2,6 +2,9 @@ import AppKit
 import AbydosKit
 
 final class BacklogPane: NSView {
+	/// The ticks made from this pane's cards, for ⌘Z — see `BacklogPane+Undo`.
+	let tickUndo = UndoManager()
+	override var undoManager: UndoManager? { tickUndo }
 	/// Open a file of the backlog's in the editor: an item, or the instructions
 	/// a backlog that has just been made was given.
 	var onOpenItem: ((URL) -> Void)?
@@ -711,9 +714,14 @@ final class BacklogPane: NSView {
 		// they were verified by hand, or carry on. `OpenSpec.commands` is where
 		// that lives and why.
 		for command in OpenSpec.commands(for: card.change, in: card.state) {
+			// The name is last and set apart: a separator is what keeps it from
+			// reading as a fourth sentence under the three, and it is not quoted
+			// because it is not a thing somebody says.
+			let isName = command.command == card.change.name
+			if isName { menu.addItem(.separator()) }
 			let entry = NSMenuItem(
-				title: "Copy \u{201C}\(command.title)\u{201D}",
-				action: #selector(copyApplyCommandFromMenu(_:)),
+				title: isName ? "Copy name" : "Copy \u{201C}\(command.title)\u{201D}",
+				action: isName ? #selector(copyNameFromMenu(_:)) : #selector(copyApplyCommandFromMenu(_:)),
 				keyEquivalent: ""
 			)
 			entry.target = self
@@ -780,6 +788,13 @@ final class BacklogPane: NSView {
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(command, forType: .string)
 		onNotify?("Copied", command)
+	}
+
+	@objc private func copyNameFromMenu(_ sender: NSMenuItem) {
+		guard let name = sender.representedObject as? String else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(name, forType: .string)
+		onNotify?("Copied the change\u{2019}s name", name)
 	}
 
 	@objc private func copyArchiveCommandFromMenu(_ sender: NSMenuItem) {

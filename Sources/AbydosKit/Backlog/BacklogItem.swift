@@ -330,6 +330,24 @@ public struct BacklogItem: Identifiable, Sendable, Equatable {
 		return lines.joined(separator: "\n")
 	}
 
+	/// What the markdown becomes when one line's tick is taken back, or nothing
+	/// when that line is not the ticked step it is expected to be.
+	///
+	/// The mirror of `ticking`, and it is the mirror that makes an undo safe to
+	/// offer: the line has to read as a ticked step *with the text that was
+	/// ticked*, or an agent that rewrote the file between the tick and the undo
+	/// would have a different task unticked under it. Everything else is kept
+	/// byte for byte, for the same reason as the tick — these files are
+	/// committed, and an undo should show in a diff as the one character it is.
+	public static func unticking(line index: Int, text expected: String, in markdown: String) -> String? {
+		var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+		guard lines.indices.contains(index) else { return nil }
+		guard let step = step(in: Substring(lines[index])), step.isDone, step.text == expected else { return nil }
+		guard let box = lines[index].range(of: "[x]", options: .caseInsensitive) else { return nil }
+		lines[index].replaceSubrange(box, with: "[ ]")
+		return lines.joined(separator: "\n")
+	}
+
 	/// Why a tick could not be written, naming the file so a sentence can.
 	///
 	/// A refusal is not one of these: a line that no longer reads as an
@@ -377,6 +395,28 @@ public struct BacklogItem: Identifiable, Sendable, Equatable {
 			// Atomic, because the watcher on this directory fires while the
 			// write is happening: a board woken by a tick must never walk a
 			// half-written file.
+			try written.write(to: file, atomically: true, encoding: .utf8)
+		} catch {
+			throw ChecklistWriteError(file: file, reason: "could not be written")
+		}
+		return true
+	}
+
+	/// Takes a tick back, over any checklist file, the way `tick` made it.
+	///
+	/// `false` where the line no longer reads as the ticked step with that
+	/// text, and nothing is written; throws where the file could not be read or
+	/// written, naming it.
+	@discardableResult
+	public static func untick(line: Int, text: String, in file: URL) throws -> Bool {
+		let markdown: String
+		do {
+			markdown = try String(contentsOf: file, encoding: .utf8)
+		} catch {
+			throw ChecklistWriteError(file: file, reason: "could not be read")
+		}
+		guard let written = unticking(line: line, text: text, in: markdown) else { return false }
+		do {
 			try written.write(to: file, atomically: true, encoding: .utf8)
 		} catch {
 			throw ChecklistWriteError(file: file, reason: "could not be written")

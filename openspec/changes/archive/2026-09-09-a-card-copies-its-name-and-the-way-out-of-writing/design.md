@@ -47,6 +47,21 @@ missing tasks offers *write the tasks*" is a line.
 separator, *Copy name*. The separator is what keeps the name from reading as a
 fourth sentence.
 
+## What the run showed, 2026-09-09
+
+Menus read through `--backlog-menu` on a scratch copy of this board:
+
+    [writing]  Open | Copy “write the design, the spec delta and the tasks” | — | Copy name | — | proposal.md
+    [archived] Open | — | Copy name | — | proposal.md | design.md | tasks.md | spec: themes
+    [ready]    Open | Copy “/opsx:apply” | — | Copy name | — | …
+
+## Release note
+
+> **Every card copies its name**, in every column, from the last entry of its
+> menu. And a card still being written offers the sentence that finishes it —
+> *write the design and the spec delta for <name>, so it is ready to apply* —
+> built from the documents it still lacks, for pasting into an assistant.
+
 ## Open Questions
 
 None.

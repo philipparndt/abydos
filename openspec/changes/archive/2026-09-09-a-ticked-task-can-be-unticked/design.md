@@ -50,6 +50,23 @@ with the next re-read.
 **⌘Z while the editor has the keyboard** → goes to the editor, as it should;
 the pane answers only while the board or the tip is first responder.
 
+## What the run showed, 2026-09-09
+
+On a scratch copy of this repository's own board, `--backlog-tick
+a-java-edit-reaches-the-running-jvm:1` ticked the first open task — 5.2 — and
+the card read 25 of 31; `--backlog-untick` on the same card took it back, and
+the file's line 92 read `- [ ] 5.2 **Measure the build before settling this.**`
+with the words unchanged. The tip kept the ticked row with *Undo* between the
+two, which is the row the untick went through.
+
+## Release note
+
+> **A tick on a card can be undone.** The task you just ticked stays in the
+> card's list for a moment, dimmed, with *Undo* at its end; ⌘Z takes it back
+> too while the board has the keyboard. The undo is as careful as the tick: it
+> writes only if the line still reads as the task that was ticked, and says so
+> when the file has moved on.
+
 ## Open Questions
 
 None.

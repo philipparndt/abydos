@@ -39,6 +39,13 @@ extension MainWindowController {
 		return pane.tickOpenTaskForTesting(change: card, index: index)
 	}
 
+	/// Takes the last tick back through the tip, which is still up from the
+	/// tick before it, and says what the line reads now.
+	func backlogUntickForTesting(card: String) -> String {
+		guard bottomPanel.showBacklog() != nil else { return "no project" }
+		return TaskTip.shared.undoForTesting()
+	}
+
 	/// Draws the tip to a PNG, for `--backlog-tasks-shot`, because a child
 	/// window is invisible to a capture of the main one.
 	func backlogTasksShotForTesting(to path: String) -> String {

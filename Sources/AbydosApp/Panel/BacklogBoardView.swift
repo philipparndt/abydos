@@ -160,6 +160,9 @@ final class BacklogColumnView: NSView {
 		}
 		let card = tableView.rect(ofRow: row)
 		TaskTip.shared.onTicked = { [weak self] in self?.pane?.reload() }
+		TaskTip.shared.onTickWritten = { [weak self] file, line, text in
+			self?.pane?.registerTick(file: file, line: line, text: text)
+		}
 		TaskTip.shared.pointerIsOn(
 			entries[row],
 			at: convert(card, from: tableView),
@@ -181,6 +184,9 @@ final class BacklogColumnView: NSView {
 	func openTheTipForTesting(on entry: BoardEntry) {
 		guard let row = entries.firstIndex(where: { $0.identity == entry.identity }) else { return }
 		TaskTip.shared.onTicked = { [weak self] in self?.pane?.reload() }
+		TaskTip.shared.onTickWritten = { [weak self] file, line, text in
+			self?.pane?.registerTick(file: file, line: line, text: text)
+		}
 		TaskTip.shared.showNowForTesting(
 			entry,
 			at: convert(tableView.rect(ofRow: row), from: tableView),
