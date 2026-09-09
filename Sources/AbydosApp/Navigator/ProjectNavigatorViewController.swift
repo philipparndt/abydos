@@ -28,6 +28,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onPreviewModel: ((URL) -> Void)?
 	/// Compare ▸ Against Last Commit on a file row.
 	var onCompareFile: ((URL) -> Void)?
+	/// Compare Selected over two rows of one kind: the first selected is A.
+	var onCompareSelected: (([URL]) -> Void)?
+	/// Compare ▸ With… on a row: the other side is asked for.
+	var onCompareWith: ((URL) -> Void)?
 	/// Compare ▸ History… on a file row.
 	var onShowFileHistory: ((URL) -> Void)?
 	/// Something under the project root changed on disk.
@@ -1321,16 +1325,24 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Comparing the file with its git past. Both destinations exist — the
 		// diff tab and the file-scoped log — and neither was reachable from
 		// the file it is about.
+		// Two rows of one kind selected: the page that puts them side by side.
+		let selected = item("Compare Selected", #selector(contextCompareSelected))
+		compareSelectedItem = selected
+		menu.addItem(selected)
 		let compare = NSMenuItem(title: "Compare", action: nil, keyEquivalent: "")
 		let comparing = NSMenu()
 		let against = item("Against Last Commit", #selector(contextCompareAgainstHead))
 		let history = item("History\u{2026}", #selector(contextCompareHistory))
+		let with = item("With\u{2026}", #selector(contextCompareWith))
 		comparing.addItem(against)
 		comparing.addItem(history)
+		comparing.addItem(.separator())
+		comparing.addItem(with)
 		compare.submenu = comparing
 		compareMenu = comparing
 		compareAgainstItem = against
 		compareHistoryItem = history
+		compareWithItem = with
 		menu.addItem(compare)
 		menu.addItem(.separator())
 		menu.addItem(item("Open as Subproject", #selector(contextOpenSubproject)))
@@ -1449,6 +1461,8 @@ final class ProjectNavigatorViewController: NSViewController {
 	private weak var compareMenu: NSMenu?
 	private weak var compareAgainstItem: NSMenuItem?
 	private weak var compareHistoryItem: NSMenuItem?
+	private weak var compareWithItem: NSMenuItem?
+	private weak var compareSelectedItem: NSMenuItem?
 
 	/// The row of the sessions root the menu was opened on — the root itself, or
 	/// one session — if it was opened on either.
@@ -2311,6 +2325,17 @@ final class ProjectNavigatorViewController: NSViewController {
 	@objc private func contextCompareAgainstHead() {
 		guard let node = contextNode, !node.isDirectory else { return }
 		onCompareFile?(node.url)
+	}
+
+	@objc private func contextCompareWith() {
+		guard let node = contextNode else { return }
+		onCompareWith?(node.url)
+	}
+
+	@objc private func contextCompareSelected() {
+		let nodes = contextNodes
+		guard nodes.count == 2 else { return }
+		onCompareSelected?(nodes.map(\.url))
 	}
 
 	@objc private func contextCompareHistory() {
@@ -4019,14 +4044,28 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				}
 				continue
 			}
+			if item === compareSelectedItem {
+				// Two rows, both files or both folders: anything else has no
+				// two sides to put beside each other.
+				let nodes = contextNodes
+				let two = nodes.count == 2 && nodes[0].isDirectory == nodes[1].isDirectory
+					&& !nodes.contains { $0 === rootNode }
+				item.isHidden = !two
+				item.isEnabled = two
+				continue
+			}
 			if item.submenu === compareMenu {
 				// A file's question and only a file's: folders and the root
 				// have no one file's working copy to compare. An untracked or
 				// ignored file offers Against Last Commit disabled — there is
 				// no last commit of it — and no History…, git holding none.
+				// With… is any row's: a folder is compared with a folder.
 				let file = node.map { !$0.isDirectory } ?? false
-				item.isHidden = !file || isRoot
-				item.isEnabled = file
+				item.isHidden = node == nil || isRoot
+				item.isEnabled = node != nil
+				compareAgainstItem?.isHidden = !file
+				compareHistoryItem?.isHidden = !file
+				compareWithItem?.isHidden = false
 				if let node, file {
 					let outside = node.gitStatus == .unversioned || node.gitStatus == .ignored
 					compareAgainstItem?.isEnabled = !outside

@@ -139,6 +139,15 @@ brew uninstall --zap --cask abydos    # and its settings and saved state
   knows (Mach-O, ELF, PE, PNG, ZIP, SQLite, Java class, WebAssembly and more)
   and an entropy curve. It memory-maps the file and draws only visible rows,
   so a 100 MB STL opens instantly.
+- **Compare** — any two files or any two folders, on disk or at a commit, on
+  one page: the whole of both files side by side with a curve joining each
+  change to where it went, the characters that differ marked, *Change n of m*
+  to walk them, and the file's history down the edge so any two revisions are
+  A and B by clicking. Two folders align by path — different, equal, only on
+  one side, ignored — and a row is marked to copy one way or the other, or to
+  delete, and *Apply…* does the lot after moving what it overwrites to the
+  Trash. From two rows of the tree, a file dropped onto an open file, or
+  `abydos-diff a b`, which is also a `git difftool`.
 - **Scratches** (⇧⌘N), **word wrap** (⌥⌘Z), and **zoom** (⌘+ / ⌘− / ⌘0) that
   scales the whole interface — every control — rather than only text.
 - **The backlog** (⇧⌘B) — what is left to do, as files beside the code, shown
@@ -167,6 +176,7 @@ tick is something with a test behind it.
 | **Debug in a cluster** | the same pod, held at the first instruction until the debugger arrives | the above, and the pod image for that language |
 | **Profiler** | CPU, heap, goroutine, block, mutex and allocation profiles; flame graph; pod profiling | a Go program serving pprof |
 | **Git** | status colours, changes, log and commit pages, blame, branches, tags, worktrees, stash, fetch, pull, push, submodules as one working copy, picture diffs, a backup ref before anything destructive | git |
+| **Compare** | two files or two folders side by side, on disk or at a commit; curves between the halves, marks inside a changed line, the file's history as A and B; copies between folders applied together, the Trash as the undo | — (`gh` for nothing; git for the history) |
 | **Pull requests** | the list of what waits on you, a page of diffs with ticks that die when the file changes, comments against their lines, a review written from the page, a worktree checkout | `gh`, logged in |
 | **Secrets** | dotenv values concealed, SOPS files decrypted and re-encrypted in place, a warning when git can see plaintext | sops, for SOPS files |
 | **Previews** | Markdown, Mermaid, PlantUML, draw.io, Cadova, 3D models, pictures, video, PDF | — (PlantUML needs its server image) |
@@ -378,9 +388,24 @@ file opens in the editor of *that* window and the keyboard goes with it — the
 pane asks the terminal it is in, over an escape sequence, and falls back to
 `open -a` everywhere else.
 
+`abydos-diff a b` puts two files or two folders side by side, in the window
+the pane belongs to when typed in one of the app's own terminals and through
+`abydos://compare` otherwise. It is a `git difftool` too:
+
+```sh
+git config --global diff.tool abydos
+git config --global difftool.abydos.cmd 'abydos-diff --wait "$LOCAL" "$REMOTE"'
+git config --global difftool.prompt false
+git difftool --dir-diff HEAD~3      # one folder diff over everything
+```
+
+`--wait` holds the command until Return is pressed, because `--dir-diff`
+copies a change back to the working tree only after the tool exits; the app
+cannot yet tell the command that the tab was closed, so Return is the signal.
+
 `abydos-icat picture.png` prints a picture on the terminal's character grid
 over the kitty graphics protocol, and `abydos-bench` is the DOOM-fire terminal
-stress test. `make install-cli` installs all three; `abydos-hook install` wires
+stress test. `make install-cli` installs all four; `abydos-hook install` wires
 the Claude Code hook into `~/.claude/settings.json`.
 
 ### Command-line options
@@ -548,7 +573,8 @@ Sources/AbydosKit/    engine — no view code, so all of it is testable headless
   Project/            Project, FileNode, FileIndex, DependencyTree, FileSystemWatcher, AgentSessions
   Settings/           Settings, Scheme, Schemes/ (the colour schemes)
   Support/            DrivenRun, ClaudeCommand, StallWatch, …
-Sources/AbydosApp/    AppKit — window, navigator, titlebar, editor, terminal, panel, git, review, hex
+  Text/               …and TextDiff, the line and character diff behind the compare page
+Sources/AbydosApp/    AppKit — window, navigator, titlebar, editor, terminal, panel, git, review, hex, compare
 Sources/AbydosMain/   main
 Sources/AbydosHook/   abydos-hook, the Claude Code hook as a binary of its own
 Sources/AbydosBacklog/ abydos-backlog, the backlog from a terminal

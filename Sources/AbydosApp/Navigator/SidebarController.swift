@@ -22,6 +22,8 @@ final class SidebarController: NSObject {
 	/// Not private: `SidebarController+Compare` opens the diff tab and the log
 	/// page, and Swift's `private` is file-scoped.
 	let editor: EditorAreaController
+	/// A remembered compare page coming back with its project.
+	var onOpenComparePage: ((CompareSource, CompareSource) -> Void)?
 	private let navigator: ProjectNavigatorViewController
 
 	// What the window knows and this object asks for.
@@ -1225,6 +1227,12 @@ final class SidebarController: NSObject {
 		case "settings":
 			openSettingsPage()
 		default:
+			// A compare page carries its two sides in its identifier; a side
+			// that is gone is the page's own to say.
+			if let sides = ComparePageIdentity.sides(of: page.identifier) {
+				onOpenComparePage?(sides.left, sides.right)
+				break
+			}
 			// A page this version has no opener for — one a later version wrote
 			// down, or one whose owner is elsewhere in the app. Left closed
 			// rather than guessed at.

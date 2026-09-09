@@ -1,0 +1,141 @@
+#!/bin/sh
+# Compares two files, or two folders, side by side in Abydos.
+#
+#   abydos-diff old.yaml new.yaml       the two files, as a compare page
+#   abydos-diff ./v6 ./v7               the two folders, as a folder diff
+#   abydos-diff --wait A B              …and wait here until you say you are done
+#
+# ## As git's difftool
+#
+#   git config --global diff.tool abydos
+#   git config --global difftool.abydos.cmd 'abydos-diff --wait "$LOCAL" "$REMOTE"'
+#   git config --global difftool.prompt false
+#
+#   git difftool HEAD~3 -- Sources/     one page per file, in turn
+#   git difftool --dir-diff HEAD~3      one folder diff over everything
+#
+# `--dir-diff` hands over two temporary directories and copies whatever changed
+# in the right-hand one back to the working tree *after the tool exits* — so
+# a copy marked and applied on the page reaches the working tree only if this
+# command is still running when it is applied. That is what `--wait` is for:
+# it holds here until Return is pressed, and git does its copying then. The
+# app cannot yet tell this command that the tab was closed; until it can,
+# Return is the signal.
+#
+# ## Typed in one of Abydos's own terminals
+#
+# The page opens in the window the pane belongs to, the way `abydos` opens a
+# file there: the terminal is asked, over the same OSC 440 escape, and answers
+# if it is Abydos. Everywhere else — Ghostty, Terminal.app, over ssh — the app
+# is opened through LaunchServices with a URL it registers, `abydos://compare`,
+# aimed at the installed bundle by identifier so that a build somebody is
+# driving under a throwaway identifier never takes the request.
+set -eu
+
+esc=$(printf '\033')
+osc=440
+reply_marker="440;abydos"
+bundle="de.rnd7.ideai"
+
+usage() {
+	cat >&2 <<'USAGE'
+usage: abydos-diff [--wait] <a> <b>
+
+  two files      the two, side by side
+  two folders    the two trees, aligned by path
+  --wait         stay here until Return is pressed, for git difftool
+USAGE
+	exit 2
+}
+
+wait_after=""
+case "${1:-}" in
+	-h|--help) usage ;;
+	--wait) wait_after=yes; shift ;;
+esac
+[ "$#" -eq 2 ] || usage
+
+in_tmux() { [ -n "${TMUX:-}" ]; }
+
+# The path as the app will have to read it: absolute, with the directory
+# resolved and the name left alone, as `abydos` does it.
+absolute() {
+	if [ -d "$1" ]; then
+		(cd -- "$1" 2>/dev/null && pwd -P) || return 1
+		return 0
+	fi
+	directory=$(dirname -- "$1")
+	name=$(basename -- "$1")
+	directory=$(cd -- "$directory" 2>/dev/null && pwd -P) || return 1
+	case "$directory" in
+		/) printf '%s%s' "$directory" "$name" ;;
+		*) printf '%s/%s' "$directory" "$name" ;;
+	esac
+}
+
+for path in "$1" "$2"; do
+	[ -e "$path" ] || { echo "abydos-diff: $path does not exist" >&2; exit 1; }
+done
+a=$(absolute "$1") || { echo "abydos-diff: cannot resolve $1" >&2; exit 1; }
+b=$(absolute "$2") || { echo "abydos-diff: cannot resolve $2" >&2; exit 1; }
+if [ -d "$a" ] && [ ! -d "$b" ] || [ ! -d "$a" ] && [ -d "$b" ]; then
+	echo "abydos-diff: a file is compared with a file and a folder with a folder" >&2
+	exit 1
+fi
+
+saved_termios=""
+restore_termios() {
+	[ -z "$saved_termios" ] || stty "$saved_termios" < /dev/tty 2>/dev/null || true
+	saved_termios=""
+}
+trap 'restore_termios' EXIT
+trap 'restore_termios; trap - INT; kill -INT $$' INT
+trap 'restore_termios; trap - TERM; kill -TERM $$' TERM
+
+# Whether this terminal is Abydos: asked, with three tenths of a second for
+# the answer, exactly as `abydos` asks.
+ask_terminal() {
+	[ -t 0 ] || [ -t 1 ] || return 1
+	saved_termios=$(stty -g < /dev/tty 2>/dev/null) || return 1
+	stty -echo -icanon min 0 time 3 < /dev/tty 2>/dev/null || { restore_termios; return 1; }
+	if in_tmux; then
+		printf '%sPtmux;%s%s]%s;?%s%s\\%s\\' "$esc" "$esc" "$esc" "$osc" "$esc" "$esc" "$esc" > /dev/tty
+	else
+		printf '%s]%s;?%s\\' "$esc" "$osc" "$esc" > /dev/tty
+	fi
+	reply=$(dd bs=64 count=1 2>/dev/null < /dev/tty | tr -d '\000')
+	restore_termios
+	case "$reply" in
+		*"$reply_marker"*) return 0 ;;
+	esac
+	return 1
+}
+
+base64_of() { printf '%s' "$1" | base64 | tr -d '\n'; }
+
+send_compare() {
+	body="compare;$(base64_of "$a");$(base64_of "$b")"
+	if in_tmux; then
+		printf '%sPtmux;%s%s]%s;%s%s%s\\%s\\' \
+			"$esc" "$esc" "$esc" "$osc" "$body" "$esc" "$esc" "$esc" > /dev/tty
+	else
+		printf '%s]%s;%s%s\\' "$esc" "$osc" "$body" "$esc" > /dev/tty
+	fi
+}
+
+# Every byte percent-encoded, which is more than a URL needs and never less.
+encoded() {
+	printf '%s' "$1" | od -An -tx1 -v | tr -s ' \n' '\n\n' | grep . | sed 's/^/%/' | tr -d '\n'
+}
+
+if ask_terminal; then
+	send_compare
+else
+	url="abydos://compare?a=$(encoded "$a")&b=$(encoded "$b")"
+	open -b "$bundle" "$url" 2>/dev/null || open -a Abydos "$url"
+fi
+
+if [ -n "$wait_after" ]; then
+	printf 'abydos-diff: comparing in Abydos; press Return here when you are done. ' > /dev/tty
+	read -r _ < /dev/tty || true
+fi

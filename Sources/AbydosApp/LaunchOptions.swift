@@ -468,6 +468,11 @@ struct LaunchOptions {
 	var branchRowSteps: String?
 	/// `--hex <steps>`: the front tab as bytes, driven, with a report.
 	var hexSteps: String?
+	/// `--compare <a> <b>`: a compare page over two paths.
+	var comparePaths: (String, String)?
+	/// `--compare-steps <steps>`: the page in front, driven. See
+	/// `ComparePage.stepsForTesting`.
+	var compareSteps: String?
 	/// Print what the menu over a commit in the log offers.
 	var commitMenuRow: Int?
 	/// Drive the log page and print what it holds.
@@ -1130,6 +1135,9 @@ struct LaunchOptions {
 			case "--pill-state": options.pillState = true
 			case "--branch-rows": options.branchRowSteps = next()
 			case "--hex":        options.hexSteps = next()
+			case "--compare":
+				if let a = next(), let b = next() { options.comparePaths = (a, b) }
+			case "--compare-steps": options.compareSteps = next()
 			case "--commit-menu": options.commitMenuRow = next().flatMap(Int.init)
 			case "--log-page": options.logPageSteps = next()
 			case "--commit-page": options.commitPageSteps = next()

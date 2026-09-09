@@ -412,6 +412,11 @@ extension MainWindowController {
 		}
 		navigator.onOpenSubproject = { [weak self] url in self?.openSubproject(at: url) }
 		navigator.onCompareFile = { [weak self] url in self?.sidebar.compareFileAgainstHead(url) }
+		navigator.onCompareSelected = { [weak self] urls in self?.compareSelected(urls) }
+		navigator.onCompareWith = { [weak self] url in self?.compareWith(url) }
+		sidebar.onOpenComparePage = { [weak self] left, right in
+			self?.openComparePage(left: left, right: right, asked: false)
+		}
 		navigator.onShowFileHistory = { [weak self] url in self?.sidebar.showFileHistory(of: url) }
 		navigator.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
 		navigator.onPreviewModel = { url in
