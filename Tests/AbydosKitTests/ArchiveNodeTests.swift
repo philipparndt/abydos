@@ -39,6 +39,37 @@ struct ArchiveNodeTests {
 		#expect(values?.foldKey(archiveKey: "x") == nil)
 	}
 
+	/// The selection survives a rebuild by name, and a file has a name too.
+	///
+	/// `foldKey` answers for directories alone, which is right for what is
+	/// *open* — a file cannot be. What is *selected* is a file far more often
+	/// than not, and that is the row whose highlight went out on every
+	/// filesystem event.
+	@Test func aSelectedRowIsRememberedByItsPathInsideTheArchive() {
+		let root = ArchiveRoot(url: URL(fileURLWithPath: "/p/chart-0.1.0.tgz"))
+		root.set(index: index())
+		let key = "archive:deploy/chart-0.1.0.tgz"
+
+		let values = root.node(forPath: "chart/values.yaml")
+		#expect(values?.selectionKey(archiveKey: key) == "\(key)!chart/values.yaml")
+		// The directory answers as well, and with the same key its fold uses.
+		let templates = root.node(forPath: "chart/templates")
+		#expect(templates?.selectionKey(archiveKey: key) == templates?.foldKey(archiveKey: key))
+
+		// And the key finds the row again, which is the whole of putting a
+		// selection back.
+		let inside = (values?.selectionKey(archiveKey: key) ?? "")
+			.dropFirst(key.count + 1)
+		#expect(root.node(forPath: String(inside)) === values)
+	}
+
+	/// Nothing to find afterwards, so nothing is kept.
+	@Test func aNoteRowHasNoSelectionKey() {
+		let root = ArchiveRoot(url: URL(fileURLWithPath: "/p/x.zip"))
+		root.set(failure: "This is not an archive this app can read.")
+		#expect(root.children[0].selectionKey(archiveKey: "archive:x.zip") == nil)
+	}
+
 	@Test func beforeTheIndexArrivesTheRootIsReadingAndAFailureIsARow() {
 		let root = ArchiveRoot(url: URL(fileURLWithPath: "/p/x.zip"))
 		#expect(root.isReading)

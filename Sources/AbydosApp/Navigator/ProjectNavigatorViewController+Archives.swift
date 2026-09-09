@@ -306,10 +306,42 @@ extension ProjectNavigatorViewController {
 	}
 
 	func archiveKey(for node: FileNode) -> String {
-		guard let root = project?.root.standardizedFileURL.path, node.url.path.hasPrefix(root + "/") else {
-			return "archive:" + node.url.path
+		archiveKey(forArchivePath: node.url.path)
+	}
+
+	/// The same key from the path alone, for the rows *inside* an archive: an
+	/// `ArchiveNode` knows the archive it came from and never the file row.
+	func archiveKey(forArchivePath path: String) -> String {
+		guard let root = project?.root.standardizedFileURL.path, path.hasPrefix(root + "/") else {
+			return "archive:" + path
 		}
-		return "archive:" + String(node.url.path.dropFirst(root.count + 1))
+		return "archive:" + String(path.dropFirst(root.count + 1))
+	}
+
+	/// What a selected archive row is remembered by across a rebuild.
+	///
+	/// See `ArchiveNode.selectionKey`, which is where the fault this answers
+	/// is written down: the capture knew a file row and a session row, so the
+	/// highlight on an entry went out on the next filesystem event.
+	func archiveSelectionKey(for node: ArchiveNode) -> String? {
+		node.selectionKey(archiveKey: archiveKey(forArchivePath: node.root.url.path))
+	}
+
+	/// The row a selection key names, or -1 where the key finds nothing.
+	///
+	/// -1 rather than nil because that is what `TreeSelection.rows` reads, and
+	/// it is the honest answer for a key whose archive has since been hidden
+	/// or whose entry is no longer in it: the selection is gone because the
+	/// row is, which is not this fault.
+	func archiveRow(forSelectionKey key: String) -> Int {
+		guard let bang = key.firstIndex(of: "!") else { return -1 }
+		let archive = String(key[..<bang])
+		let inside = String(key[key.index(after: bang)...])
+		guard let root = archives.roots.first(where: {
+			archiveKey(forArchivePath: $0.key) == archive
+		})?.value else { return -1 }
+		guard let node = root.node(forPath: inside) else { return -1 }
+		return outlineView.row(forItem: node)
 	}
 
 	/// Shows the archives a session had open, and remembers which of their

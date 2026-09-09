@@ -150,4 +150,23 @@ public final class ArchiveNode {
 		guard case .directory(let entry) = row else { return nil }
 		return "\(archiveKey)!\(entry.path)"
 	}
+
+	/// The key a *selected* row is remembered by, which is the same shape as
+	/// `foldKey` and is asked of files as well as directories.
+	///
+	/// **Selecting an entry inside an archive used to last until the next
+	/// filesystem event.** A rebuild of the tree captures the selection by
+	/// name and puts it back afterwards, because `reloadData` replaces every
+	/// row object — and the capture knew a file row and a session row and
+	/// nothing else, so an archive row came back as nothing at all and the
+	/// highlight went out. The tree rebuilds on every event under the project,
+	/// which while anything is building is many times a minute.
+	///
+	/// A note row — *Reading …*, or why an archive could not be read — has no
+	/// entry and so no key: there is nothing to find it by afterwards, and it
+	/// is not a row anybody means to keep.
+	public func selectionKey(archiveKey: String) -> String? {
+		guard let entry else { return nil }
+		return "\(archiveKey)!\(entry.path)"
+	}
 }

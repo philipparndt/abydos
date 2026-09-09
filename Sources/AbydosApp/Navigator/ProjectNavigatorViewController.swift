@@ -1032,6 +1032,11 @@ final class ProjectNavigatorViewController: NSViewController {
 			// A session's own row is a selection too, and it is not a file. Held
 			// the way its expansion is, so the one set carries both.
 			if let node = item as? SessionNode { return "session:" + node.identity }
+			// A row inside a shown archive is not a file either, and it was
+			// the third kind to be missing from here — see
+			// `ArchiveNode.selectionKey`. Held under the same `archive:` key
+			// its fold is, so the one set carries both.
+			if let node = item as? ArchiveNode { return archiveSelectionKey(for: node) }
 			return nil
 		}
 	}
@@ -1068,6 +1073,8 @@ final class ProjectNavigatorViewController: NSViewController {
 				}
 				return outlineView.row(forItem: node)
 			}
+			// An entry inside a shown archive, by the path it has in there.
+			if path.hasPrefix("archive:") { return archiveRow(forSelectionKey: path) }
 			let url = URL(fileURLWithPath: path)
 			if let node = rootNode.loadedNode(for: url) { return outlineView.row(forItem: node) }
 			if let located = dependencies?.locate(url) {
@@ -3347,6 +3354,10 @@ final class ProjectNavigatorViewController: NSViewController {
 			if let node = item as? FileNode { return "\(node.name)@\(row)" }
 			if let node = item as? DependencyNode { return "\(node.title)@\(row)" }
 			if let node = item as? SessionNode { return "\(node.title)@\(row)" }
+			// And an archive row, for the same reason: a highlight that stayed
+			// on an entry read as `nothing@2`, which is what a highlight that
+			// went out reads as.
+			if let node = item as? ArchiveNode { return "\(node.name)@\(row)" }
 			return "nothing@\(row)"
 		}
 		return (names.joined(separator: "+"), outlineView.numberOfRows)
@@ -3368,8 +3379,13 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	/// The selection by the project-relative paths it is remembered by.
+	///
+	/// The `archive:` keys are dropped and the archive line appended instead,
+	/// so an entry reads as `bundle.zip!/a.txt` here rather than twice in two
+	/// spellings — the report's own shape, unchanged by the capture having
+	/// learnt about archive rows.
 	func selectedPathsForTesting() -> [String] {
-		let files = selectedPaths().map { path -> String in
+		let files = selectedPaths().filter { !$0.hasPrefix("archive:") }.map { path -> String in
 			guard let root = project?.root.path, path.hasPrefix(root) else { return path }
 			return String(path.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 		}
@@ -3388,6 +3404,12 @@ final class ProjectNavigatorViewController: NSViewController {
 			}
 			if let node = item as? SessionNode {
 				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "") + mark
+			}
+			// A row inside a shown archive, which this said `?` about — so the
+			// one report that can show *which* row keeps the highlight could
+			// not name the rows the highlight is about.
+			if let node = item as? ArchiveNode {
+				return indent + node.name + (node.subtitle.map { "  " + $0 } ?? "") + mark
 			}
 			guard let node = item as? FileNode else { return indent + "?" }
 			// **And the colour it is drawn in.** A report that says which rows
