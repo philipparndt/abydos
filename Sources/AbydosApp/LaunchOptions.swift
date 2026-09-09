@@ -106,6 +106,27 @@ struct LaunchOptions {
 	/// find-bands-follow-soft-wrap` are the same question asked of the two
 	/// records, and which record is showing is `--backlog`'s business.
 	var backlogMenuChange: String?
+	/// Open the task tip on a card and print what it lists.
+	///
+	/// A number is an item and anything else is a change's name, the way
+	/// `--backlog-menu` tells the two apart: an item's name *is* its number, so
+	/// there is nothing to collide.
+	var backlogTasks: Int?
+	var backlogTasksChange: String?
+	/// Tick the n-th open task through the tip, and print the fraction after.
+	/// `--backlog-tick <name|number>:<n>`, one-based as the report numbers its
+	/// rows.
+	var backlogTick: (card: String, index: Int)?
+	/// Draw the tip to a PNG, because a child window is invisible to a capture
+	/// of the main one.
+	///
+	/// **Deliberately not in `writesACapture`**, which every other
+	/// image-writing flag is. That set exists so a verb that prints and exits
+	/// does not exit before a capture the window layer takes *later*; this one
+	/// is written by the same block that prints, a line above the exit. Listed
+	/// there, the run would print, decline to exit, and wait for a screenshot
+	/// nobody asked for.
+	var backlogTasksShot: String?
 	/// File a new item from the pane and print where it landed.
 	///
 	/// The one thing worth proving mechanically about that button: `ready/` is
@@ -1073,6 +1094,23 @@ struct LaunchOptions {
 				} else {
 					options.backlogMenuChange = named
 				}
+			case "--backlog-tasks":
+				let named = next()
+				if let number = named.flatMap(Int.init) {
+					options.backlogTasks = number
+				} else {
+					options.backlogTasksChange = named
+				}
+			case "--backlog-tick":
+				// `<name|number>:<n>`, split at the last colon so a name with
+				// one in it is still readable — and the index is what has to be
+				// a number, not the card.
+				let spec = next() ?? ""
+				if let colon = spec.lastIndex(of: ":"),
+				   let index = Int(spec[spec.index(after: colon)...]) {
+					options.backlogTick = (card: String(spec[spec.startIndex..<colon]), index: index)
+				}
+			case "--backlog-tasks-shot": options.backlogTasksShot = next()
 			case "--backlog-new":  options.backlogNew = next()
 			case "--backlog-init": options.backlogInit = true
 			case "--review-uncommitted": options.reviewUncommitted = true

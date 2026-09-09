@@ -438,4 +438,138 @@ struct BacklogTests {
 		#expect(item.attachments().isEmpty)
 		#expect(item.specDeltas().count == 1)
 	}
+
+	// MARK: - Ticking one step
+
+	@Test func anOpenStepKnowsWhichLineItIsOn() {
+		let steps = BacklogItem.openSteps(in: """
+		## Steps
+
+		- [x] Read the file
+		- [ ] Write the test
+		- [ ] Fold the spec
+		""")
+		#expect(steps.map(\.text) == ["Write the test", "Fold the spec"])
+		// Counted from zero over the same split every other reader here uses.
+		#expect(steps.map(\.line) == [3, 4])
+	}
+
+	@Test func tickingAStepChangesOneCharacter() throws {
+		let before = "- [x] Done\n- [ ] Not done\n"
+		let after = try #require(BacklogItem.ticking(line: 1, in: before))
+		#expect(after == "- [x] Done\n- [x] Not done\n")
+		#expect(after.count == before.count)
+	}
+
+	/// The bullet, the indentation, the prose under a step and a file that ends
+	/// without a newline: all of it committed, all of it expected to survive a
+	/// tick untouched.
+	@Test func tickingKeepsTheContinuationLinesAndTheMissingFinalNewline() throws {
+		let before = """
+		  * [ ] 3.2 The list: a heading in the title weight,
+		        a scrolling table of drawn rows, and the step's
+		        first line cut to two.
+		  * [ ] 3.3 Opening reads the file once.
+		"""
+		#expect(!before.hasSuffix("\n"))
+
+		let after = try #require(BacklogItem.ticking(line: 0, in: before))
+		#expect(after == """
+		  * [x] 3.2 The list: a heading in the title weight,
+		        a scrolling table of drawn rows, and the step's
+		        first line cut to two.
+		  * [ ] 3.3 Opening reads the file once.
+		""")
+		#expect(!after.hasSuffix("\n"))
+	}
+
+	/// The reason a step is a line number and not its words: ticking by text
+	/// would find the first of these and tick the other section's box.
+	@Test func theSecondOfTwoStepsWithTheSameWordsIsTheOneTicked() throws {
+		let markdown = """
+		## 1. Reading
+
+		- [ ] Tests
+
+		## 2. Writing
+
+		- [ ] Tests
+		"""
+		let steps = BacklogItem.openSteps(in: markdown)
+		#expect(steps.count == 2)
+		#expect(steps.allSatisfy { $0.text == "Tests" })
+
+		let after = try #require(BacklogItem.ticking(line: steps[1].line, in: markdown))
+		#expect(after == """
+		## 1. Reading
+
+		- [ ] Tests
+
+		## 2. Writing
+
+		- [x] Tests
+		""")
+	}
+
+	@Test func aLineThatIsNoLongerAnOpenStepIsRefused() {
+		let markdown = "- [x] Already ticked\n## A heading\n- [ ] Open\n"
+		// Ticked since the list was read.
+		#expect(BacklogItem.ticking(line: 0, in: markdown) == nil)
+		// Prose where a step used to be.
+		#expect(BacklogItem.ticking(line: 1, in: markdown) == nil)
+		// Past the end, which is a file that got shorter.
+		#expect(BacklogItem.ticking(line: 99, in: markdown) == nil)
+		// And the one line that is still what it was.
+		#expect(BacklogItem.ticking(line: 2, in: markdown) != nil)
+	}
+
+	/// A refusal reaches the writing verb as `false` rather than as a throw:
+	/// nothing went wrong, the file moved on under whoever was reading it.
+	@Test func tickingAnItemWritesItsOwnFileAndRefusesAStaleLine() throws {
+		let root = try makeProject()
+		defer { cleanUp(root) }
+		let backlog = Backlog(projectRoot: root)
+		try BacklogSetup.run(projectRoot: root, assistants: [])
+
+		let item = try backlog.create(title: "Tick me")
+		try "## Steps\n\n- [ ] One\n- [ ] Two\n".write(
+			to: item.file, atomically: true, encoding: .utf8
+		)
+		let steps = item.openSteps()
+		#expect(steps.count == 2)
+
+		#expect(try item.tick(line: steps[0].line) == true)
+		#expect(item.progress()?.summary == "1/2")
+		#expect(item.text() == "## Steps\n\n- [x] One\n- [ ] Two\n")
+
+		// The same line again, now ticked: refused, and nothing else moves.
+		#expect(try item.tick(line: steps[0].line) == false)
+		#expect(item.progress()?.summary == "1/2")
+	}
+
+	@Test func aFileThatCannotBeWrittenIsSaidSoByName() {
+		let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("nothing-here-\(UUID().uuidString)", isDirectory: true)
+			.appendingPathComponent("task.md")
+		do {
+			_ = try BacklogItem.tick(line: 0, in: missing)
+			Issue.record("a file that is not there was ticked")
+		} catch let error as BacklogItem.ChecklistWriteError {
+			#expect(error.file == missing)
+			#expect(error.localizedDescription.contains(missing.path))
+		} catch {
+			Issue.record("wrong error: \(error)")
+		}
+	}
+
+	/// The fraction, the steps `done` prints and the rows a tip offers are one
+	/// reader now, so a box with nothing written after it is open in all three
+	/// or in none. They disagreed before: `progress` counted it and
+	/// `remainingSteps` dropped it.
+	@Test func aBoxWithNoWordsAfterItIsStillOneOfTheOpenSteps() {
+		let markdown = "- [x] Done\n- [ ]\n"
+		#expect(BacklogItem.progress(in: markdown)?.summary == "1/2")
+		#expect(BacklogItem.openSteps(in: markdown).count == 1)
+		#expect(BacklogItem.remainingSteps(in: markdown) == [""])
+	}
 }

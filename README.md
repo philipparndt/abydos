@@ -143,7 +143,8 @@ brew uninstall --zap --cask abydos    # and its settings and saved state
   scales the whole interface — every control — rather than only text.
 - **The backlog** (⇧⌘B) — what is left to do, as files beside the code, shown
   as a list and a board; an OpenSpec `changes/` directory is shown on the same
-  board.
+  board. A card in progress lists its open tasks on the pointer resting on it,
+  and each one ticks where it is read.
 
 ## What is supported
 
@@ -172,7 +173,7 @@ tick is something with a test behind it.
 | **Terminal** | real PTY, VT100/xterm, optional libghostty-vt engine, Metal renderer, tmux windows as tabs, kitty graphics, bundled Nerd Font | — |
 | **Agent review** | ⇧⌘R / ⇧⌘U — an agent reviews the branch or the uncommitted changes and reports findings over MCP as typed data | Claude Code |
 | **Running sessions** | ⇧⌘A — every Claude Code session on the machine, what it is doing, and a way to it | `abydos-hook install` |
-| **Backlog** | ⇧⌘B — a list and a board over `.abydos/backlog/` or an OpenSpec `changes/` directory | — |
+| **Backlog** | ⇧⌘B — a list and a board over `.abydos/backlog/` or an OpenSpec `changes/` directory; a card in progress lists its open tasks and ticks them | — |
 
 ### Languages
 
@@ -650,7 +651,9 @@ shows whichever records of work a project keeps: a project that uses OpenSpec
 itself, as this repository now does, gets its `openspec/changes/` on the same
 board, each change read from its directory — its ticked tasks are its progress,
 its state is derived from what is on disk — with the command that starts work
-on it offered on the card.
+on it offered on the card. A card in progress lists its open tasks when the
+pointer rests on it, and each one can be ticked there: the click rewrites that
+line of `tasks.md`, and the fraction, the bar and the column follow.
 
 `abydos-backlog` is the same model from a terminal, which is where an agent
 works. It ships in the app bundle.

@@ -37,6 +37,20 @@ struct BacklogCard {
 	let hasSpecDelta: Bool
 	let run: BacklogRun?
 	let source: Source
+	/// The markdown the fraction above was counted from, which is the copy a
+	/// box ticked on this card has to write.
+	///
+	/// **Not `item.file`**, for the same reason `source` exists: an item being
+	/// worked in a checkout of its own has two copies, and the card draws the
+	/// checkout's. A tick that went to the project's would tick a step the card
+	/// was not showing, on a copy whose fraction the card was not drawing — so
+	/// the number under the pointer would not move, and the one that did move
+	/// would be somebody else's.
+	///
+	/// Worked out here, on the walk, rather than asked for while drawing: the
+	/// question is which copy `progress` came from, and this is where that was
+	/// decided.
+	let checklistFile: URL
 
 	init(_ item: BacklogItem, run: BacklogRun?) {
 		self.item = item
@@ -58,6 +72,7 @@ struct BacklogCard {
 		self.images = copy.images().count
 		self.hasSpecDelta = !copy.specDeltas().isEmpty
 		self.source = onBranch == nil ? .project : .worktree
+		self.checklistFile = copy.file
 	}
 
 	var number: Int { item.number }
@@ -96,6 +111,15 @@ struct OpenSpecCard: Equatable {
 
 	var name: String { change.name }
 
+	/// The file the fraction was counted from, and the one a tick writes.
+	///
+	/// A change has only ever one copy — it is not picked up into a checkout of
+	/// its own the way an item is — so this is `tasks.md` and nothing else. It
+	/// is still asked by name rather than derived at the point of writing,
+	/// because the tip asks the same question of both records and one answer to
+	/// it is one behaviour to keep.
+	var checklistFile: URL { change.tasksFile }
+
 	/// The line under the name, and **in one place** because three of them read
 	/// it: the card, the row in the list, and the measurement that decides how
 	/// tall the card is. Those had the same expression written out three times,
@@ -122,6 +146,45 @@ enum BoardEntry {
 		switch self {
 		case let .item(card):   return .backlog(card.state)
 		case let .change(card): return .openSpec(card.state)
+		}
+	}
+
+	/// What a card is called, whichever record it came from.
+	///
+	/// **The tip keys on this rather than on the view it was opened from.** A
+	/// card view is a cell the table recycles, and the board rebuilds its rows
+	/// on every reload — including the reload a tick causes — so a tip holding
+	/// a view would be a tip about whichever card the table happened to reuse
+	/// that object for. A number and a name are what survive a walk.
+	enum Identity: Hashable {
+		case item(Int)
+		case change(String)
+	}
+
+	var identity: Identity {
+		switch self {
+		case let .item(card):   return .item(card.number)
+		case let .change(card): return .change(card.name)
+		}
+	}
+
+	/// Whether this is a card somebody is in the middle of.
+	///
+	/// The one column the task tip opens over. A Ready card has nothing
+	/// verified — ticking its first box is an agent picking the work up, not a
+	/// person confirming it — and a Complete one has nothing open to list.
+	var isInProgress: Bool {
+		switch self {
+		case let .item(card):   return card.state == .inProgress
+		case let .change(card): return card.state == .inProgress
+		}
+	}
+
+	/// The file whose boxes this card's fraction was counted from.
+	var checklistFile: URL {
+		switch self {
+		case let .item(card):   return card.checklistFile
+		case let .change(card): return card.checklistFile
 		}
 	}
 }
@@ -629,6 +692,10 @@ final class BacklogPane: NSView {
 		listView.applySettings()
 		boardView.applySettings()
 		absentView.applySettings()
+		// The tip is a window of its own, so nothing above reaches it: a theme
+		// or zoom change with one open would leave a panel in the old ink over
+		// a board in the new.
+		TaskTip.shared.applySettings()
 		refreshViews()
 	}
 
@@ -686,6 +753,14 @@ final class BacklogPane: NSView {
 					self.watch()
 				}
 				self.refreshViews()
+				// After the walk, with the card as it now stands: a task ticked
+				// in a terminal drops its row from a tip that is open, exactly
+				// as it drops off the card's fraction. A card that has left In
+				// progress — which is what ticking the last task does — takes
+				// its tip with it.
+				if let identity = TaskTip.shared.identity {
+					TaskTip.shared.boardReloaded(entry: self.entry(with: identity))
+				}
 			}
 		}
 	}
@@ -804,6 +879,16 @@ final class BacklogPane: NSView {
 		}
 	}
 
+	/// The card with this number or this name, wherever it now is.
+	///
+	/// Over every column rather than the one it was in, because where it is is
+	/// the answer being asked for: a change whose last task was just ticked is
+	/// in Complete now, and the tip that asked has to be told so rather than
+	/// told the card is gone.
+	func entry(with identity: BoardEntry.Identity) -> BoardEntry? {
+		columns.lazy.flatMap { self.entries(in: $0) }.first { $0.identity == identity }
+	}
+
 	func item(number: Int) -> BacklogItem? {
 		BacklogState.board.compactMap { cards(in: $0).first { $0.item.number == number }?.item }.first
 	}
@@ -836,10 +921,17 @@ final class BacklogPane: NSView {
 	/// a drag could only mean ticking or unticking checkboxes in a file nobody
 	/// opened — a gesture that rewrote a file would be discovered by accident
 	/// and distrusted afterwards.
+	///
+	/// **A box ticked in the task tip is not that rewrite**, which is why the
+	/// sentence now points at it. The tip lists each open task by its words and
+	/// the click lands on the one task it ticks, so the person has read what
+	/// they are ticking; a drag names a column, and which boxes would get it
+	/// there is nobody's decision.
 	func refuseDrag(of card: OpenSpecCard) {
 		onNotify?(
 			"\(card.name) cannot be moved",
-			"A change's column comes from its tasks. Tick them in tasks.md and the card follows."
+			"A change's column comes from its tasks."
+				+ " Tick them on the card, or in tasks.md, and the card follows."
 		)
 	}
 
@@ -1172,6 +1264,87 @@ final class BacklogPane: NSView {
 		return "[\(card.state.rawValue)] " + menu(for: card).items
 			.map { $0.isSeparatorItem ? "\u{2014}" : $0.title }
 			.joined(separator: " | ")
+	}
+
+	// MARK: The task tip
+
+	/// What the tip lists for a named card, for `--backlog-tasks`.
+	///
+	/// **Opened through the column's own hand-off**, so what is driven is what
+	/// the pointer does: a harness that built a list of its own would pass with
+	/// the hit test wired to nothing.
+	func taskTipReportForTesting(change name: String) -> String {
+		report(of: .change(name))
+	}
+
+	func taskTipReportForTesting(number: Int) -> String {
+		report(of: .item(number))
+	}
+
+	/// Ticks the n-th open task through the tip's own click handler, and says
+	/// what the fraction is afterwards.
+	///
+	/// One-based, because the report above numbers its rows from one and the
+	/// two are read together.
+	func tickOpenTaskForTesting(change name: String, index: Int) -> String {
+		tick(.change(name), index: index)
+	}
+
+	func tickOpenTaskForTesting(number: Int, index: Int) -> String {
+		tick(.item(number), index: index)
+	}
+
+	/// Draws the tip to a PNG, since a child window is invisible to a capture
+	/// of the main one.
+	func writeTaskTipImageForTesting(to path: String) -> String {
+		guard TaskTip.shared.isShowing else { return "no tip is open" }
+		return TaskTip.shared.writeImageForTesting(to: path) ? "wrote \(path)" : "could not write \(path)"
+	}
+
+	private func report(of identity: BoardEntry.Identity) -> String {
+		guard let opened = openTheTip(on: identity) else { return missing(identity) }
+		if case let .noTip(why) = opened { return why }
+		return TaskTip.shared.reportForTesting
+	}
+
+	private func tick(_ identity: BoardEntry.Identity, index: Int) -> String {
+		guard let opened = openTheTip(on: identity) else { return missing(identity) }
+		if case let .noTip(why) = opened { return why }
+		let said = TaskTip.shared.tickForTesting(row: index - 1)
+		// After the write, from the file rather than from the card: the walk
+		// this kicked off runs off the main thread and has not come back.
+		let entry = self.entry(with: identity)
+		let file = entry?.checklistFile
+		let now = file.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+			.flatMap(BacklogItem.progress(in:))
+		return "\(said) \u{2192} \(now?.summary ?? "no fraction")"
+	}
+
+	/// What happened when the tip was asked to open on a card, with the sentence
+	/// to print where it did not.
+	private enum Opening {
+		case opened
+		case noTip(String)
+	}
+
+	/// Finds the card, and hands it to the tip the way the column does.
+	private func openTheTip(on identity: BoardEntry.Identity) -> Opening? {
+		guard let entry = entry(with: identity) else { return nil }
+		guard entry.isInProgress else {
+			return .noTip("the card is in \(entry.column.title) and has no tip")
+		}
+		guard mode == .board else { return .noTip("the list is showing, and it has no tip") }
+		guard let view = boardView.columnViewsForTesting.first(where: { $0.column == entry.column })
+		else { return .noTip("no column on the board for \(entry.column.title)") }
+		view.openTheTipForTesting(on: entry)
+		return .opened
+	}
+
+	private func missing(_ identity: BoardEntry.Identity) -> String {
+		switch identity {
+		case let .item(number):  return "no item \(number) on the board"
+		case let .change(name):  return "no change called \(name) on the board"
+		}
 	}
 
 	/// Files an item the way the button does, and says where it landed.
@@ -1694,10 +1867,103 @@ final class BacklogColumnView: NSView {
 	private var emptyLabel: NSTextField!
 	/// The width the cached row heights were measured at. See `widthChanged`.
 	private var measuredWidth: CGFloat = 0
+	/// Where the pointer is watched from. See `updateTrackingAreas`.
+	private var tracking: NSTrackingArea?
 
 	override func layout() {
 		super.layout()
 		widthChanged(to: cardWidth)
+	}
+
+	// MARK: - The pointer, and the tip it opens
+
+	/// **One tracking area, on the column, and it asks the row.**
+	///
+	/// Not one per card: `BacklogCardView` is a cell the table recycles, so a
+	/// tracking area per card would be a tracking area per recycled view with
+	/// the wrong entry in it. The column already owns the table and its
+	/// entries, so it hit-tests the row under the pointer and hands the tip the
+	/// entry — or tells it the pointer is on nothing.
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		if let tracking { removeTrackingArea(tracking) }
+		let area = NSTrackingArea(
+			rect: bounds,
+			// `inVisibleRect` so a column that scrolls or is resized does not
+			// need the area rebuilt by hand; `activeInKeyWindow` because a
+			// board in a window nobody is looking at should open nothing.
+			options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
+			owner: self
+		)
+		addTrackingArea(area)
+		tracking = area
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		let inTable = tableView.convert(event.locationInWindow, from: nil)
+		let row = tableView.row(at: inTable)
+		// Only a card somebody is in the middle of. That is one `switch` on the
+		// entry's column and costs nothing per move — **the file is not read
+		// until the delay has elapsed and the tip is about to open**.
+		guard entries.indices.contains(row), entries[row].isInProgress else {
+			return TaskTip.shared.pointerIsOnNothing()
+		}
+		let card = tableView.rect(ofRow: row)
+		TaskTip.shared.onTicked = { [weak self] in self?.pane?.reload() }
+		TaskTip.shared.pointerIsOn(
+			entries[row],
+			at: convert(card, from: tableView),
+			of: self,
+			colour: BacklogPalette.colour(for: column)
+		)
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		TaskTip.shared.pointerIsOnNothing()
+	}
+
+	/// Opens the tip on a card, without the wait, for a driven run.
+	///
+	/// **The same hand-off `mouseMoved` makes**, down to the rectangle and the
+	/// colour, so what a driver opens is what a rested pointer opens. Only the
+	/// half-second is skipped: a run that waited for it would be a run whose
+	/// report depended on a timer under load.
+	func openTheTipForTesting(on entry: BoardEntry) {
+		guard let row = entries.firstIndex(where: { $0.identity == entry.identity }) else { return }
+		TaskTip.shared.onTicked = { [weak self] in self?.pane?.reload() }
+		TaskTip.shared.showNowForTesting(
+			entry,
+			at: convert(tableView.rect(ofRow: row), from: tableView),
+			of: self,
+			colour: BacklogPalette.colour(for: column)
+		)
+	}
+
+	/// A card's context menu is about to show.
+	///
+	/// **Here and not in `pane.menu(for:)`**, which was where this was going to
+	/// go: that is called while the table builds its rows, once per card per
+	/// reload, so a `hide()` in it would close the tip every time the board
+	/// walked — which is exactly the reload a tick causes. `willOpenMenu` is
+	/// the menu actually opening, and it runs before the menu is on screen.
+	override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+		TaskTip.shared.hide()
+		super.willOpenMenu(menu, with: event)
+	}
+
+	/// The column scrolled, so the card the tip is under has moved out from
+	/// under it.
+	///
+	/// Watched on the clip view rather than as `scrollWheel`, which the scroll
+	/// view handles and never passes here — and which would miss a scroller
+	/// dragged, a trackpad flick continuing, or the table scrolling itself.
+	private func closeTheTipWhenTheColumnScrolls(_ scrollView: NSScrollView) {
+		scrollView.contentView.postsBoundsChangedNotifications = true
+		NotificationCenter.default.addObserver(
+			forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main
+		) { _ in
+			MainActor.assumeIsolated { TaskTip.shared.hide() }
+		}
 	}
 
 	/// The table says when its own width changed, because `layout()` is too
@@ -1772,6 +2038,7 @@ final class BacklogColumnView: NSView {
 		scrollView.contentInsets = NSEdgeInsets(
 			top: Theme.current.scaled(6), left: 0, bottom: Theme.current.scaled(6), right: 0
 		)
+		closeTheTipWhenTheColumnScrolls(scrollView)
 
 		// What belongs in this column, for a column with nothing in it.
 		//
@@ -1947,6 +2214,10 @@ extension BacklogColumnView: NSTableViewDataSource, NSTableViewDelegate {
 	// MARK: Dragging
 
 	func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+		// A drag starting takes the card out from under the tip, and a panel
+		// left floating over a board a card is being dragged across is a panel
+		// in the way of the drop.
+		TaskTip.shared.hide()
 		switch entries[row] {
 		case let .item(card):
 			let entry = NSPasteboardItem()

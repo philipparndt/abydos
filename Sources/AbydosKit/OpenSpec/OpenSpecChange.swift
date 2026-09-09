@@ -264,6 +264,26 @@ public struct OpenSpecChange: Identifiable, Sendable, Equatable {
 		return BacklogItem.progress(in: text)
 	}
 
+	/// The tasks still unticked, with the line each is on.
+	///
+	/// The same reader the fraction comes from, so the rows a tip lists and the
+	/// number on the card cannot come to disagree about what a task is.
+	public func openTasks() -> [BacklogItem.OpenStep] {
+		guard artifacts.contains(.tasks) else { return [] }
+		guard let text = try? String(contentsOf: tasksFile, encoding: .utf8) else { return [] }
+		return BacklogItem.openSteps(in: text)
+	}
+
+	/// Ticks one line of `tasks.md`.
+	///
+	/// `false` where that line no longer reads as an unticked task — the file
+	/// moved on under whoever was reading it — and nothing is written. Throws
+	/// naming the file where the disk would not answer.
+	@discardableResult
+	public func tick(line: Int) throws -> Bool {
+		try BacklogItem.tick(line: line, in: tasksFile)
+	}
+
 	/// The one schema whose states this can read.
 	///
 	/// A change carries `schema:` in its `.openspec.yaml`. `spec-driven`'s
