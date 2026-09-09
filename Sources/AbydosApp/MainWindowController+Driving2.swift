@@ -229,6 +229,14 @@ extension MainWindowController {
 			// What a build writing files does to the tree, on demand: the point
 			// is what is still selected afterwards.
 			case "reload": navigator.reloadForTesting()
+			// Where the tree is scrolled, and a way to scroll it: the claim that a
+			// rebuild keeps the reader's place is two `place` lines that agree.
+			// `place` rather than `scroll`, which the editor's own step below
+			// already answers for the code view.
+			case "end": navigator.scrollToEndForTesting()
+			case "place":
+				print("TREE place: \(navigator.scrollReportForTesting)")
+				continue
 			case "copy":
 				print("TREE copy: clipboard=\(navigator.copyTextForTesting().replacingOccurrences(of: "\n", with: " | "))")
 				continue

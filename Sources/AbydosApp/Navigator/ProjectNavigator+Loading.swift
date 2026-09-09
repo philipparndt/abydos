@@ -159,10 +159,12 @@ extension ProjectNavigatorViewController {
 	func show(_ node: SessionNode?) {
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
+		let place = rememberPlace()
 		sessions = node
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 		restoreSelection(paths: selected)
+		restore(place: place)
 	}
 
 	// MARK: - Dependencies
@@ -228,10 +230,12 @@ extension ProjectNavigatorViewController {
 		guard let project else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
+		let place = rememberPlace()
 		dependencies = DependencyTree(sets: sets, toolchains: toolchains, project: project.root)
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 		restoreSelection(paths: selected)
+		restore(place: place)
 	}
 
 	/// Learns a toolchain from a path something is about to be revealed at.

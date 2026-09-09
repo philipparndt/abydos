@@ -731,8 +731,10 @@ extension ProjectNavigatorViewController {
 	private func redrawRows() {
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
+		let place = rememberPlace()
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 		restoreSelectionOrReveal(paths: selected)
+		restore(place: place)
 	}
 }

@@ -107,6 +107,7 @@ extension ProjectNavigatorViewController {
 		// A reload drops the selection, so it is captured by path and restored.
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
+		let place = rememberPlace()
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 		// Or lands on the file somebody is waiting for. This is the path a
@@ -115,6 +116,7 @@ extension ProjectNavigatorViewController {
 		// selection back regardless, so `pendingReveal` was only honoured when
 		// something else happened to reload everything.
 		restoreSelectionOrReveal(paths: selected)
+		restore(place: place)
 		// The status was already asked for above, for every change rather than
 		// only the ones that landed here; rows that have just appeared are
 		// covered by the same read.
@@ -142,11 +144,13 @@ extension ProjectNavigatorViewController {
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
+		let place = rememberPlace()
 		rootNode.invalidate()
 		outlineView.reloadData()
 		outlineView.expandItem(rootNode)
 		restore(expandedPaths: expanded)
 		restoreSelection(paths: selected)
+		restore(place: place)
 		refreshGitStatus()
 	}
 
@@ -182,11 +186,13 @@ extension ProjectNavigatorViewController {
 		guard !holdRebuildForRename() else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
+		let place = rememberPlace()
 		rootNode.reloadPreservingIdentity()
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 
 		restoreSelectionOrReveal(paths: selected)
+		restore(place: place)
 		refreshGitStatus()
 	}
 
