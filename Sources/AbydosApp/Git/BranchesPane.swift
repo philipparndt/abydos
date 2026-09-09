@@ -3696,19 +3696,25 @@ extension BranchesPane: NSMenuDelegate {
 			))
 		}
 
-		// **Bringing a branch up to date without standing on it.** `main ↓4`
-		// while the work happens on a feature branch was three operations —
-		// checkout, pull, checkout back — and a working copy touched twice for a
-		// ref that could simply be moved. Offered only where it is a
-		// fast-forward: behind its upstream and with nothing of its own on it,
-		// which is exactly when moving the ref loses nothing.
-		if case .local = branch.kind, !branch.isCurrent,
-		   branch.upstream != nil, branch.behind > 0, branch.ahead == 0 {
+		// **Bringing this branch up to date**, in whichever of the two ways
+		// applies to it. `main ↓4` while the work happens on a feature branch
+		// was three operations — checkout, pull, checkout back — and a working
+		// copy touched twice for a ref that could simply be moved; standing on
+		// `main ↓3` was no operation at all, because the verb for that case was
+		// on the repository row and never on the row that says the number.
+		// `BranchCatchUp` decides which, and is where the reasoning is written.
+		switch BranchCatchUp.offer(for: branch) {
+		case .fastForward(let upstream):
 			menu.addItem(.separator())
-			menu.addItem(item(
-				"Fast-forward to \(branch.upstream ?? "Upstream")",
-				#selector(fastForwardBranch)
-			))
+			menu.addItem(item("Fast-forward to \(upstream)", #selector(fastForwardBranch)))
+		case .pull:
+			menu.addItem(.separator())
+			// The ellipsis is the pull sheet, which is where the remote, the
+			// branch and rebase-or-merge are chosen — the same item the
+			// repository row above offers, on the row it is about.
+			menu.addItem(item("Pull\u{2026}", #selector(pullWithDialog)))
+		case nil:
+			break
 		}
 
 		menu.addItem(.separator())

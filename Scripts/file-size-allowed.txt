@@ -1,13 +1,13 @@
-3992 Sources/AbydosApp/AppDelegate.swift  # +16 on main's 3976: the --compare driving verbs dispatched, the abydos:// scheme routed
+4020 Sources/AbydosApp/AppDelegate.swift  # +44 on main's 3976: the --compare driving verbs dispatched, the abydos:// scheme routed, New File and New Folder in the File menu, --command dispatched
 4841 Sources/AbydosApp/Editor/CodeView.swift
 6263 Sources/AbydosApp/Editor/EditorViewController.swift  # +31: a page can be retitled and carry a subtitle; the drop view can ask which tab is in front
 3634 Sources/AbydosApp/Editor/LanguageService.swift
-4696 Sources/AbydosApp/Git/BranchesPane.swift
+4702 Sources/AbydosApp/Git/BranchesPane.swift
 3232 Sources/AbydosApp/Git/ChangesPane.swift
 1562 Sources/AbydosApp/Git/HistoryPane.swift
-1693 Sources/AbydosApp/LaunchOptions.swift  # +8 on main's 1685: --compare and --compare-steps
-4705 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift  # +39: Compare Selected over two rows, and Compare ▸ With…
-1847 Sources/AbydosApp/Navigator/SidebarController.swift
+1701 Sources/AbydosApp/LaunchOptions.swift  # +16 on main's 1685: --compare and --compare-steps, --command
+4741 Sources/AbydosApp/Navigator/ProjectNavigatorViewController.swift  # +75: Compare Selected over two rows, Compare ▸ With…, and archive rows in the selection the tree keeps
+1857 Sources/AbydosApp/Navigator/SidebarController.swift  # +10: revealSidebarTool, for a menu command that must not toggle the tool away
 2877 Sources/AbydosApp/Panel/BacklogPane.swift
 5871 Sources/AbydosApp/Panel/BottomPanel.swift
 1550 Sources/AbydosApp/Panel/DebugPane.swift
