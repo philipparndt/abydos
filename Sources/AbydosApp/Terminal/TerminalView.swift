@@ -75,7 +75,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Something changed and the screen has not been drawn since.
 	var needsRender = false
 	/// Drives drawing at the rate the display actually refreshes.
-	private var displayLink: CADisplayLink?
+	var displayLink: CADisplayLink?
 	/// Guards the resize callback against the redraw that caused it.
 	var isPositioningMetalView = false
 	/// Distance from the top of a cell to the baseline the text sits on.

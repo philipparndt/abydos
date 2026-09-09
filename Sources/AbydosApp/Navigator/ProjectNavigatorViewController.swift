@@ -52,7 +52,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// driven run reads it here so that "the row goes at once" is a claim about
 	/// the row and not about a fast trash. A duration with no load beside it
 	/// cannot be argued with afterwards, so both are one sentence.
-	internal(set) var trashTimeForTesting = "nothing has been trashed"
+	var trashTimeForTesting = "nothing has been trashed"
 
 	// Kept in the body because a stored property cannot live in an
 	// extension; what each is for is said where it is used.
@@ -271,7 +271,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	var lastDependencyRead = Date.distantPast
 	/// The folder being worked on, marked in the tree so it is obvious which
 	/// part of a repository the run button belongs to.
-	internal(set) var subprojectRoot: URL?
+	var subprojectRoot: URL?
 	var watcher: FileSystemWatcher?
 	var outlineView: NavigatorOutlineView!
 	var headerView: NavigatorHeaderView!

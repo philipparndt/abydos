@@ -313,9 +313,9 @@ final class EditorViewController: NSViewController {
 	/// The window shows one status bar for the whole editor area, not one per
 	/// pane, so a group reports its state and the area controller displays
 	/// whichever group is active.
-	internal(set) var statusLine = 1
-	internal(set) var statusColumn = 1
-	internal(set) var statusLanguage: String?
+	var statusLine = 1
+	var statusColumn = 1
+	var statusLanguage: String?
 	/// The server answering for the active tab, or nil when there is none to
 	/// name.
 	///
@@ -326,7 +326,7 @@ final class EditorViewController: NSViewController {
 	/// the project's choices on the path of the arrow keys, which is the fault
 	/// 0443 built a card's own struct to avoid and 0458 had to make
 	/// `Backlog.item(number:)` cheap for.
-	internal(set) var statusServer: LanguageServerFooter?
+	var statusServer: LanguageServerFooter?
 	var onStatusChanged: ((EditorViewController) -> Void)?
 	var placeholder: NSTextField!
 	/// The one thing an empty window can offer to do.

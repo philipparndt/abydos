@@ -31,7 +31,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	// Kept in the body because a stored property cannot live in an
 	// extension; what each is for is said where it is used.
 	/// Where the last picture paste wrote its file, for the driven run's report.
-	internal(set) var lastPastedPictureForTesting: URL?
+	var lastPastedPictureForTesting: URL?
 	/// Range of in-progress IME composition. Named distinctly from the
 	/// `markedRange()` protocol method it backs.
 	var composingRange = NSRange(location: NSNotFound, length: 0)
@@ -50,7 +50,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	/// the closing brace's dedent. Held once here rather than sampled per
 	/// keypress — `usesTabsForIndent`, which this replaces, re-read the top
 	/// of the file on every return.
-	internal(set) var indentStyle: IndentStyle = .spaces(width: Settings.shared.tabWidth)
+	var indentStyle: IndentStyle = .spaces(width: Settings.shared.tabWidth)
 	/// The default text of each stop, in the order Tab visits them.
 	var snippetStopNames: [String] = []
 
@@ -95,7 +95,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
 	/// Row mapping when soft wrap is on. Empty means one row per line.
 	var wrapLayout = WrapLayout()
-	internal(set) var isWordWrapEnabled = false
+	var isWordWrapEnabled = false
 
 	/// Caret and selection anchor, in UTF-16 offsets.
 	var caret = 0
@@ -308,7 +308,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	var lineHeight: CGFloat = 18
 	var baselineOffset: CGFloat = 4
 	var charWidth: CGFloat = 7
-	internal(set) var gutterWidth: CGFloat = 60
+	var gutterWidth: CGFloat = 60
 
 	/// Which lines differ from HEAD, for the gutter's change marks. 1-based
 	/// document lines, as `GitChangedLines` reads them off the diff.
@@ -533,7 +533,7 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	/// blamed again on the next save, and until then the entries still line up
 	/// with what is on screen for everything above the edit.
 	var blame: [GitBlame.Line] = []
-	internal(set) var isBlameVisible = false
+	var isBlameVisible = false
 	/// The line whose entry the pointer is over, lit with the rest of its
 	/// commit's run, since the run is what the one label stands for.
 	var hoveredBlameLine: Int?

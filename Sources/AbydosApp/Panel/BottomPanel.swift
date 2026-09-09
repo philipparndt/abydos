@@ -123,7 +123,7 @@ final class BottomPanel: NSView {
 	/// Answered from the field rather than by walking the sessions since item
 	/// 506: the pane goes on existing while it is showing under the project view
 	/// or in a window of its own, where it has no tab here to be found by.
-	internal(set) var existingSearchPane: SearchPane?
+	var existingSearchPane: SearchPane?
 	/// Fired when the panel wants to be hidden, so the window can collapse it.
 	var onRequestHide: (() -> Void)?
 	/// Told when the set of terminals changes, so it can be written down.

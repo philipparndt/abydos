@@ -633,14 +633,14 @@ final class SidebarController: NSObject {
 	/// - Parameter owner: the repository whose log this is, when it is not the
 	///   project's own — a submodule, for the history of a file inside one.
 	/// The log page, while one is open, for the driver to read.
-	internal(set) weak var logPage: HistoryPane?
+	weak var logPage: HistoryPane?
 
 	/// The commit page, likewise.
 	weak var commitPage: ChangesPane?
 
 	/// The estate page, while one is open, for the driver to read.
-	internal(set) weak var estatePage: EstateOverviewPage?
-	internal(set) weak var stashPage: StashPage?
+	weak var estatePage: EstateOverviewPage?
+	weak var stashPage: StashPage?
 
 
 	func searchScratchesForTesting(_ query: String) {

@@ -95,8 +95,8 @@ final class EditorAreaController: NSViewController {
 		onBecameEmpty?()
 	}
 
-	internal(set) var groups: [EditorViewController] = []
-	internal(set) var activeGroup: EditorViewController! {
+	var groups: [EditorViewController] = []
+	var activeGroup: EditorViewController! {
 		didSet { refreshStatus(from: activeGroup) }
 	}
 

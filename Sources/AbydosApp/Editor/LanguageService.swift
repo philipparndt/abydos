@@ -36,7 +36,7 @@ final class LanguageService {
 
 	// Kept in the body because a stored property cannot live in an
 	// extension; what each is for is said where it is used.
-	internal(set) var didCloseCount = 0
+	var didCloseCount = 0
 
 	// Kept in the body because a stored property cannot live in an
 	// extension; what each is for is said where it is used.
@@ -47,7 +47,7 @@ final class LanguageService {
 	/// A count and not a timing. What is claimed about a list of usages walked
 	/// with ↓ is a number of messages, and a number of messages is the same on a
 	/// loaded machine as on an idle one — which a duration is not.
-	internal(set) var didOpenCount = 0
+	var didOpenCount = 0
 	static let shared = LanguageService()
 
 	struct Server {
@@ -78,7 +78,7 @@ final class LanguageService {
 	var lastStandardError: [String: String] = [:]
 
 	/// Diagnostics per file, newest wins.
-	internal(set) var diagnostics: [String: [LSPDiagnostic]] = [:]
+	var diagnostics: [String: [LSPDiagnostic]] = [:]
 
 	/// How a server's own edit gets applied, set by the window in front.
 	///
@@ -88,7 +88,7 @@ final class LanguageService {
 	/// once, and must answer `false` when the edit did not happen.
 	/// How many edits servers have asked this app to apply, for a driver that
 	/// has to say whether the second half of a command actually arrived.
-	internal(set) var serverEditsForTesting = 0
+	var serverEditsForTesting = 0
 
 	var applyEditFromServer: ((
 		_ edit: WorkspaceEdit,
@@ -208,7 +208,7 @@ final class LanguageService {
 	var devcontainerFailures: Set<String> = []
 
 	/// What to say in the status bar about servers: names of those running.
-	internal(set) var runningNames: [String] = []
+	var runningNames: [String] = []
 	/// A server that is not there, and how to get it — keyed by the server, the
 	/// way `servers` is, and not by the language.
 	///
