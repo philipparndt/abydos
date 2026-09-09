@@ -75,7 +75,14 @@ git tag -a "$TAG" -m "Abydos $VERSION"
 # build they came from, and `release.sh` checks for exactly that. `make release`
 # passed it and this path did not, so the one command that is meant to do the whole
 # thing was the one that stopped halfway — after tagging.
-make --no-print-directory build CONFIG=release PIN_UUID=0
+#
+# `ARCHS` is not optional here either, for the same shape of reason. The
+# universal build was taught to `make release` on 2026-09-09 and this script
+# builds on its own, so 0.20.0 went out with notes promising an Intel build and
+# an image carrying none — found by mounting the download and asking `lipo`.
+# The download is the one build whose machine is not known in advance;
+# `release.sh` now refuses a thin app, so this cannot happen quietly again.
+make --no-print-directory build CONFIG=release PIN_UUID=0 ARCHS="arm64 x86_64"
 Scripts/release.sh
 
 test -f "$DMG" || { echo "expected $DMG and it is not there"; exit 1; }

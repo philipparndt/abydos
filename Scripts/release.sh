@@ -49,6 +49,28 @@ if [ "$BUILT_UUID" = "$PINNED" ]; then
 	exit 1
 fi
 
+# And that it runs on both processors. The download is the one build whose
+# machine is not known in advance, and 0.20.0 went out with notes promising an
+# Intel build over an image that carried none: the universal build had been
+# taught to `make release` and the publish script builds on its own. The bundle
+# printed `architectures: arm64` and nobody read it, so it is a stop now. Every
+# executable in the bundle, not only the app — the hook, the bench and the
+# backlog tool ship inside it and would be the ones to fail on the other Mac.
+for binary in "$APP/Contents/MacOS/"* "$APP/Contents/Resources/bin/"*; do
+	[ -f "$binary" ] || continue
+	# Scripts in Resources/bin are not Mach-O and have no architecture to ask for.
+	file -b "$binary" | grep -q "Mach-O" || continue
+	ARCHS_FOUND=$(lipo -archs "$binary" 2>/dev/null || true)
+	case " $ARCHS_FOUND " in
+		*" arm64 "*" x86_64 "*|*" x86_64 "*" arm64 "*) ;;
+		*)
+			echo "refusing to release: $(basename "$binary") is built for '$ARCHS_FOUND', not for both arm64 and x86_64" >&2
+			echo "  rebuild universal: make build PIN_UUID=0 ARCHS=\"arm64 x86_64\"" >&2
+			exit 1
+			;;
+	esac
+done
+
 # --- Sign ------------------------------------------------------------------
 #
 # Inside out, and without `--deep`: Apple deprecated it, and it signs nested

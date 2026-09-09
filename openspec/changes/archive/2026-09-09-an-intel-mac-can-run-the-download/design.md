@@ -71,6 +71,19 @@ now, which is Apple saying what the Intel build is for — Macs on macOS 26 and
 earlier, since macOS 27 does not run on them and Rosetta is being wound down.
 Worth having while those machines are in use; not a long-term commitment.
 
+## What the release showed, the same evening
+
+0.20.0 was cut with `make release-publish`, and the image carried an arm64
+binary only. `make release` asks for both architectures; `publish-release.sh`
+does not go through it — it runs its own `make build CONFIG=release
+PIN_UUID=0` — and this change taught the flag to the target nobody uses for a
+release. The design above says "`make release` asks for both" and the notes
+for 0.20.0 said the download runs on an Intel Mac; both were true of a command
+and false of the download. Fixed for 0.20.1 in two places: the publish script
+passes `ARCHS`, and `release.sh` refuses a thin app as it refuses a pinned
+UUID, so the summary line `architectures: arm64` that the bundle printed and
+nobody read is a stop rather than a line.
+
 ## Open Questions
 
 - Real Intel hardware. Rosetta proves the slice is well-formed and the app
