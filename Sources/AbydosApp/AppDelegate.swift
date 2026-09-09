@@ -2547,7 +2547,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// somebody else's files. Whatever is printed below is only about the
 		// tree named on this line.
 		if options.backlogMenu != nil || options.backlogMenuChange != nil
-			|| options.backlogNew != nil || options.backlogInit {
+			|| options.backlogNew != nil || options.backlogInit
+			|| options.backlogTasks != nil || options.backlogTasksChange != nil
+			|| options.backlogTick != nil || options.backlogTasksShot != nil {
 			// **Waited for rather than slept through.** Three seconds was enough
 			// for the backlog, whose state is which folder a file is in; the
 			// OpenSpec record asks the CLI about every change, and a board still
@@ -2570,6 +2572,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				if let title = options.backlogNew {
 					print("BACKLOG new: "
 						+ (controller?.newBacklogItemForTesting(titled: title) ?? "no window"))
+				}
+				// The tick before the report, deliberately: `--backlog-tick`
+				// and `--backlog-tasks` together are "tick one and show me what
+				// is left", which is the pair somebody working a manual list
+				// asks for.
+				if let asked = options.backlogTick {
+					print("BACKLOG tick \(asked.card):\(asked.index): "
+						+ (controller?.backlogTickForTesting(card: asked.card, index: asked.index)
+							?? "no window"))
+				}
+				if let number = options.backlogTasks {
+					print("BACKLOG tasks \(String(format: "%04d", number)):")
+					print(controller?.backlogTasksForTesting(number: number) ?? "no window")
+				}
+				if let name = options.backlogTasksChange {
+					print("BACKLOG tasks \(name):")
+					print(controller?.backlogTasksForTesting(change: name) ?? "no window")
+				}
+				if let path = options.backlogTasksShot {
+					print("BACKLOG tasks shot: "
+						+ (controller?.backlogTasksShotForTesting(to: path) ?? "no window"))
 				}
 				fflush(stdout)
 				if options.writesACapture { return }
