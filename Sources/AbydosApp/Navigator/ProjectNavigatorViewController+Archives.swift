@@ -544,7 +544,7 @@ extension ProjectNavigatorViewController {
 /// Its own cell rather than the file cell, which is private to the tree file
 /// and is about a `FileNode`; this one is about an entry.
 final class ArchiveCellView: NSTableCellView {
-	private var node: ArchiveNode?
+	var node: ArchiveNode?
 
 	func configure(_ node: ArchiveNode) {
 		self.node = node
