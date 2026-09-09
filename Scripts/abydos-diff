@@ -28,14 +28,29 @@
 # file there: the terminal is asked, over the same OSC 440 escape, and answers
 # if it is Abydos. Everywhere else — Ghostty, Terminal.app, over ssh — the app
 # is opened through LaunchServices with a URL it registers, `abydos://compare`,
-# aimed at the installed bundle by identifier so that a build somebody is
-# driving under a throwaway identifier never takes the request.
+# aimed at a bundle by *path* — `IDEAI_APP`, or `/Applications/Abydos.app` — the
+# way `abydos <file>` picks the app it falls back to.
+#
+# **By path, because the identifier does not name one app.** This asked for the
+# shipping identifier with `open -b`, on the reasoning that a build driven under
+# a throwaway one could then never take the request. That is true and it is
+# beside the point: a plain `make build` is not throwaway, so `build/Abydos.app`
+# carries the shipping identifier, claims `abydos:` alongside the installed copy,
+# and is stamped from the commit count — so the two are usually the same version
+# as well. LaunchServices was left holding two registrations that tie on every
+# test it has, and `git difftool` opened a checkout nobody was looking at about
+# as often as it opened the real app.
+#
+# `IDEAI_APP` is the variable the app exports into its own panes, so a compare
+# asked for from a checkout's terminal opens in that checkout, and everywhere
+# else in the installed app. Which is what the escape above already does, by
+# being answered by the terminal it was typed in.
 set -eu
 
 esc=$(printf '\033')
 osc=440
 reply_marker="440;abydos"
-bundle="de.rnd7.ideai"
+app="${IDEAI_APP:-/Applications/Abydos.app}"
 
 usage() {
 	cat >&2 <<'USAGE'
@@ -132,7 +147,11 @@ if ask_terminal; then
 	send_compare
 else
 	url="abydos://compare?a=$(encoded "$a")&b=$(encoded "$b")"
-	open -b "$bundle" "$url" 2>/dev/null || open -a Abydos "$url"
+	if [ ! -d "$app" ]; then
+		echo "abydos-diff: $app is not installed (run 'make install', or set IDEAI_APP)" >&2
+		exit 1
+	fi
+	open -a "$app" "$url"
 fi
 
 if [ -n "$wait_after" ]; then

@@ -108,6 +108,37 @@ if [ -n "$PRINT" ]; then
 	exit 0
 fi
 
+# The release has to be there, and has to be the one this cask describes.
+#
+# **Because the tap is published separately and can therefore go first.** The
+# order inside `publish-release.sh` is right — the release, then this — but this
+# is its own target precisely so it can be redone alone, and nothing stopped it
+# running when there was no release to point at. 0.19.1 is how that reads from
+# outside: the notes gate stopped the publish, the tag was already pushed, this
+# was run anyway, and the tap spent an hour advertising a download that 404'd
+# while the only version it had offered before was gone from the cask.
+#
+# The digest is what GitHub computed for the asset it is actually serving, so
+# this compares the cask against the download rather than against the file that
+# happens to be in `build/` — which is the failure that would otherwise reach
+# somebody as a checksum mismatch halfway through `brew install`.
+PUBLISHED=$(gh release view "v$VERSION" --repo "$REPO" --json assets \
+	--jq ".assets[] | select(.name == \"Abydos-$VERSION.dmg\") | .digest // \"\"" 2>/dev/null || true)
+if [ -z "$PUBLISHED" ]; then
+	echo "no Abydos-$VERSION.dmg published at v$VERSION in $REPO" >&2
+	echo "publish the release first — a cask pointing at a download GitHub does" >&2
+	echo "not have is a failed 'brew install' for whoever is quickest" >&2
+	exit 1
+fi
+if [ "$PUBLISHED" != "null" ] && [ "$PUBLISHED" != "sha256:$SHA" ]; then
+	echo "the published image is not the one this cask pins:" >&2
+	echo "  cask:      sha256:$SHA" >&2
+	echo "  published: $PUBLISHED" >&2
+	echo "pass the right checksum, or upload the image the checksum is of" >&2
+	exit 1
+fi
+echo "==> v$VERSION is published and the image matches"
+
 echo "==> Cloning $TAP"
 gh repo clone "$TAP" "$WORK/tap" -- --quiet
 mkdir -p "$WORK/tap/Casks"
