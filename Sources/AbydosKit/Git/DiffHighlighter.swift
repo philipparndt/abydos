@@ -36,6 +36,18 @@ public enum DiffHighlighter {
 		return result
 	}
 
+	/// Tokens for every line of a whole text — one side of a comparison that
+	/// has no patch, only two files. The same cutting-up by line as a patch's
+	/// side gets, so the compare page draws its rows with the diff view's
+	/// colours.
+	public static func highlightLines(_ text: String, languageId: String) -> [Int: [HighlightToken]] {
+		guard let engine = SyntaxEngine(languageId: languageId), engine.hasHighlightQuery, !text.isEmpty else {
+			return [:]
+		}
+		let count = text.split(separator: "\n", omittingEmptySubsequences: false).count
+		return tokens(in: text, lineIndices: Array(0..<count), engine: engine)
+	}
+
 	private enum Side {
 		case old, new
 

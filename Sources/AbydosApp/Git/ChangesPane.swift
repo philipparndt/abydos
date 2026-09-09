@@ -869,9 +869,9 @@ final class ChangesPane: NSView, ScaleFollowing {
 			// a hung pane; this is the same wait with the number in it. Nil
 			// once the first read is done, so a later sweep — a checkout, a
 			// pull — moves nothing on a pane that has rows on it.
-			let fresh = await submodules.refresh(read) { [weak self] done, total in
+			let fresh = await submodules.refresh(read) { done, total in
 				Task { @MainActor in
-					self?.activity?.count(
+					self.activity?.count(
 						done, of: total,
 						saying: "Reading \(done) of \(total) repositories…"
 					)

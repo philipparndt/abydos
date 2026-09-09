@@ -149,6 +149,17 @@ final class EditorDropView: ColoredView {
 		// drag springs back rather than opening a tab named after a web address.
 		let dropped = EditorDrop.urls(from: sender.draggingPasteboard)
 		guard !dropped.isEmpty else { return false }
+		// One file over the text of an open file is a comparison of the two,
+		// not an opening: the tab strip is where a file is dropped to open it.
+		// Asked of the window straight away rather than threaded through the
+		// area: the window is where the compare page opens, and the area has
+		// nothing to add on the way.
+		if dropped.count == 1, let active = owner.activeTabURL, owner.activeTabIsPlainFile,
+		   owner.isOverDocument(convert(sender.draggingLocation, from: nil)),
+		   let controller = window?.windowController as? MainWindowController,
+		   controller.compareDropped(dropped, onto: active) {
+			return true
+		}
 		owner.onFilesDropped?(dropped)
 		return true
 	}

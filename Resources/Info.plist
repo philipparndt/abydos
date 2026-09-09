@@ -419,5 +419,18 @@
 			</dict>
 		</dict>
 	</array>
+	<!-- abydos://compare?a=<path>&b=<path>, which is how `abydos-diff` reaches
+	     the app from a terminal that is not one of its own. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>de.rnd7.abydos.url</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>abydos</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

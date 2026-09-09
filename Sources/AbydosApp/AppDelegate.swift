@@ -1778,6 +1778,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let paths = options.comparePaths {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				Task { @MainActor in
+					var report = controller?.openCompareForTesting(paths.0, paths.1) ?? "no window"
+					if let steps = options.compareSteps {
+						report += "\n" + (await controller?.compareStepsForTesting(steps) ?? "no window")
+					}
+					print("COMPARE: " + report)
+					fflush(stdout)
+				}
+			}
+		}
+
 		if let steps = options.logPageSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.sidebarForTesting.logPageForTesting(steps)
@@ -2979,6 +2992,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	/// nothing to show for it and nobody to tell, this being a message from the
 	/// system rather than something somebody typed.
 	public func application(_ application: NSApplication, open urls: [URL]) {
+		// `abydos://compare?a=…&b=…` is `abydos-diff` typed in a terminal that
+		// is not one of this app's own, where no pane can carry the request.
+		for url in urls where url.scheme == "abydos" { openCompareURL(url) }
 		for url in urls where url.isFileURL {
 			if url.hasDirectoryPath {
 				open(projectAt: url)
@@ -3024,7 +3040,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	/// The window a menu command belongs to.
-	private var frontmostController: MainWindowController? {
+	var frontmostController: MainWindowController? {
 		if let key = NSApp.keyWindow?.windowController as? MainWindowController { return key }
 		return windowControllers.first { !$0.isTornOff }
 	}

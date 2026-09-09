@@ -266,6 +266,8 @@ install-cli: ## Put the `abydos` commands on the PATH (PREFIX=/usr/local)
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos"
 	@install -m 755 Scripts/abydos-icat $(or $(PREFIX),/usr/local)/bin/abydos-icat
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-icat"
+	@install -m 755 Scripts/abydos-diff $(or $(PREFIX),/usr/local)/bin/abydos-diff
+	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-diff"
 	@$(SWIFT) build $(SWIFT_JOBS) -c release --product firebench >/dev/null
 	@install -m 755 .build/release/firebench $(or $(PREFIX),/usr/local)/bin/abydos-bench
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-bench"

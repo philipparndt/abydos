@@ -161,6 +161,18 @@ shoot java --open "$JAVA" --file "$JAVA/src/main/java/com/example/api/Server.jav
 MMD="$(prepare mermaid mermaid)"
 shoot diagram --open "$MMD" --file "$MMD/document.mmd" --panel-height 0 --delay 8
 
+# Two folders side by side, and two files: the same service twice, one copy
+# with a file edited, one added and one removed, so every row state is in the
+# picture. The edits are made here, to the copies, and never to the examples.
+GO_B="$(prepare go-service go-service-b)"
+printf '\n// A line the other copy does not have.\n' >> "$GO_B/main.go"
+printf 'notes\n' > "$GO_B/NOTES.md"
+rm -f "$GO_B/README.md"
+shoot compare --open "$GO" --panel-height 0 --compare "$GO" "$GO_B" \
+	--compare-steps "settle,mark:main.go:copy to B" --delay 8
+shoot compare-file --open "$GO" --panel-height 0 --compare "$GO/main.go" "$GO_B/main.go" \
+	--compare-steps "settle" --delay 8
+
 # What a breakpoint can be told to do. Drawn by hand, so it is photographed
 # rather than described — and the values come from the session file, which is
 # also how anybody's would.

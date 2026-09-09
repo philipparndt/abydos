@@ -263,7 +263,9 @@ fi
 # declarations in `Resources/Info.plist` are untouched — `DeclaredFileTypesTests`
 # reads that file, not this copy.
 if [ -n "${BUNDLE_ID:-}" ] && [ "$BUNDLE_ID" != "$SHIPPING_ID" ]; then
-	for KEY in CFBundleDocumentTypes UTImportedTypeDeclarations UTExportedTypeDeclarations; do
+	# The URL scheme too: a driven build that registered `abydos://` would
+	# take `abydos-diff`'s requests away from the installed app.
+	for KEY in CFBundleDocumentTypes UTImportedTypeDeclarations UTExportedTypeDeclarations CFBundleURLTypes; do
 		/usr/libexec/PlistBuddy -c "Delete :$KEY" "$CONTENTS/Info.plist" >/dev/null 2>&1 || true
 	done
 	echo "    claims nothing: no document types under a throwaway identifier"

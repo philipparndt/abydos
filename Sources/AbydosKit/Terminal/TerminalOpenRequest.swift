@@ -23,6 +23,7 @@ import Foundation
 ///     ESC ] 440 ; abydos                  ST     the answer, from this app
 ///     ESC ] 440 ; open ; <base64 path>    ST     open this
 ///     ESC ] 440 ; open ; <base64> ; 12    ST     …and put the cursor on line 12
+///     ESC ] 440 ; compare ; <b64> ; <b64> ST     these two, side by side
 ///
 /// The path is base64 because a path is arbitrary bytes: a semicolon in a file
 /// name would end the field, and a newline or an ESC would end the sequence
@@ -42,10 +43,14 @@ public struct TerminalOpenRequest: Equatable, Sendable {
 	public let path: String
 	/// Where to put the cursor, when the command was given one.
 	public let line: Int?
+	/// The other side, for `compare`: the page puts `path` on the left and
+	/// this on the right. Nil for an `open`.
+	public let comparePath: String?
 
-	public init(path: String, line: Int? = nil) {
+	public init(path: String, line: Int? = nil, comparePath: String? = nil) {
 		self.path = path
 		self.line = line
+		self.comparePath = comparePath
 	}
 
 	/// The OSC code this travels under.
@@ -67,17 +72,25 @@ public struct TerminalOpenRequest: Equatable, Sendable {
 	/// exactly what was meant is one to drop rather than to guess at.
 	public init?(body: String) {
 		let fields = body.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
-		guard fields.count >= 2, fields[0] == "open" else { return nil }
+		guard fields.count >= 2, fields[0] == "open" || fields[0] == "compare" else { return nil }
 
-		guard let data = Data(base64Encoded: fields[1], options: .ignoreUnknownCharacters) else {
-			return nil
-		}
-		let decoded = String(decoding: data, as: UTF8.self)
 		// Absolute, because the app's working directory is not the shell's and
 		// resolving a relative path here would resolve it against the wrong one.
-		guard decoded.hasPrefix("/") else { return nil }
-		path = decoded
+		func absolutePath(_ field: String) -> String? {
+			guard let data = Data(base64Encoded: field, options: .ignoreUnknownCharacters) else { return nil }
+			let decoded = String(decoding: data, as: UTF8.self)
+			return decoded.hasPrefix("/") ? decoded : nil
+		}
+		guard let first = absolutePath(fields[1]) else { return nil }
+		path = first
 
+		if fields[0] == "compare" {
+			guard fields.count >= 3, let second = absolutePath(fields[2]) else { return nil }
+			comparePath = second
+			line = nil
+			return
+		}
+		comparePath = nil
 		if fields.count >= 3, let number = Int(fields[2]), number > 0 {
 			line = number
 		} else {
@@ -89,6 +102,10 @@ public struct TerminalOpenRequest: Equatable, Sendable {
 	/// tmux. Only the tests use it; the command builds its own, in shell.
 	public var sequence: String {
 		let payload = Data(path.utf8).base64EncodedString()
+		if let comparePath {
+			let other = Data(comparePath.utf8).base64EncodedString()
+			return "\u{1B}]\(Self.osc);compare;\(payload);\(other)\u{1B}\\"
+		}
 		let suffix = line.map { ";\($0)" } ?? ""
 		return "\u{1B}]\(Self.osc);open;\(payload)\(suffix)\u{1B}\\"
 	}

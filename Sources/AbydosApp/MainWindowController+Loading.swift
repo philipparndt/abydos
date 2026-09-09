@@ -368,6 +368,15 @@ extension MainWindowController {
 	/// working on, not to stop working on it.
 	func openFromTerminal(_ request: TerminalOpenRequest) {
 		let url = URL(fileURLWithPath: request.path).standardizedFileURL
+		// `abydos-diff a b`: the two side by side, whatever kind they are.
+		if let other = request.comparePath {
+			window?.makeKeyAndOrderFront(nil)
+			openComparePage(
+				left: ComparePage.source(for: url),
+				right: ComparePage.source(for: URL(fileURLWithPath: other).standardizedFileURL)
+			)
+			return
+		}
 		// A directory is a project, whoever asked; that is what `abydos` with no
 		// arguments means and it is not this window's to reinterpret.
 		var isDirectory: ObjCBool = false

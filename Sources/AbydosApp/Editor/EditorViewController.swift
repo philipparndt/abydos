@@ -89,6 +89,8 @@ final class EditorViewController: NSViewController {
 		var pageTitle: String?
 		/// What it is marked with in the tab bar.
 		var pageSymbol: String?
+		/// The line under a page's name: what a compare page counts.
+		var pageSubtitle: String?
 
 		/// A diff tab shows a comparison rather than the file, so it is a
 		/// separate tab from the file itself and says so in its subtitle.
@@ -3529,6 +3531,35 @@ final class EditorViewController: NSViewController {
 		return view
 	}
 
+	/// Renames an open page and gives it a line under the name — a compare
+	/// page whose sides moved, or whose counts arrived.
+	func retitlePage(_ view: NSView, title: String, subtitle: String) {
+		guard let index = tabs.firstIndex(where: { $0.contentView === view && $0.pageTitle != nil }) else { return }
+		tabs[index].pageTitle = title
+		tabs[index].pageSubtitle = subtitle
+		refreshTabBar()
+	}
+
+	/// The page in front, if the active tab is one.
+	var activePageView: NSView? {
+		guard let tab = activeTab, tab.pageTitle != nil else { return nil }
+		return tab.contentView
+	}
+
+	/// Whether the tab in front is a file as such: not a page, not a diff,
+	/// not an entry of an archive.
+	var activeTabIsPlainFile: Bool {
+		guard let tab = activeTab else { return false }
+		return tab.pageTitle == nil && !tab.isDiff && tab.archiveOrigin == nil
+	}
+
+	/// Whether a point of this group is over the document rather than the
+	/// tab strip — the strip is where a file is dropped to be opened.
+	func isOverDocument(_ point: NSPoint) -> Bool {
+		guard let tabBar else { return true }
+		return !tabBar.frame.contains(point)
+	}
+
 	/// The open page with this identifier, if it is open, whatever kind it is.
 	func page(identifier: String) -> NSView? {
 		let url = URL(fileURLWithPath: "/ideai/page/" + identifier)
@@ -3817,7 +3848,7 @@ final class EditorViewController: NSViewController {
 				isDirty: tab.isDirty || scratch,
 				isPreview: tab.isPreview,
 				subtitle: tab.pageTitle != nil
-					? ""
+					? (tab.pageSubtitle ?? "")
 					: tab.archiveOrigin?.said ?? tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))),
 				pageSymbol: tab.pageSymbol,
 				isExternal: tab.pageTitle == nil && !scratch && !tab.isDiff && tab.archiveOrigin == nil && isOutsideProject(tab.url)
