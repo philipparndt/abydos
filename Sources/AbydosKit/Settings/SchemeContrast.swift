@@ -114,6 +114,100 @@ public enum SchemeContrast {
 		return found
 	}
 
+	// MARK: - The app half
+
+	/// The ground a text role is drawn on, and whether it is meant to recede.
+	///
+	/// Three classes. Text — the editor's, the sidebar's, the git colours a file
+	/// name is drawn in, the fold placeholder's, and the caret, which is a shape
+	/// but a shape nobody can find is a bug — is held to the promised floor. Dim
+	/// text — line numbers and ignored files — is held one step down, as bright
+	/// black is in the terminal: meant to be read less, not to be unreadable.
+	/// Grounds and highlights are not text and return nil; `BundledSchemeTests`
+	/// judges those by their own relations.
+	public static func ground(for role: SchemeRole) -> (ground: SchemeRole, isDim: Bool)? {
+		switch role {
+		case .editorText, .caret: return (.editorBackground, false)
+		case .gutterText: return (.editorBackground, true)
+		case .gutterCurrentLineText: return (.currentLineBackground, true)
+		case .sidebarText, .sidebarHeaderText: return (.sidebarBackground, false)
+		case .gitAdded, .gitModified, .gitUnversioned, .gitConflict: return (.sidebarBackground, false)
+		case .gitIgnored: return (.sidebarBackground, true)
+		case .foldPlaceholderText: return (.foldPlaceholderBackground, false)
+		default: return nil
+		}
+	}
+
+	/// Comments and documentation recede on purpose; every other kind is code.
+	public static func isDim(_ kind: HighlightKind) -> Bool {
+		kind == .comment || kind == .documentation
+	}
+
+	/// What a text role or syntax kind has to reach: the promise, or one step
+	/// down for what is meant to recede.
+	public static func floor(promised: Double?, dim: Bool) -> Double {
+		let text = promised ?? ordinary
+		return dim ? (text >= 7 ? 4.5 : 3.0) : text
+	}
+
+	/// One role or syntax kind under its floor on its ground.
+	public struct AppShortfall: Equatable, Sendable, CustomStringConvertible {
+		public let scheme: String
+		public let isLight: Bool
+		/// A role's name, or `syntax.<kind>`.
+		public let role: String
+		public let ground: String
+		public let value: UInt32
+		public let ratio: Double
+		public let floor: Double
+
+		public var description: String {
+			String(
+				format: "%@ %@ %@ on %@: #%06X is %.2f:1, floor %.1f:1",
+				scheme, isLight ? "light" : "dark", role, ground, value, ratio, floor
+			)
+		}
+	}
+
+	/// Every text role and syntax kind of a theme under its floor, both halves.
+	public static func appShortfalls(in scheme: Scheme) -> [AppShortfall] {
+		guard let app = scheme.app else { return [] }
+		var found: [AppShortfall] = []
+		for isLight in [true, false] {
+			for role in SchemeRole.allCases {
+				guard let (groundRole, dim) = ground(for: role) else { continue }
+				let value = app.colour(role, isLight: isLight)
+				let ground = app.colour(groundRole, isLight: isLight)
+				let floor = floor(promised: app.floor, dim: dim)
+				let ratio = ratio(value, ground)
+				if ratio < floor {
+					found.append(AppShortfall(
+						scheme: scheme.id, isLight: isLight, role: role.rawValue, ground: groundRole.rawValue,
+						value: value, ratio: ratio, floor: floor
+					))
+				}
+			}
+			let editor = app.colour(.editorBackground, isLight: isLight)
+			for kind in HighlightKind.allCases {
+				let value = app.colour(kind, isLight: isLight)
+				let floor = floor(promised: app.floor, dim: isDim(kind))
+				let ratio = ratio(value, editor)
+				if ratio < floor {
+					found.append(AppShortfall(
+						scheme: scheme.id, isLight: isLight, role: "syntax." + kind.schemeKey,
+						ground: SchemeRole.editorBackground.rawValue, value: value, ratio: ratio, floor: floor
+					))
+				}
+			}
+		}
+		return found
+	}
+
+	/// The app-half shortfalls of every theme in a library.
+	public static func appShortfalls(in library: SchemeLibrary) -> [AppShortfall] {
+		library.appSchemes.flatMap(appShortfalls(in:))
+	}
+
 	/// The shortfalls of every terminal palette in a library, against the
 	/// editor grounds of every theme in it.
 	public static func shortfalls(in library: SchemeLibrary) -> [Shortfall] {

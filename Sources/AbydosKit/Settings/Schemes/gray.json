@@ -45,19 +45,19 @@
       "dark": "#302B24"
     },
     "gitAdded": {
-      "light": "#4E7A38",
+      "light": "#4B7636",
       "dark": "#83AE7C"
     },
     "gitModified": {
-      "light": "#A87608",
+      "light": "#8E6407",
       "dark": "#D6A659"
     },
     "gitUnversioned": {
-      "light": "#A15C18",
+      "light": "#9E5A18",
       "dark": "#C98C4E"
     },
     "gitIgnored": {
-      "light": "#96958D",
+      "light": "#8A887F",
       "dark": "#78776F"
     },
     "gitConflict": {
@@ -69,7 +69,7 @@
       "dark": "#CBCAC6"
     },
     "gutterText": {
-      "light": "#ABAAA3",
+      "light": "#929188",
       "dark": "#6E6D69"
     },
     "gutterCurrentLineText": {

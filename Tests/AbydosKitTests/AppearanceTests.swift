@@ -5,9 +5,11 @@ import Testing
 /// Two questions about what the app looks like — which palette, and how light —
 /// where there used to be one list with an entry per pairing.
 struct AppearanceTests {
-	@Test func offersFourPalettesAndThreeLightnesses() {
-		#expect(Appearance.families.map(\.id) == ["abydos", "blue", "dracula", "gray"])
-		#expect(Appearance.families.map(\.title) == ["Abydos", "Blue", "Dracula", "Gray"])
+	/// Five since 2026-09-09, when WCAG Level AAA joined the four: a theme whose
+	/// file promises 7:1 for its text and is held to it by `ThemeContrastTests`.
+	@Test func offersFivePalettesAndThreeLightnesses() {
+		#expect(Appearance.families.map(\.id) == ["abydos", "blue", "dracula", "gray", "wcag-level-aaa"])
+		#expect(Appearance.families.map(\.title) == ["Abydos", "Blue", "Dracula", "Gray", "WCAG Level AAA"])
 		#expect(Appearance.Mode.allCases.map(\.rawValue) == ["system", "light", "dark"])
 	}
 

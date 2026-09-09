@@ -45,6 +45,13 @@ file there with the same `id` as one of these replaces it.
   unless it asks for a place.
 - **`about`** is prose, ignored by the app. It is where the reasoning lives now
   that the colours are not next to a doc comment.
+- **`app.floor`** is the contrast ratio the theme promises its text reaches
+  against the ground it is drawn on — the editor's text and every syntax kind
+  on `editorBackground`, the sidebar's text and the git colours on
+  `sidebarBackground`, and so on; `SchemeContrast.ground(for:)` says which
+  ground each text role has. Left out, it is 4.5:1. Line numbers, ignored
+  files, comments and documentation are meant to recede and are held one step
+  lower: 3:1 under 4.5, 4.5 under 7. `wcag-level-aaa.json` says `7`.
 - **`terminal.floor`** is the contrast ratio the palette promises each of its
   sixteen colours reaches against the ground it is drawn on — its own, or every
   theme's editor ground for one that `follows` the editor. Left out, it is

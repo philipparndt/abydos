@@ -368,11 +368,14 @@ struct BundledSchemeTests {
 	}
 
 	/// The values themselves, spot-checked against what the Swift constants
-	/// held: the amber the Abydos caret is, and Dracula's own pink.
+	/// held: the amber the Abydos caret is, and Dracula's own pink — save the
+	/// light caret, which the contrast measurement moved on 2026-09-09 from
+	/// 3.80:1 to 4.59:1 against the light editor; a hand that puts `0xB07407`
+	/// back is told what it has undone.
 	@Test func carriesTheColoursThePaletteAlwaysHad() throws {
 		let abydos = try #require(library.appScheme(id: "abydos")?.app)
 		#expect(abydos.colour(.caret, isLight: false) == 0xF7B44E)
-		#expect(abydos.colour(.caret, isLight: true) == 0xB07407)
+		#expect(abydos.colour(.caret, isLight: true) == 0x9E6806)
 		#expect(abydos.colour(.editorBackground, isLight: false) == 0x151210)
 
 		let dracula = try #require(library.appScheme(id: "dracula")?.app)

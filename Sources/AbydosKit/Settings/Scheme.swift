@@ -169,11 +169,19 @@ public struct SchemeApp: Equatable, Sendable {
 	public let stored: Stored
 	private let roles: [SchemeRole: SchemePair]
 	private let syntax: [HighlightKind: SchemePair]
+	/// The contrast ratio the file promises its text reaches against the ground
+	/// it is drawn on, or nil for the ordinary 4.5:1 — the same promise the
+	/// terminal half makes with its own `floor`, kept by `SchemeContrast`.
+	public let floor: Double?
 
-	public init(stored: Stored, roles: [SchemeRole: SchemePair], syntax: [HighlightKind: SchemePair]) {
+	public init(
+		stored: Stored, roles: [SchemeRole: SchemePair], syntax: [HighlightKind: SchemePair],
+		floor: Double? = nil
+	) {
 		self.stored = stored
 		self.roles = roles
 		self.syntax = syntax
+		self.floor = floor
 	}
 
 	/// Every role is present: a file missing one is refused rather than loaded,
@@ -389,7 +397,10 @@ public extension Scheme {
 				system: stored["system"] as? String ?? names.system
 			)
 		}
-		return SchemeApp(stored: names, roles: roles, syntax: syntax)
+		return SchemeApp(
+			stored: names, roles: roles, syntax: syntax,
+			floor: try promisedFloor(section["floor"], at: "app.floor")
+		)
 	}
 
 	private static func readTerminal(_ section: [String: Any]) throws -> SchemeTerminal {
@@ -412,14 +423,19 @@ public extension Scheme {
 		for colour in SchemeAnsi.allCases {
 			ansi[colour] = try pair(table[colour.rawValue], at: "terminal.ansi.\(colour.rawValue)")
 		}
-		var floor: Double?
-		if let promised = section["floor"] {
-			guard let number = promised as? NSNumber, number.doubleValue >= 1 else {
-				throw SchemeProblem.notANumber(key: "terminal.floor", found: describe(promised))
-			}
-			floor = number.doubleValue
+		return SchemeTerminal(
+			background: background, foreground: foreground, cursor: cursor, ansi: ansi,
+			floor: try promisedFloor(section["floor"], at: "terminal.floor")
+		)
+	}
+
+	/// `"floor": 7` — a contrast ratio a section promises, or nothing.
+	private static func promisedFloor(_ value: Any?, at key: String) throws -> Double? {
+		guard let value else { return nil }
+		guard let number = value as? NSNumber, number.doubleValue >= 1 else {
+			throw SchemeProblem.notANumber(key: key, found: describe(value))
 		}
-		return SchemeTerminal(background: background, foreground: foreground, cursor: cursor, ansi: ansi, floor: floor)
+		return number.doubleValue
 	}
 
 	/// `{ "light": "#RRGGBB", "dark": "#RRGGBB" }`, and nothing else.
