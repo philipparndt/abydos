@@ -9,6 +9,10 @@ import AbydosKit
 /// which is the question a log is nearly always being asked: not "what
 /// happened" but "what happened to this".
 final class HistoryPane: NSView, ScaleFollowing {
+	/// A diff belongs in a tab, and the pane does not own the editor: whoever
+	/// built this pane says where the diff goes.
+	var onOpenWorkingCopyDiff: ((GitChange, URL, String) -> Void)?
+
 	/// How much room this has, and therefore what it can draw.
 	///
 	/// **One pane and not two.** A graph needs width for its lanes and its
@@ -32,10 +36,10 @@ final class HistoryPane: NSView, ScaleFollowing {
 
 	/// Not `layout`: that is `NSView`'s, and shadowing it means the override
 	/// below silently is not one.
-	private let arrangement: Layout
-	private let root: URL
+	let arrangement: Layout
+	let root: URL
 
-	private var commits: [GitCommit] = []
+	var commits: [GitCommit] = []
 	/// The shape of what is loaded: one row per commit, in the same order.
 	///
 	/// Rebuilt whenever the list changes rather than kept in step by hand — it
@@ -43,16 +47,16 @@ final class HistoryPane: NSView, ScaleFollowing {
 	/// call that fetched them.
 	private var graph: [GitGraph.Row] = []
 	/// Merges whose branch is folded away, and the commits that hides.
-	private var collapsedMerges: Set<String> = []
+	var collapsedMerges: Set<String> = []
 	private var hiddenByCollapse: Set<String> = []
 	/// What is actually on screen: the commits, less anything folded away.
-	private var visible: [(commit: GitCommit, graph: GitGraph.Row?)] = []
+	var visible: [(commit: GitCommit, graph: GitGraph.Row?)] = []
 	/// Commits that exist here and nowhere else yet.
-	private var unpushed: Set<String> = []
+	var unpushed: Set<String> = []
 	/// The mirror image: commits the scoped ref's upstream has and it does not.
 	/// These rows are drawn dimmed — on the page before a pull, not of the
 	/// branch yet.
-	private var remoteOnly: Set<String> = []
+	var remoteOnly: Set<String> = []
 	/// The upstream the scoped log is showing beside its ref, so paging asks
 	/// the same question the first page did.
 	private var scopedUpstream: String?
@@ -60,31 +64,31 @@ final class HistoryPane: NSView, ScaleFollowing {
 	/// its parent. The line fades as one piece: dimming only the remote row's
 	/// own strokes left the segment snapping back to full strength below the
 	/// dot, which read as a bright line through a quiet commit.
-	private var fadedLanesByRow: [Set<Int>] = []
-	private var files: [GitCommitFile] = []
+	var fadedLanesByRow: [Set<Int>] = []
+	var files: [GitCommitFile] = []
 	private var selectedCommit: GitCommit?
-	private var query = ""
+	var query = ""
 	/// When set, the history of that file rather than of the repository.
-	private var scopedPath: String?
+	var scopedPath: String?
 	/// When set, the history of that ref rather than of the branch checked out.
 	///
 	/// `GitHistory.log` has taken a revision from the day it was written and
 	/// nothing has ever passed one: a branch row could say "take me there" and
 	/// could not say "show me where it has been".
-	private var scopedRef: String?
+	var scopedRef: String?
 	/// Whether there may be more behind what has been loaded.
 	private var hasMore = false
 	private var isLoading = false
 
 	private static let pageSize = 150
 
-	private var searchField: ScaledSearchField!
-	private var scopeControl: DrawnChoice!
-	private var commitTable: HistoryTableView!
+	var searchField: ScaledSearchField!
+	var scopeControl: DrawnChoice!
+	var commitTable: HistoryTableView!
 	/// The changed files of the selected commit — the list a pull request page
 	/// hosts too, which is why it is a view of its own rather than an outline
 	/// wired up in here. See `ChangedFileList`.
-	private var fileList: ChangedFileList!
+	var fileList: ChangedFileList!
 
 	/// The pane is a container, and the keyboard has nothing to do in one.
 	///
@@ -114,10 +118,10 @@ final class HistoryPane: NSView, ScaleFollowing {
 	}
 	/// The two arrangements, as a control. Only the page has one — see
 	/// `arrangesFilesByFolder` for why the column does not.
-	private var arrangeControl: DrawnChoice?
+	var arrangeControl: DrawnChoice?
 	private var detailLabel: NSTextField!
 	/// The diff of the selected file, in `.page` only.
-	private var diffView: DiffView?
+	var diffView: DiffView?
 	/// The text diff and the picture diff, and which is in the scroll view: a
 	/// changed picture diffs as two pictures rather than as one sentence.
 	///
@@ -126,14 +130,14 @@ final class HistoryPane: NSView, ScaleFollowing {
 	/// arranged and the diff view is in a scroll view at all — and a cached nil
 	/// is a picture that diffs as prose for the life of the pane.
 	private var builtDiffDocuments: DiffDocuments?
-	private var diffDocuments: DiffDocuments? {
+	var diffDocuments: DiffDocuments? {
 		if let builtDiffDocuments { return builtDiffDocuments }
 		guard let diffView, let made = DiffDocuments(text: diffView) else { return nil }
 		builtDiffDocuments = made
 		return made
 	}
 	/// The page's splits, and whether their dividers have been put yet.
-	private var pageSplit: NSSplitView?
+	var pageSplit: NSSplitView?
 	private var detailSplit: NSSplitView?
 	private var hasPlacedDivider = false
 	/// The commit message, on the page.
@@ -512,7 +516,7 @@ final class HistoryPane: NSView, ScaleFollowing {
 	/// is mostly indent, and the four rows of `Sources/AbydosKit/Git` above one
 	/// file would leave nothing for the name. The preference is named for
 	/// commit files, which is the page's list.
-	private var arrangesFilesByFolder: Bool {
+	var arrangesFilesByFolder: Bool {
 		arrangement == .page && Settings.shared.commitFilesByFolder
 	}
 
@@ -735,7 +739,7 @@ final class HistoryPane: NSView, ScaleFollowing {
 		commitTable.scrollRowToVisible(landing)
 	}
 
-	private func toggleCollapse(at row: Int) {
+	func toggleCollapse(at row: Int) {
 		guard visible.indices.contains(row) else { return }
 		let commit = visible[row].commit
 		guard visible[row].graph?.collapsible ?? 0 > 0 else { return }
@@ -886,677 +890,21 @@ final class HistoryPane: NSView, ScaleFollowing {
 		return menu
 	}
 
-	private var clickedCommit: GitCommit? {
+	var clickedCommit: GitCommit? {
 		let clicked = commitTable.clickedRow
 		let row = clicked >= 0 ? clicked : commitTable.selectedRow
 		return visible.indices.contains(row) ? visible[row].commit : nil
 	}
 
-	@objc private func copyHash() {
+	@objc func copyHash() {
 		guard let commit = clickedCommit else { return }
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(commit.hash, forType: .string)
 	}
 
-	@objc private func copySubject() {
+	@objc func copySubject() {
 		guard let commit = clickedCommit else { return }
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(commit.subject, forType: .string)
 	}
-
-	// MARK: - What can be done to a commit
-
-	/// Runs something over the repository and tells the window it moved.
-	private func run(_ operation: @escaping () async -> GitRepository.ProcessResult) {
-		Task { @MainActor in
-			let result = await operation()
-			if result.exitCode != 0 {
-				Toast.post(
-					"That did not work",
-					detail: result.stderr.isEmpty ? result.stdout : result.stderr
-				)
-			}
-			NotificationCenter.default.post(name: .abydosRepositoryChanged, object: nil)
-			reload()
-		}
-	}
-
-	/// Reports an outcome that has three answers rather than two.
-	///
-	/// A revert or a cherry-pick that stops in a conflict has *already* changed
-	/// the work tree, so "that did not work" would be false about it — the
-	/// files are there, half-merged, and somebody has to be told which ones.
-	private func report(_ outcome: GitCommits.Outcome, verb: String) {
-		switch outcome {
-		case .done:
-			Toast.post("\(verb) done", kind: .information)
-		case let .conflicted(paths):
-			Toast.post(Toast(
-				kind: .warning,
-				title: "\(verb) stopped in \(paths.count) file\(paths.count == 1 ? "" : "s")",
-				detail: paths.joined(separator: "\n"),
-				actionTitle: "Abort",
-				action: { [weak self] in
-					guard let self else { return }
-					Task { @MainActor in
-						let undone = await GitCommits.abort(in: self.root)
-						self.report(undone, verb: "Abort")
-					}
-				}
-			))
-		case let .failed(said):
-			Toast.post("\(verb) did not happen", detail: said)
-		}
-		NotificationCenter.default.post(name: .abydosRepositoryChanged, object: nil)
-		reload()
-	}
-
-	/// What this log is narrowed to, for a session to write down: the ref and
-	/// the file, each only where there is one. Empty for the everything-log,
-	/// which is what reopening with nothing gives back.
-	func scopeToRemember() -> [String: String] {
-		var showing: [String: String] = [:]
-		if let ref = scopedRef { showing["ref"] = ref }
-		if let path = scopedPath { showing["path"] = path }
-		return showing
-	}
-
-	/// A diff belongs in a tab, and the pane does not own the editor: whoever
-	/// built this pane says where the diff goes.
-	var onOpenWorkingCopyDiff: ((GitChange, URL, String) -> Void)?
-
-	/// How far now is from then, for the one file this log is scoped to.
-	/// Selecting the commit already shows what it changed at the time; this
-	/// is the other question.
-	@objc private func compareCommitWithWorkingCopy() {
-		guard let commit = clickedCommit, let path = scopedPath else { return }
-		Task { @MainActor in
-			let text = await GitWorkingCopy.diffToWorkingCopy(
-				since: commit.hash, for: path, in: self.root
-			)
-			guard !text.isEmpty else {
-				Toast.post(
-					"Nothing to compare",
-					detail: "The working copy matches \(commit.shortHash).",
-					kind: .information
-				)
-				return
-			}
-			self.onOpenWorkingCopyDiff?(
-				GitChange(path: path, kind: .modified, isStaged: false),
-				self.root, text
-			)
-		}
-	}
-
-	@objc private func checkoutCommit() {
-		guard let commit = clickedCommit else { return }
-		// Detaching HEAD is not destructive — nothing is lost by standing
-		// somewhere else — so it asks nothing and keeps nothing.
-		run { await GitRepository.run(["checkout", commit.hash], in: self.root) }
-	}
-
-	@objc private func branchFromHere() {
-		guard let commit = clickedCommit else { return }
-		promptForName(
-			title: "New branch from \(commit.shortHash)",
-			message: commit.subject,
-			defaultValue: ""
-		) { [weak self] name in
-			guard let self, !name.isEmpty else { return }
-			self.run { await GitRepository.run(["checkout", "-b", name, commit.hash], in: self.root) }
-		}
-	}
-
-	@objc private func tagHere() {
-		guard let commit = clickedCommit else { return }
-		promptForName(
-			title: "Tag \(commit.shortHash)",
-			message: commit.subject,
-			defaultValue: ""
-		) { [weak self] name in
-			guard let self, !name.isEmpty else { return }
-			self.run { await GitTags.create(name, at: commit.hash, in: self.root) }
-		}
-	}
-
-	@objc private func revertCommit() {
-		guard let commit = clickedCommit else { return }
-		Task { @MainActor in
-			let outcome = await GitCommits.revert(commit.hash, in: root)
-			report(outcome, verb: "Revert")
-		}
-	}
-
-	@objc private func cherryPickCommit() {
-		guard let commit = clickedCommit else { return }
-		Task { @MainActor in
-			let outcome = await GitCommits.cherryPick(commit.hash, in: root)
-			report(outcome, verb: "Cherry-pick")
-		}
-	}
-
-	/// The one on this menu that can lose work, and the only one that asks.
-	@objc private func resetToCommit() {
-		guard let commit = clickedCommit else { return }
-		// The work tree, taken now rather than through `self` later: the sheet
-		// is answered minutes afterwards and the pane may be gone by then,
-		// while the repository it was reset against certainly is not.
-		let root = self.root
-
-		// Weak from the top and nowhere else. A weak capture inside a scope
-		// that already holds a strong one reads as care that is not being
-		// taken — the compiler says so, and `BranchesPane.recreateTag` learnt
-		// it first.
-		Task { @MainActor [weak self] in
-			let leaving = await GitCommits.count(of: "HEAD", notIn: commit.hash, in: root)
-			DestructiveAsk.run(
-				.reset(to: commit.shortHash, commits: leaving, mode: .hard),
-				in: root,
-				over: self?.window
-			) { _, _ in
-				let outcome = await GitCommits.reset(to: commit.hash, mode: .hard, in: root)
-				NotificationCenter.default.post(name: .abydosRepositoryChanged, object: nil)
-				self?.reload()
-				if case let .failed(said) = outcome { return said }
-				return nil
-			}
-		}
-	}
-
-	/// Asks for a name, the way the branches pane does.
-	private func promptForName(
-		title: String,
-		message: String,
-		defaultValue: String,
-		then act: @escaping (String) -> Void
-	) {
-		let alert = NSAlert()
-		alert.messageText = title
-		alert.informativeText = message
-		alert.addButton(withTitle: "Create")
-		alert.addButton(withTitle: "Cancel")
-
-		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-		field.stringValue = defaultValue
-		alert.accessoryView = field
-
-		let handle: (NSApplication.ModalResponse) -> Void = { response in
-			guard response == .alertFirstButtonReturn else { return }
-			act(field.stringValue.trimmingCharacters(in: .whitespaces))
-		}
-		if let window {
-			alert.beginSheetModal(for: window, completionHandler: handle)
-			window.makeFirstResponder(field)
-		} else {
-			handle(alert.runModal())
-		}
-	}
-
-	// MARK: - Testing
-
-	/// Runs a driver's comma-separated step script against this pane. The
-	/// steps live here rather than on the controller that owns the page, the
-	/// way the pull request list drives itself: every one of them is a
-	/// question or a verb of this pane's, and the controller's part is only
-	/// to have the page and wait for its first rows.
-	func driveForTesting(_ steps: String) {
-		let script = steps.split(separator: ",").map(String.init)
-		for (index, step) in script.enumerated() {
-			// The diff of a file is read off the main queue like everything
-			// else here, so a report taken in the same turn as the selection
-			// sees the state before it.
-			if step == "settle" || step.hasPrefix("settle:") {
-				let seconds = step.hasPrefix("settle:")
-					? Double(step.dropFirst("settle:".count)) ?? 1.5
-					: 1.5
-				let rest = script[(index + 1)...].joined(separator: ",")
-				guard !rest.isEmpty else { return }
-				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-					self?.driveForTesting(rest)
-				}
-				return
-			}
-
-			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
-			switch step.prefix(while: { $0 != ":" }) {
-			case "report": print("LOG-PAGE:\n\(pageReportForTesting())")
-			// Folds or unfolds the merge on a row, so the graph after a fold is
-			// something a run can read rather than something to look at.
-			case "fold":   print("LOG-PAGE fold: \(toggleCollapseForTesting(row: Int(argument) ?? 0))")
-			// Narrow to one ref, the way a branch row's "show log" does: the
-			// scoped log is where the upstream's unpulled commits appear, and a
-			// driver that can only open the everything-log could not ask about
-			// them. Follow with `settle` — the reload is asynchronous.
-			case "scope":  setRef(argument.isEmpty ? nil : argument)
-			// Narrow to one file, the way Compare ▸ History… arrives.
-			case "path":
-				offerScope(path: argument.isEmpty ? nil : argument)
-				setScope(path: argument.isEmpty ? nil : argument)
-			case "verbs":  print("LOG-PAGE verbs: \(diffVerbsForTesting())")
-			case "menu":   print("LOG-PAGE-MENU:\n\(commitMenuForTesting(row: Int(argument) ?? 0))")
-			// `choose:<row>:<title>` fires that row's menu item by title, the
-			// way a person picking Compare with Working Copy does.
-			case "choose":
-				let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
-				if parts.count == 2, let row = Int(parts[0]) {
-					print("LOG-PAGE choose: \(chooseCommitMenuItemForTesting(row: row, titled: parts[1]))")
-				} else {
-					print("LOG-PAGE choose: wants row:title, got \(argument)")
-				}
-			case "file":
-				selectCommitForTesting(0)
-				selectFileForTesting(Int(argument) ?? 0)
-			// The changes view's own rows, which `report` does not carry: how a
-			// commit's files are arranged is the question, and the flat
-			// arrangement has to match what the page drew before it was an
-			// outline at all.
-			// The keyboard's own claims: a click gives the list focus, the
-			// arrows move, and ← and → shut and open without losing the row.
-			case "keys":
-				print("LOG-PAGE keys: " + fileKeysForTesting(argument))
-				fflush(stdout)
-			case "files":
-				print("LOG-PAGE files:\n  " + fileRowsForTesting().joined(separator: "\n  "))
-			case "arrange": toggleFileArrangementForTesting()
-			case "star":    pressStarForTesting()
-			// The same diff steps the commit page has, spelled the same way —
-			// a commit's diff is the read-only one, and it is where *Copy* has
-			// to be offered over a diff nothing can be staged from.
-			case "diff-rows":
-				print("LOG-PAGE diff rows:\n" + diffRowsForTesting())
-			case "text":
-				let ends = argument.split(separator: "-").map { end -> (Int, Int) in
-					let place = end.split(separator: ".").compactMap { Int($0) }
-					return (place.first ?? 0, place.count > 1 ? place[1] : 0)
-				}
-				guard let first = ends.first, let last = ends.last else { break }
-				print("LOG-PAGE text: " + selectDiffTextForTesting(
-					fromRow: first.0, offset: first.1, toRow: last.0, offset: last.1
-				))
-			case "copied":
-				print("LOG-PAGE copied:\n" + copiedDiffTextForTesting())
-			case "copy":
-				print("LOG-PAGE copy:\n" + copyDiffTextForTesting())
-			case "diff-menu":
-				print("LOG-PAGE diff menu: " + diffMenuForTesting())
-			case "shut":    collapseEveryFolderForTesting()
-			// A script that says so ends the run, as the commit page's does:
-			// whatever is waiting on the process gets an exit rather than
-			// having to kill it, and an exit is the one ending that flushes.
-			case "exit":   fflush(stdout); exit(0)
-			default:       print("LOG-PAGE: unknown step \(step)")
-			}
-		}
-		fflush(stdout)
-	}
-
-	/// What the page is showing, on both sides of its split.
-	///
-	/// The claim is that a page holds what a column cannot: the graph with
-	/// lanes and refs on one side, and the selected commit's files *and its
-	/// diff* on the other rather than in a tab somewhere else.
-	/// Lines drawn on a row that nothing above it hands down.
-	///
-	/// **The claim a folded merge is under.** A lane leaves a row through an
-	/// edge and arrives at the next one; a line whose `from` lane is neither
-	/// this row's own dot nor something the row above passed down is a line
-	/// starting in nowhere — which is what folding used to leave behind, when
-	/// the graph was laid out over every commit and the rows were filtered
-	/// afterwards. Counted rather than drawn, so a run can assert zero.
-	func danglingLanesForTesting() -> Int {
-		var carried: Set<Int> = []
-		var dangling = 0
-		for row in visible {
-			guard let graph = row.graph else { continue }
-			for edge in graph.edges where edge.from != graph.lane && !carried.contains(edge.from) {
-				dangling += 1
-			}
-			carried = Set(graph.edges.map(\.to))
-		}
-		return dangling
-	}
-
-	func pageReportForTesting() -> String {
-		var said = ["layout=\(arrangement == .page ? "page" : "sidebar")"]
-		// Which segment is lit, because Compare ▸ History…'s claim is that it
-		// lands on "This File" — a state a screenshot of a segmented control
-		// says less reliably than the control itself.
-		let scope = scopeControl.selectedIndex == 1
-			? (scopeControl.label(forSegment: 1) ?? "file") : "whole"
-		said.append("scope=\(scope)")
-		said.append("commits=\(visible.count)")
-		said.append("dangling=\(danglingLanesForTesting())")
-		said += visible.prefix(6).map { row in
-			let lanes = row.graph.map { "lane \($0.lane)" } ?? "no graph"
-			// Dimming is a drawing, and a driven run reads text: the marker is
-			// how a test can say which rows are the unpulled ones.
-			let side = remoteOnly.contains(row.commit.hash) ? " remote-only" : ""
-			let refs = row.commit.refs.isEmpty
-				? ""
-				: " [" + row.commit.refs.joined(separator: ", ") + "]"
-			return "  \(row.commit.shortHash) \(lanes)\(side) \(row.commit.authorName)\(refs) \(row.commit.subject)"
-		}
-		said.append("files=\(files.count)")
-		said += files.prefix(6).map { "  \($0.path)" }
-		said.append("diff=\(diffDocuments?.reportForTesting ?? diffView?.reportForTesting ?? "none")")
-		return said.joined(separator: "\n")
-	}
-
-	/// Whether the log has anything in it yet.
-	/// What the menu over the log page's diff offers — see
-	/// `DiffView.verbsForTesting`. A commit has already happened, so the answer
-	/// is that it offers nothing to stage or throw away.
-	func diffVerbsForTesting() -> String {
-		diffView?.verbsForTesting() ?? "no diff view"
-	}
-
-	/// Every row of the diff, numbered, as a `text:` step names them — and what
-	/// a gesture over it selects and copies. A commit's diff is read-only, so
-	/// this is the other half of the claim the commit page checks: *Copy* is
-	/// offered over a diff nothing can be staged from either.
-	func diffRowsForTesting() -> String {
-		diffView?.rowTextsForTesting() ?? "no diff view"
-	}
-
-	func selectDiffTextForTesting(
-		fromRow: Int, offset from: Int, toRow: Int, offset to: Int
-	) -> String {
-		diffView?.selectTextForTesting(
-			fromRow: fromRow, offset: from, toRow: toRow, offset: to
-		) ?? "no diff view"
-	}
-
-	func copiedDiffTextForTesting() -> String {
-		diffView?.copiedTextForTesting() ?? "no diff view"
-	}
-
-	func copyDiffTextForTesting() -> String {
-		diffView?.copyToPasteboardForTesting() ?? "no diff view"
-	}
-
-	func diffMenuForTesting() -> String {
-		diffView?.menuTitlesForTesting() ?? "no diff view"
-	}
-
-	var hasRowsForTesting: Bool { !visible.isEmpty }
-
-	/// What the menu over a commit offers, one item per line.
-	///
-	/// The list is the claim — that a commit has verbs at all, and that the one
-	/// which can lose work is fenced off from the ones that cannot — and a list
-	/// diffs where a photograph of an open menu does not.
-	/// Fires one of the commit menu's items by title, through the same menu
-	/// `menu:` reports, so the verb is proven to be *in* the menu rather than
-	/// merely behind a method the driver knows.
-	func chooseCommitMenuItemForTesting(row: Int, titled title: String) -> String {
-		guard visible.indices.contains(row) else { return "no such row" }
-		commitTable.selectRowIndexes([row], byExtendingSelection: false)
-		let menu = NSMenu()
-		menu.delegate = self
-		menuNeedsUpdate(menu)
-		guard let item = menu.items.first(where: { $0.title == title }) else {
-			return "\(title) is not in the menu"
-		}
-		guard let action = item.action, let target = item.target else {
-			return "\(title) has no action"
-		}
-		_ = NSApp.sendAction(action, to: target, from: item)
-		return "fired \(title)"
-	}
-
-	func commitMenuForTesting(row: Int) -> String {
-		guard visible.indices.contains(row) else { return "no such row" }
-		commitTable.selectRowIndexes([row], byExtendingSelection: false)
-		let menu = NSMenu()
-		menu.delegate = self
-		menuNeedsUpdate(menu)
-		return menu.items
-			.map { $0.isSeparatorItem ? "--" : $0.title }
-			.joined(separator: "\n")
-	}
-
-	func setQueryForTesting(_ text: String) {
-		searchField.stringValue = text
-		query = text
-		reload()
-	}
-
-	var commitSubjectsForTesting: [String] { commits.map(\.subject) }
-	var fileNamesForTesting: [String] { files.map(\.path) }
-
-	func selectCommitForTesting(_ index: Int) {
-		guard commits.indices.contains(index) else { return }
-		commitTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-	}
-
-	func selectFileForTesting(_ index: Int) {
-		fileList.select(index: index)
-	}
-
-	/// The rows as they are drawn, top to bottom, so a driven run can compare
-	/// the two arrangements — and compare the flat one against what the page
-	/// drew when its file list was a table.
-	func fileRowsForTesting() -> [String] { fileList.rowsForTesting() }
-
-	private func fileArrangementChanged(to index: Int) {
-		Settings.shared.commitFilesByFolder = index == 1
-		fileList.arrangesByFolder = arrangesFilesByFolder
-	}
-
-	/// Draws the file list in whichever arrangement the preference now names.
-	///
-	/// The menu item flips the preference; this is the page catching up. Public
-	/// because the window owns the menu and the page owns the rows.
-	func applyFileArrangement() {
-		arrangeControl?.selectedIndex = Settings.shared.commitFilesByFolder ? 1 : 0
-		fileList.arrangesByFolder = arrangesFilesByFolder
-	}
-
-	/// Flips the arrangement, the way the menu item does.
-	func toggleFileArrangementForTesting() {
-		Settings.shared.commitFilesByFolder.toggle()
-		applyFileArrangement()
-	}
-
-	func pressStarForTesting() { fileList.expandEveryFolder() }
-
-	/// Works the commit's file list from the keyboard, and says what happened.
-	func fileKeysForTesting(_ steps: String) -> String { fileList.keysForTesting(steps) }
-
-	/// Shuts every folder, so `*` has something to do.
-	func collapseEveryFolderForTesting() { fileList.collapseEveryFolder() }
 }
-
-// MARK: - Tables
-
-extension HistoryPane: NSTableViewDataSource, NSTableViewDelegate {
-	func numberOfRows(in tableView: NSTableView) -> Int {
-		// The changes view is an outline and asks its own questions; this is the
-		// commit list alone now.
-		visible.count
-	}
-
-	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-		(tableView as? HistoryTableView)?.rowHeightOverride ?? Theme.current.scaled(22)
-	}
-
-	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-		if tableView === commitTable {
-			guard commits.indices.contains(row) else { return nil }
-			let commit = visible[row].commit
-			let view = CommitRowView(
-				commit: commit,
-				isUnpushed: unpushed.contains(commit.hash),
-				isRemoteOnly: remoteOnly.contains(commit.hash),
-				fadedLanes: fadedLanesByRow.indices.contains(row) ? fadedLanesByRow[row] : [],
-				graph: visible[row].graph,
-				isCollapsed: collapsedMerges.contains(commit.hash),
-				// Who and when, which a 300 pt column has no room for and a
-				// page does. They are the two questions a log is asked that the
-				// subject cannot answer.
-				showsAuthor: arrangement == .page
-			)
-			// **By hash, and selecting first.** The row index captured here is
-			// the one the view was made at, and folding moves every row below
-			// it — so a reused view folded whatever had since arrived at that
-			// index. And a click on the button is not a click on the row, so
-			// nothing was selected for `keepingSelection` to put back: the
-			// keyboard path kept its selection because pressing ← requires
-			// having one.
-			view.onFold = { [weak self] in
-				guard let self,
-				      let now = self.visible.firstIndex(where: { $0.commit.hash == commit.hash })
-				else { return }
-				self.commitTable.selectRowIndexes(
-					IndexSet(integer: now), byExtendingSelection: false
-				)
-				self.toggleCollapse(at: now)
-			}
-			return view
-		}
-		return nil
-	}
-
-	/// The theme's selection colour rather than the system's blue, in both of
-	/// the log's tables — the same reason `ThemedRowView` was written.
-	func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-		ThemedRowView()
-	}
-
-	func tableViewSelectionDidChange(_ notification: Notification) {
-		(notification.object as? HistoryTableView)?.onSelectionChange?()
-	}
-}
-
-extension HistoryPane: NSMenuDelegate {
-	func menuNeedsUpdate(_ menu: NSMenu) {
-		menu.removeAllItems()
-		guard clickedCommit != nil else { return }
-
-		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
-			let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
-			item.target = self
-			return item
-		}
-		// Where you can stand, and what you can make from here.
-		menu.addItem(item("Checkout", #selector(checkoutCommit)))
-		// Only on a file-scoped log: on the whole log "the working copy
-		// against then" spans every file, which is not a diff tab, and the
-		// item would lie about what it opens.
-		if scopedPath != nil {
-			menu.addItem(item(
-				"Compare with Working Copy", #selector(compareCommitWithWorkingCopy)
-			))
-		}
-		menu.addItem(item("Branch from Here\u{2026}", #selector(branchFromHere)))
-		menu.addItem(item("Tag Here\u{2026}", #selector(tagHere)))
-		menu.addItem(.separator())
-
-		// What this commit's change can do to the branch you are on. Revert and
-		// cherry-pick add a commit; reset takes them away, which is why it is
-		// fenced off below and is the only one here that asks first.
-		menu.addItem(item("Revert\u{2026}", #selector(revertCommit)))
-		menu.addItem(item("Cherry-pick", #selector(cherryPickCommit)))
-		menu.addItem(.separator())
-		menu.addItem(item("Reset to Here\u{2026}", #selector(resetToCommit)))
-		menu.addItem(.separator())
-
-		menu.addItem(item("Copy Commit Hash", #selector(copyHash)))
-		menu.addItem(item("Copy Subject", #selector(copySubject)))
-	}
-}
-
-extension HistoryPane: NSSplitViewDelegate {
-	/// How small a pane may be dragged.
-	///
-	/// **Through the delegate rather than through constraints.** A height
-	/// constraint on a pane is a second opinion about where the divider is, and
-	/// two opinions is what made the page argue with the panel below it once
-	/// per frame.
-	func splitView(
-		_ splitView: NSSplitView,
-		constrainMinCoordinate minimum: CGFloat,
-		ofSubviewAt divider: Int
-	) -> CGFloat {
-		// Two rows of files, or a third of the graph: below either there is
-		// nothing to read, and a pane dragged to nothing cannot be found again.
-		guard splitView === pageSplit else { return minimum + Theme.current.scaled(48) }
-		return minimum + Theme.current.scaled(320)
-	}
-
-	func splitView(
-		_ splitView: NSSplitView,
-		constrainMaxCoordinate maximum: CGFloat,
-		ofSubviewAt divider: Int
-	) -> CGFloat {
-		guard splitView === pageSplit else { return maximum - Theme.current.scaled(80) }
-		return maximum - Theme.current.scaled(300)
-	}
-}
-
-extension HistoryPane: NSSearchFieldDelegate {
-	func controlTextDidChange(_ notification: Notification) {
-		query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
-		reload()
-	}
-}
-
-/// A table that says when its selection changed and when it ran out of rows.
-private final class HistoryTableView: NSTableView {
-	/// A click from an inactive window lands on the row, rather than being
-	/// spent activating the app.
-	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-	override func becomeFirstResponder() -> Bool {
-		needsDisplay = true
-		announceKeyboardFocusChange()
-		return super.becomeFirstResponder()
-	}
-
-	override func resignFirstResponder() -> Bool {
-		needsDisplay = true
-		announceKeyboardFocusChange()
-		return super.resignFirstResponder()
-	}
-
-	var onSelectionChange: (() -> Void)?
-	var onScrolledToEnd: (() -> Void)?
-	var rowHeightOverride: CGFloat?
-	/// A click in the graph column, which the pane may take for a fold.
-	var onGraphClick: ((NSPoint, Int) -> Bool)?
-	/// Left and right on a commit: fold the branch it brought in, or show it.
-	var onFold: ((_ expanding: Bool, _ row: Int) -> Void)?
-
-	override func keyDown(with event: NSEvent) {
-		// A merge folds with ← and opens with →, as a tree does everywhere
-		// else. It could only ever be done by hitting a nine-point box.
-		if event.keyCode == 123 || event.keyCode == 124, selectedRow >= 0 {
-			onFold?(event.keyCode == 124, selectedRow)
-			return
-		}
-		super.keyDown(with: event)
-	}
-
-	override func mouseDown(with event: NSEvent) {
-		let point = convert(event.locationInWindow, from: nil)
-		// The table's own x is the row's x — rows start at its leading edge —
-		// so converting through a row view that may not exist yet only ever
-		// moved the point into the wrong space.
-		let row = self.row(at: point)
-		if row >= 0, onGraphClick?(point, row) == true { return }
-		super.mouseDown(with: event)
-	}
-
-	override func draw(_ dirtyRect: NSRect) {
-		super.draw(dirtyRect)
-
-		// Asking for more when the last row has been drawn: a log is read by
-		// scrolling, and the page after the one you are on is the one you are
-		// about to want.
-		guard numberOfRows > 0, let last = rowView(atRow: numberOfRows - 1, makeIfNecessary: false)
-		else { return }
-		if dirtyRect.intersects(last.frame) { onScrolledToEnd?() }
-	}
-}
-
