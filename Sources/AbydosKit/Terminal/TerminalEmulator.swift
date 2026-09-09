@@ -11,15 +11,15 @@ import Foundation
 /// git, and agent CLIs like Claude Code, which lean on colour, cursor
 /// positioning, line erasure and the alternate screen.
 public final class TerminalEmulator {
-	public private(set) var screen: TerminalScreen
+	public internal(set) var screen: TerminalScreen
 
 	/// Cursor position within the active grid.
-	public private(set) var cursorRow = 0
-	public private(set) var cursorColumn = 0
-	public private(set) var isCursorVisible = true
+	public internal(set) var cursorRow = 0
+	public internal(set) var cursorColumn = 0
+	public internal(set) var isCursorVisible = true
 
 	/// Window title from OSC 0/2.
-	public private(set) var title: String?
+	public internal(set) var title: String?
 
 	/// What changed since the view last drew, as absolute line indices.
 	///
@@ -36,7 +36,7 @@ public final class TerminalEmulator {
 	public var onBell: (() -> Void)?
 
 	/// The addresses behind the hyperlinks on screen, by the id cells carry.
-	private var links: [String] = []
+	var links: [String] = []
 
 	/// The address a cell belongs to, if it belongs to one.
 	public func link(for id: UInt16) -> String? {
@@ -76,16 +76,16 @@ public final class TerminalEmulator {
 		case cursor
 	}
 
-	private var attributes = TerminalAttributes()
-	private var savedCursor: (row: Int, column: Int, attributes: TerminalAttributes)?
+	var attributes = TerminalAttributes()
+	var savedCursor: (row: Int, column: Int, attributes: TerminalAttributes)?
 
 	/// DECSTBM scroll region, inclusive.
-	private var scrollTop = 0
-	private var scrollBottom: Int
+	var scrollTop = 0
+	var scrollBottom: Int
 
 	/// Set after writing to the last column: the next character wraps. Without
 	/// this, writing exactly `columns` characters would wrap one column early.
-	private var pendingWrap = false
+	var pendingWrap = false
 
 	/// Set when a program asked for the row one below the last one.
 	///
@@ -112,11 +112,11 @@ public final class TerminalEmulator {
 	/// clamping is the only answer to that; this is the same kind of memory as
 	/// `pendingWrap`, one edge over, and it lasts exactly as long — until
 	/// something puts the cursor somewhere real.
-	private var isParkedBelowScreen = false
+	var isParkedBelowScreen = false
 
 	/// Alternate screen (used by full-screen apps), saved main screen.
-	private var alternateSaved: (screen: TerminalScreen, row: Int, column: Int)?
-	public private(set) var isAlternateScreen = false
+	var alternateSaved: (screen: TerminalScreen, row: Int, column: Int)?
+	public internal(set) var isAlternateScreen = false
 
 	public var applicationCursorKeys = false
 	public var bracketedPaste = false
@@ -126,7 +126,7 @@ public final class TerminalEmulator {
 	/// Set by mode 2026 and cleared when the program says it has finished. What
 	/// is on the grid in between is half-drawn — a pane erased but not yet
 	/// filled in — and drawing it is what makes a repaint flicker.
-	public private(set) var isSynchronizingOutput = false
+	public internal(set) var isSynchronizingOutput = false
 
 	/// How the program wants pointer events reported, if at all.
 	public enum MouseTracking: Equatable, Sendable {
@@ -139,11 +139,11 @@ public final class TerminalEmulator {
 		case anyEvent
 	}
 
-	public private(set) var mouseTracking: MouseTracking = .off
+	public internal(set) var mouseTracking: MouseTracking = .off
 	/// 1004 — whether the program wants to hear about the window gaining and
 	/// losing the keyboard. tmux passes it through to whatever is in the pane,
 	/// which is how a full-screen program knows to stop animating.
-	public private(set) var reportsFocus = false
+	public internal(set) var reportsFocus = false
 
 	/// The kitty keyboard protocol's flags, and the stack a program pushes them
 	/// on so it can put them back.
@@ -151,12 +151,12 @@ public final class TerminalEmulator {
 	/// Bit 1 is the one that matters: "disambiguate escape codes", which is how
 	/// a program tells Shift+Enter from Enter, or Ctrl+I from Tab. Without it
 	/// both halves of each pair send the same byte and no program can tell.
-	public private(set) var keyboardFlags: UInt8 = 0
-	private var keyboardStack: [UInt8] = []
+	public internal(set) var keyboardFlags: UInt8 = 0
+	var keyboardStack: [UInt8] = []
 
 	/// xterm's older answer to the same problem: `CSI > 4 ; 2 m` asks for
 	/// modified keys as `CSI 27 ; modifiers ; code ~`.
-	public private(set) var modifyOtherKeys = 0
+	public internal(set) var modifyOtherKeys = 0
 
 	/// Whether either protocol is on, in whichever form.
 	public var reportsModifiedKeys: Bool { keyboardFlags & 1 != 0 || modifyOtherKeys >= 2 }
@@ -167,7 +167,7 @@ public final class TerminalEmulator {
 	/// twice a second whatever the program is doing — but the shape is: vim in
 	/// insert mode asks for a bar, and a block there is a lie about what typing
 	/// will do.
-	public private(set) var cursorShape: CursorShape = .block
+	public internal(set) var cursorShape: CursorShape = .block
 
 	public enum CursorShape: Sendable, Equatable {
 		case block, underline, bar
@@ -175,7 +175,7 @@ public final class TerminalEmulator {
 
 	/// 1006 — SGR encoding. The legacy encoding cannot express coordinates past
 	/// column 223, so modern programs all ask for this one.
-	public private(set) var sgrMouseEncoding = false
+	public internal(set) var sgrMouseEncoding = false
 
 	/// How large one character cell is, in pixels.
 	///
@@ -190,7 +190,7 @@ public final class TerminalEmulator {
 
 	// MARK: - Parser state
 
-	private enum State {
+	enum State {
 		case ground
 		case escape
 		case csi
@@ -203,7 +203,7 @@ public final class TerminalEmulator {
 		case skipOne
 	}
 
-	private var state = State.ground
+	var state = State.ground
 
 	/// CSI parameters, folded into integers as their digits arrive.
 	///
@@ -220,22 +220,22 @@ public final class TerminalEmulator {
 	/// on every single write — which came to more than reading the digits did.
 	/// The capacity is fixed: no sequence anyone sends carries thirty-two
 	/// components, and anything longer is dropped rather than grown into.
-	private static let parameterCapacity = 32
-	private let parameterValues: UnsafeMutablePointer<Int32>
-	private let componentStarts: UnsafeMutablePointer<Int32>
-	private var parameterCount = 0
-	private var componentTotal = 0
-	private var pendingValue = 0
-	private var atComponentStart = true
+	static let parameterCapacity = 32
+	let parameterValues: UnsafeMutablePointer<Int32>
+	let componentStarts: UnsafeMutablePointer<Int32>
+	var parameterCount = 0
+	var componentTotal = 0
+	var pendingValue = 0
+	var atComponentStart = true
 	/// The `?`, `>`, `<` or `=` marking a sequence as private rather than ANSI.
-	private var introducer: UInt8?
+	var introducer: UInt8?
 	/// Intermediate bytes, such as the `$` that makes `CSI ? p` a mode query.
-	private var intermediateBytes: [UInt8] = []
-	private var oscBytes: [UInt8] = []
-	private var apcBytes: [UInt8] = []
+	var intermediateBytes: [UInt8] = []
+	var oscBytes: [UInt8] = []
+	var apcBytes: [UInt8] = []
 	/// Whether the sequence being gathered ran past the cap, in which case it
 	/// is dropped whole rather than acted on short.
-	private var apcOverflowed = false
+	var apcOverflowed = false
 
 	/// The pictures on the screen, and the ones a program has sent but not shown.
 	///
@@ -245,9 +245,9 @@ public final class TerminalEmulator {
 	public let graphics = TerminalImageStore()
 
 	/// Placements belonging to the screen that is not the current one.
-	private var alternateGraphics: [TerminalImagePlacement] = []
+	var alternateGraphics: [TerminalImagePlacement] = []
 	/// What `screen.discardedLineCount` was when the placements were last moved.
-	private var lastDiscardedLineCount = 0
+	var lastDiscardedLineCount = 0
 
 	/// Partial UTF-8 sequence carried between writes, since a read can split one.
 	/// The UTF-8 sequence being assembled, decoded by hand.
@@ -656,7 +656,7 @@ public final class TerminalEmulator {
 		pendingWrap = false
 	}
 
-	private func lineFeed() {
+	func lineFeed() {
 		pendingWrap = false
 		isParkedBelowScreen = false
 		if cursorRow == scrollBottom {
@@ -666,7 +666,7 @@ public final class TerminalEmulator {
 		}
 	}
 
-	private func moveCursor(row: Int, column: Int) {
+	func moveCursor(row: Int, column: Int) {
 		isParkedBelowScreen = row == screen.rows
 		cursorRow = max(0, min(row, screen.rows - 1))
 		cursorColumn = max(0, min(column, screen.columns - 1))
@@ -675,7 +675,7 @@ public final class TerminalEmulator {
 
 	/// Where a vertical move counts from: the cursor's row, unless it was parked
 	/// one row below the screen — see `isParkedBelowScreen`.
-	private var verticalOrigin: Int { isParkedBelowScreen ? screen.rows : cursorRow }
+	var verticalOrigin: Int { isParkedBelowScreen ? screen.rows : cursorRow }
 
 	// MARK: - Escape
 
@@ -723,935 +723,5 @@ public final class TerminalEmulator {
 		default:
 			state = .ground
 		}
-	}
-
-	// MARK: - CSI
-
-	private func consumeCSI(_ byte: UInt8) {
-		switch byte {
-		case 0x30...0x39: // digits
-			// Capped rather than allowed to overflow: no real sequence carries a
-			// value this large, and a stream of digits must not trap.
-			pendingValue = min(pendingValue * 10 + Int(byte - 0x30), 65_535)
-		case 0x3B: // ;  — next component
-			pushParameter()
-			atComponentStart = true
-		case 0x3A: // :  — next subparameter of this component
-			pushParameter()
-		case 0x3C...0x3F: // ? > < =
-			introducer = byte
-		case 0x20...0x2F: // intermediates
-			intermediateBytes.append(byte)
-		case 0x40...0x7E: // final byte
-			pushParameter()
-			executeCSI(final: byte)
-			state = .ground
-		default:
-			state = .ground
-		}
-	}
-
-	private func resetParameters() {
-		parameterCount = 0
-		componentTotal = 0
-		// Checked rather than cleared: intermediates are rare, and this runs for
-		// every escape sequence that arrives.
-		if !intermediateBytes.isEmpty { intermediateBytes.removeAll(keepingCapacity: true) }
-		pendingValue = 0
-		atComponentStart = true
-		introducer = nil
-	}
-
-	/// Closes off the number being read.
-	///
-	/// Called for the final byte too, so `CSI m` yields one component of 0 —
-	/// which is what SGR reset is, and what splitting an empty string used to
-	/// produce.
-	private func pushParameter() {
-		defer { pendingValue = 0 }
-		guard parameterCount < Self.parameterCapacity else { return }
-
-		if atComponentStart {
-			componentStarts[componentTotal] = Int32(parameterCount)
-			componentTotal += 1
-			atComponentStart = false
-		}
-		parameterValues[parameterCount] = Int32(pendingValue)
-		parameterCount += 1
-	}
-
-	/// How many `;`-separated components the sequence carried.
-	private var componentCount: Int { componentTotal }
-
-	/// A component's primary value, or 0 when it was not given.
-	private func componentValue(_ index: Int) -> Int {
-		guard index >= 0, index < componentTotal else { return 0 }
-		return Int(parameterValues[Int(componentStarts[index])])
-	}
-
-	/// The first component, which most sequences are entirely made of.
-	private var firstParameter: Int { componentValue(0) }
-
-	/// A component's `:` subparameters, which carry variants — SGR `4:3` for a
-	/// curly underline, `58:2::r:g:b` for its colour.
-	private func subparameter(_ index: Int, at position: Int) -> Int? {
-		guard index >= 0, index < componentTotal else { return nil }
-		let start = Int(componentStarts[index]) + 1 + position
-		let end = index + 1 < componentTotal
-			? Int(componentStarts[index + 1])
-			: parameterCount
-		guard start < end else { return nil }
-		return Int(parameterValues[start])
-	}
-
-	/// How many `:` subparameters a component carried.
-	private func subparameterCount(_ index: Int) -> Int {
-		guard index >= 0, index < componentTotal else { return 0 }
-		let start = Int(componentStarts[index]) + 1
-		let end = index + 1 < componentTotal
-			? Int(componentStarts[index + 1])
-			: parameterCount
-		return Swift.max(0, end - start)
-	}
-
-	private var isPrivateSequence: Bool {
-		guard let introducer else { return false }
-		return (0x3C...0x3F).contains(introducer)
-	}
-
-	/// Parameter bytes that mark a sequence as private rather than ANSI.
-	///
-	/// The same set the parameter parser strips, so a sequence cannot be
-	/// recognised as private by one and read as ANSI by the other.
-	static let privateIntroducers: Set<Character> = ["?", ">", "<", "="]
-
-	/// Final bytes whose handlers inspect the introducer themselves.
-	///
-	/// - `h`/`l`: DEC private modes.
-	/// - `c`: primary, secondary and tertiary device attributes.
-	/// - `p`: DECRQM, a mode query — tmux and modern shells probe synchronised
-	///   output (mode 2026) with it and wait for the reply.
-	/// - `n`: DECXCPR, the private cursor position report.
-	/// - `u`: the kitty keyboard protocol — push, pop, set and query.
-	/// - `m`: XTMODKEYS with `>`, which is xterm's older answer to the same
-	///   question and not SGR at all.
-	static let introducerAwareFinals: Set<UInt8> = [
-		0x68, 0x6C, 0x63, 0x70, 0x6E, 0x75, 0x6D, // h l c p n u m
-	]
-
-	private func parameter(_ index: Int, default fallback: Int) -> Int {
-		guard index < componentCount else { return fallback }
-		let value = componentValue(index)
-		return value == 0 ? fallback : value
-	}
-
-	private func executeCSI(final: UInt8) {
-		let isPrivate = introducer == 0x3F // ?
-
-		// A private-prefixed sequence is a different command that happens to end
-		// in the same byte, not a variant of the standard one. `CSI > 4 ; 2 m`
-		// is XTMODKEYS, which Claude Code sends on startup — read as SGR it says
-		// "underline, dim", and every character after it came out underlined.
-		//
-		// Only the handlers that understand an introducer see one; everything
-		// else is ignored rather than run as its ANSI namesake. A final byte
-		// belongs in the set below once its handler checks the introducer
-		// itself — leaving one out silently drops a query the sender is
-		// blocking on, which is worse than the mis-parse this guard prevents.
-		if isPrivateSequence, !Self.introducerAwareFinals.contains(final) {
-			return
-		}
-
-		switch final {
-		// The vertical four count from `verticalOrigin` rather than from
-		// `cursorRow`, which is the same thing except after a park below the
-		// screen — see `rowBelowScreen`.
-		case 0x41: moveCursor(row: verticalOrigin - parameter(0, default: 1), column: cursorColumn) // A
-		case 0x42: moveCursor(row: verticalOrigin + parameter(0, default: 1), column: cursorColumn) // B
-		case 0x43: moveCursor(row: cursorRow, column: cursorColumn + parameter(0, default: 1)) // C
-		case 0x44: moveCursor(row: cursorRow, column: cursorColumn - parameter(0, default: 1)) // D
-		case 0x45: moveCursor(row: verticalOrigin + parameter(0, default: 1), column: 0) // E
-		case 0x46: moveCursor(row: verticalOrigin - parameter(0, default: 1), column: 0) // F
-		case 0x47, 0x60: moveCursor(row: cursorRow, column: parameter(0, default: 1) - 1) // G `
-		case 0x64: moveCursor(row: parameter(0, default: 1) - 1, column: cursorColumn) // d
-		case 0x48, 0x66: // H f
-			moveCursor(row: parameter(0, default: 1) - 1, column: parameter(1, default: 1) - 1)
-		case 0x4A: eraseInDisplay(mode: firstParameter) // J
-		case 0x4B: eraseInLine(mode: firstParameter) // K
-		case 0x4C: insertLines(parameter(0, default: 1)) // L
-		case 0x4D: deleteLines(parameter(0, default: 1)) // M
-		case 0x50: deleteCharacters(parameter(0, default: 1)) // P
-		case 0x40: insertCharacters(parameter(0, default: 1)) // @
-		case 0x58: eraseCharacters(parameter(0, default: 1)) // X
-		case 0x53: screen.scrollUp(top: scrollTop, bottom: scrollBottom, attributes: attributes) // S
-		case 0x54: screen.scrollDown(top: scrollTop, bottom: scrollBottom, attributes: attributes) // T
-		case 0x71 where intermediateBytes.contains(0x20): // SP q — DECSCUSR
-			// 0 and 1 are a blinking block, 2 a steady one, 3/4 underline,
-			// 5/6 bar. Blink is dropped; shape is kept.
-			switch parameter(0, default: 1) {
-			case 0, 1, 2: cursorShape = .block
-			case 3, 4: cursorShape = .underline
-			case 5, 6: cursorShape = .bar
-			default: break
-			}
-			onUpdate?()
-		case 0x75 where introducer == 0x3E: // > u — push keyboard flags
-			keyboardStack.append(keyboardFlags)
-			if keyboardStack.count > 16 { keyboardStack.removeFirst() }
-			keyboardFlags = UInt8(truncatingIfNeeded: parameter(0, default: 0))
-		case 0x75 where introducer == 0x3C: // < u — pop them again
-			for _ in 0..<max(1, parameter(0, default: 1)) {
-				keyboardFlags = keyboardStack.popLast() ?? 0
-			}
-		case 0x75 where introducer == 0x3D: // = u — set, or or, or clear
-			let value = UInt8(truncatingIfNeeded: parameter(0, default: 0))
-			switch parameter(1, default: 1) {
-			case 2: keyboardFlags |= value
-			case 3: keyboardFlags &= ~value
-			default: keyboardFlags = value
-			}
-		case 0x75 where introducer == 0x3F: // ? u — what are they now?
-			onResponse?("\u{1B}[?\(keyboardFlags)u")
-		case 0x6D where introducer == 0x3E: // > m — XTMODKEYS
-			// `CSI > 4 ; n m` sets the level; `CSI > 4 m` puts it back.
-			if parameter(0, default: 0) == 4 {
-				modifyOtherKeys = parameterCount > 1 ? parameter(1, default: 0) : 0
-			}
-		case 0x6D: applySGR() // m
-		case 0x72: // r
-			let top = parameter(0, default: 1) - 1
-			let bottom = componentCount > 1 ? parameter(1, default: screen.rows) - 1 : screen.rows - 1
-			if top < bottom, bottom < screen.rows {
-				scrollTop = max(0, top)
-				scrollBottom = bottom
-				moveCursor(row: scrollTop, column: 0)
-			}
-		case 0x68: setMode(enabled: true, isPrivate: isPrivate) // h
-		case 0x6C: setMode(enabled: false, isPrivate: isPrivate) // l
-		case 0x73: savedCursor = (cursorRow, cursorColumn, attributes) // s
-		case 0x75: restoreCursor() // u
-		case 0x6E: // n
-			// Device status. A shell blocks on these, so they must be answered.
-			switch firstParameter {
-			case 5 where !isPrivate: onResponse?("\u{1B}[0n")   // terminal OK
-			case 6:
-				// DECXCPR (`CSI ? 6 n`) carries the marker back, so a sender that
-				// issued both forms can tell the replies apart.
-				let marker = isPrivate ? "?" : ""
-				onResponse?("\u{1B}[\(marker)\(cursorRow + 1);\(cursorColumn + 1)R")
-			default: break
-			}
-		case 0x63: // c
-			// Primary and secondary device attributes are different questions and
-			// need different answers. Replying to a secondary query with a primary
-			// response is what made tmux and powerlevel10k leave `^[[?6c` on
-			// screen: the reply was not what they were parsing, so it fell through
-			// to the shell, which echoed it as input.
-			if introducer == 0x3E { // >
-				// Secondary DA: terminal type 0, firmware version, cartridge 0.
-				onResponse?("\u{1B}[>0;95;0c")
-			} else if isPrivateSequence {
-				// Tertiary (`CSI = c`) and anything else private: a primary reply
-				// is not an answer to the question that was asked, and an
-				// unrecognised reply ends up echoed by the shell.
-				break
-			} else {
-				// Primary DA: VT220 with 132 columns, ANSI colour.
-				onResponse?("\u{1B}[?62;1;6;22c")
-			}
-		case 0x74: // t
-			windowOperation()
-		case 0x70: // p
-			// DECRQM — a mode query. Answering "not recognised" is far better than
-			// silence, which leaves the program waiting.
-			if introducer == 0x3F, intermediateBytes.contains(0x24) { // ? and $
-				let mode = firstParameter
-				// 1 means set, 2 reset, 0 not recognised. A program only uses
-				// synchronised output if the terminal says it has it, so this
-				// one has to answer properly rather than plead ignorance.
-				let state: Int
-				switch mode {
-				case 2026: state = isSynchronizingOutput ? 1 : 2
-				default: state = 0
-				}
-				onResponse?("\u{1B}[?\(mode);\(state)$y")
-			}
-		default:
-			break
-		}
-	}
-
-	/// `CSI t` — the window operations that are questions rather than commands.
-	///
-	/// Only the three that report a size are answered. The rest of the set moves,
-	/// resizes, raises and iconifies the window on the program's say-so, which is
-	/// not something a terminal here is going to do.
-	///
-	/// A program drawing pictures needs to know how many pixels a cell is: it has
-	/// to turn "this image is 300 pixels wide" into a number of columns. The
-	/// window size carries it, and this is the fallback for a program that cannot
-	/// read that — or is on the far side of an ssh connection, where the ioctl
-	/// describes the wrong machine.
-	private func windowOperation() {
-		// The two that answer in pixels can only be answered once somebody has
-		// said how large a cell is; the one that answers in cells always can.
-		let knowsPixels = cellPixelSize.width > 0 && cellPixelSize.height > 0
-		switch firstParameter {
-		case 14 where knowsPixels: // Text area, in pixels.
-			onResponse?("\u{1B}[4;\(screen.rows * cellPixelSize.height);\(screen.columns * cellPixelSize.width)t")
-		case 16 where knowsPixels: // One cell, in pixels.
-			onResponse?("\u{1B}[6;\(cellPixelSize.height);\(cellPixelSize.width)t")
-		case 18: // Text area, in cells.
-			onResponse?("\u{1B}[8;\(screen.rows);\(screen.columns)t")
-		default:
-			break
-		}
-	}
-
-	private func restoreCursor() {
-		guard let saved = savedCursor else { return }
-		cursorRow = min(saved.row, screen.rows - 1)
-		cursorColumn = min(saved.column, screen.columns - 1)
-		attributes = saved.attributes
-		pendingWrap = false
-		isParkedBelowScreen = false
-	}
-
-	// MARK: - Modes
-
-	private func setMode(enabled: Bool, isPrivate: Bool) {
-		guard isPrivate else { return }
-		for index in 0..<componentCount {
-			switch componentValue(index) {
-			case 1: applicationCursorKeys = enabled
-			case 25: isCursorVisible = enabled
-			case 1000: mouseTracking = enabled ? .click : .off
-			case 1002: mouseTracking = enabled ? .buttonEvent : .off
-			case 1003: mouseTracking = enabled ? .anyEvent : .off
-			case 1004: reportsFocus = enabled
-			case 1006: sgrMouseEncoding = enabled
-			case 1049, 1047, 47:
-				setAlternateScreen(enabled)
-			case 2004: bracketedPaste = enabled
-			case 2026:
-				// Synchronised output. A program that is about to rewrite a lot
-				// of the screen says so first, and says when it has finished:
-				// what is shown in between is half-drawn, and showing it is what
-				// makes a repaint flicker. tmux and full-screen tools use it.
-				isSynchronizingOutput = enabled
-			default: break
-			}
-		}
-	}
-
-	/// The alternate screen is a separate blank grid with no scrollback, which is
-	/// what stops full-screen apps from polluting history.
-	private func setAlternateScreen(_ enabled: Bool) {
-		if enabled {
-			guard !isAlternateScreen else { return }
-			alternateSaved = (screen, cursorRow, cursorColumn)
-			var fresh = TerminalScreen(rows: screen.rows, columns: screen.columns)
-			fresh.maximumScrollback = 0
-			screen = fresh
-			cursorRow = 0
-			cursorColumn = 0
-			isAlternateScreen = true
-			// A picture belongs to the screen it was put on. A full-screen program
-			// must not find the ones the shell left behind, and the shell must find
-			// them again when the program exits — the same rule its text follows.
-			alternateGraphics = graphics.takePlacements()
-		} else {
-			guard isAlternateScreen, let saved = alternateSaved else { return }
-			screen = saved.screen
-			cursorRow = min(saved.row, screen.rows - 1)
-			cursorColumn = min(saved.column, screen.columns - 1)
-			alternateSaved = nil
-			isAlternateScreen = false
-			graphics.restorePlacements(alternateGraphics)
-			alternateGraphics = []
-		}
-		// Every row on the screen is now a different row, and no write said so:
-		// the grid was swapped for another one whole, taking its dirty range
-		// with it.
-		//
-		// It has to be said out loud, because the dirty range is the only
-		// account of what changed that a renderer gets. Both draw paths used to
-		// get away with not being told — the document's height changes as the
-		// scrollback comes and goes, and AppKit repaints a view whose frame
-		// changed — but the GPU path now keeps the instances it built for each
-		// row (0488) and nothing about a frame size reaches that.
-		screen.markAllDirty()
-		scrollTop = 0
-		scrollBottom = screen.rows - 1
-		isParkedBelowScreen = false
-	}
-
-	// MARK: - Erase and edit
-
-	private func eraseInDisplay(mode: Int) {
-		switch mode {
-		case 0: // cursor to end
-			eraseInLine(mode: 0)
-			blankRows((cursorRow + 1)..<screen.rows)
-			erasePictures(from: cursorRow, to: screen.rows - 1)
-		case 1: // start to cursor
-			eraseInLine(mode: 1)
-			blankRows(0..<cursorRow)
-			erasePictures(from: 0, to: cursorRow)
-		case 2, 3:
-			blankRows(0..<screen.rows)
-			erasePictures(from: 0, to: screen.rows - 1)
-		default:
-			break
-		}
-	}
-
-	/// Blanks whole rows in place, carrying the current background.
-	///
-	/// In place rather than `screen[row] = screen.blankLine(…)`: a full-screen
-	/// erase is what a program does at the start of every repaint, and the
-	/// replacement spelling allocated a row of cells and freed the old one for
-	/// each of the forty rows.
-	private func blankRows(_ rows: Range<Int>) {
-		for row in rows {
-			screen.blank(row: row, columns: 0..<screen.columns, attributes: attributes)
-		}
-	}
-
-	/// Takes the pictures standing on erased rows with them.
-	///
-	/// Erasing text is how a program says "there is nothing here now", and a
-	/// picture left behind by it cannot be got rid of by any means the program
-	/// has — which is what left one on screen until the app was restarted.
-	private func erasePictures(from first: Int, to last: Int) {
-		guard first <= last else { return }
-		let offset = screen.scrollback.count
-		graphics.removePlacements(inRows: (offset + first)...(offset + last))
-	}
-
-	private func eraseInLine(mode: Int) {
-		guard cursorRow < screen.rows else { return }
-		switch mode {
-		case 0:
-			screen.blank(row: cursorRow, columns: cursorColumn..<screen.columns, attributes: attributes)
-		case 1:
-			screen.blank(row: cursorRow, columns: 0..<(cursorColumn + 1), attributes: attributes)
-		case 2:
-			screen.blank(row: cursorRow, columns: 0..<screen.columns, attributes: attributes)
-		default:
-			break
-		}
-	}
-
-	private func insertLines(_ count: Int) {
-		guard cursorRow >= scrollTop, cursorRow <= scrollBottom else { return }
-		for _ in 0..<count {
-			screen.scrollDown(top: cursorRow, bottom: scrollBottom, attributes: attributes)
-		}
-	}
-
-	private func deleteLines(_ count: Int) {
-		guard cursorRow >= scrollTop, cursorRow <= scrollBottom else { return }
-		for _ in 0..<count {
-			screen.scrollUp(top: cursorRow, bottom: scrollBottom, attributes: attributes)
-		}
-	}
-
-	private func deleteCharacters(_ count: Int) {
-		guard cursorRow < screen.rows else { return }
-		var cells = screen[cursorRow].cells
-		let removable = min(count, screen.columns - cursorColumn)
-		guard removable > 0 else { return }
-		cells.removeSubrange(cursorColumn..<(cursorColumn + removable))
-		cells.append(contentsOf: Array(repeating: TerminalCell.blank, count: removable))
-		screen[cursorRow].cells = cells
-	}
-
-	private func insertCharacters(_ count: Int) {
-		guard cursorRow < screen.rows else { return }
-		var cells = screen[cursorRow].cells
-		let insertable = min(count, screen.columns - cursorColumn)
-		guard insertable > 0 else { return }
-		cells.insert(contentsOf: Array(repeating: TerminalCell.blank, count: insertable), at: cursorColumn)
-		cells.removeLast(insertable)
-		screen[cursorRow].cells = cells
-	}
-
-	private func eraseCharacters(_ count: Int) {
-		guard cursorRow < screen.rows else { return }
-		let end = min(cursorColumn + count, screen.columns)
-		guard cursorColumn < end else { return }
-		screen.blank(row: cursorRow, columns: cursorColumn..<end, attributes: attributes)
-	}
-
-	// MARK: - SGR
-
-	private func applySGR() {
-		let count = componentCount
-		var index = 0
-		while index < count {
-			let value = componentValue(index)
-			switch value {
-			case 0: attributes = TerminalAttributes()
-			case 1: attributes.bold = true
-			case 2: attributes.dim = true
-			case 3: attributes.italic = true
-			case 4:
-				// `4:0` is *no* underline; every other style — single, double,
-				// curly, dotted, dashed — is one. Treating the subparameter as
-				// decoration and keeping the 4 turned underline on for text that
-				// asked for it to be off, which underlines whole applications.
-				attributes.underline = subparameter(index, at: 0) != 0
-			case 7: attributes.inverse = true
-			case 8: attributes.hidden = true
-			case 9: attributes.strikethrough = true
-			case 21, 22: attributes.bold = false; attributes.dim = false
-			case 23: attributes.italic = false
-			case 24: attributes.underline = false
-			case 27: attributes.inverse = false
-			case 28: attributes.hidden = false
-			case 29: attributes.strikethrough = false
-			case 30...37: attributes.foreground = .indexed(UInt8(value - 30))
-			case 39: attributes.foreground = .default
-			case 40...47: attributes.background = .indexed(UInt8(value - 40))
-			case 49: attributes.background = .default
-			case 90...97: attributes.foreground = .indexed(UInt8(value - 90 + 8))
-			case 100...107: attributes.background = .indexed(UInt8(value - 100 + 8))
-			case 38, 48:
-				// Extended colour, in either of the two spellings.
-				//
-				// `38;2;r;g;b` separates with semicolons, which is what almost
-				// everything writes. `38:2:r:g:b` separates with colons, which
-				// is what the standard actually specifies and what kitty's own
-				// `icat` uses for the colour that names an image — so ignoring
-				// it meant the placeholder cells had no id, and kitty's icat
-				// drew nothing here while working everywhere else.
-				//
-				// The colon form may carry a colour space before the channels:
-				// `38:2::r:g:b` is the full spelling and `38:2:r:g:b` the
-				// common short one. Five subparameters means the long form.
-				let isForeground = value == 38
-				if let kind = subparameter(index, at: 0) {
-					let colour: TerminalColor?
-					if kind == 5 {
-						colour = subparameter(index, at: 1)
-							.map { .indexed(UInt8(clamping: $0)) }
-					} else if kind == 2 {
-						// With a colour space the channels start one later.
-						let offset = subparameterCount(index) >= 5 ? 2 : 1
-						if let red = subparameter(index, at: offset),
-						   let green = subparameter(index, at: offset + 1),
-						   let blue = subparameter(index, at: offset + 2) {
-							colour = .rgb(
-								UInt8(clamping: red), UInt8(clamping: green), UInt8(clamping: blue)
-							)
-						} else {
-							colour = nil
-						}
-					} else {
-						colour = nil
-					}
-					if let colour {
-						if isForeground { attributes.foreground = colour }
-						else { attributes.background = colour }
-					}
-					index += 1
-					continue
-				}
-				guard index + 1 < count else { index = count; break }
-				let kind = componentValue(index + 1)
-				if kind == 5, index + 2 < count {
-					let color = TerminalColor.indexed(UInt8(clamping: componentValue(index + 2)))
-					if isForeground { attributes.foreground = color } else { attributes.background = color }
-					index += 2
-				} else if kind == 2, index + 4 < count {
-					let color = TerminalColor.rgb(
-						UInt8(clamping: componentValue(index + 2)),
-						UInt8(clamping: componentValue(index + 3)),
-						UInt8(clamping: componentValue(index + 4))
-					)
-					if isForeground { attributes.foreground = color } else { attributes.background = color }
-					index += 4
-				} else {
-					index = count
-				}
-			default:
-				break
-			}
-			index += 1
-		}
-	}
-
-	// MARK: - APC
-
-	/// APC carries the kitty graphics protocol, and nothing else anybody sends.
-	///
-	/// Terminated by ST, exactly as OSC is. It used to be discarded wholesale,
-	/// which is why an image sent to this terminal did nothing at all.
-	private func consumeAPC(_ byte: UInt8) {
-		if byte == 0x1B {
-			finishAPC()
-			state = .escape
-			return
-		}
-		// A stream that never terminates must not be accumulated forever. Past
-		// the cap the sequence is marked and dropped whole at the end rather
-		// than delivered short: a truncated payload is a picture that fails to
-		// decode, or worse decodes to something wrong, and neither says why.
-		guard apcBytes.count < Self.longestAPC else {
-			apcOverflowed = true
-			return
-		}
-		apcBytes.append(byte)
-	}
-
-	/// Longest APC sequence held.
-	///
-	/// The protocol says a chunk should be at most 4096 bytes of base64, and
-	/// this was 8192 on the strength of it. kitty's own `icat` does not follow
-	/// its own recommendation when it believes the terminal can cope: it sends
-	/// the whole image in two chunks of 131072. Everything past 8192 was
-	/// swallowed, the base64 was truncated, the PNG did not decode and no
-	/// picture appeared — which is why kitty's icat drew nothing here and
-	/// everything in the terminals it was tested against.
-	///
-	/// Eight megabytes is far past any real chunk and still a bound. What a
-	/// picture actually costs is capped separately, by the image store's own
-	/// budget, once it is decoded.
-	private static let longestAPC = 8 * 1024 * 1024
-
-	private func finishAPC() {
-		let bytes = apcBytes
-		let overflowed = apcOverflowed
-		apcBytes = []
-		apcOverflowed = false
-		guard !overflowed else {
-			state = .ground
-			return
-		}
-		state = .ground
-		// `G` is kitty's; there is no other APC to answer.
-		guard bytes.first == 0x47 else { return }
-
-		let command = KittyGraphicsCommand(Array(bytes.dropFirst()))
-		let result = graphics.apply(command, context: .init(
-			scrollbackCount: screen.scrollback.count,
-			cursorRow: cursorRow,
-			cursorColumn: cursorColumn,
-			rows: screen.rows,
-			columns: screen.columns
-		))
-
-		if let response = result.response { onResponse?(response) }
-		if let dirty = result.dirtyRows { screen.markDirty(absolute: dirty) }
-		if let advance = result.cursorAdvance {
-			// Down first, then across, so a picture wider than what is left of the
-			// row still lands the cursor on the row the image ends on.
-			//
-			// A line feed for each row rather than one move to the row it ends on.
-			// A move *clamps* at the last row, and a picture placed where fewer
-			// rows are left than it needs then keeps the rows it was given —
-			// rows below the bottom of the screen, which are never drawn, and
-			// which overlap everything the shell erases from its next prompt
-			// downwards, so `ESC[J` took the picture away. A feed makes the room
-			// instead: the retired lines go into the scrollback, every absolute
-			// row stays where it was, and the picture comes onto the screen.
-			//
-			// This is what a program placing a picture is asking for. It is told
-			// nothing about how tall the pane is — `icat` outside tmux sends no
-			// `r` at all — so making room is the terminal's part, exactly as it
-			// is when a program prints that many lines.
-			for _ in 0..<advance.rows { lineFeed() }
-			for _ in 0..<advance.columns {
-				if cursorColumn == screen.columns - 1 {
-					cursorColumn = 0
-					lineFeed()
-				} else {
-					cursorColumn += 1
-				}
-			}
-		}
-	}
-
-	// MARK: - OSC
-
-	private func consumeOSC(_ byte: UInt8) {
-		// Terminated by BEL or ST (ESC \).
-		if byte == 0x07 {
-			finishOSC()
-			return
-		}
-		if byte == 0x1B {
-			// The backslash of ST follows. Handing it back to the escape handler
-			// consumes it; finishing straight to ground left it to be printed as
-			// ordinary text.
-			finishOSC()
-			state = .escape
-			return
-		}
-		oscBytes.append(byte)
-	}
-
-	private func finishOSC() {
-		// Decoded as UTF-8, not byte-per-character. A title is arbitrary text and
-		// routinely contains an emoji; treating each byte as a scalar turned
-		// "\u{23F3}" into "\u{00E2}\u{008F}\u{00B3}" and put mojibake in the tab.
-		let text = String(decoding: oscBytes, as: UTF8.self)
-		oscBytes = []
-		state = .ground
-
-		let parts = text.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
-		guard let code = Int(parts.first ?? "") else { return }
-		let body = parts.count > 1 ? String(parts[1]) : ""
-
-		switch code {
-		case 0, 2:
-			title = body
-		case 4:
-			applyPaletteRequest(body)
-		case 8:
-			applyHyperlink(body)
-		case 10, 11, 12:
-			applyColourRequest(code: code, body: body)
-		case 52:
-			applyClipboard(body)
-		case TerminalOpenRequest.osc:
-			applyOpenRequest(body)
-		default:
-			break
-		}
-	}
-
-	/// OSC 440 — a program asking this window to open a file.
-	///
-	/// Two messages share the code. `?` is the question a command asks before
-	/// it commits to anything: it is answered only by this app, so a command
-	/// that gets no answer knows it is somewhere else and can fall back to
-	/// `open -a` rather than writing an escape into the void. `open;…` is the
-	/// request itself.
-	private func applyOpenRequest(_ body: String) {
-		if body == "?" {
-			onResponse?(TerminalOpenRequest.reply)
-			return
-		}
-		guard let request = TerminalOpenRequest(body: body) else { return }
-		onOpenFile?(request)
-	}
-
-	/// OSC 52 — a program handing something to the clipboard.
-	///
-	/// Only writing. A program that asks to *read* the clipboard is refused in
-	/// silence: anything that can run in a terminal could then take whatever
-	/// somebody last copied, which is a password as often as not.
-	private func applyClipboard(_ body: String) {
-		let parts = body.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
-		guard parts.count == 2 else { return }
-		let payload = String(parts[1])
-		guard payload != "?" else { return }
-
-		guard let data = Data(base64Encoded: payload, options: .ignoreUnknownCharacters) else { return }
-		onClipboardWrite?(String(decoding: data, as: UTF8.self))
-	}
-
-	/// OSC 10, 11, 12 — the default foreground, background and cursor colours.
-	///
-	/// A query is what matters: a program asks what the background is so it can
-	/// choose a palette that can be read against it, and one that gets no
-	/// answer guesses — which is how a light theme ends up with grey-on-white
-	/// diffs.
-	private func applyColourRequest(code: Int, body: String) {
-		let query: ColourQuery = code == 10 ? .foreground : (code == 11 ? .background : .cursor)
-		for request in body.split(separator: ";") where request == "?" {
-			guard let colour = colourLookup?(query) else { continue }
-			onResponse?("\u{1B}]\(code);\(Self.xtermColour(colour))\u{1B}\\")
-		}
-	}
-
-	/// OSC 4 — a palette entry, asked about by number.
-	private func applyPaletteRequest(_ body: String) {
-		let fields = body.split(separator: ";", omittingEmptySubsequences: false)
-		var index = 0
-		for (position, field) in fields.enumerated() {
-			if position % 2 == 0 {
-				index = Int(field) ?? -1
-			} else if field == "?", index >= 0 {
-				guard let colour = colourLookup?(.palette(index)) else { continue }
-				onResponse?("\u{1B}]4;\(index);\(Self.xtermColour(colour))\u{1B}\\")
-			}
-		}
-	}
-
-	/// OSC 8 — the text that follows belongs to an address.
-	///
-	/// `OSC 8 ; params ; uri ST` opens one and `OSC 8 ; ; ST` closes it, so a
-	/// program brackets the text it wants to make clickable. The parameters
-	/// carry an id for linking runs that are far apart, which nothing here
-	/// needs: what matters is which address a cell belongs to.
-	private func applyHyperlink(_ body: String) {
-		let parts = body.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
-		let uri = parts.count > 1 ? String(parts[1]) : ""
-		guard !uri.isEmpty else {
-			attributes.link = 0
-			return
-		}
-
-		// Only the addresses a screenful can hold: a program printing thousands
-		// of links should not grow a table nobody will look at again.
-		if let existing = links.firstIndex(of: uri) {
-			attributes.link = UInt16(existing + 1)
-			return
-		}
-		guard links.count < Int(UInt16.max) - 1 else { return }
-		links.append(uri)
-		attributes.link = UInt16(links.count)
-	}
-
-	/// `rgb:RRRR/GGGG/BBBB`, which is the form every terminal answers in.
-	static func xtermColour(_ colour: (red: Double, green: Double, blue: Double)) -> String {
-		func component(_ value: Double) -> String {
-			String(format: "%04x", Int((max(0, min(1, value)) * 65535).rounded()))
-		}
-		return "rgb:\(component(colour.red))/\(component(colour.green))/\(component(colour.blue))"
-	}
-
-	// MARK: - Lifecycle
-
-	public func resize(rows: Int, columns: Int) {
-		let delta = screen.resize(rows: rows, columns: columns, cursorRow: cursorRow)
-
-		// The grid moved under the cursor; without this the shell's post-SIGWINCH
-		// redraw lands on the wrong line and duplicates the prompt.
-		cursorRow = max(0, min(cursorRow + delta, screen.rows - 1))
-		cursorColumn = min(cursorColumn, screen.columns - 1)
-
-		// The saved normal screen has to track the new size too, or leaving a
-		// full-screen app after a resize restores a grid of the wrong shape.
-		if var saved = alternateSaved {
-			let savedDelta = saved.screen.resize(rows: rows, columns: columns, cursorRow: saved.row)
-			saved.row = max(0, min(saved.row + savedDelta, saved.screen.rows - 1))
-			saved.column = min(saved.column, saved.screen.columns - 1)
-			alternateSaved = saved
-		}
-
-		scrollTop = 0
-		scrollBottom = screen.rows - 1
-		pendingWrap = false
-		isParkedBelowScreen = false
-		onUpdate?()
-	}
-
-	public func reset() {
-		let rows = screen.rows, columns = screen.columns
-		screen = TerminalScreen(rows: rows, columns: columns)
-		// A fresh grid reports nothing dirty, and everything about it is. See
-		// `setAlternateScreen`, which replaces the screen for the other reason.
-		screen.markAllDirty()
-		attributes = TerminalAttributes()
-		cursorRow = 0
-		cursorColumn = 0
-		scrollTop = 0
-		scrollBottom = rows - 1
-		isCursorVisible = true
-		isAlternateScreen = false
-		alternateSaved = nil
-		pendingWrap = false
-		isParkedBelowScreen = false
-		graphics.removeAll()
-		alternateGraphics = []
-		lastDiscardedLineCount = 0
-		onUpdate?()
-	}
-
-	/// Encodes a key the way the program asked to hear about it, or nil when it
-	/// has not asked and the ordinary bytes should be sent.
-	///
-	/// Only for keys that are otherwise ambiguous — Enter, Tab, Escape,
-	/// Backspace, and anything held with Control — because that is the whole
-	/// point: Shift+Enter and Enter are one byte apart in a program's mind only
-	/// if the terminal says which was pressed.
-	public func encodeModifiedKey(
-		code: Int,
-		shift: Bool = false,
-		option: Bool = false,
-		control: Bool = false,
-		command: Bool = false
-	) -> String? {
-		guard reportsModifiedKeys else { return nil }
-
-		// 1 is "no modifiers", and each one adds its bit.
-		var modifiers = 1
-		if shift { modifiers += 1 }
-		if option { modifiers += 2 }
-		if control { modifiers += 4 }
-		if command { modifiers += 8 }
-
-		// Nothing held is what it always was; a protocol that changed those
-		// would break every program that only asked about the modified ones.
-		guard modifiers > 1 else { return nil }
-
-		if keyboardFlags & 1 != 0 {
-			return "\u{1B}[\(code);\(modifiers)u"
-		}
-		return "\u{1B}[27;\(modifiers);\(code)~"
-	}
-
-	/// Encodes a key for the process, honouring application cursor key mode.
-	public func encodeArrow(_ direction: ArrowKey) -> String {
-		let prefix = applicationCursorKeys ? "\u{1B}O" : "\u{1B}["
-		return prefix + direction.rawValue
-	}
-
-	public enum ArrowKey: String, Sendable {
-		case up = "A", down = "B", right = "C", left = "D"
-	}
-
-	public enum MouseButton: Int, Sendable {
-		case left = 0, middle = 1, right = 2
-		/// No button held. Only meaningful with motion, where it is how a
-		/// program hears that the pointer has moved over something — which is
-		/// what makes a menu highlight the item under it.
-		case none = 3
-		case scrollUp = 64, scrollDown = 65
-	}
-
-	/// Encodes a pointer event, or nil when the program is not tracking the mouse.
-	///
-	/// Coordinates are 1-based. SGR encoding is preferred because the legacy form
-	/// adds 32 to each coordinate and therefore cannot address a terminal wider
-	/// than 223 columns.
-	public func encodeMouse(
-		button: MouseButton,
-		row: Int,
-		column: Int,
-		isRelease: Bool,
-		isDrag: Bool = false,
-		shift: Bool = false,
-		option: Bool = false,
-		control: Bool = false
-	) -> String? {
-		guard mouseTracking != .off else { return nil }
-		if isDrag, mouseTracking == .click { return nil }
-		// Motion with nothing held is only wanted by a program that asked for
-		// every event; the others would be flooded by it.
-		if button == .none, mouseTracking != .anyEvent { return nil }
-
-		var code = button.rawValue
-		if isDrag { code += 32 }
-		if shift { code += 4 }
-		if option { code += 8 }
-		if control { code += 16 }
-
-		let row = max(1, min(row, screen.rows))
-		let column = max(1, min(column, screen.columns))
-
-		if sgrMouseEncoding {
-			return "\u{1B}[<\(code);\(column);\(row)\(isRelease ? "m" : "M")"
-		}
-		// Legacy X10 encoding: release is reported as button 3.
-		let legacyCode = isRelease ? 3 : code
-        guard column + 32 < 256, row + 32 < 256 else { return nil }
-		let columnByte = Character(UnicodeScalar(UInt8(column + 32)))
-		let rowByte = Character(UnicodeScalar(UInt8(row + 32)))
-		return "\u{1B}[M\(Character(UnicodeScalar(UInt8(legacyCode + 32))))\(columnByte)\(rowByte)"
 	}
 }
