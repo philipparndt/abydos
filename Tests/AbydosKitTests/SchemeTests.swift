@@ -13,7 +13,8 @@ struct SchemeFileTests {
 		terminal: Bool = true,
 		follows: Bool = false,
 		stored: String? = nil,
-		omitting: String? = nil
+		omitting: String? = nil,
+		floor: Double? = nil
 	) -> Data {
 		func pair(_ light: String, _ dark: String) -> String {
 			"{ \"light\": \"\(light)\", \"dark\": \"\(dark)\" }"
@@ -34,9 +35,10 @@ struct SchemeFileTests {
 		}
 		if terminal {
 			let ansi = section(SchemeAnsi.allCases.map(\.rawValue), "#333333", "#CCCCCC")
-			let chrome = follows
+			var chrome = follows
 				? "\t\t\"follows\": \"editor\""
 				: section(["background", "foreground", "cursor"], "#444444", "#BBBBBB")
+			if let floor { chrome += ",\n\t\t\"floor\": \(floor)" }
 			parts.append("\t\"terminal\": {\n\(chrome),\n\t\t\"ansi\": {\n\(ansi)\n\t\t}\n\t}")
 		}
 		return Data("{\n\(parts.joined(separator: ",\n"))\n}\n".utf8)
@@ -342,7 +344,7 @@ struct BundledSchemeTests {
 	/// fail in the suite, not in somebody's window.
 	@Test func everyBundledSchemeReads() {
 		#expect(library.problems.isEmpty, "\(library.problems)")
-		#expect(library.schemes.map(\.id) == ["abydos", "blue", "dracula", "editor", "gray"])
+		#expect(library.schemes.map(\.id) == ["abydos", "blue", "dracula", "editor", "gray", "wcag-level-aaa"])
 	}
 
 	/// Every palette names a terminal palette of its own. One added without a
@@ -448,16 +450,20 @@ struct BundledSchemeTests {
 		}
 	}
 
-	/// Ghostty's sixteen, which is what somebody arriving from Ghostty expects.
+	/// Ghostty's sixteen, which is what somebody arriving from Ghostty expects
+	/// — save where the contrast measurement moved one, 2026-09-09. Ghostty's
+	/// red on the blue ground was 3.88:1 and is a shade lighter now; the
+	/// values here are the ones the measurement settled on, so a hand that
+	/// puts the old ones back is told it has undone that.
 	@Test func carriesTheTerminalTablesTheyAlwaysHad() throws {
 		let blue = try #require(library.scheme(id: "blue")?.terminal)
 		#expect(blue.named(isLight: false).first == 0x1D1F21)
-		#expect(blue.named(isLight: false)[1] == 0xCC6666)
+		#expect(blue.named(isLight: false)[1] == 0xD27878)
 		#expect(blue.background?.dark == 0x282935)
 
 		let editor = try #require(library.scheme(id: "editor")?.terminal)
-		#expect(editor.named(isLight: false)[1] == 0xC7756B)
-		#expect(editor.named(isLight: true)[1] == 0xC8503F)
+		#expect(editor.named(isLight: false)[1] == 0xCB7F75)
+		#expect(editor.named(isLight: true)[1] == 0xC54A38)
 	}
 
 	/// The prose that used to be the doc comment above the Swift constant
@@ -470,25 +476,17 @@ struct BundledSchemeTests {
 	}
 }
 
-/// WCAG's contrast ratio, for making a claim about two colours that would
-/// otherwise be a matter of taste.
+/// WCAG 2's contrast ratio, for the claims below about one highlight being
+/// stronger than another.
 ///
-/// Here rather than in the app because nothing in the app draws from it — the
-/// colours are chosen by eye and checked here, which is the right way round: a
-/// number is what stops "it looked fine to me" from being the only account of
-/// why one highlight is stronger than another.
+/// The formula used to live here, and only here, because nothing in the app
+/// drew from it: colours were chosen by eye and checked by number. It moved to
+/// `SchemeContrast` in the kit on 2026-09-09, when the terminal palettes had to
+/// be measured against the floor a scheme file promises — a promise the kit
+/// reads, so the arithmetic that holds it to that belongs beside it. This is
+/// the same number under the name these tests already use.
 enum Contrast {
 	static func ratio(_ first: UInt32, _ second: UInt32) -> Double {
-		let bright = max(luminance(first), luminance(second))
-		let dim = min(luminance(first), luminance(second))
-		return (bright + 0.05) / (dim + 0.05)
-	}
-
-	private static func luminance(_ colour: UInt32) -> Double {
-		func channel(_ shift: UInt32) -> Double {
-			let value = Double((colour >> shift) & 0xFF) / 255
-			return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-		}
-		return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+		SchemeContrast.ratio(first, second)
 	}
 }

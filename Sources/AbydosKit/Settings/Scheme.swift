@@ -196,6 +196,11 @@ public struct SchemeTerminal: Equatable, Sendable {
 	public let foreground: SchemePair?
 	public let cursor: SchemePair?
 	private let ansi: [SchemeAnsi: SchemePair]
+	/// The contrast ratio the file promises its colours reach against their
+	/// ground, or nil for the ordinary one — 4.5:1, the floor for text. A
+	/// palette that says `"floor": 7` is held to 7:1 by `SchemeContrast`, which
+	/// is what makes "high contrast" a claim a test checks rather than a name.
+	public let floor: Double?
 
 	public var followsEditor: Bool { background == nil }
 
@@ -203,12 +208,14 @@ public struct SchemeTerminal: Equatable, Sendable {
 		background: SchemePair?,
 		foreground: SchemePair?,
 		cursor: SchemePair?,
-		ansi: [SchemeAnsi: SchemePair]
+		ansi: [SchemeAnsi: SchemePair],
+		floor: Double? = nil
 	) {
 		self.background = background
 		self.foreground = foreground
 		self.cursor = cursor
 		self.ansi = ansi
+		self.floor = floor
 	}
 
 	/// ANSI 0–15 in order.
@@ -230,6 +237,7 @@ public enum SchemeProblem: Error, Equatable, Sendable {
 	case notAnObjectAt(String)
 	case emptyScheme
 	case unknownFollows(String)
+	case notANumber(key: String, found: String)
 
 	public var reason: String {
 		switch self {
@@ -247,6 +255,8 @@ public enum SchemeProblem: Error, Equatable, Sendable {
 			return "it has neither an app nor a terminal section, so it is not a scheme"
 		case let .unknownFollows(value):
 			return "terminal.follows says \"\(value)\", and the only thing it can follow is \"editor\""
+		case let .notANumber(key, found):
+			return "\(key) is \(found) rather than a contrast ratio such as 4.5 or 7"
 		}
 	}
 }
@@ -402,7 +412,14 @@ public extension Scheme {
 		for colour in SchemeAnsi.allCases {
 			ansi[colour] = try pair(table[colour.rawValue], at: "terminal.ansi.\(colour.rawValue)")
 		}
-		return SchemeTerminal(background: background, foreground: foreground, cursor: cursor, ansi: ansi)
+		var floor: Double?
+		if let promised = section["floor"] {
+			guard let number = promised as? NSNumber, number.doubleValue >= 1 else {
+				throw SchemeProblem.notANumber(key: "terminal.floor", found: describe(promised))
+			}
+			floor = number.doubleValue
+		}
+		return SchemeTerminal(background: background, foreground: foreground, cursor: cursor, ansi: ansi, floor: floor)
 	}
 
 	/// `{ "light": "#RRGGBB", "dark": "#RRGGBB" }`, and nothing else.

@@ -242,15 +242,15 @@
         "dark": "#CC6F68"
       },
       "green": {
-        "light": "#5C8A44",
+        "light": "#537C3D",
         "dark": "#93B37E"
       },
       "yellow": {
-        "light": "#A8830C",
+        "light": "#8D6E0A",
         "dark": "#DCB86A"
       },
       "blue": {
-        "light": "#3A7BA8",
+        "light": "#3878A3",
         "dark": "#7FA6C8"
       },
       "magenta": {
@@ -258,39 +258,39 @@
         "dark": "#C58CC0"
       },
       "cyan": {
-        "light": "#2F8C84",
+        "light": "#2A7E77",
         "dark": "#7FBDB4"
       },
       "white": {
-        "light": "#8E8D86",
+        "light": "#74736D",
         "dark": "#A3A29B"
       },
       "brightBlack": {
         "light": "#6B6A64",
-        "dark": "#6A6963"
+        "dark": "#706F69"
       },
       "brightRed": {
-        "light": "#C9665C",
+        "light": "#C04E42",
         "dark": "#DC8078"
       },
       "brightGreen": {
-        "light": "#6E9C52",
+        "light": "#577C41",
         "dark": "#A5C48C"
       },
       "brightYellow": {
-        "light": "#C09A22",
+        "light": "#8A6F18",
         "dark": "#E8C878"
       },
       "brightBlue": {
-        "light": "#4E8DBA",
+        "light": "#3F78A1",
         "dark": "#92B6D6"
       },
       "brightMagenta": {
-        "light": "#AE68A6",
+        "light": "#A2579A",
         "dark": "#D3A2CE"
       },
       "brightCyan": {
-        "light": "#3F9E96",
+        "light": "#327E78",
         "dark": "#92CCC2"
       },
       "brightWhite": {

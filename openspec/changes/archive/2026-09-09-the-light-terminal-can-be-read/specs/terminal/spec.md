@@ -32,3 +32,33 @@ palette's light half shipped unlooked-at.
 - **WHEN** the suite runs
 - **THEN** any of its sixteen colours under the floor on either ground fails a
   test that names the colour, the ground and the ratio
+
+### Requirement: A palette that promises more contrast is held to it
+
+A scheme file SHALL be able to state the contrast ratio its terminal colours
+promise, as `terminal.floor`; left out, the promise is 4.5:1. The measurement SHALL hold
+every colour to the floor the file promises, and the dim colour one step below
+it — 3:1 under a 4.5 promise, 4.5:1 under a 7 promise — so that a palette
+called high-contrast is one the suite has measured as such. The app SHALL ship
+one such palette, "WCAG Level AAA", at 7:1 against every editor ground it can
+be drawn on, following the editor's ground as "Editor colours" does.
+
+#### Scenario: Choosing the AAA palette
+
+- **GIVEN** any theme, light or dark
+- **WHEN** the terminal palette is set to WCAG Level AAA
+- **THEN** every ANSI colour but black reads at 7:1 or better against the
+  editor ground, and bright black at 4.5:1 or better
+
+#### Scenario: A promise the file does not keep
+
+- **GIVEN** a scheme file that says `"floor": 7` and has a colour at 6:1
+- **WHEN** the suite runs
+- **THEN** the test names that colour, its ground, its ratio and the 7:1 it
+  promised
+
+#### Scenario: A floor that is not a number
+
+- **GIVEN** a scheme file whose `terminal.floor` is a word
+- **WHEN** it is read
+- **THEN** the file is refused, naming `terminal.floor` and what it found

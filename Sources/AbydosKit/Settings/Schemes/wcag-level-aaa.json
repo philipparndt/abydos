@@ -1,0 +1,28 @@
+{
+	"id": "wcag-level-aaa",
+	"title": "WCAG Level AAA",
+	"order": 6,
+	"about": "The Editor colours hues at 7:1 — WCAG's Level AAA floor for text, the one for people who find 4.5:1 tiring — against every editor ground the app ships, light and dark. Asked for beside the fix to the light palettes on 2026-09-09: 4.5:1 is Level AA, 7:1 is Level AAA, and a palette that promises it in its file is held to it by the test that measures every scheme. It follows the editor's ground as Editor colours does, so it is a choice of palette rather than a theme of its own. What it costs is range: on a light ground the bright half sits close to the normal half, since bright cannot mean lighter and still clear the floor.",
+	"terminal": {
+		"follows": "editor",
+		"floor": 7,
+		"ansi": {
+			"black": { "light": "#2B2D30", "dark": "#2B2D30" },
+			"red": { "light": "#93372A", "dark": "#DDACA6" },
+			"green": { "light": "#385E22", "dark": "#94C39B" },
+			"yellow": { "light": "#6E5007", "dark": "#D9B35E" },
+			"blue": { "light": "#285884", "dark": "#85BFDE" },
+			"magenta": { "light": "#7F3B7C", "dark": "#D9A8D1" },
+			"cyan": { "light": "#1B5F5A", "dark": "#46C9D5" },
+			"white": { "light": "#51565E", "dark": "#BCBEC4" },
+			"brightBlack": { "light": "#6B7078", "dark": "#8F939A" },
+			"brightRed": { "light": "#9B3020", "dark": "#ECA69F" },
+			"brightGreen": { "light": "#3B5E23", "dark": "#7FCC89" },
+			"brightYellow": { "light": "#6B510C", "dark": "#E8BF6A" },
+			"brightBlue": { "light": "#215988", "dark": "#7EBDF7" },
+			"brightMagenta": { "light": "#84387D", "dark": "#E6A1DE" },
+			"brightCyan": { "light": "#255E59", "dark": "#4BD4E0" },
+			"brightWhite": { "light": "#2B2D30", "dark": "#DFE1E5" }
+		}
+	}
+}

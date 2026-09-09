@@ -334,6 +334,7 @@ extension LaunchOptions {
 			case "--menu-keys": options.menuKeys = true
 			case "--print-text": options.printText = true
 			case "--theme": options.theme = next()
+			case "--terminal-scheme": options.terminalScheme = next()
 			case "--debug-stop": options.debugStop = true
 			case "--debug-finish": options.debugStop = true; options.debugFinish = true
 			case "--debug-inspect": options.debugInspect = true

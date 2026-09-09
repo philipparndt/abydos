@@ -74,12 +74,12 @@
 			"cyan": { "light": "#036A96", "dark": "#8BE9FD" },
 			"white": { "light": "#6C664B", "dark": "#F8F8F2" },
 			"brightBlack": { "light": "#4D4D4D", "dark": "#6272A4" },
-			"brightRed": { "light": "#E35142", "dark": "#FF6E6E" },
-			"brightGreen": { "light": "#1D8E10", "dark": "#69FF94" },
-			"brightYellow": { "light": "#9C851B", "dark": "#FFFFA5" },
+			"brightRed": { "light": "#DA3220", "dark": "#FF6E6E" },
+			"brightGreen": { "light": "#1B850F", "dark": "#69FF94" },
+			"brightYellow": { "light": "#877317", "dark": "#FFFFA5" },
 			"brightBlue": { "light": "#7862D4", "dark": "#D6ACFF" },
 			"brightMagenta": { "light": "#C01B5E", "dark": "#FF92DF" },
-			"brightCyan": { "light": "#0480B5", "dark": "#A4FFFF" },
+			"brightCyan": { "light": "#047AAD", "dark": "#A4FFFF" },
 			"brightWhite": { "light": "#1F1F1F", "dark": "#FFFFFF" }
 		}
 	}

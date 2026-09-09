@@ -369,6 +369,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			Settings.shared.terminalScheme = Appearance.followsEditor
 			Theme.apply()
 		}
+		if let scheme = options.terminalScheme { Settings.shared.terminalScheme = scheme }
 
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }

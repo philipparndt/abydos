@@ -336,6 +336,9 @@ struct LaunchOptions {
 	/// The palette to run in, so a capture does not depend on whoever's
 	/// settings the machine happens to have.
 	var theme: String?
+	/// The terminal's own palette, by scheme id, for a capture of one that is
+	/// not the editor's: `--theme` alone makes the terminal follow the editor.
+	var terminalScheme: String?
 	/// Start the debugger and inspect where it stopped, without stepping.
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.

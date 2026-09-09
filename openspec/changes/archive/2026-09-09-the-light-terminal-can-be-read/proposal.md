@@ -12,12 +12,10 @@ report: *"I don't use the light theme, so the first light theme user should
 know."* This is that user, and the report is a measurement the dark-theme desk
 cannot make.
 
-What is likely, from reading and not yet from looking: the ANSI sixteen in the
-bundled schemes were chosen against a dark ground, and the bright half of them
-— yellow, bright green, bright cyan, bright white — is what a shell prompt, a
-`ls --color` and a diff lean on. On a near-white ground those are the colours
-with the least contrast, and a scheme that flips only ground, text and cursor
-for light mode keeps them. Whether that is the whole of it is the first task.
+What was likely from reading — that the light tables reuse the dark values —
+turned out to be wrong when measured: every scheme has a light table of its
+own, chosen to look like the dark one, and those tables are what fail. The
+design has the numbers.
 
 There is no originating `.abydos/backlog` item: this comes from a relayed user
 report, 2026-09-09.
@@ -33,6 +31,12 @@ report, 2026-09-09.
   light-mode ANSI values of their own rather than the dark set reused; the ones
   that already have a light table stay as they are unless the numbers say
   otherwise.
+- **A palette at 7:1, "WCAG Level AAA".** Asked for beside the fix: the
+  "Editor colours" hues moved to WCAG's Level AAA floor against every editor
+  ground, light and dark, following the editor's ground as "Editor colours" does. A
+  scheme file can now say the floor it promises (`terminal.floor`), and the
+  measurement holds it to that — so "high contrast" in a title is a claim a
+  test checks.
 - **A screenshot in each theme** with a prompt, a coloured `ls` and a diff, so
   the next change to a palette can be looked at by somebody who does not use
   the light theme either.

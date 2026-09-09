@@ -45,6 +45,14 @@ file there with the same `id` as one of these replaces it.
   unless it asks for a place.
 - **`about`** is prose, ignored by the app. It is where the reasoning lives now
   that the colours are not next to a doc comment.
+- **`terminal.floor`** is the contrast ratio the palette promises each of its
+  sixteen colours reaches against the ground it is drawn on — its own, or every
+  theme's editor ground for one that `follows` the editor. Left out, it is
+  4.5:1, WCAG's floor for text; `wcag-level-aaa.json` says `7`. A test measures
+  every bundled scheme against what it promises and names the colour that
+  falls short, so the word "contrast" in a title is a claim and not a mood.
+  Black is never measured — it is the ground's own colour by convention — and
+  bright black, the dim one, is held one step lower: 3:1 under 4.5, 4.5 under 7.
 - **`stored`** — `{ "dark": …, "light": …, "system": … }` — overrides the values
   the setting holds for this scheme, which are otherwise `nord`, `nord-light`
   and `nord-system`. Only `blue.json` uses it, because its three were named
