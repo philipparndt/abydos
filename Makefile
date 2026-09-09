@@ -53,8 +53,8 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: devpod-chart ## Build the .app bundle (CONFIG=debug|release, BUNDLE_ID=... to override the identifier)
-	@BUNDLE_ID="$(BUNDLE_ID)" SWIFT_JOBS="$(SWIFT_JOBS)" Scripts/bundle.sh $(CONFIG)
+build: devpod-chart ## Build the .app bundle (CONFIG=debug|release, BUNDLE_ID=... to override the identifier, ARCHS="arm64 x86_64" for a universal one)
+	@BUNDLE_ID="$(BUNDLE_ID)" SWIFT_JOBS="$(SWIFT_JOBS)" ARCHS="$(ARCHS)" Scripts/bundle.sh $(CONFIG)
 
 .PHONY: run
 run: ## Build and launch the app (debug; CONFIG=release to override)
@@ -227,8 +227,8 @@ xcode-build: ## Build the app the way Xcode does, as a check on the package
 		-destination 'platform=macOS' -derivedDataPath build/xcode | tail -3
 
 .PHONY: release
-release: ## Sign with Developer ID, notarise and package a DMG
-	@$(MAKE) --no-print-directory build PIN_UUID=0
+release: ## Sign with Developer ID, notarise and package a universal DMG
+	@$(MAKE) --no-print-directory build PIN_UUID=0 ARCHS="arm64 x86_64"
 	@Scripts/release.sh
 
 # The whole of cutting a release, in the one order that keeps the tag and the

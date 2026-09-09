@@ -16,7 +16,6 @@ CONFIG="${1:-release}"
 APP="build/Abydos.app"
 CONTENTS="$APP/Contents"
 
-echo "==> Building ($CONFIG)"
 # Xcode's Swift rather than whatever is first on the PATH: a toolchain manager
 # such as swiftly pins an older release, which cannot compile against a newer
 # SDK and fails here with an error about Foundation rather than about Abydos.
@@ -24,21 +23,68 @@ SWIFT=(xcrun swift)
 
 # Passed by the Makefile; empty when somebody runs this script directly.
 read -ra JOB_FLAGS <<< "${SWIFT_JOBS:-}"
-"${SWIFT[@]}" build "${JOB_FLAGS[@]}" -c "$CONFIG"
 
-BIN_DIR="$("${SWIFT[@]}" build "${JOB_FLAGS[@]}" -c "$CONFIG" --show-bin-path)"
+# Which processors the binary is for: `ARCHS="arm64 x86_64"` builds one that
+# runs on an Intel Mac as well as on this one. This machine's alone by default,
+# because a universal build compiles everything twice and a build somebody is
+# waiting on to try a change should not. `make release` asks for both, since
+# the download is the one build whose machine is not known in advance — and
+# until it did, the DMG opened on an Intel Mac with "You can't open the
+# application because this application is not supported on this Mac".
+#
+# **One native build per architecture, then `lipo`, rather than one build with
+# two `--arch` flags.** Two flags make SwiftPM hand the whole build to the
+# Xcode build system, which compiles the 3D viewer's `.metal` resource itself
+# and so needs the Metal toolchain — the one this machine does not have, and
+# whose absence the shader step below is written to survive. That build failed
+# here with exactly the `cannot execute tool 'metal'` the comments below
+# describe. A single `--arch` stays on the native build system and writes to
+# `.build/<arch>-apple-macosx/<config>`, so each architecture is built the way
+# the native one always was, and only the four executables need joining; the
+# grammar bundles are queries and the same for both.
+#
+# Nothing in Sources cares which it is: there is no `#if arch` anywhere, and
+# the one prebuilt library (`Vendor/ghostty-vt.xcframework`) ships both slices.
+read -ra ARCH_LIST <<< "${ARCHS:-}"
+BIN_DIRS=()
+if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
+	echo "==> Building ($CONFIG)"
+	"${SWIFT[@]}" build "${JOB_FLAGS[@]}" -c "$CONFIG"
+	BIN_DIRS+=("$("${SWIFT[@]}" build "${JOB_FLAGS[@]}" -c "$CONFIG" --show-bin-path)")
+else
+	for arch in "${ARCH_LIST[@]}"; do
+		echo "==> Building ($CONFIG, $arch)"
+		"${SWIFT[@]}" build "${JOB_FLAGS[@]}" --arch "$arch" -c "$CONFIG"
+		BIN_DIRS+=("$("${SWIFT[@]}" build "${JOB_FLAGS[@]}" --arch "$arch" -c "$CONFIG" --show-bin-path)")
+	done
+fi
+# Resources come from the first build; executables from all of them.
+BIN_DIR="${BIN_DIRS[0]}"
+
+# Puts an executable into the bundle: copied when there is one build, joined
+# with `lipo` when there are several.
+place_executable() {
+	local name="$1" dest="$2"
+	if [ "${#BIN_DIRS[@]}" -eq 1 ]; then
+		cp "$BIN_DIR/$name" "$dest"
+	else
+		local slices=()
+		for dir in "${BIN_DIRS[@]}"; do slices+=("$dir/$name"); done
+		lipo -create "${slices[@]}" -output "$dest"
+	fi
+}
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 
-cp "$BIN_DIR/Abydos" "$CONTENTS/MacOS/Abydos"
+place_executable Abydos "$CONTENTS/MacOS/Abydos"
 
 # The Claude Code hook, which travels with the app but is its own binary:
 # Claude runs it several times per tool call, and starting one that links
 # AppKit and a syntax engine to read a line of JSON would be felt in every
 # session on the machine.
-cp "$BIN_DIR/abydos-hook" "$CONTENTS/MacOS/abydos-hook"
+place_executable abydos-hook "$CONTENTS/MacOS/abydos-hook"
 
 # The commands a shell in this app can use. Bundled rather than installed, so
 # they are there for anybody who runs the app without running `make
@@ -57,13 +103,13 @@ chmod +x "$CONTENTS/Resources/bin/abydos-icat"
 # when the terminal feels slow, and one that lives in a checkout behind
 # `swift run` is one nobody runs — least of all against the build that is
 # actually installed, which is the build the question is about.
-cp "$BIN_DIR/firebench" "$CONTENTS/Resources/bin/abydos-bench"
+place_executable firebench "$CONTENTS/Resources/bin/abydos-bench"
 chmod +x "$CONTENTS/Resources/bin/abydos-bench"
 
 # The backlog, on the PATH of every shell this app opens. It has to be here
 # rather than only installed: an agent working an item runs in a terminal this
 # app started, and the first thing the instructions tell it to type is this.
-cp "$BIN_DIR/abydos-backlog" "$CONTENTS/Resources/bin/abydos-backlog"
+place_executable abydos-backlog "$CONTENTS/Resources/bin/abydos-backlog"
 chmod +x "$CONTENTS/Resources/bin/abydos-backlog"
 
 # Grammar query bundles. Without these every file opens uncoloured, so treat a
@@ -322,8 +368,16 @@ echo "    build $BUILD ($COMMIT$DIRTY)"
 # measurement; `make profile` builds one that can be read.
 PIN_UUID="${PIN_UUID:-C94373A9-FCB2-3966-B045-208B26A4CA30}"
 if [ "$PIN_UUID" != "0" ]; then
-	python3 Scripts/pin-uuid.py "$CONTENTS/MacOS/Abydos" "$PIN_UUID"
-	echo "    a pinned build cannot be profiled — 'make profile' builds one that can"
+	# One slice only: `pin-uuid.py` reads a thin Mach-O, and a universal binary
+	# is a header over two of them. The pin is for a build somebody drives on
+	# this machine, which is never the universal one, so it is skipped and said
+	# rather than taught to walk a fat header for a case nobody has.
+	if [ "${#ARCH_LIST[@]}" -gt 1 ]; then
+		echo "    not pinning the UUID of a universal build (PIN_UUID applies to one slice)"
+	else
+		python3 Scripts/pin-uuid.py "$CONTENTS/MacOS/Abydos" "$PIN_UUID"
+		echo "    a pinned build cannot be profiled — 'make profile' builds one that can"
+	fi
 fi
 
 # **Liquid glass, and how to not have it.**
@@ -427,4 +481,8 @@ if ! VERIFY_OUT=$(codesign --verify --strict "$APP" 2>&1); then
 	exit 1
 fi
 
+# Said, because a universal build and a native one are the same path with a
+# different file at it, and "did the release get both" is otherwise a `lipo`
+# somebody has to remember to run.
+echo "    architectures: $(lipo -archs "$CONTENTS/MacOS/Abydos" 2>/dev/null || echo unknown)"
 echo "==> Done: $APP"
