@@ -770,6 +770,9 @@ struct LaunchOptions {
 	/// Arrow keys to press in the settings sidebar, comma separated: `left`,
 	/// `right`, `up`, `down`. The keyboard path to the same folding.
 	var settingsKeys: String?
+	/// Type this into the settings page's filter once it is up, and print what
+	/// is left: `--settings-filter ghostty`.
+	var settingsFilter: String?
 	/// Print where the development pod's chart was found.
 	var reportChart = false
 	/// Press the window's zoom button before capture.

@@ -314,6 +314,17 @@ extension EditorAreaController {
 		print("SETTINGS: \(page.reportForTesting)")
 	}
 
+	/// Types into the settings page's filter and says what is left.
+	func filterSettingsForTesting(_ text: String) {
+		guard let page = activeGroup?.page(identifier: "settings") as? SettingsPage else {
+			print("SETTINGS: no settings page")
+			return
+		}
+		page.filterForTesting(text)
+		print("SETTINGS FILTER \(page.filterReportForTesting)")
+		fflush(stdout)
+	}
+
 	/// What the editor is holding, saved or not.
 	func editorTextForTesting() -> String? { textForTesting }
 

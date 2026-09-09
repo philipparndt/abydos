@@ -59,6 +59,7 @@ extension LaunchOptions {
 			case "--settings-section": options.settingsSection = next()
 			case "--settings-fold": options.settingsFold = next()
 			case "--settings-keys": options.settingsKeys = next()
+			case "--settings-filter": options.settingsFilter = next()
 			case "--settings":   options.openSettings = true
 			case "--about":      options.openAbout = true
 			case "--zoom":       options.zoom = next().flatMap(Double.init)

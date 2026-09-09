@@ -41,6 +41,14 @@ final class SettingsPage: NSView, ScalingPage {
 	private let form = NSStackView()
 	private var scroll: NSScrollView!
 	private var sidebarTitle: NSTextField!
+	/// The filter field in the sidebar, and the words it holds. Empty words is
+	/// no filter, and the page is the page it always was.
+	private let filterField = NSSearchField()
+	private var filterWords: [String] = []
+	/// Each section's heading on the results page, by its place in `sections`,
+	/// so a click in the narrowed sidebar scrolls to it rather than replacing
+	/// the results with one page.
+	private var resultHeadings: [Int: NSView] = [:]
 
 	/// Constraints whose constants are design-time sizes, kept beside the size
 	/// each was written as.
@@ -71,10 +79,7 @@ final class SettingsPage: NSView, ScalingPage {
 		NotificationCenter.default.addObserver(
 			forName: .abydosSettingsRowsChanged, object: nil, queue: .main
 		) { [weak self] _ in
-			MainActor.assumeIsolated {
-				guard let self else { return }
-				self.show(section: self.selected)
-			}
+			MainActor.assumeIsolated { self?.redisplay() }
 		}
 	}
 
@@ -167,7 +172,11 @@ final class SettingsPage: NSView, ScalingPage {
 	}
 
 	private func refreshRows() {
-		rows = SettingsOutline.visible(depths: sections.map(\.depth), collapsed: collapsed)
+		// Filtering wins over folding: a match under a folded Tools is still a
+		// match, and a sidebar that hid it would be a filter that lies.
+		rows = filterWords.isEmpty
+			? SettingsOutline.visible(depths: sections.map(\.depth), collapsed: collapsed)
+			: filteredSections().map(\.index)
 		list.reloadData()
 	}
 
@@ -223,7 +232,7 @@ final class SettingsPage: NSView, ScalingPage {
 		applyMetrics()
 		// Built again rather than adjusted: every control in a section reads the
 		// zoom as it is made, and there is one section on screen.
-		show(section: selected)
+		redisplay()
 		list.reloadData()
 	}
 
@@ -344,7 +353,17 @@ final class SettingsPage: NSView, ScalingPage {
 		title.textColor = Theme.current.gitIgnored
 		sidebarTitle = title
 
-		for view in [title, scroll] as [NSView] {
+		// The filter, where every settings window on the machine has one.
+		// Typing narrows the sidebar to the sections with a match and turns the
+		// form into the matching rows of all of them; see `applyFilter`.
+		filterField.placeholderString = "Filter"
+		filterField.sendsSearchStringImmediately = true
+		filterField.sendsWholeSearchString = false
+		filterField.target = self
+		filterField.action = #selector(filterChanged(_:))
+		filterField.setAccessibilityLabel("Filter settings")
+
+		for view in [title, filterField, scroll] as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 			background.addSubview(view)
 		}
@@ -352,7 +371,11 @@ final class SettingsPage: NSView, ScalingPage {
 			scaled(title.topAnchor.constraint(equalTo: background.topAnchor), 14),
 			scaled(title.leadingAnchor.constraint(equalTo: background.leadingAnchor), 14),
 
-			scaled(scroll.topAnchor.constraint(equalTo: title.bottomAnchor), 8),
+			scaled(filterField.topAnchor.constraint(equalTo: title.bottomAnchor), 8),
+			scaled(filterField.leadingAnchor.constraint(equalTo: background.leadingAnchor), 10),
+			scaled(filterField.trailingAnchor.constraint(equalTo: background.trailingAnchor), -10),
+
+			scaled(scroll.topAnchor.constraint(equalTo: filterField.bottomAnchor), 8),
 			scroll.leadingAnchor.constraint(equalTo: background.leadingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: background.trailingAnchor),
 			scaled(scroll.bottomAnchor.constraint(equalTo: background.bottomAnchor), -10),
@@ -377,15 +400,169 @@ final class SettingsPage: NSView, ScalingPage {
 		form.addArrangedSubview(heading)
 
 		for block in blocks(for: section.rows()) { form.addArrangedSubview(block) }
+		fitFormWidths()
+	}
 
-		// Wide enough to read and no wider — and the cap is on the card alone,
-		// so nothing here can decide how wide the editor area has to be.
+	/// Wide enough to read and no wider — and the cap is on the card alone,
+	/// so nothing here can decide how wide the editor area has to be.
+	private func fitFormWidths() {
 		for view in form.arrangedSubviews {
 			let full = view.widthAnchor.constraint(
 				equalTo: form.widthAnchor, constant: -Theme.current.scaled(56)
 			)
 			full.priority = .defaultHigh
 			full.isActive = true
+		}
+	}
+
+	/// The form as it should be now: the selected page, or the results of a
+	/// filter that is in force. What every rebuild goes through, so a zoom or a
+	/// reloaded scheme list does not throw a filter away.
+	private func redisplay() {
+		if filterWords.isEmpty {
+			show(section: selected)
+		} else {
+			showResults()
+		}
+	}
+
+	// MARK: - Filtering
+
+	@objc private func filterChanged(_ sender: Any?) {
+		applyFilter(filterField.stringValue)
+	}
+
+	/// ⌘F. The menu sends Find to the first responder, and with the sidebar or
+	/// the form focused that chain runs through this view before it reaches the
+	/// window controller's find-in-file — which has no file here to find in.
+	@objc func findInFile(_ sender: Any?) {
+		window?.makeFirstResponder(filterField)
+	}
+
+	/// Narrows the page to what matches, or puts it back.
+	///
+	/// Two things at once, because each alone is half a filter: the sidebar
+	/// keeps only the sections with a match, and the form shows the matching
+	/// rows of every one of them under its heading. Filtering the sidebar alone
+	/// would light up "Terminal" for "ghostty" and leave the reader to find the
+	/// word on that page; filtering the selected page alone finds nothing for a
+	/// row that is on another page, which is the row people search for.
+	private func applyFilter(_ query: String) {
+		let words = SettingsFilter.words(in: query)
+		let hadFilter = !filterWords.isEmpty
+		filterWords = words
+		refreshRows()
+		if words.isEmpty {
+			// Back to the page that was selected, with the sidebar as it was.
+			guard hadFilter else { return }
+			if let row = rows.firstIndex(of: selected) {
+				list.selectRowIndexes([row], byExtendingSelection: false)
+			}
+			show(section: selected)
+			return
+		}
+		showResults()
+	}
+
+	/// Every section with a matching row, with those rows — a group kept whole
+	/// when its own title matches, and with its matching rows when only they do.
+	private func filteredSections() -> [(index: Int, rows: [SettingsPaneController.Row])] {
+		sections.indices.compactMap { index in
+			let kept = filtered(sections[index].section.rows())
+			return kept.isEmpty ? nil : (index, kept)
+		}
+	}
+
+	private func filtered(_ rows: [SettingsPaneController.Row]) -> [SettingsPaneController.Row] {
+		rows.compactMap { row in
+			switch row {
+			case let .group(title, help, inside):
+				if SettingsFilter.matches(title: title, help: help, words: filterWords) { return row }
+				let kept = filtered(inside)
+				return kept.isEmpty ? nil : .group(title: title, help: help, rows: kept)
+			case let .button(title, label, _):
+				return SettingsFilter.matches(title: title, help: label, words: filterWords) ? row : nil
+			case let .toggle(title, help, _, _, _),
+			     let .slider(title, help, _, _, _, _, _),
+			     let .stepper(title, help, _, _, _),
+			     let .text(title, help, _, _),
+			     let .choice(title, help, _, _, _),
+			     let .choiceWithActions(title, help, _, _, _, _):
+				return SettingsFilter.matches(title: title, help: help, words: filterWords) ? row : nil
+			}
+		}
+	}
+
+	/// The matching rows of every matching section, each under its heading, in
+	/// the sidebar's order — or the one line that says nothing matched.
+	private func showResults() {
+		refreshHandlers.removeAll()
+		resultHeadings.removeAll()
+		for view in form.arrangedSubviews { view.removeFromSuperview() }
+
+		let found = filteredSections()
+		if found.isEmpty {
+			let nothing = NSTextField(labelWithString: "Nothing matches \u{201C}\(filterField.stringValue)\u{201D}")
+			nothing.font = Theme.current.uiFont(13)
+			nothing.textColor = Theme.current.gitIgnored
+			form.addArrangedSubview(nothing)
+			return
+		}
+		for (index, rows) in found {
+			let heading = NSTextField(labelWithString: resultTitle(for: index))
+			heading.font = Theme.current.uiFont(17, weight: .semibold)
+			heading.textColor = Theme.current.sidebarHeaderText
+			form.addArrangedSubview(heading)
+			resultHeadings[index] = heading
+			for block in blocks(for: rows) { form.addArrangedSubview(block) }
+		}
+		fitFormWidths()
+	}
+
+	/// A child page's name with its parent's, so "Rust" on a results page says
+	/// whose Rust it is.
+	private func resultTitle(for index: Int) -> String {
+		let title = sections[index].section.title
+		guard sections[index].depth > 0,
+		      let parent = sections[..<index].lastIndex(where: { $0.depth == 0 })
+		else { return title }
+		return "\(sections[parent].section.title) \u{25B8} \(title)"
+	}
+
+	// MARK: - Testing the filter
+
+	/// Types into the filter, as a driven run does instead of a keyboard.
+	func filterForTesting(_ text: String) {
+		filterField.stringValue = text
+		applyFilter(text)
+	}
+
+	/// What the filter left: the sections in the sidebar and the rows on the
+	/// results page, by title, in order.
+	var filterReportForTesting: String {
+		let query = filterField.stringValue
+		let found = filteredSections()
+		let sections = found.map { resultTitle(for: $0.index) }
+		let rows = found.flatMap { entry in
+			titles(of: entry.rows).map { "\(resultTitle(for: entry.index)) \u{25B8} \($0)" }
+		}
+		return "query=\u{201C}\(query)\u{201D} sections=[\(sections.joined(separator: " | "))]"
+			+ " rows=\(rows.count)\n" + rows.map { "SETTINGS FILTER   \($0)" }.joined(separator: "\n")
+	}
+
+	private func titles(of rows: [SettingsPaneController.Row]) -> [String] {
+		rows.flatMap { row -> [String] in
+			switch row {
+			case let .group(title, _, inside): return titles(of: inside).map { "\(title) / \($0)" }
+			case let .button(title, _, _): return [title]
+			case let .toggle(title, _, _, _, _),
+			     let .slider(title, _, _, _, _, _, _),
+			     let .stepper(title, _, _, _, _),
+			     let .text(title, _, _, _),
+			     let .choice(title, _, _, _, _),
+			     let .choiceWithActions(title, _, _, _, _, _):
+				return [title]
+			}
 		}
 	}
 
@@ -787,39 +964,17 @@ extension SettingsPage: NSTableViewDataSource, NSTableViewDelegate {
 	func tableViewSelectionDidChange(_ notification: Notification) {
 		let row = list.selectedRow
 		guard rows.indices.contains(row), rows[row] != selected else { return }
-		show(section: rows[row])
-	}
-}
-
-/// The settings sidebar's table, so the arrow keys fold as well as move.
-///
-/// An `NSOutlineView` has this behaviour for nothing, and this list is
-/// deliberately not one (0421): two levels over a flat array is a list somebody
-/// can see all of, and the depth is drawn by the row. What an outline view has
-/// that is worth keeping is what hands already expect from one — right opens,
-/// left closes, and the row you land on is the one you would have clicked. So
-/// that is the part written out, and only that part: up and down go to
-/// `super`, where the table walks the rows that are showing.
-private final class SettingsSidebarTable: NSTableView {
-	/// Asked what a sideways arrow should do; answers whether it did anything,
-	/// so a key that means nothing here is still the table's to refuse.
-	var onFold: ((SettingsOutline.Fold) -> Bool)?
-
-	override func keyDown(with event: NSEvent) {
-		let pressed = event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) }
-		let key: SettingsOutline.Fold? = switch pressed {
-		case NSRightArrowFunctionKey: .open
-		case NSLeftArrowFunctionKey: .close
-		default: nil
-		}
-		guard let key, onFold?(key) == true else {
-			super.keyDown(with: event)
+		selected = rows[row]
+		// While filtering, the form is every matching section at once, and a
+		// click in the sidebar goes to that section's place in it rather than
+		// replacing the results with one page.
+		if !filterWords.isEmpty {
+			if let heading = resultHeadings[selected] {
+				scroll.contentView.scroll(to: NSPoint(x: 0, y: heading.frame.minY - Theme.current.scaled(24)))
+				scroll.reflectScrolledClipView(scroll.contentView)
+			}
 			return
 		}
+		show(section: selected)
 	}
-}
-
-/// Top-down coordinates, so a stack in a scroll view starts at the top.
-private final class FlippedContainer: NSView {
-	override var isFlipped: Bool { true }
 }

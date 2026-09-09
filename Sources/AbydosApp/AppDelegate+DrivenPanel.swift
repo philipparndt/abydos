@@ -879,6 +879,15 @@ extension AppDelegate {
 					controller?.editorForTesting.pressSettingsKeysForTesting(keys)
 				}
 			}
+			if let text = options.settingsFilter {
+				// Before the capture, so the picture is of the filtered page,
+				// and after the page has had a turn to build.
+				DispatchQueue.main.asyncAfter(
+					deadline: .now() + max(0.4, options.screenshotDelay - 0.8)
+				) {
+					controller?.editorForTesting.filterSettingsForTesting(text)
+				}
+			}
 		}
 
 		// The list of what is running, driven the way somebody would drive it:
