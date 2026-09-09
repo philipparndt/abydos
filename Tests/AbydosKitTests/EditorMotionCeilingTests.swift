@@ -33,12 +33,26 @@ struct EditorMotionCeilingTests {
 		#expect(unhandled.count <= 14, "unhandled motions: \(unhandled.sorted())")
 	}
 
+	/// Every file `CodeView` is written across, read as one.
+	///
+	/// The class is `CodeView.swift` and its `CodeView+…` files, and the switch
+	/// this counts against is in the one about the keyboard. Reading the folder
+	/// rather than naming that file means a later split cannot make this test
+	/// quietly pass by moving the switch somewhere it was not looking.
 	private func sourceOfCodeView() -> String? {
 		// From this file, up to the package root, across to the app target.
-		var directory = URL(fileURLWithPath: #filePath)
+		let root = URL(fileURLWithPath: #filePath)
 			.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-		directory.appendPathComponent("Sources/AbydosApp/Editor/CodeView.swift")
-		return try? String(contentsOf: directory, encoding: .utf8)
+		let folder = root.appendingPathComponent("Sources/AbydosApp/Editor")
+		guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path)
+		else { return nil }
+		let wanted = names
+			.filter { $0 == "CodeView.swift" || $0.hasPrefix("CodeView+") }
+			.sorted()
+		guard !wanted.isEmpty else { return nil }
+		return wanted
+			.compactMap { try? String(contentsOf: folder.appendingPathComponent($0), encoding: .utf8) }
+			.joined(separator: "\n")
 	}
 
 	private func matches(of pattern: String, in text: String) -> [String] {
