@@ -4,6 +4,192 @@ import AbydosKit
 /// The project window: titlebar pills, the left tool strip, the navigator, and
 /// the editor area.
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
+
+	// Kept in the body because a stored property cannot live in an
+	// extension; what each is for is said where it is used.
+	/// The left rail and the tools it opens.
+	///
+	/// Not an `NSViewController`: the rail is a subview of the window's root and
+	/// the tool it opens lives inside `navigatorContainer`, so there is no one
+	/// view for it to control. The window builds the hierarchy and hands it the
+	/// two pieces; it owns which tool is showing and every pane behind that.
+	private(set) lazy var sidebar: SidebarController = makeSidebar()
+	/// Breakpoints and the stopped line, which outlive any one session.
+	lazy var debug: DebugCoordinator = makeDebug()
+	/// Running a program, wherever it runs.
+	private(set) lazy var run: RunCoordinator = {
+		let coordinator = RunCoordinator(panel: bottomPanel, editor: editor)
+		coordinator.currentProject = { [weak self] in self?.project }
+		coordinator.currentLaunchRoot = { [weak self] in self?.launchRoot ?? URL(fileURLWithPath: ".") }
+		coordinator.debugCoordinator = { [weak self] in self?.debug }
+		coordinator.hostWindow = { [weak self] in self?.window }
+		coordinator.onSetPanelVisible = { [weak self] visible in self?.setPanelVisible(visible) }
+		coordinator.onNotify = { [weak self] title, detail, kind, actionTitle, action in
+			self?.notify(title, detail: detail, kind: kind, actionTitle: actionTitle, action: action)
+		}
+		coordinator.onWire = { [weak self] session in self?.wire(session) }
+		coordinator.onRememberOpenEditors = { [weak self] in self?.rememberOpenEditors() }
+		coordinator.onLeaveTerminalFullScreen = { [weak self] in self?.leaveTerminalFullScreen() }
+		coordinator.onAttachToProcess = { [weak self] sender in self?.attachToProcess(sender) }
+		coordinator.onMenuItem = { [weak self] title, action in
+			self?.menuItem(title, action) ?? NSMenuItem(title: title, action: action, keyEquivalent: "")
+		}
+		coordinator.onRunSelected = { [weak self] sender in self?.runSelected(sender) }
+		coordinator.onDebugSelected = { [weak self] sender in self?.debugSelected(sender) }
+		coordinator.onStopSelected = { [weak self] sender in self?.stopSelected(sender) }
+		coordinator.onShowConfigurationMenu = { [weak self] rect, control in
+			self?.showConfigurationMenu(from: rect, in: control)
+		}
+		return coordinator
+	}()
+	/// What a language server offers to change, and taking it.
+	private(set) lazy var serverActions: ServerActions = {
+		let actions = ServerActions(
+			editor: editor, navigator: navigator, panel: bottomPanel, toasts: toasts
+		)
+		actions.currentProject = { [weak self] in self?.project }
+		actions.onNotify = { [weak self] title, detail, kind in
+			self?.notify(title, detail: detail, kind: kind)
+		}
+		actions.results = { [weak self] in self?.results }
+		actions.onSetPanelVisible = { [weak self] visible in self?.setPanelVisible(visible) }
+		return actions
+	}()
+	/// Copying a place in the code, and going to one that was copied.
+	private(set) lazy var codeLinks: CodeLinks = {
+		let links = CodeLinks(editor: editor, toasts: toasts)
+		links.currentProject = { [weak self] in self?.project }
+		links.onNotify = { [weak self] title, detail, kind in
+			self?.notify(title, detail: detail, kind: kind)
+		}
+		return links
+	}()
+	/// The strip across the top: the capsule, the pills, the backdrop and the
+	/// seam, and the toolbar's delegate.
+	///
+	/// It owns those views and what they say; what pressing one *means* stays
+	/// here, and arrives there as a closure. The run item is the exception — it
+	/// sits in that toolbar and belongs to running, so this builds it and hands
+	/// it over until there is a run coordinator to do so.
+	private(set) lazy var titlebar: TitlebarController = {
+		let bar = TitlebarController(window: window)
+		bar.project = { [weak self] in self?.project }
+		bar.subprojectRoot = { [weak self] in self?.subprojectRoot }
+		bar.branchRead = { [weak self] in self?.branchRead }
+		bar.devContainerRoot = { [weak self] in self?.devContainerRoot }
+		bar.devContainerChoices = { [weak self] in self?.devContainerChoices ?? [] }
+		bar.choiceCarriedBy = { [weak self] sender in self?.choice(carriedBy: sender) }
+		bar.scopeRoot = { [weak self] in self?.scopeRoot }
+		bar.containerName = { choice, root in Self.containerName(for: choice, in: root) }
+		bar.containerMark = Self.containerMark
+		bar.containerTerminalTitle = Self.containerTerminalTitle
+		bar.containerMenuItem = { [weak self] choice in
+			self?.makeContainerMenuItem(for: choice) ?? NSMenuItem()
+		}
+		bar.makeRunItem = { [weak self] identifier in self?.makeRunToolbarItem(identifier) }
+		bar.relayoutRunControl = { [weak self] in
+			self?.run.runControl?.invalidateIntrinsicContentSize()
+			self?.run.runControl?.applyThemeChange()
+		}
+		bar.onProjectPressed = { [weak self] in self?.showProjectSwitcherAtPill() }
+		bar.onBranchPressed = { [weak self] in self?.showBranchMenu() }
+		bar.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
+		bar.onOpenSubproject = { [weak self] url in self?.openSubproject(at: url) }
+		bar.onOpenWorktree = { [weak self] url in
+			guard let self else { return }
+			(NSApp.delegate as? AppDelegate)?.open(projectAt: url, from: self)
+		}
+		bar.onShowAllWorktrees = { [weak self] in self?.toggleBranchesView(nil) }
+		bar.onOpenFile = { [weak self] url in self?.openFile(at: url) }
+		return bar
+	}()
+	/// Where an answer to a question about the code is shown, and where it moves.
+	///
+	/// Wired rather than owned: it is handed the two views it presents into and
+	/// the handful of things only the window knows, and it holds no reference
+	/// back. `dockInSidebar` and `undockFromSidebar` are lent from here because
+	/// the lower half of the sidebar is the sidebar's, not a results list's.
+	private(set) lazy var results: ResultsPresenter = {
+		let presenter = ResultsPresenter(editor: editor, panel: bottomPanel)
+		presenter.hostWindow = { [weak self] in self?.window }
+		presenter.scopeRoot = { [weak self] in self?.project?.scopeRoot }
+		presenter.showPanel = { [weak self] in self?.setPanelVisible(true) }
+		// These two used to be the window's, lent to the presenter because there
+		// was nowhere else for them. There is now.
+		presenter.dockInSidebar = { [weak self] pane, focusList in
+			self?.sidebar.dockInSidebar(pane, focusList: focusList)
+		}
+		presenter.undockFromSidebar = { [weak self] pane in self?.sidebar.undockFromSidebar(pane) }
+		presenter.sidebarDockHost = { [weak self] in self?.sidebar.dockHost }
+		presenter.askUsagesAgain = { [weak self] url, line, character in
+			self?.serverActions.findUsages(in: url, line: line, character: character)
+		}
+		presenter.symbolsMatching = { [weak self] query, scope in
+			await self?.serverActions.symbols(matching: query, scope: scope) ?? []
+		}
+		presenter.reasonForNoSymbols = { [weak self] query, scope in
+			self?.serverActions.reasonForNoSymbols(query: query, scope: scope) ?? ""
+		}
+		return presenter
+	}()
+	/// Where news the user did not ask for goes.
+	private(set) lazy var toasts = ToastPresenter(window: window)
+
+	// Kept in the body because a stored property cannot live in an
+	// extension; what each is for is said where it is used.
+	var panelHeight: CGFloat = 260
+	/// Reading the repository, as a job rather than an answer.
+	///
+	/// The toolbar builds its items when it chooses, and in a repository small
+	/// enough git answers first — so a pill that is only ever *told* the branch
+	/// misses it. Anything that needs the branch awaits this instead, whenever
+	/// it happens to come into existence.
+	/// The whole of HEAD and not just its name: a branch with nothing committed
+	/// on it is drawn differently, and the capsule cannot tell from a string.
+	var branchRead: Task<GitRepository.HeadState?, Never>?
+	var toolStripWidthConstraint: NSLayoutConstraint!
+	var trustBannerHeight: NSLayoutConstraint!
+	/// Projects whose strip has been put away in this window, until they are
+	/// opened again. Nothing about their trust changes — see `hideTrustBanner`.
+	var hiddenTrustBanners: Set<String> = []
+
+	// Kept in the body because a stored property cannot live in an
+	// extension; what each is for is said where it is used.
+	var onClose: (() -> Void)?
+	let navigator = ProjectNavigatorViewController()
+	/// True while the panel is being rounded to whole rows, so the resize that
+	/// causes cannot ask for another one.
+	var isSnappingPanel = false
+	/// The two heights the rounding last acted on, so that a resize which
+	/// changed neither can be ignored — a window dragged wider posts one resize
+	/// notification after another, and rounding on each of them is what
+	/// shortened the terminal.
+	var lastSnappedHeights: (total: CGFloat, panel: CGFloat)?
+	/// Painted behind the toolbar, since the titlebar itself is transparent.
+	/// Everywhere the editor has been, and where in it we are.
+	var navigation = NavigationHistory()
+	/// Set while going back or forward, so retracing steps is not itself a step.
+	var isNavigatingHistory = false
+	/// Watches `.git` so a commit made in a terminal shows up here.
+	var repositoryWatcher: RepositoryWatcher?
+	/// The strip that says this project is not trusted, above everything the
+	/// project can reach.
+	let trustBanner = TrustBanner()
+	/// How far below the window's top the strip sits — the titlebar's own
+	/// inset, which every pane here takes.
+	var trustBannerTop: NSLayoutConstraint!
+
+	// Kept in the body because a stored property cannot live in an
+	// extension; what each is for is said where it is used.
+	/// The editor area, which may hold several split groups.
+	let editor = EditorAreaController()
+	let bottomPanel = BottomPanel()
+	var splitView: NSSplitView!
+	var verticalSplitView: NSSplitView!
+	/// How wide the tree is, kept as a constraint so nothing else decides.
+	var navigatorWidthConstraint: NSLayoutConstraint!
+	var navigatorContainer: ColoredView!
+	var navigatorWidth: CGFloat = 260
 	var project: Project?
 
 	/// The part of the project being worked on, when it is not the whole of it.
@@ -109,423 +295,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	var onTearOffTab: ((EditorViewController.Tab, NSPoint, MainWindowController) -> Void)?
 
 	func markAsTornOff() { isTornOff = true }
-
-	// MARK: - Testing
-
-	/// Takes a tab dragged out of another window.
-	func adopt(_ tab: EditorViewController.Tab) {
-		editor.adopt(tab)
-	}
-	var onClose: (() -> Void)?
-
-	let navigator = ProjectNavigatorViewController()
-	/// The editor area, which may hold several split groups.
-	let editor = EditorAreaController()
-	let bottomPanel = BottomPanel()
-
-	/// The left rail and the tools it opens.
-	///
-	/// Not an `NSViewController`: the rail is a subview of the window's root and
-	/// the tool it opens lives inside `navigatorContainer`, so there is no one
-	/// view for it to control. The window builds the hierarchy and hands it the
-	/// two pieces; it owns which tool is showing and every pane behind that.
-	private(set) lazy var sidebar: SidebarController = makeSidebar()
-
-	private func makeSidebar() -> SidebarController {
-		let bar = SidebarController(editor: editor, navigator: navigator)
-		bar.project = { [weak self] in self?.project }
-		bar.hostWindow = { [weak self] in self?.window }
-		bar.gitCommandRoot = { [weak self] in self?.gitCommandRoot }
-		bar.rememberedMessage = { [weak self] in self?.rememberedMessage }
-		bar.rememberedFolds = { [weak self] in self?.rememberedFolds ?? [:] }
-		bar.holdDraft = { [weak self] root, draft in self?.drafts.hold(draft, for: root) }
-		bar.heldDraft = { [weak self] root in self?.drafts.peek(for: root) }
-		// A buffer is parked under the project being left, which is still
-		// `project` when the switch parks — and taken under the one that has
-		// just been loaded when its session reopens the file.
-		editor.parkDecrypted = { [weak self] file, buffer in
-			guard let self, let root = self.project?.root else { return }
-			self.decrypted.park(buffer, root: root, file: file)
-		}
-		editor.takeParkedDecrypted = { [weak self] file in
-			guard let self, let root = self.project?.root else { return nil }
-			return self.decrypted.take(root: root, file: file)
-		}
-		bar.discardDraft = { [weak self] root in self?.drafts.discard(for: root) }
-		// Restoring these two, not opening them fresh: both refuse to take the
-		// window from a maximised terminal on this path, since nobody asked.
-		bar.openLaunchConfigurationsPage = { [weak self] in
-			self?.run.showLaunchConfigurations()
-		}
-		bar.openSettingsPage = { [weak self] in self?.showSettingsPage(nil) }
-		bar.relativePathOfActiveFile = { [weak self] in self?.relativePathOfActiveFile() }
-		bar.symbols = { [weak self] query, scope in
-			await self?.serverActions.symbols(matching: query, scope: scope) ?? []
-		}
-		bar.notify = { [weak self] title, detail in self?.notify(title, detail: detail) }
-		bar.isNavigatorVisible = { [weak self] in
-			guard let self, let container = self.navigatorContainer else { return false }
-			return !container.isHidden
-				&& !self.splitView.isSubviewCollapsed(container)
-				&& container.frame.width >= 2
-		}
-		bar.showNavigator = { [weak self] in self?.openNavigator() }
-		bar.hideNavigator = { [weak self] in self?.toggleNavigator(nil) }
-		bar.isPanelMaximized = { [weak self] in self?.isPanelMaximized ?? false }
-		bar.leaveMaximised = { [weak self] in self?.togglePanelMaximized(nil) }
-		bar.leaveTerminalFullScreen = { [weak self] in self?.leaveTerminalFullScreen() }
-		bar.onInsetsChanged = { [weak self] in self?.updateTopInsets() }
-		bar.giveTheEditorTheWindow = { [weak self] in self?.giveTheEditorTheWindow() }
-		bar.isPanelVisible = { [weak self] in self?.isPanelVisible ?? false }
-		bar.readGit = { [weak self] in self?.readGit() }
-		bar.openProject = { [weak self] url in
-			guard let self else { return }
-			(NSApp.delegate as? AppDelegate)?.open(projectAt: url, from: self)
-		}
-		return bar
-	}
-
-	/// Breakpoints and the stopped line, which outlive any one session.
-	lazy var debug: DebugCoordinator = makeDebug()
-
-	private func makeDebug() -> DebugCoordinator {
-		let coordinator = DebugCoordinator(editor: editor, panel: bottomPanel)
-		coordinator.debugSession = { [weak self] in self?.bottomPanel.activeDebugSession }
-		coordinator.projectRoot = { [weak self] in self?.project?.root }
-		coordinator.hostWindow = { [weak self] in self?.window }
-		coordinator.onRememberBreakpoints = { [weak self] in self?.rememberBreakpoints() }
-		coordinator.onBreakpointsChanged = { [weak self] in self?.refreshBreakpointList() }
-		coordinator.onDebugContinue = { [weak self] in self?.debugContinue($0) }
-		coordinator.onDebugStepOver = { [weak self] in self?.debugStepOver($0) }
-		coordinator.onDebugStepInto = { [weak self] in self?.debugStepInto($0) }
-		coordinator.onDebugStepOut = { [weak self] in self?.debugStepOut($0) }
-		coordinator.onWatchFromEditor = { [weak self] expression in self?.watchFromEditor(expression) }
-		return coordinator
-	}
-
-	var debugSession: DebugSession? { bottomPanel.activeDebugSession }
-
-	/// Running a program, wherever it runs.
-	private(set) lazy var run: RunCoordinator = {
-		let coordinator = RunCoordinator(panel: bottomPanel, editor: editor)
-		coordinator.currentProject = { [weak self] in self?.project }
-		coordinator.currentLaunchRoot = { [weak self] in self?.launchRoot ?? URL(fileURLWithPath: ".") }
-		coordinator.debugCoordinator = { [weak self] in self?.debug }
-		coordinator.hostWindow = { [weak self] in self?.window }
-		coordinator.onSetPanelVisible = { [weak self] visible in self?.setPanelVisible(visible) }
-		coordinator.onNotify = { [weak self] title, detail, kind, actionTitle, action in
-			self?.notify(title, detail: detail, kind: kind, actionTitle: actionTitle, action: action)
-		}
-		coordinator.onWire = { [weak self] session in self?.wire(session) }
-		coordinator.onRememberOpenEditors = { [weak self] in self?.rememberOpenEditors() }
-		coordinator.onLeaveTerminalFullScreen = { [weak self] in self?.leaveTerminalFullScreen() }
-		coordinator.onAttachToProcess = { [weak self] sender in self?.attachToProcess(sender) }
-		coordinator.onMenuItem = { [weak self] title, action in
-			self?.menuItem(title, action) ?? NSMenuItem(title: title, action: action, keyEquivalent: "")
-		}
-		coordinator.onRunSelected = { [weak self] sender in self?.runSelected(sender) }
-		coordinator.onDebugSelected = { [weak self] sender in self?.debugSelected(sender) }
-		coordinator.onStopSelected = { [weak self] sender in self?.stopSelected(sender) }
-		coordinator.onShowConfigurationMenu = { [weak self] rect, control in
-			self?.showConfigurationMenu(from: rect, in: control)
-		}
-		return coordinator
-	}()
-
-	/// What a language server offers to change, and taking it.
-	private(set) lazy var serverActions: ServerActions = {
-		let actions = ServerActions(
-			editor: editor, navigator: navigator, panel: bottomPanel, toasts: toasts
-		)
-		actions.currentProject = { [weak self] in self?.project }
-		actions.onNotify = { [weak self] title, detail, kind in
-			self?.notify(title, detail: detail, kind: kind)
-		}
-		actions.results = { [weak self] in self?.results }
-		actions.onSetPanelVisible = { [weak self] visible in self?.setPanelVisible(visible) }
-		return actions
-	}()
-
-	/// Copying a place in the code, and going to one that was copied.
-	private(set) lazy var codeLinks: CodeLinks = {
-		let links = CodeLinks(editor: editor, toasts: toasts)
-		links.currentProject = { [weak self] in self?.project }
-		links.onNotify = { [weak self] title, detail, kind in
-			self?.notify(title, detail: detail, kind: kind)
-		}
-		return links
-	}()
-
-	// Menu-bar selectors. AppKit resolves these against the responder chain and
-	// finds them here; the work is the collaborator's.
-	@objc func renameSymbol(_ sender: Any?) { serverActions.renameSymbol(sender) }
-	@objc func completeAtCaret(_ sender: Any?) { serverActions.completeAtCaret(sender) }
-	@objc func showCodeActions(_ sender: Any?) { serverActions.showCodeActions(sender) }
-	@objc func showSourceActions(_ sender: Any?) { serverActions.showSourceActions(sender) }
-	@objc func copyReference(_ sender: Any?) { codeLinks.copyReference(sender) }
-	@objc func copyPermalink(_ sender: Any?) { codeLinks.copyPermalink(sender) }
-	@objc func goToCopiedPlace(_ sender: Any?) { codeLinks.goToCopiedPlace(sender) }
-
-	// Menu-bar selectors, which AppKit resolves against the responder chain and
-	// finds here rather than on the coordinator.
-	@objc func showRunConfigurations(_ sender: Any?) { run.showRunConfigurations(sender) }
-	@objc func newFromMakeGoal(_ sender: Any?) { run.newFromMakeGoal(sender) }
-	@objc func debugStop(_ sender: Any?) { run.debugStop(sender) }
-
-	/// The run strip in the titlebar.
-	///
-	/// Built here rather than by `TitlebarController`: it sits in that toolbar
-	/// and every button on it is about running, which is this class's until
-	/// there is a run coordinator to take it.
-	func makeRunToolbarItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
-		let item = NSToolbarItem(itemIdentifier: identifier)
-		let control = RunControl()
-		control.onRun = { [weak self] in self?.run.runSelectedConfiguration(debug: false) }
-		control.onDebug = { [weak self] in self?.run.runSelectedConfiguration(debug: true) }
-		control.onStop = { [weak self] in self?.run.stopRunning() }
-		control.onProfile = { [weak self] in self?.run.profileSelectedConfiguration() }
-		control.onCoverage = { [weak self] in self?.run.runSelectedWithCoverage() }
-		// The ways of starting a debug session that used to live on the rail's
-		// ladybird. The bodies did not move — only which control asks.
-		control.onDebugExecutable = { [weak self] in self?.debugExecutable(nil) }
-		control.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
-		control.onDebugGoPackage = { [weak self] in self?.goDebug(nil) }
-		control.isGoProject = { [weak self] in
-			guard let root = self?.project?.root else { return false }
-			return GoTooling.isGoModule(root) || !RunConfigurationDiscovery
-				.searchDirectories(from: root)
-				.filter(GoTooling.isGoModule)
-				.isEmpty
-		}
-		control.onChooseConfiguration = { [weak self, weak control] rect in
-			guard let control else { return }
-			self?.showConfigurationMenu(from: rect, in: control)
-		}
-		control.onRunStateChanged = { [weak self] state in
-			self?.titlebar.setRunState(state)
-		}
-		run.runControl = control
-		item.view = control
-		run.refreshRunControl()
-
-		// The whole strip in a menu: run, debug, stop and the list of
-		// configurations, so a narrow window loses the buttons but not the
-		// ability to press them.
-		let menu = NSMenuItem(title: "Run", action: nil, keyEquivalent: "")
-		menu.submenu = runOverflowMenu()
-		item.menuFormRepresentation = menu
-		// Last to go: it is the one thing here that is pressed rather than
-		// read.
-		item.visibilityPriority = .high
-		return item
-	}
-
-	/// The list of configurations, and the ways to change them.
-	///
-	/// **A popover rather than the flat menu it used to be.** The menu printed
-	/// goals × modules: a reactor of a hundred modules offering three goals came
-	/// to three hundred rows, two hundred and ninety-seven of them saying the
-	/// same three words, running off the bottom of the screen and under a scroll
-	/// arrow — and an `NSMenu` cannot be typed at, so there was nothing to do
-	/// but scroll it. `RunPicker` names each goal once and treats the module as
-	/// the second choice it is; this is the same popover the project pill and
-	/// the branch pill use, so the filtering and the keys are the ones already
-	/// there.
-	func showConfigurationMenu(from rect: NSRect, in control: RunControl) {
-		ProjectSwitcherPopover.show(
-			relativeTo: control,
-			anchorRect: rect,
-			currentProject: project,
-			owner: self,
-			focus: .runs,
-			runs: run.runList()
-		)
-	}
-
-	func runOverflowMenu() -> NSMenu {
-		let menu = NSMenu()
-		menu.addItem(menuItem("Run", #selector(runSelected(_:))))
-		menu.addItem(menuItem("Debug", #selector(debugSelected(_:))))
-		menu.addItem(menuItem("Stop", #selector(stopSelected(_:))))
-		menu.addItem(.separator())
-
-		for configuration in run.launchConfigurations {
-			let item = NSMenuItem(
-				title: configuration.name,
-				action: #selector(RunCoordinator.configurationChosen(_:)),
-				keyEquivalent: ""
-			)
-			item.target = run
-			item.representedObject = configuration.name
-			item.state = configuration.name == run.selectedConfiguration?.name ? .on : .off
-			menu.addItem(item)
-		}
-		return menu
-	}
-
-	// Menu-bar items find their target through the responder chain, and this
-	// class is on it while `SidebarController` is not. So the actions stay
-	// here, one line each, and the work is the sidebar's.
-	@objc func showLogPage(_ sender: Any?) { sidebar.showLogPage(scopedTo: nil) }
-	@objc func showCommitPage(_ sender: Any?) { sidebar.showCommitPage(carrying: nil) }
-	@objc func showEstatePage(_ sender: Any?) { sidebar.showEstatePage() }
-
-	/// Flips how the git page arranges a commit's files, and ticks itself.
-	@objc func toggleCommitFilesByFolder(_ sender: Any?) {
-		Settings.shared.commitFilesByFolder.toggle()
-		sidebar.logPage?.applyFileArrangement()
-		(sender as? NSMenuItem)?.state = Settings.shared.commitFilesByFolder ? .on : .off
-	}
-	var toolStrip: ToolWindowBar { sidebar.rail }
-
-	/// The strip across the top: the capsule, the pills, the backdrop and the
-	/// seam, and the toolbar's delegate.
-	///
-	/// It owns those views and what they say; what pressing one *means* stays
-	/// here, and arrives there as a closure. The run item is the exception — it
-	/// sits in that toolbar and belongs to running, so this builds it and hands
-	/// it over until there is a run coordinator to do so.
-	private(set) lazy var titlebar: TitlebarController = {
-		let bar = TitlebarController(window: window)
-		bar.project = { [weak self] in self?.project }
-		bar.subprojectRoot = { [weak self] in self?.subprojectRoot }
-		bar.branchRead = { [weak self] in self?.branchRead }
-		bar.devContainerRoot = { [weak self] in self?.devContainerRoot }
-		bar.devContainerChoices = { [weak self] in self?.devContainerChoices ?? [] }
-		bar.choiceCarriedBy = { [weak self] sender in self?.choice(carriedBy: sender) }
-		bar.scopeRoot = { [weak self] in self?.scopeRoot }
-		bar.containerName = { choice, root in Self.containerName(for: choice, in: root) }
-		bar.containerMark = Self.containerMark
-		bar.containerTerminalTitle = Self.containerTerminalTitle
-		bar.containerMenuItem = { [weak self] choice in
-			self?.makeContainerMenuItem(for: choice) ?? NSMenuItem()
-		}
-		bar.makeRunItem = { [weak self] identifier in self?.makeRunToolbarItem(identifier) }
-		bar.relayoutRunControl = { [weak self] in
-			self?.run.runControl?.invalidateIntrinsicContentSize()
-			self?.run.runControl?.applyThemeChange()
-		}
-		bar.onProjectPressed = { [weak self] in self?.showProjectSwitcherAtPill() }
-		bar.onBranchPressed = { [weak self] in self?.showBranchMenu() }
-		bar.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
-		bar.onOpenSubproject = { [weak self] url in self?.openSubproject(at: url) }
-		bar.onOpenWorktree = { [weak self] url in
-			guard let self else { return }
-			(NSApp.delegate as? AppDelegate)?.open(projectAt: url, from: self)
-		}
-		bar.onShowAllWorktrees = { [weak self] in self?.toggleBranchesView(nil) }
-		bar.onOpenFile = { [weak self] url in self?.openFile(at: url) }
-		return bar
-	}()
-
-	/// Where an answer to a question about the code is shown, and where it moves.
-	///
-	/// Wired rather than owned: it is handed the two views it presents into and
-	/// the handful of things only the window knows, and it holds no reference
-	/// back. `dockInSidebar` and `undockFromSidebar` are lent from here because
-	/// the lower half of the sidebar is the sidebar's, not a results list's.
-	private(set) lazy var results: ResultsPresenter = {
-		let presenter = ResultsPresenter(editor: editor, panel: bottomPanel)
-		presenter.hostWindow = { [weak self] in self?.window }
-		presenter.scopeRoot = { [weak self] in self?.project?.scopeRoot }
-		presenter.showPanel = { [weak self] in self?.setPanelVisible(true) }
-		// These two used to be the window's, lent to the presenter because there
-		// was nowhere else for them. There is now.
-		presenter.dockInSidebar = { [weak self] pane, focusList in
-			self?.sidebar.dockInSidebar(pane, focusList: focusList)
-		}
-		presenter.undockFromSidebar = { [weak self] pane in self?.sidebar.undockFromSidebar(pane) }
-		presenter.sidebarDockHost = { [weak self] in self?.sidebar.dockHost }
-		presenter.askUsagesAgain = { [weak self] url, line, character in
-			self?.serverActions.findUsages(in: url, line: line, character: character)
-		}
-		presenter.symbolsMatching = { [weak self] query, scope in
-			await self?.serverActions.symbols(matching: query, scope: scope) ?? []
-		}
-		presenter.reasonForNoSymbols = { [weak self] query, scope in
-			self?.serverActions.reasonForNoSymbols(query: query, scope: scope) ?? ""
-		}
-		return presenter
-	}()
-
-	var splitView: NSSplitView!
-	var verticalSplitView: NSSplitView!
-	/// How wide the tree is, kept as a constraint so nothing else decides.
-	var navigatorWidthConstraint: NSLayoutConstraint!
-	var panelHeight: CGFloat = 260
-	/// True while the panel is being rounded to whole rows, so the resize that
-	/// causes cannot ask for another one.
-	fileprivate var isSnappingPanel = false
-	/// The two heights the rounding last acted on, so that a resize which
-	/// changed neither can be ignored — a window dragged wider posts one resize
-	/// notification after another, and rounding on each of them is what
-	/// shortened the terminal.
-	fileprivate var lastSnappedHeights: (total: CGFloat, panel: CGFloat)?
-	var navigatorContainer: ColoredView!
-	/// Painted behind the toolbar, since the titlebar itself is transparent.
-	/// Everywhere the editor has been, and where in it we are.
-	var navigation = NavigationHistory()
-	/// Set while going back or forward, so retracing steps is not itself a step.
-	var isNavigatingHistory = false
-
-	/// Watches `.git` so a commit made in a terminal shows up here.
-	private var repositoryWatcher: RepositoryWatcher?
-
-	/// Reading the repository, as a job rather than an answer.
-	///
-	/// The toolbar builds its items when it chooses, and in a repository small
-	/// enough git answers first — so a pill that is only ever *told* the branch
-	/// misses it. Anything that needs the branch awaits this instead, whenever
-	/// it happens to come into existence.
-	/// The whole of HEAD and not just its name: a branch with nothing committed
-	/// on it is drawn differently, and the capsule cannot tell from a string.
-	var branchRead: Task<GitRepository.HeadState?, Never>?
-	var toolStripWidthConstraint: NSLayoutConstraint!
-	/// The strip that says this project is not trusted, above everything the
-	/// project can reach.
-	let trustBanner = TrustBanner()
-	var trustBannerHeight: NSLayoutConstraint!
-	/// How far below the window's top the strip sits — the titlebar's own
-	/// inset, which every pane here takes.
-	var trustBannerTop: NSLayoutConstraint!
-	/// Projects whose strip has been put away in this window, until they are
-	/// opened again. Nothing about their trust changes — see `hideTrustBanner`.
-	var hiddenTrustBanners: Set<String> = []
-
-	var navigatorWidth: CGFloat = 260
-
-	/// Where news the user did not ask for goes.
-	private(set) lazy var toasts = ToastPresenter(window: window)
-
-	/// Says something without stopping anything.
-	///
-	/// Automatic modals are banned here: they take the keyboard and demand
-	/// dismissal for news as small as "no go.mod in this project". A toast
-	/// says it in the corner and opens the details if it turns out to matter.
-	func notify(
-		_ title: String,
-		detail: String? = nil,
-		kind: Toast.Kind = .error,
-		actionTitle: String? = nil,
-		action: (() -> Void)? = nil
-	) {
-		toasts.show(Toast(
-			kind: kind, title: title, detail: detail, actionTitle: actionTitle, action: action
-		))
-	}
-
-	// MARK: - Claude sessions in the terminal
-
-	/// The tmux session the panel's tabs are showing, if they are showing one.
-	var mirroredTmuxSession: String? { bottomPanel.mirroredTmuxSession }
-
-	/// Which of those windows is the active one.
-	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
-
-	/// Tells the rail which panes are in front.
-	///
-	/// The same shape as the `setSidebarSelection` call beside it, which is the
-	/// point: both groups of the rail now answer one question in one way.
 
 	// MARK: - Remembered layout
 
@@ -936,7 +705,7 @@ extension MainWindowController {
 
 	/// The run strip's commands, for when there is no room to draw it.
 	/// A menu item pointing back at this window.
-	private func menuItem(_ title: String, _ action: Selector) -> NSMenuItem {
+	func menuItem(_ title: String, _ action: Selector) -> NSMenuItem {
 		let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
 		item.target = self
 		return item
