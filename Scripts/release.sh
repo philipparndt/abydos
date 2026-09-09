@@ -61,14 +61,21 @@ for binary in "$APP/Contents/MacOS/"* "$APP/Contents/Resources/bin/"*; do
 	# Scripts in Resources/bin are not Mach-O and have no architecture to ask for.
 	file -b "$binary" | grep -q "Mach-O" || continue
 	ARCHS_FOUND=$(lipo -archs "$binary" 2>/dev/null || true)
-	case " $ARCHS_FOUND " in
-		*" arm64 "*" x86_64 "*|*" x86_64 "*" arm64 "*) ;;
-		*)
-			echo "refusing to release: $(basename "$binary") is built for '$ARCHS_FOUND', not for both arm64 and x86_64" >&2
-			echo "  rebuild universal: make build PIN_UUID=0 ARCHS=\"arm64 x86_64\"" >&2
-			exit 1
-			;;
-	esac
+	# Each architecture on its own. `lipo` lists them in the order the file
+	# holds them, and the first version of this asked for both in one pattern
+	# whose two spaces could not share the one between the words — so it
+	# refused the very build it was written to accept, `x86_64 arm64`, at the
+	# first 0.20.1 attempt, after the tag was made.
+	for wanted in arm64 x86_64; do
+		case " $ARCHS_FOUND " in
+			*" $wanted "*) ;;
+			*)
+				echo "refusing to release: $(basename "$binary") is built for '$ARCHS_FOUND', which lacks $wanted" >&2
+				echo "  rebuild universal: make build PIN_UUID=0 ARCHS=\"arm64 x86_64\"" >&2
+				exit 1
+				;;
+		esac
+	done
 done
 
 # --- Sign ------------------------------------------------------------------
