@@ -229,6 +229,8 @@ extension LaunchOptions {
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true
+			case "--terminal-screen-at":
+				options.terminalScreenAt = (next() ?? "5").split(separator: ",").compactMap { Double($0) }
 			case "--backlog-geometry":
 				options.backlogGeometryAt = (next() ?? "3").split(separator: ",").compactMap { Double($0) }
 			case "--blame": options.showsBlame = true

@@ -500,6 +500,11 @@ struct LaunchOptions {
 	var reportsTerminalDirectory = false
 	/// Print the terminal's geometry, for the clipped-bottom-row bug.
 	var reportsTerminalGeometry = false
+	/// Print the active pane's screen — the rows a program is drawn in, not the
+	/// scrollback above them — at these seconds: `--terminal-screen-at 5,8`. For
+	/// the question a picture cannot settle: which row a line landed on, and
+	/// whether what was above it went into history or under it.
+	var terminalScreenAt: [Double] = []
 	/// Where the backlog pane's header is against the strip, at these seconds:
 	/// `--backlog-geometry 3,5,7`.
 	var backlogGeometryAt: [Double] = []

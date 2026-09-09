@@ -282,6 +282,13 @@ extension AppDelegate {
 			}
 		}
 
+		for seconds in options.terminalScreenAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+				print(controller?.panelForTesting.terminalScreenReportForTesting(label: "\(seconds)s") ?? "TERMINAL SCREEN: no window")
+				fflush(stdout)
+			}
+		}
+
 		if options.reportsTerminalGeometry {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {

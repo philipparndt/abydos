@@ -763,6 +763,38 @@ final class BottomPanel: NSView {
 		}
 	}
 
+	/// The active pane's screen, row by row, with what is above it counted.
+	///
+	/// `terminalTextForTesting` is the scrollback and the screen in one string,
+	/// which answers "did the command print" and not "where". A shell making
+	/// room for a completion listing is a question of where: the rows that were
+	/// on the screen should now be in the history above it, and the listing
+	/// should sit on the rows below the prompt. So the screen's rows are named
+	/// by number, and the count of lines above them is said, so two readings
+	/// can be compared line for line.
+	func terminalScreenReportForTesting(label: String) -> String {
+		var out = "TERMINAL SCREEN \(label): sessions=\(sessions.count) active=\(activeIndex ?? -1)"
+		// Every pane, not only the active one: a report that read a pane other
+		// than the one on screen would describe a terminal nobody is looking at
+		// and call it the screen.
+		for (index, session) in sessions.enumerated() {
+			guard let terminal = session.terminal else {
+				out += "\nTERMINAL pane \(index): no terminal"
+				continue
+			}
+			let view = terminal.terminalViewForTesting
+			let grid = terminal.gridSizeForTesting
+			let lines = view.screenTextForTesting.components(separatedBy: "\n")
+			let above = max(0, lines.count - grid.rows)
+			out += "\nTERMINAL pane \(index): rows=\(grid.rows) columns=\(grid.columns) lines-above=\(above) engine=\(view.engineNameForTesting)"
+			for (offset, line) in lines.suffix(grid.rows).enumerated() {
+				let text = line.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+				out += String(format: "\nTERMINAL %d.%02d| %@", index, offset, text)
+			}
+		}
+		return out
+	}
+
 	var terminalGridForTesting: (rows: Int, columns: Int) {
 		let index = activeIndex ?? 0
 		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else {
