@@ -49,7 +49,7 @@ final class SidebarController: NSObject {
 	/// the window. Closures for the reason every other cross-controller verb
 	/// here is one — the sidebar knows the session, not the page.
 	var openLaunchConfigurationsPage: () -> Void = {}
-	var openSettingsPage: () -> Void = {}
+	var openSettingsPage: (_ asked: Bool) -> Void = { _ in }
 	var gitCommandRoot: () -> URL? = { nil }
 	var relativePathOfActiveFile: () -> String? = { nil }
 	var symbols: (String, SymbolPalette.Scope) async -> [LSPSymbol] = { _, _ in [] }

@@ -62,6 +62,42 @@ visible after the open exactly when it was visible before.
 **A driving step that opens the settings again**, `--settings-again <seconds>`,
 so the claim is two `PANEL` lines: maximised before, maximised after.
 
+## The real cause, 2026-09-10
+
+The ⌘, path above is real and fixed, but it is not what the maintainer hit. The
+report is: a window with Follow Terminal on, two tmux windows in two different
+projects, the terminal maximised on window 1 with the settings page open;
+switching to window 2 and back un-maximises it, every time, about a second
+after the switch.
+
+The second is the tell. Following the terminal switches project, and switching
+project restores the new project's open pages — `SidebarController.reopen(page:)`.
+Its comment already names this bug for the commit and log pages: *"a window
+following its terminal switches project when the shell walks into another one …
+Reported as the maximised terminal being lost on a tab switch."* The commit,
+log, stash and estate pages were given an `asked` flag — `if asked {
+leaveTerminalFullScreen() }` — so a page **restored** with a project (asked:
+false) does not give the editor the window. The **settings** page was the one
+case that never got the flag: `reopen(page:)` called `openSettingsPage()`, which
+left the terminal's full screen unconditionally. So a project that had the
+settings page open lost its maximise on every follow.
+
+**The fix.** `showSettingsPage` gains `asked`, and leaves full screen only when
+asked and the page is not already there. `reopen(page:)` restores it with
+`asked: false`, the way it restores the other four. The maximise is global
+window state and a follow now leaves it alone.
+
+Driven with `--restore-pages settings`, whose report says the maximise before
+and after and which tabs opened:
+
+| Restore of the settings page | maximised before | after | tabs |
+| --- | --- | --- | --- |
+| the old path (`asked: true`) | yes | **no** | Settings |
+| the fix (`asked: false`) | yes | yes | Settings |
+
+The settings tab opens either way; only the maximise differs, which is the
+whole of the report.
+
 ## What the fix measured, 2026-09-10
 
 `--settings-again 6` on a scratch project, the panel maximised at three:
@@ -82,8 +118,13 @@ so the claim is two `PANEL` lines: maximised before, maximised after.
 ## Asked of the reporter
 
 - Is "switching back" ⌘, or the gear, a macOS Space, or another window of
-  this app? The first is fixed here and measured; the second the driver cannot
-  make; the third was measured not to move the panel.
+  this app? — *A **tmux window switch**, the maintainer, 2026-09-10, with the
+  exact steps: a tmux window 1 with the settings page open, a tmux window 2
+  without, the terminal maximised on window 1, switch to window 2, switch back
+  to window 1 — and it is no longer maximised, every time. Not ⌘, and not the
+  macOS window, which the first fix and the first measurement covered. The app
+  notices tmux's active window return to one whose editor holds the settings
+  page, and un-maximises. A different path, reopened below.
 
 ## Open Questions
 

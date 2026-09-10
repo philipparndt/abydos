@@ -709,6 +709,18 @@ extension MainWindowController {
 	/// A page rather than a window: a setting is judged by what it does to the
 	/// thing beside it, and a preferences window covers exactly that.
 	@objc func showSettingsPage(_ sender: Any?) {
+		showSettingsPage(asked: true)
+	}
+
+	/// - Parameter asked: whether somebody asked for this page. Only then does
+	///   it give the editor the window back — the same rule the commit, log,
+	///   stash and estate pages keep. **A settings page restored with a project
+	///   asked for nothing**, and this case alone used to leave the terminal's
+	///   full screen: a window following its terminal between two projects
+	///   restores the open pages on every switch, and the settings page among
+	///   them un-maximised the terminal somebody was reading. Reported
+	///   2026-09-10; the other four pages had this guard and it did not.
+	func showSettingsPage(asked: Bool) {
 		guard let group = editor.activeGroup else { return }
 		// **Opening a page that is already open is not an opening.** Full screen
 		// is left only when the page has to be made: a page opened behind a
@@ -719,7 +731,10 @@ extension MainWindowController {
 		// over it was un-maximised under them. Reported 2026-09-10; driven,
 		// `maximized=true` then `false` across the second ⌘,.
 		let existing = group.page(identifier: "settings") as? SettingsPage
-		if existing == nil { leaveTerminalFullScreen() }
+		// Only a page being opened for the first time by somebody who asked
+		// gives the editor the window: a page already there is brought forward,
+		// and a restore asked for nothing.
+		if asked, existing == nil { leaveTerminalFullScreen() }
 		let page = existing ?? SettingsPage()
 		group.openPage(page, title: "Settings", identifier: "settings", symbol: "gearshape")
 		if let section = settingsSectionForTesting { page.show(named: section) }

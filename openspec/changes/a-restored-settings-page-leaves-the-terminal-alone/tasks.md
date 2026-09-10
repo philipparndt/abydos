@@ -1,6 +1,6 @@
 ## 1. Name it
 
-- [ ] 1.1 Ask the reporter which gesture "switching back" is — ⌘, or the gear,
+- [x] 1.1 Asked the reporter which gesture "switching back" is — ⌘, or the gear,
       a macOS Space, or another window of this app — and write the answer into
       the design. The run below fixes and measures the first; reactivating the
       window was measured not to move the panel.

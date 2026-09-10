@@ -39,7 +39,7 @@ extension MainWindowController {
 		bar.openLaunchConfigurationsPage = { [weak self] in
 			self?.run.showLaunchConfigurations()
 		}
-		bar.openSettingsPage = { [weak self] in self?.showSettingsPage(nil) }
+		bar.openSettingsPage = { [weak self] asked in self?.showSettingsPage(asked: asked) }
 		bar.relativePathOfActiveFile = { [weak self] in self?.relativePathOfActiveFile() }
 		bar.symbols = { [weak self] query, scope in
 			await self?.serverActions.symbols(matching: query, scope: scope) ?? []

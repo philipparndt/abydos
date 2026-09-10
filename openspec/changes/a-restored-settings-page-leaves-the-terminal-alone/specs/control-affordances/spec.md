@@ -27,6 +27,13 @@ first opening should.
 - **WHEN** ⌘, is pressed
 - **THEN** the terminal leaves full screen and the page is visible
 
+#### Scenario: a page restored with a project it followed the terminal into
+
+- **GIVEN** the terminal maximised with the settings page open, and a window
+  that follows its terminal into another project and back
+- **WHEN** the project's pages are restored on the way back
+- **THEN** the settings page comes back and the terminal is still maximised
+
 #### Scenario: a driven run
 
 - **GIVEN** a driven run with the settings page open and the panel maximised

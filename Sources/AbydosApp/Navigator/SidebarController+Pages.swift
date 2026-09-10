@@ -179,7 +179,7 @@ extension SidebarController {
 			// existed and was unmet rather than a new one.
 			openLaunchConfigurationsPage()
 		case "settings":
-			openSettingsPage()
+			openSettingsPage(false)
 		default:
 			// A compare page carries its two sides in its identifier; a side
 			// that is gone is the page's own to say.
