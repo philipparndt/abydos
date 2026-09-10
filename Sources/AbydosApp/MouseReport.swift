@@ -28,4 +28,19 @@ enum MouseReport {
 			+ (tracking.map { " tracking=\($0)" } ?? ""))
 		fflush(stdout)
 	}
+
+	/// One line per wheel event, saying what arrived and what the terminal made
+	/// of it. A trackpad and a wheel raise events of different shapes — a
+	/// hundred small precise ones a second against one a notch — and which
+	/// shape a run received is the first question when it scrolled too far, or
+	/// not at all.
+	static func wheel(_ event: NSEvent, steps: Int, forTheProgram: Bool) {
+		guard isOn else { return }
+		print(String(
+			format: "WHEEL dy=%.2f precise=%@ phase=%d momentum=%d steps=%d program=%@",
+			event.scrollingDeltaY, event.hasPreciseScrollingDeltas ? "yes" : "no",
+			event.phase.rawValue, event.momentumPhase.rawValue, steps,
+			forTheProgram ? "yes" : "no"))
+		fflush(stdout)
+	}
 }

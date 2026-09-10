@@ -348,6 +348,21 @@ extension TerminalView {
 			clear()
 			return
 		}
+		// ⇧⇞, ⇧⇟, ⇧Home and ⇧End read history, on the screen that has some. On
+		// the alternate screen the key is the program's as it always was; a
+		// trackpad was the only way through a build log before this, and on a
+		// trackpad the wheel was the complaint.
+		if !emulator.isAlternateScreen,
+		   let motion = TerminalKeys.scrollbackMotion(
+			keyCode: event.keyCode,
+			shift: event.modifierFlags.contains(.shift),
+			control: event.modifierFlags.contains(.control),
+			option: event.modifierFlags.contains(.option),
+			command: event.modifierFlags.contains(.command)
+		   ) {
+			scrollHistory(motion)
+			return
+		}
 		// A dead key or an input method has to compose before there is anything
 		// to send. `^` and `` ` `` on a German layout could not be typed at all
 		// while every event was encoded here: they carry no character of their

@@ -92,6 +92,9 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Follows output unless the user scrolls up to read history.
 	var isPinnedToBottom = true
+	/// Points a trackpad has moved that are not yet a whole line for the
+	/// program. See `WheelSteps` for why a wheel and a trackpad differ.
+	var wheelSteps = WheelSteps()
 
 	/// Highlighted while files are held over the view.
 	var isDropTarget = false

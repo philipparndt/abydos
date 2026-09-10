@@ -128,6 +128,39 @@ public enum TerminalKeys {
 		return "\u{1B}[Z"
 	}
 
+	/// Where a key moves the pane's own history, or nil when it is the program's.
+	///
+	/// There were no such keys: Page Up, Page Down, Home and End all reached the
+	/// program, so the only way through a long build log was the wheel — and on
+	/// a trackpad the wheel was the complaint (reported 2026-09-10). Shift plus
+	/// the four is the convention of kitty, Alacritty, GNOME Terminal and
+	/// iTerm2. The unshifted keys stay the program's, because `less`, `vim` and
+	/// an agent's own history page on them; and any modifier beside Shift makes
+	/// a chord that is somebody else's.
+	///
+	/// The view asks only on the normal screen. On the alternate screen there is
+	/// no history to move through, and the shifted key reaches the program as it
+	/// always has.
+	public enum ScrollbackMotion: Equatable, Sendable {
+		case pageUp
+		case pageDown
+		case top
+		case bottom
+	}
+
+	public static func scrollbackMotion(
+		keyCode: UInt16, shift: Bool, control: Bool, option: Bool, command: Bool
+	) -> ScrollbackMotion? {
+		guard shift, !control, !option, !command else { return nil }
+		switch Key(rawValue: keyCode) {
+		case .pageUp: return .pageUp
+		case .pageDown: return .pageDown
+		case .home: return .top
+		case .end: return .bottom
+		default: return nil
+		}
+	}
+
 	/// What a modified navigation key sends, or nil when the key has no special
 	/// meaning with that modifier.
 	///

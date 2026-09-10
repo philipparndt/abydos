@@ -208,6 +208,29 @@ extension TerminalView {
 		scrollView.reflectScrolledClipView(scrollView.contentView)
 	}
 
+	/// Moves the view through history by a page or to an end.
+	///
+	/// A page is the pane less one row, so the row at the bottom of one page is
+	/// at the top of the next and nothing is skipped past — the overlap `less`
+	/// keeps. The pin is not set here: the bounds-change notification works
+	/// `isPinnedToBottom` out from where the clip view lands, so ⇧End pins and
+	/// ⇧⇞ unpins the way a drag of the scroller does.
+	func scrollHistory(_ motion: TerminalKeys.ScrollbackMotion) {
+		guard let scrollView = enclosingScrollView else { return }
+		let clip = scrollView.contentView
+		let maxY = max(0, frame.height - scrollView.contentSize.height)
+		let page = max(cellHeight, scrollView.contentSize.height - cellHeight)
+		let y: CGFloat
+		switch motion {
+		case .pageUp: y = clip.bounds.origin.y - page
+		case .pageDown: y = clip.bounds.origin.y + page
+		case .top: y = 0
+		case .bottom: y = maxY
+		}
+		clip.scroll(to: NSPoint(x: 0, y: min(maxY, max(0, y))))
+		scrollView.reflectScrolledClipView(clip)
+	}
+
 	/// Called by the container when the clip view's bounds change.
 	func viewportChanged() {
 		guard let scrollView = enclosingScrollView else {

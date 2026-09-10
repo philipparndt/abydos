@@ -491,12 +491,35 @@ extension TerminalView {
 	}
 
 	override func scrollWheel(with event: NSEvent) {
+		// Shift and the wheel is history even over a program tracking the
+		// mouse, which is how every terminal lets somebody read past a TUI.
+		let forTheProgram = (emulator.mouseTracking != .off && !event.modifierFlags.contains(.shift))
+			|| emulator.isAlternateScreen
+		guard forTheProgram else {
+			MouseReport.wheel(event, steps: 0, forTheProgram: false)
+			super.scrollWheel(with: event)
+			return
+		}
+
+		// One formula for a wheel and another for a trackpad, because they raise
+		// events of different shapes: a notch is whole on its own, and a
+		// trackpad's hundred events a second are added up into cells. Before
+		// `WheelSteps` every trackpad event was at least a line, and a slow drag
+		// of one cell moved ten of them (reported 2026-09-10).
+		if event.phase == .began { wheelSteps.reset() }
+		let steps = wheelSteps.take(
+			delta: event.scrollingDeltaY,
+			precise: event.hasPreciseScrollingDeltas,
+			cellHeight: cellHeight
+		)
+		MouseReport.wheel(event, steps: steps, forTheProgram: true)
+		guard steps != 0 else { return }
+
 		// A program tracking the mouse gets wheel events as button 64/65.
 		if emulator.mouseTracking != .off, !event.modifierFlags.contains(.shift) {
-			let steps = max(1, min(5, Int(abs(event.scrollingDeltaY) / max(1, cellHeight)) + 1))
-			let button: TerminalEmulator.MouseButton = event.scrollingDeltaY > 0 ? .scrollUp : .scrollDown
-            let position = gridPosition(for: event)
-			for _ in 0..<steps {
+			let button: TerminalEmulator.MouseButton = steps > 0 ? .scrollUp : .scrollDown
+			let position = gridPosition(for: event)
+			for _ in 0..<abs(steps) {
 				if let sequence = emulator.encodeMouse(
 					button: button,
 					row: position.row,
@@ -515,13 +538,7 @@ extension TerminalView {
 
 		// On the alternate screen there is no scrollback to move through, so the
 		// wheel drives the program's own cursor instead of doing nothing.
-		if emulator.isAlternateScreen {
-			let steps = max(1, min(5, Int(abs(event.scrollingDeltaY) / max(1, cellHeight)) + 1))
-			let key: TerminalEmulator.ArrowKey = event.scrollingDeltaY > 0 ? .up : .down
-			pty.write(String(repeating: emulator.encodeArrow(key), count: steps))
-			return
-		}
-
-		super.scrollWheel(with: event)
+		let key: TerminalEmulator.ArrowKey = steps > 0 ? .up : .down
+		pty.write(String(repeating: emulator.encodeArrow(key), count: abs(steps)))
 	}
 }
