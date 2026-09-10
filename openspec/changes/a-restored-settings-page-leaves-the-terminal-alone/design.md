@@ -62,6 +62,16 @@ visible after the open exactly when it was visible before.
 **A driving step that opens the settings again**, `--settings-again <seconds>`,
 so the claim is two `PANEL` lines: maximised before, maximised after.
 
+## What the fix measured, 2026-09-10
+
+`--settings-again 6` on a scratch project, the panel maximised at three:
+
+| Run | before the second ⌘, | after |
+| --- | --- | --- |
+| before the fix, page already open | maximised | **not maximised** |
+| after the fix, page already open | maximised | maximised |
+| after the fix, no page yet | maximised | not maximised — the first opening, as it should |
+
 ## Release note
 
 > **Getting back to the settings page leaves the terminal alone.** Opening the

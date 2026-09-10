@@ -29,6 +29,15 @@ extension AppDelegate {
 			}
 		}
 
+		if let at = options.settingsAgainAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("PANEL: before settings again maximized=\(controller?.isPanelMaximized == true)")
+				controller?.showSettingsPage(nil)
+				print("PANEL: after settings again maximized=\(controller?.isPanelMaximized == true)")
+				fflush(stdout)
+			}
+		}
+
 		if let at = options.panelMaximizeAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				controller?.togglePanelMaximized(nil)

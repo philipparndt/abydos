@@ -709,9 +709,18 @@ extension MainWindowController {
 	/// A page rather than a window: a setting is judged by what it does to the
 	/// thing beside it, and a preferences window covers exactly that.
 	@objc func showSettingsPage(_ sender: Any?) {
-		leaveTerminalFullScreen()
 		guard let group = editor.activeGroup else { return }
-		let page = (group.page(identifier: "settings") as? SettingsPage) ?? SettingsPage()
+		// **Opening a page that is already open is not an opening.** Full screen
+		// is left only when the page has to be made: a page opened behind a
+		// terminal that has the whole window is a page nobody can see, and
+		// that is right the first time. Every time after, ⌘, or the gear was
+		// returning to a page already in the group — `openPage` brings it
+		// forward and opens nothing — and the terminal somebody had maximised
+		// over it was un-maximised under them. Reported 2026-09-10; driven,
+		// `maximized=true` then `false` across the second ⌘,.
+		let existing = group.page(identifier: "settings") as? SettingsPage
+		if existing == nil { leaveTerminalFullScreen() }
+		let page = existing ?? SettingsPage()
 		group.openPage(page, title: "Settings", identifier: "settings", symbol: "gearshape")
 		if let section = settingsSectionForTesting { page.show(named: section) }
 		if let folded = settingsFoldForTesting { page.toggleFold(named: folded) }

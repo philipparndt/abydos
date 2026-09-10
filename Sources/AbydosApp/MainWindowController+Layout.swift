@@ -784,7 +784,10 @@ extension MainWindowController {
 		reviewing.notify = { title, body in Toast.post(title, detail: body) }
 		reviewing.openPage = { [weak self] page, title, identifier, symbol in
 			guard let self, let group = self.editor.activeGroup else { return }
-			self.leaveTerminalFullScreen()
+			// The same rule the settings page keeps: a page already in the
+			// group is brought forward, not opened, and the terminal is left
+			// where the reader had it.
+			if group.page(identifier: identifier) == nil { self.leaveTerminalFullScreen() }
 			group.openPage(page, title: title, identifier: identifier, symbol: symbol)
 			self.giveTheEditorTheWindow()
 		}

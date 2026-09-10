@@ -245,6 +245,7 @@ extension LaunchOptions {
 				if let row = Int(parts.first ?? "") {
 					options.terminalPairs = (row, parts.count > 1 ? Double(parts[1]) ?? 7 : 7)
 				}
+			case "--settings-again": options.settingsAgainAt = next().flatMap(Double.init) ?? 6
 			case "--terminal-screen-at":
 				options.terminalScreenAt = (next() ?? "5").split(separator: ",").compactMap { Double($0) }
 			case "--tip-report":

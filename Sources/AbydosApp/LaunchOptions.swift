@@ -508,6 +508,11 @@ struct LaunchOptions {
 	/// the question a picture cannot settle: which row a line landed on, and
 	/// whether what was above it went into history or under it.
 	var terminalScreenAt: [Double] = []
+	/// `--settings-again <seconds>`: the settings page opened once more at that
+	/// moment, as ⌘, does with the page already open, with the panel's
+	/// maximised state printed before and after — the claim that returning to
+	/// a page leaves the terminal alone is those two lines agreeing.
+	var settingsAgainAt: Double?
 	/// `--terminal-pairs <row>[@<seconds>]`: every run of cells on that row with
 	/// the colours the renderer resolves them to, drawn, and the contrast ratio
 	/// of each pair — so what a program painted is a number and not a picture.
