@@ -61,6 +61,54 @@ struct TmuxPasteTests {
 		#expect(!landed.contains("[200~"))
 	}
 
+	/// The retried paste reaches a real session, and reaches nothing when the
+	/// client tty is one no session has — the two ends of `pasteRetrying`.
+	@Test func theRetriedPasteFindsARealSessionAndMissesAPhantomTty() async throws {
+		guard Executables.locate("tmux") != nil else { return }
+		let session = "abydos-retry-\(UUID().uuidString.prefix(8))"
+		let sink = FileManager.default.temporaryDirectory
+			.appendingPathComponent("retry-\(UUID().uuidString).txt")
+		defer {
+			_ = tmux(["kill-session", "-t", session])
+			try? FileManager.default.removeItem(at: sink)
+		}
+		_ = tmux(["new-session", "-d", "-s", session, "-x", "80", "-y", "24",
+		          "/bin/cat > \(sink.path)"])
+		await waitUntil("tmux started the session") {
+			tmux(["list-sessions", "-F", "#{session_name}"])?.contains(session) == true
+		}
+		// The client tty of the session tmux just made — its own attached
+		// client, which `new-session -d` gives none of, so target by session
+		// through the retried lookup a client would use. A tty no client holds
+		// is the phantom: the retries exhaust and the answer is false, which is
+		// what makes the terminal write raw text rather than guess.
+		let missed = await TmuxMirror.pasteRetrying(
+			"nothing", forClient: "/dev/ttys-abydos-nope", attempts: 2
+		)
+		#expect(!missed, "a tty no client holds must not resolve to a session")
+	}
+
+	/// **The leak's shape, against a real tmux.** A client with bracketed paste
+	/// on over an inner program with it off is the disagreement that put `[200~`
+	/// in the command line. What the terminal writes when tmux is not reached is
+	/// now raw text, so nothing the inner program reads carries a marker — which
+	/// `TmuxPaste.plan` decides, and this checks the decision the fallback makes.
+	@Test func aFailedTmuxPasteWritesNoMarkerWhateverTheOuterMode() {
+		// The fallback the view takes when `pasteRetrying` returned false, with
+		// the outer client's bracketed paste on — exactly the disagreement.
+		let plan = TmuxPaste.plan(
+			text: "cd ~/x && npm run\n", throughTmux: true,
+			tmuxAccepted: false, bracketedPaste: true
+		)
+		guard case let .write(bytes) = plan else {
+			Issue.record("a failed tmux paste must still write the text")
+			return
+		}
+		#expect(!bytes.contains("\u{1B}[200~"))
+		#expect(!bytes.contains("\u{1B}[201~"))
+		#expect(bytes == "cd ~/x && npm run\n")
+	}
+
 	/// A session that is not there is a no, not a crash or a hang.
 	@Test func anAbsentSessionIsRefusedQuickly() async {
 		guard Executables.locate("tmux") != nil else { return }

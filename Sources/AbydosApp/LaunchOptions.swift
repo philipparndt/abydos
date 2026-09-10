@@ -508,6 +508,10 @@ struct LaunchOptions {
 	/// the question a picture cannot settle: which row a line landed on, and
 	/// whether what was above it went into history or under it.
 	var terminalScreenAt: [Double] = []
+	/// `--paste-terminal <text>`: put the text on the clipboard and paste it
+	/// into the pane the way ⌘V does, so the tmux paste path is exercised end
+	/// to end and the pane can be read back for a leaked marker.
+	var pasteTerminal: String?
 	/// `--settings-again <seconds>`: the settings page opened once more at that
 	/// moment, as ⌘, does with the page already open, with the panel's
 	/// maximised state printed before and after — the claim that returning to

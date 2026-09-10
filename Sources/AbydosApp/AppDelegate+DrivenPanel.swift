@@ -780,6 +780,15 @@ extension AppDelegate {
 			}
 		}
 
+		if let text = options.pasteTerminal {
+			// After the shell is up, and before a screen report can read the row
+			// it lands on. \n is a real newline so a multi-line paste is one.
+			let decoded = text.replacingOccurrences(of: "\\n", with: "\n")
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.pasteIntoTerminalForTesting(decoded)
+			}
+		}
+
 		if let raw = options.terminalBytes {
 			// \e and \x01-style escapes, so a sequence can be given on the
 			// command line.

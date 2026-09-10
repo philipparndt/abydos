@@ -610,6 +610,16 @@ extension MainWindowController {
 		bottomPanel.showTerminal()?.terminalView.send(text)
 	}
 
+	/// Pastes text into the terminal the way ⌘V does, for `--paste-terminal`:
+	/// through the pasteboard and the view's own `paste`, so the tmux paste
+	/// path and its fallback are what a driven run exercises.
+	func pasteIntoTerminalForTesting(_ text: String) {
+		let pasteboard = NSPasteboard.general
+		pasteboard.clearContents()
+		pasteboard.setString(text, forType: .string)
+		bottomPanel.showTerminal()?.terminalView.paste(nil)
+	}
+
 	@objc func findInFile(_ sender: Any?) {
 		editor.showFind()
 	}

@@ -74,9 +74,16 @@ before the fix, could arrive with `[200~` and after it arrives clean because
 the fallback writes no markers. And the pure function is tested directly for the
 four cases, which is the claim that does not need a race to hold.
 
-## What was measured
+## What was measured, 2026-09-10
 
-*(the runs, once made)*
+`--paste-terminal 'cd ~/dev/screencasts && npm version 0.1.1 -w kit'` into a
+pane running `cat -v`, inside the app's own tmux. `cat -v` renders an escape as
+`^[`, so a leaked `^[[200~` would be on the screen; the pane read back exactly
+`cd ~/dev/screencasts && npm version 0.1.1 -w kit` and nothing else. The happy
+path is clean end to end. The fallback — the branch that used to leak — is
+covered by the pure function's four cases and by
+`aFailedTmuxPasteWritesNoMarkerWhateverTheOuterMode`, since forcing a live tmux
+to fail on demand is what a test of the decision replaces.
 
 ## Release note
 

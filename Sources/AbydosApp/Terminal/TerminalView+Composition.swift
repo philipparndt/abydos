@@ -42,26 +42,30 @@ extension TerminalView {
 		// the command line.
 		if let tty = pty.ttyName {
 			Task { @MainActor [weak self] in
-				if let session = await TmuxMirror.session(forClient: tty),
-				   await TmuxMirror.paste(text, intoSession: session) {
-					return
-				}
-				self?.sendPaste(text)
+				let took = await TmuxMirror.pasteRetrying(text, forClient: tty)
+				self?.putOnWire(text, throughTmux: true, tmuxTook: took)
 			}
 			return
 		}
-		sendPaste(text)
+		putOnWire(text, throughTmux: false, tmuxTook: false)
 	}
 
-	/// Types the text at the program, which is what a terminal does when there
-	/// is nothing in the way that knows better.
-	private func sendPaste(_ text: String) {
-		// The markers tell the program the text arrived at once, which stops
-		// shells from executing every pasted line as it lands.
-		if emulator.bracketedPaste {
-			pty.write("\u{1B}[200~" + text + "\u{1B}[201~")
-		} else {
-			pty.write(text)
+	/// Puts a paste on the wire by the rule `TmuxPaste.plan` decides.
+	///
+	/// **Never a bracketed-paste marker the inner program did not ask for.**
+	/// Through tmux the terminal's own mode is the outer client's and not the
+	/// program's, so a tmux paste that failed is written raw — the plan carries
+	/// the whole of why. A bare pane keeps its markers, where the emulator's
+	/// mode is the real one.
+	private func putOnWire(_ text: String, throughTmux: Bool, tmuxTook: Bool) {
+		switch TmuxPaste.plan(
+			text: text,
+			throughTmux: throughTmux,
+			tmuxAccepted: tmuxTook,
+			bracketedPaste: emulator.bracketedPaste
+		) {
+		case .tmuxTook: break
+		case let .write(bytes): pty.write(bytes)
 		}
 	}
 

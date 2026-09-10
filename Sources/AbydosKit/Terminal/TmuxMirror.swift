@@ -127,6 +127,34 @@ public enum TmuxMirror {
 		return await succeeds(["paste-buffer", "-d", "-p", "-b", buffer, "-t", "\(session):"])
 	}
 
+	/// Finds the pane's tmux session and hands tmux the paste, retried a bounded
+	/// few times before it is a no.
+	///
+	/// **A single miss must not decide a paste.** `session(forClient:)` and
+	/// `paste` are each a subprocess round-trip, and a momentary failure of
+	/// either — tmux busy, the client not listed for an instant — used to drop
+	/// the paste to a path that wrote bracketed-paste markers on a guess, which
+	/// is how `[200~` reached the command line (reported 2026-09-10). The
+	/// transient miss is answered by asking again; only a failure that outlasts
+	/// the retries is a real one, and the caller writes the text plainly then,
+	/// never with markers.
+	public static func pasteRetrying(
+		_ text: String, forClient tty: String, attempts: Int = 3
+	) async -> Bool {
+		for attempt in 0..<max(1, attempts) {
+			if let session = await session(forClient: tty),
+			   await paste(text, intoSession: session) {
+				return true
+			}
+			// A few milliseconds between tries: long enough for a busy server to
+			// answer the next one, short enough that a paste never feels held.
+			if attempt < attempts - 1 {
+				try? await Task.sleep(nanoseconds: 5_000_000)
+			}
+		}
+		return false
+	}
+
 	/// Puts text in a tmux buffer, by way of its standard input so that nothing
 	/// has to be quoted.
 	private static func load(
