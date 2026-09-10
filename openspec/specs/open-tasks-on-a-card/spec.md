@@ -6,14 +6,28 @@ TBD - created by archiving change a-ticked-task-can-be-unticked. Update Purpose 
 ### Requirement: A tick made on a card can be undone
 
 A task ticked from a card's tip SHALL be undoable from where it was ticked and
-from the keyboard. The row just ticked SHALL stay in the tip, drawn ticked and
-dimmed with *Undo* at its end, until the tip is next re-read or the pointer
-leaves; clicking it SHALL untick the same line. ⌘Z, and the Edit menu's *Undo
+from the keyboard. **Every** row ticked while the tip has been open SHALL stay
+in it, drawn ticked and dimmed with *Undo* at its end, each one clickable to
+untick that same line, in any order — not only the newest, which was the one
+tick a tip offered a way back on until 2026-09-10. A row SHALL keep the place
+its line gives it, so ticking one does not move the others. The ticks SHALL be
+forgotten when the tip closes, after which ⌘Z through the pane is the way back.
+
+*Undo* SHALL be drawn at the row's trailing edge, with the task's words
+wrapping short of it. Flowed after the words it was drawn nowhere on the rows
+that fill both their lines, which is most of them. ⌘Z, and the Edit menu's *Undo
 Tick*, SHALL untick the last tick this window made while the board or the tip
 has the keyboard. The untick SHALL be written the way the tick is: only when the
 line still reads as the ticked step with the same text, keeping every other byte,
 and refusing — writing nothing and re-reading the tip — when the line has moved
 on. Only ticks made in this window SHALL be undoable.
+
+#### Scenario: Several ticks, and the first one taken back
+
+- **GIVEN** a card's tip open, and two tasks ticked in it one after the other
+- **WHEN** *Undo* is clicked on the first of the two
+- **THEN** that line reads `[ ]` again and the second stays ticked, and both
+  rows had been offered a way back at once
 
 #### Scenario: A slipped click
 

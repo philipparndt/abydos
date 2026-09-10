@@ -85,11 +85,20 @@ final class TaskTip {
 	/// A tick that was written — which file, which line, which words — for the
 	/// pane to register with its undo manager, so ⌘Z can take it back.
 	var onTickWritten: ((URL, Int, String) -> Void)?
-	/// The last tick this tip made, while it is still on screen. It is the row
-	/// that stays, dimmed, with *Undo* at its end, and what `undoLast` takes
-	/// back. Forgotten when the tip goes: a tick undone from a tip that is not
+	/// The ticks this tip has made while it has been on screen, oldest first.
+	///
+	/// Each is a row that stays, dimmed, with *Undo* at its end. **Every one of
+	/// them, not only the newest**: a tip is where somebody ticks off several
+	/// things at once, and until this was a list the second tick took the first
+	/// one's way back off the screen, so the only tick undoable from the tip was
+	/// the last one made. Asked for 2026-09-10.
+	///
+	/// Forgotten when the tip goes: a tick undone from a tip that is not
 	/// showing is ⌘Z's, through the pane.
-	private var lastTick: (file: URL, line: Int, text: String)?
+	private var ticks: [(file: URL, line: Int, text: String)] = []
+
+	/// The newest of them, which is what ⌘Z and the driven `undo` take back.
+	private var lastTick: (file: URL, line: Int, text: String)? { ticks.last }
 
 	private init() {}
 
@@ -114,10 +123,19 @@ final class TaskTip {
 		case nil:                  name = "none"
 		}
 		let frame = window?.frame ?? .zero
-		return "TIP showing=\(isShowing) card=\(name) pending=\(pending != nil)"
+		var out = "TIP showing=\(isShowing) card=\(name) pending=\(pending != nil)"
 			+ " grace=\(graceTimer != nil) wait=\(delayTimer != nil)"
 			+ String(format: " frame=%.0f,%.0f,%.0f,%.0f",
 				frame.minX, frame.minY, frame.width, frame.height)
+		// Every row's box, on the screen, so a run can press one without
+		// guessing where a row of two lines put the one after it.
+		for row in view?.rowRectsForTesting ?? [] {
+			let onScreen = window?.convertToScreen(row.rect) ?? .zero
+			out += String(format: "\nTIPROW %d ticked=%@ box=%.0f,%.0f",
+				row.index, row.ticked ? "yes" : "no",
+				onScreen.minX + Theme.current.scaled(20), onScreen.midY)
+		}
+		return out
 	}
 
 	// MARK: - The pointer
@@ -256,21 +274,21 @@ final class TaskTip {
 		// be a second answer, from a walk that may be a tick behind.
 		let markdown = (try? String(contentsOf: entry.checklistFile, encoding: .utf8)) ?? ""
 		let steps = BacklogItem.openSteps(in: markdown)
-		// The row just ticked stays, if the file still has it ticked with the
-		// same words: that is the row *Undo* is offered on. A file that has moved
-		// on since — an agent rewrote it — offers nothing to undo, which is what
-		// the write itself would decide.
-		let undo = lastTick.flatMap { last -> BacklogItem.OpenStep? in
-			guard last.file == entry.checklistFile,
-			      BacklogItem.unticking(line: last.line, text: last.text, in: markdown) != nil
+		// The rows ticked from this tip stay, each one that the file still has
+		// ticked with the same words: those are the rows *Undo* is offered on. A
+		// file that has moved on since — an agent rewrote it — offers nothing to
+		// undo for that row, which is what the write itself would decide.
+		let undo = ticks.compactMap { tick -> BacklogItem.OpenStep? in
+			guard tick.file == entry.checklistFile,
+			      BacklogItem.unticking(line: tick.line, text: tick.text, in: markdown) != nil
 			else { return nil }
-			return BacklogItem.OpenStep(line: last.line, text: last.text)
+			return BacklogItem.OpenStep(line: tick.line, text: tick.text)
 		}
 		// Nothing left open closes it — which is what ticking the last task
 		// does — unless there is a sentence to say, and the sentence that gets
 		// here is a file that could not be read at all. A row to undo counts as
 		// something left: ticking the last task is the tick most worth a way back.
-		guard !steps.isEmpty || undo != nil || said != nil else { return hide() }
+		guard !steps.isEmpty || !undo.isEmpty || said != nil else { return hide() }
 
 		let window = self.window ?? makeWindow()
 		self.window = window
@@ -315,6 +333,12 @@ final class TaskTip {
 		entry = nil
 		host = nil
 		view?.said = nil
+		// The ticks this tip offered a way back on go with it, which is what
+		// its own comment always claimed and nothing did: they were kept, so a
+		// tip opened later on the same file drew *Undo* on a row somebody had
+		// ticked minutes ago and forgotten. Once the tip is gone, ⌘Z through
+		// the pane is the way back.
+		ticks = []
 		stopWatchingForAClickElsewhere()
 		guard let window, window.isVisible else { return }
 		window.parent?.removeChildWindow(window)
@@ -333,7 +357,7 @@ final class TaskTip {
 	fileprivate func tick(row: Int) -> String {
 		guard let entry, let step = view?.step(at: row) else { return "no row \(row)" }
 		// The dimmed row with *Undo* on it: the click takes the tick back.
-		if view?.undoRow == row { return undoLast() }
+		if view?.undoRows.contains(row) == true { return untick(step) }
 		let file = entry.checklistFile
 		do {
 			guard try BacklogItem.tick(line: step.line, in: file) else {
@@ -342,7 +366,7 @@ final class TaskTip {
 				show(saying: "That task has moved. This is the list as the file has it now.")
 				return "refused, and the list was read again"
 			}
-			lastTick = (file, step.line, step.text)
+			ticks.append((file, step.line, step.text))
 			onTickWritten?(file, step.line, step.text)
 			onTicked?()
 			// Re-read at once rather than waiting for the walk to come back off
@@ -359,26 +383,42 @@ final class TaskTip {
 		}
 	}
 
-	/// Takes the last tick back, the way it was made: only if the line still
-	/// reads as that ticked step, byte for byte otherwise, refused and re-read
-	/// when the file has moved on.
+	/// Takes one tick back, the way it was made: only if the line still reads as
+	/// that ticked step, byte for byte otherwise, refused and re-read when the
+	/// file has moved on.
+	///
+	/// The row is named rather than assumed to be the newest, because every row
+	/// ticked from this tip carries its own *Undo* and they can be pressed in
+	/// any order.
 	@discardableResult
-	fileprivate func undoLast() -> String {
-		guard let last = lastTick else { return "nothing to undo" }
+	private func untick(_ step: BacklogItem.OpenStep) -> String {
+		guard let tick = ticks.last(where: { $0.line == step.line && $0.text == step.text })
+		else { return "nothing to undo" }
 		do {
-			guard try BacklogItem.untick(line: last.line, text: last.text, in: last.file) else {
-				lastTick = nil
+			guard try BacklogItem.untick(line: tick.line, text: tick.text, in: tick.file) else {
+				forget(tick)
 				show(saying: "That task has moved. This is the list as the file has it now.")
 				return "refused, and the list was read again"
 			}
-			lastTick = nil
+			forget(tick)
 			onTicked?()
 			show()
-			return "unticked \(last.text)"
+			return "unticked \(tick.text)"
 		} catch {
-			show(saying: "Could not write \(last.file.path)")
-			return "could not write \(last.file.path)"
+			show(saying: "Could not write \(tick.file.path)")
+			return "could not write \(tick.file.path)"
 		}
+	}
+
+	private func forget(_ tick: (file: URL, line: Int, text: String)) {
+		ticks.removeAll { $0.file == tick.file && $0.line == tick.line && $0.text == tick.text }
+	}
+
+	/// What ⌘Z reaches: the newest tick this tip made.
+	@discardableResult
+	fileprivate func undoLast() -> String {
+		guard let last = lastTick else { return "nothing to undo" }
+		return untick(BacklogItem.OpenStep(line: last.line, text: last.text))
 	}
 
 	// MARK: - What closes it from outside
@@ -493,9 +533,12 @@ final class TaskTip {
 	func showNowForTesting(_ entry: BoardEntry, at rect: NSRect, of host: NSView, colour: NSColor) {
 		hide()
 		pending = entry
-		self.host = host
-		cardRect = rect
-		self.colour = colour
+		// The *pending* anchor, because that is the one `open` promotes. Set on
+		// the shown one instead, this opened nothing at all: `open` found no
+		// card waiting and returned, and every driven verb that goes through
+		// here — the tip's report, its tick, its picture — said the tip was not
+		// up. Caught by driving them; there is no test target for this layer.
+		rememberPending(rect, of: host, colour: colour)
 		open()
 	}
 }
@@ -531,7 +574,9 @@ private final class TaskTipView: NSView {
 	/// The row that was just ticked and stays with *Undo* on it, by its place in
 	/// `steps`, or nil. It sits where the task sits in the file, among the open
 	/// ones, so the list does not reorder under the pointer.
-	private(set) var undoRow: Int?
+	/// The rows drawn ticked, with *Undo* at their end — one per tick this tip
+	/// has made and the file still has.
+	private(set) var undoRows: Set<Int> = []
 
 	private var tableView: NSTableView!
 	private var scrollView: NSScrollView!
@@ -641,20 +686,37 @@ private final class TaskTipView: NSView {
 		onClick?(tableView.clickedRow)
 	}
 
-	func put(steps: [BacklogItem.OpenStep], of total: Int, saying said: String?, undo: BacklogItem.OpenStep? = nil) {
+	func put(steps: [BacklogItem.OpenStep], of total: Int, saying said: String?,
+	         undo: [BacklogItem.OpenStep] = []) {
+		// Each ticked row goes back where its line puts it, so the list stays in
+		// the file's order and a row does not move as its neighbours are ticked.
 		var rows = steps
-		undoRow = nil
-		if let undo {
-			let place = rows.firstIndex { $0.line > undo.line } ?? rows.count
-			rows.insert(undo, at: place)
-			undoRow = place
+		for one in undo.sorted(by: { $0.line < $1.line }) {
+			let place = rows.firstIndex { $0.line > one.line } ?? rows.count
+			rows.insert(one, at: place)
 		}
+		undoRows = Set(rows.indices.filter { index in
+			undo.contains { $0.line == rows[index].line && $0.text == rows[index].text }
+		})
 		self.steps = rows
 		self.total = max(total, steps.count)
 		self.said = said
 		hovered = -1
 		tableView.reloadData()
 		needsDisplay = true
+	}
+
+	/// Each row's rectangle in the tip's own window, and whether it is one of
+	/// the ticked ones — for a run that presses a box from outside.
+	/// In the window's coordinates, ready for `convertToScreen`. A rect in this
+	/// view's own coordinates handed straight to the window converts a flipped
+	/// y as though it were not one, and the rows come back in the wrong order
+	/// and the wrong places.
+	var rowRectsForTesting: [(index: Int, rect: NSRect, ticked: Bool)] {
+		steps.indices.map { row in
+			let inView = convert(tableView.rect(ofRow: row), from: tableView)
+			return (row, convert(inView, to: nil), undoRows.contains(row))
+		}
 	}
 
 	func step(at row: Int) -> BacklogItem.OpenStep? {
@@ -668,7 +730,7 @@ private final class TaskTipView: NSView {
 
 	// MARK: What it measures
 
-	private var heading: String { "\(steps.count - (undoRow == nil ? 0 : 1)) open of \(total)" }
+	private var heading: String { "\(steps.count - undoRows.count) open of \(total)" }
 
 	private var headingHeight: CGFloat {
 		ceil(headingFont.ascender - headingFont.descender + headingFont.leading)
@@ -686,7 +748,10 @@ private final class TaskTipView: NSView {
 	/// them, and never three.
 	func height(of row: Int) -> CGFloat {
 		guard let step = step(at: row) else { return 0 }
-		let room = widest - inset * 2 - boxRoom
+		var room = widest - inset * 2 - boxRoom
+		if undoRows.contains(row) {
+			room -= Self.undoWords(colour: colour).size().width + Theme.current.scaled(8)
+		}
 		let oneLine = ceil(rowFont.ascender - rowFont.descender + rowFont.leading)
 		let wanted = ceil(words(step.text).boundingRect(
 			with: NSSize(width: room, height: .greatestFiniteMagnitude),
@@ -746,14 +811,22 @@ private final class TaskTipView: NSView {
 				.paragraphStyle: paragraph,
 			]))
 		}
-		if ticked {
-			line.append(NSAttributedString(string: "  Undo", attributes: [
-				.font: Theme.current.uiFont(11, weight: .semibold),
-				.foregroundColor: colour,
-				.paragraphStyle: paragraph,
-			]))
-		}
 		return line
+	}
+
+	/// The word at the end of a ticked row, drawn on its own.
+	///
+	/// **Not appended to the words any more.** A row is two lines at most and a
+	/// task's first two lines routinely fill them, so *Undo* flowed past the
+	/// bottom of its own row and was drawn nowhere: the one row in the list
+	/// whose action is not the obvious one was the one that could not say so.
+	/// Drawn against the trailing edge instead, with the words given the room
+	/// that is left.
+	static func undoWords(colour: NSColor) -> NSAttributedString {
+		NSAttributedString(string: "Undo", attributes: [
+			.font: Theme.current.uiFont(11, weight: .semibold),
+			.foregroundColor: colour,
+		])
 	}
 
 	/// The same face, slanted.
@@ -820,7 +893,7 @@ extension TaskTipView: NSTableViewDataSource, NSTableViewDelegate {
 
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
 		let view = TaskRowView()
-		view.isTicked = row == undoRow
+		view.isTicked = undoRows.contains(row)
 		view.words = words(steps[row].text, ticked: view.isTicked)
 		view.colour = colour
 		view.isUnderThePointer = row == hovered
@@ -894,11 +967,22 @@ private final class TaskRowView: NSView {
 		shape.stroke()
 
 		guard let words else { return }
+		// A ticked row keeps the trailing edge for *Undo*, so the words wrap
+		// short of it rather than under it.
+		let undo = isTicked ? TaskTipView.undoWords(colour: colour) : nil
+		let undoWidth = undo.map { $0.size().width + gap } ?? 0
 		words.draw(with: NSRect(
 			x: box.maxX + gap,
 			y: inset,
-			width: max(0, bounds.width - box.maxX - gap - inset),
+			width: max(0, bounds.width - box.maxX - gap - inset - undoWidth),
 			height: bounds.height - inset * 2
 		), options: [.usesLineFragmentOrigin, .usesFontLeading])
+		if let undo {
+			let size = undo.size()
+			undo.draw(at: NSPoint(
+				x: bounds.maxX - inset - size.width,
+				y: (bounds.height - size.height) / 2
+			))
+		}
 	}
 }
