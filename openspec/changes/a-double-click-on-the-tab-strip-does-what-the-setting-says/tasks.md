@@ -18,7 +18,11 @@
 
 - [x] 3.1 A `.choice` in `SettingsPaneController.editorRows`: *Double-click on
       the tab strip*, the three options worded as what they do, help naming
-      where the other two remain reachable.
+      where the other two remain reachable. **First landed on the Terminal
+      page**: the edit anchored on the first `sections` array after
+      `editorRows`, which is `terminalRows`'s, and the maintainer saw it there.
+      Moved; `--settings-says` now answers `Editor ▸ Double-click on the tab
+      strip` and finds no such row on Terminal.
 
 ## 4. Driving and proving it
 

@@ -139,6 +139,15 @@ extension SettingsPaneController {
 				get: { Settings.shared.showsInlineDiagnostics },
 				set: { Settings.shared.showsInlineDiagnostics = $0 }
 			),
+			.choice(
+				title: "Double-click on the tab strip",
+				help: "What a double-click on the empty part of the tab strip does. The other "
+					+ "two are always in the strip's menu, and the button beside it expands "
+					+ "the editor whatever this says.",
+				options: TabStripDoubleClick.allCases.map { ($0.label, $0.rawValue) },
+				get: { Settings.shared.tabStripDoubleClick.rawValue },
+				set: { Settings.shared.tabStripDoubleClick = TabStripDoubleClick(rawValue: $0) ?? .default }
+			),
 		]
 	}
 
@@ -148,17 +157,6 @@ extension SettingsPaneController {
 		// what it does when a window opens, and the tmux switches that only
 		// mean anything together.
 		var sections: [Row] = [
-			.group(title: "Tab strip", help: nil, rows: [
-				.choice(
-					title: "Double-click on the tab strip",
-					help: "What a double-click on the empty part of the strip does. The other "
-						+ "two are always in the strip's menu, and the button beside it expands "
-						+ "the editor whatever this says.",
-					options: TabStripDoubleClick.allCases.map { ($0.label, $0.rawValue) },
-					get: { Settings.shared.tabStripDoubleClick.rawValue },
-					set: { Settings.shared.tabStripDoubleClick = TabStripDoubleClick(rawValue: $0) ?? .default }
-				),
-			]),
 			.group(title: "Bell and keys", help: "Colours and fonts are on the Appearance page.", rows: [
 				.choice(
 					title: "Terminal bell",
