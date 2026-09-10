@@ -185,9 +185,19 @@ extension EditorTabBar {
 		}
 
 		guard let index = index(at: point) else {
-			// Double-clicking the empty part of the strip opens a scratch, the
-			// way it does in the editors people arrive from.
-			if event.clickCount == 2 { onNewScratch?() }
+			// Double-clicking the empty part of the strip does what the setting
+			// says. It opened a scratch, the way one family of editors does; in
+			// the other the same gesture maximises the editor, and the strip
+			// has room for one of them — so it is chosen, with expanding as the
+			// default, since 2026-09-10. The decision is made here, in one
+			// switch, so a test of the mapping is a test of the strip.
+			if event.clickCount == 2 {
+				switch Settings.shared.tabStripDoubleClick {
+				case .maximize:      onMaximize?()
+				case .localScratch:  onNewScratch?()
+				case .globalScratch: onNewGlobalScratch?()
+				}
+			}
 			return
 		}
 

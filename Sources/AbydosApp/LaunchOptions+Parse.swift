@@ -66,7 +66,10 @@ extension LaunchOptions {
 			case "--terminal":   options.openTerminal = true
 			case "--run":        if let line = next() { options.terminalInput.append(line) }
 			case "--select":     if let drag = next() { options.terminalSelections.append(drag) }
-			case "--tab-double": options.tabDoubleClicks.append(next().flatMap(Int.init) ?? 0)
+			case "--tab-double":
+				// A tab by index, or `empty` for the strip's empty part.
+				let said = next() ?? "0"
+				options.tabDoubleClicks.append(said == "empty" ? -1 : Int(said) ?? 0)
 			case "--quick-look": options.quickLook = true
 			case "--review":     options.startReview = true
 			case "--backlog":

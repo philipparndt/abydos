@@ -101,6 +101,9 @@ public final class Settings {
 			Key.terminalGPURendering: true,
 			Key.terminalGhosttyEngine: false,
 			Key.terminalOptionAsMeta: false,
+			// Expanding, which is what the maintainer reaches for; the scratch
+			// this used to open is one of the other two values.
+			Key.tabStripDoubleClick: TabStripDoubleClick.default.rawValue,
 			// The Abydos scheme, not the blue one this app started with.
 			//
 			// A registered default rather than a stored value, so this reaches
@@ -170,6 +173,7 @@ public final class Settings {
 		static let terminalGPURendering = "terminalGPURendering"
 		static let terminalGhosttyEngine = "terminalGhosttyEngine"
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
+		static let tabStripDoubleClick = "tabStripDoubleClick"
 		static let toolImages = "toolImages"
 		static let languageServers = "languageServers"
 		static let serverCommands = "serverCommands"
@@ -444,6 +448,16 @@ public final class Settings {
 	///
 	/// Its own setting rather than the editor's theme: a terminal's palette is
 	/// a language of its own, and people arrive with one they already know.
+	/// What a double-click on the empty part of the editor's tab strip does.
+	/// A stored value this build does not know reads as the default.
+	public var tabStripDoubleClick: TabStripDoubleClick {
+		get {
+			defaults.string(forKey: Key.tabStripDoubleClick)
+				.flatMap(TabStripDoubleClick.init(rawValue:)) ?? .default
+		}
+		set { set(newValue.rawValue, Key.tabStripDoubleClick) }
+	}
+
 	public var terminalScheme: String {
 		get { defaults.string(forKey: Key.terminalScheme) ?? Appearance.defaultTerminalSetting }
 		set { set(newValue, Key.terminalScheme) }

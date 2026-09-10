@@ -453,11 +453,23 @@ extension EditorTabBar: TabCloseHovering {
 	/// window, and a check that called either method directly could not be wrong
 	/// about which.
 	func doubleClickForTesting(index: Int) -> String {
-		guard frames.indices.contains(index), items.indices.contains(index) else {
-			return "no tab at \(index)"
+		// A negative index is the strip's empty part — `--tab-double empty` —
+		// which is where the setting decides what a double-click does. Just
+		// past the last tab, or the middle of an empty strip; short of the
+		// buttons at the trailing edge.
+		let centre: NSPoint
+		let was: String
+		if index < 0 {
+			let afterTabs = (frames.last?.maxX ?? 0) + Theme.current.scaled(30)
+			centre = NSPoint(x: min(afterTabs, bounds.midX), y: bounds.midY)
+			was = "the empty part of the strip (\(Settings.shared.tabStripDoubleClick.rawValue))"
+		} else {
+			guard frames.indices.contains(index), items.indices.contains(index) else {
+				return "no tab at \(index)"
+			}
+			was = items[index].isPreview ? "preview" : "permanent"
+			centre = NSPoint(x: frames[index].midX, y: frames[index].midY)
 		}
-		let was = items[index].isPreview ? "preview" : "permanent"
-		let centre = NSPoint(x: frames[index].midX, y: frames[index].midY)
 		guard let event = NSEvent.mouseEvent(
 			with: .leftMouseDown,
 			location: convert(centre, to: nil),
@@ -470,7 +482,7 @@ extension EditorTabBar: TabCloseHovering {
 			pressure: 1
 		) else { return "no event" }
 		mouseDown(with: event)
-		return "double-clicked a \(was) tab"
+		return index < 0 ? "double-clicked \(was)" : "double-clicked a \(was) tab"
 	}
 
 	func hoverCloseForTesting(_ index: Int?) -> String {

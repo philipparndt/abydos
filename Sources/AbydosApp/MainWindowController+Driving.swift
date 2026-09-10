@@ -126,7 +126,15 @@ extension MainWindowController {
 	/// Double-clicks a tab, and says what the window looks like afterwards.
 	func doubleClickTabForTesting(_ index: Int) -> String {
 		let took = editor.doubleClickTabForTesting(index: index)
-		return "\(took) — \(windowLayoutReportForTesting)"
+		// The active tab as well as the layout: a scratch shows up as a tab and
+		// the maximise shows up as the layout, and one line has to say which
+		// of the three things happened.
+		let active = editor.activeGroup?.tabTitlesForTesting.last ?? "none"
+		// And where it is: a scratch in the project and a global one share a
+		// name, and the directory is the whole difference between two of the
+		// setting's three values.
+		let path = editor.activeGroup?.activeTabURL?.path ?? "-"
+		return "\(took) — \(windowLayoutReportForTesting) active=\(active) path=\(path)"
 	}
 
 	var windowLayoutReportForTesting: String {

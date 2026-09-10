@@ -57,9 +57,22 @@ gains `empty` for the strip's empty part, and prints what happened —
 `editorMaximized=` from the window's layout report, or the scratch that opened
 — so a run under each of the three values is three lines.
 
-## What was measured
+## What was measured, 2026-09-10
 
-*(the runs, once made)*
+`--tab-double empty` on a scratch project with one file open, the throwaway
+defaults domain seeded with each value in turn, twice under the default:
+
+| Setting | First double-click | Second |
+| --- | --- | --- |
+| `maximize` (default) | `editorMaximized=true`, navigator and panel hidden | `editorMaximized=false`, navigator 260pt, panel 247pt |
+| `localScratch` | `scratch-1.md` at `~/.config/ideai/scratch/<project hash>/` | `scratch-2.md`, same directory |
+| `globalScratch` | `scratch-3.md` at `~/.config/ideai/scratch/global/` | — |
+
+The two scratch values differ only in the directory, which is why the driven
+line prints the path and not the title alone. What those runs left behind was
+in the maintainer's own config and not in the scratch project — a scratch lives
+in `~/.config` — and was removed afterwards: three empty global scratches and
+the project-hash directory's marker.
 
 ## Release note
 
