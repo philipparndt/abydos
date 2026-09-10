@@ -680,14 +680,18 @@ extension TerminalView {
 			return backtab
 		}
 
-		// A program that asked to be told which key was pressed, rather than
-		// which byte it maps to, gets that first: Shift+Enter and Enter are one
-		// byte apart otherwise, and no program can tell them apart.
-		if let modified = modifiedKeySequence(for: event) { return modified }
-
-		// Shift+Return breaks the line as ⌥⏎ does, for a program that has not
-		// asked for the protocol above. `TerminalKeys.shiftReturnSequence` has
-		// the argument.
+		// Shift+Return breaks the line as ⌥⏎ does — **ahead of the protocols,
+		// not behind them.** It was behind, on the reasoning that a program
+		// which asked to be told which key was pressed should be told; and the
+		// program asking is usually tmux, on behalf of a pane that never asked.
+		// tmux with `extended-keys on` took the protocol form as Shift+Enter
+		// and handed the inner program the legacy form of that, which is a bare
+		// carriage return — so Shift+Return submitted an agent's half-written
+		// message while ⌥⏎ beside it broke the line, because tmux's legacy form
+		// of Alt+Enter is ESC CR. Reported 2026-09-10, twice. ESC CR is what
+		// every line editor and agent prompt reads as a newline, protocol or
+		// not, and it is what iTerm2's own Shift+Enter binding for these
+		// programs sends. `TerminalKeys.shiftReturnSequence` has the rest.
 		if let newline = TerminalKeys.shiftReturnSequence(
 			keyCode: event.keyCode,
 			shift: flags.contains(.shift),
@@ -697,6 +701,12 @@ extension TerminalView {
 		) {
 			return newline
 		}
+
+		// A program that asked to be told which key was pressed, rather than
+		// which byte it maps to, gets that: Shift+Enter aside, which has its
+		// one meaning above, the modified keys are one byte apart otherwise and
+		// no program can tell them apart.
+		if let modified = modifiedKeySequence(for: event) { return modified }
 
 		// Keys with a fixed sequence, and the Option-as-Meta rule that goes with
 		// them. Applied here rather than after the switch: returning early was

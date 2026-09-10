@@ -139,9 +139,15 @@ public enum TerminalKeys {
 	/// Shift+Return, found it submitted, and was told the app wanted Option.
 	/// Most terminals answer both; so does this one now.
 	///
-	/// Answered *after* the modified-key protocols: a program that asked to be
-	/// told which key was pressed gets `CSI 13;2u` for Shift+Return, which is
-	/// the same fact said the way it asked for it.
+	/// Answered *ahead of* the modified-key protocols, since 2026-09-10 the
+	/// second time. It was behind them, so a program that asked for the
+	/// protocol got `CSI 13;2u` — and the program asking is usually tmux with
+	/// `extended-keys on`, for a pane whose own program never asked; tmux then
+	/// hands that program the legacy Enter, a bare CR, and the message is
+	/// submitted. ESC CR reaches the newline in every prompt through tmux and
+	/// without it. What is given up: a program that both asked for the protocol
+	/// and tells Shift+Enter from Alt+Enter reads this as Alt+Enter, which in
+	/// every such program anybody here runs is the same newline.
 	///
 	/// Only Shift. ⌃⏎ is somebody else's chord, and ⌥⏎ goes through the meta
 	/// rule, which reaches the same bytes by its own reasoning.
