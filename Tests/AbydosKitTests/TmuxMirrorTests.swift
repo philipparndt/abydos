@@ -220,8 +220,11 @@ struct TmuxAttachTests {
 	/// turned it on. Without this, `abydos <file>` and `abydos-icat` do nothing
 	/// in the terminal this app starts — the one they are certain to be run in.
 	@Test func attachingAsksTheSessionToCarryEscapes() {
+		// `-T RGB` first: the client says outright that this terminal shows true
+		// colour, so tmux does not downgrade a program's 24-bit colours to the
+		// nearest of 256 on the way in (2026-09-10, the k9s row).
 		#expect(TmuxMirror.attachArguments(to: "abydos") == [
-			"new", "-A", "-s", "abydos",
+			"-T", "RGB", "new", "-A", "-s", "abydos",
 			";", "set-option", "-q", "-t", "abydos", "allow-passthrough", "on",
 		])
 	}

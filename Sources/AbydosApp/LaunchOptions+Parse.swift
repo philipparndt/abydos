@@ -236,6 +236,12 @@ extension LaunchOptions {
 					let mode = parts.count > 2 ? parts[2] : ""
 					options.terminalLink = (row, column, mode == "click" || mode == "bare", mode == "bare")
 				}
+			case "--terminal-pairs":
+				let spec = next() ?? "0"
+				let parts = spec.split(separator: "@")
+				if let row = Int(parts.first ?? "") {
+					options.terminalPairs = (row, parts.count > 1 ? Double(parts[1]) ?? 7 : 7)
+				}
 			case "--terminal-screen-at":
 				options.terminalScreenAt = (next() ?? "5").split(separator: ",").compactMap { Double($0) }
 			case "--tip-report":

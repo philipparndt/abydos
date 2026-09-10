@@ -557,7 +557,7 @@ extension TerminalView {
 		var foreground = TerminalPalette.color(
 			for: resolved.foreground,
 			isForeground: true,
-			bold: attributes.bold
+			bold: attributes.brightensBold
 		)
 		if attributes.dim { foreground = foreground.withAlphaComponent(TerminalPalette.dimAmount) }
 
@@ -913,5 +913,63 @@ extension TerminalView {
 	private func reportFocus(_ hasFocus: Bool) {
 		guard emulator.reportsFocus else { return }
 		pty.write(hasFocus ? "\u{1B}[I" : "\u{1B}[O")
+	}
+}
+
+// MARK: - What a row is drawn in
+
+extension TerminalView {
+	/// Every run of cells on a row, with the colours the renderer resolves them
+	/// to and the contrast ratio of each pair — for `--terminal-pairs`.
+	///
+	/// **Written because a screenshot could not say which pair it was.** Two
+	/// pictures of k9s under the AAA theme showed grey-blue text on a bright
+	/// row, and that text could have been the palette's dim colour, the default
+	/// foreground dimmed, or a bold black brightened by eight; the fix is
+	/// different for each. This prints what the cell holds and what it becomes,
+	/// which is the one thing the picture cannot.
+	func pairsReportForTesting(row: Int) -> String {
+		guard let line = emulator.grid.line(at: row) else { return "PAIR row=\(row): no such row" }
+		func hex(_ colour: NSColor) -> String {
+			let c = colour.usingColorSpace(.sRGB) ?? colour
+			return String(format: "#%02X%02X%02X", Int(c.redComponent * 255), Int(c.greenComponent * 255), Int(c.blueComponent * 255))
+		}
+		func rgb(_ colour: NSColor) -> UInt32 {
+			let c = colour.usingColorSpace(.sRGB) ?? colour
+			return UInt32(c.redComponent * 255) << 16 | UInt32(c.greenComponent * 255) << 8 | UInt32(c.blueComponent * 255)
+		}
+		func said(_ colour: TerminalColor) -> String {
+			switch colour {
+			case .default: return "default"
+			case let .indexed(index): return "indexed(\(index))"
+			case let .rgb(r, g, b): return String(format: "rgb(#%02X%02X%02X)", Int(r), Int(g), Int(b))
+			}
+		}
+		var out: [String] = []
+		var start = 0
+		while start < line.cells.count {
+			let attributes = line.cells[start].attributes
+			var end = start + 1
+			while end < line.cells.count, line.cells[end].attributes == attributes { end += 1 }
+			let text = String(line.cells[start..<end].filter { !$0.isWideTrailer }.map(\.character))
+			if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+				let resolved = attributes.resolved
+				let background = TerminalPalette.color(for: resolved.background, isForeground: !attributes.inverse, bold: false)
+				var foreground = TerminalPalette.color(for: resolved.foreground, isForeground: !attributes.inverse, bold: attributes.brightensBold)
+				if attributes.dim, let blended = foreground.withAlphaComponent(TerminalPalette.dimAmount).blended(withFraction: 0, of: background) {
+					// What 45% over this background comes to, as the eye sees it.
+					foreground = background.blended(withFraction: TerminalPalette.dimAmount, of: blended) ?? foreground
+				}
+				out.append(String(
+					format: "PAIR row=%d cols=%d…%d fg=%@ bg=%@ bold=%@ dim=%@ inverse=%@ drawn=%@ on %@ ratio=%.2f text=\"%@\"",
+					row, start, end - 1, said(resolved.foreground), said(resolved.background),
+					attributes.bold ? "yes" : "no", attributes.dim ? "yes" : "no", attributes.inverse ? "yes" : "no",
+					hex(foreground), hex(background), SchemeContrast.ratio(rgb(foreground), rgb(background)),
+					String(text.prefix(30))
+				))
+			}
+			start = end
+		}
+		return out.isEmpty ? "PAIR row=\(row): blank" : out.joined(separator: "\n")
 	}
 }

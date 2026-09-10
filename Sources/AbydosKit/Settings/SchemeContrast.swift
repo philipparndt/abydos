@@ -114,6 +114,86 @@ public enum SchemeContrast {
 		return found
 	}
 
+	// MARK: - What programs paint
+
+	/// One pair a program paints — a text colour on a background colour, both
+	/// from the palette — under its floor.
+	public struct PaintedShortfall: Equatable, Sendable, CustomStringConvertible {
+		public let scheme: String
+		public let isLight: Bool
+		public let text: SchemeAnsi
+		public let background: SchemeAnsi
+		public let ratio: Double
+		public let floor: Double
+
+		public var description: String {
+			String(
+				format: "%@ %@ %@ on %@: %.2f:1, floor %.1f:1",
+				scheme, isLight ? "light" : "dark", text.rawValue, background.rawValue, ratio, floor
+			)
+		}
+	}
+
+	/// The floor for dark text on a background a program painted: WCAG's for
+	/// text that may be large or is meant to recede, and what a program's own
+	/// pairing can reasonably be asked to survive.
+	public static let painted = 3.0
+
+	/// The painted pairs a palette is held to: `black` as text on each of the
+	/// fourteen colours a program paints as a highlight — the base six and the
+	/// bright eight, `brightBlack` excepted — on the dark ground.
+	///
+	/// **Why these, and not every pair.** Measured over every bundled palette
+	/// on 2026-09-10, the pairs a program paints came out in three groups. Dark
+	/// text on a painted colour — a selected row, a badge, a status bar —
+	/// passes everywhere and is what k9s paints. Light text on one of the base
+	/// six fails everywhere, by construction: a palette whose base six can be
+	/// read as text on a dark ground has made them light, and white on light
+	/// is not a pair any single colour can rescue. And the dim colour on a
+	/// coloured background fails everywhere too, at 1.5:1 to 2.9:1, for the
+	/// mirror of the same reason. Holding those would fail every palette that
+	/// exists and say nothing. `pairTable` prints all of them for reading.
+	///
+	/// The dark ground only. The light halves of these palettes make their
+	/// bright colours dark so they can be read on white, and a program's dark
+	/// text on them is a fault of a different shape — see the change's design.
+	public static func paintedShortfalls(in scheme: Scheme) -> [PaintedShortfall] {
+		guard let terminal = scheme.terminal else { return [] }
+		let named = terminal.named(isLight: false)
+		let black = named[0]
+		var found: [PaintedShortfall] = []
+		// Not the dim grey: it is text that recedes, not a colour a program
+		// paints a row with, and a palette's black on its own dim grey is a
+		// pair nobody chose — the editor palette's sits at 2.99:1.
+		for (colour, value) in zip(SchemeAnsi.allCases, named) where colour != .black && colour != .brightBlack {
+			let ratio = ratio(black, value)
+			if ratio < painted {
+				found.append(PaintedShortfall(
+					scheme: scheme.id, isLight: false, text: .black, background: colour,
+					ratio: ratio, floor: painted
+				))
+			}
+		}
+		return found
+	}
+
+	public static func paintedShortfalls(in library: SchemeLibrary) -> [PaintedShortfall] {
+		library.terminalSchemes.flatMap(paintedShortfalls(in:))
+	}
+
+	/// Every colour on every other, for reading rather than for holding.
+	public static func pairTable(in scheme: Scheme, isLight: Bool) -> [(text: SchemeAnsi, background: SchemeAnsi, ratio: Double)] {
+		guard let terminal = scheme.terminal else { return [] }
+		let named = terminal.named(isLight: isLight)
+		var table: [(SchemeAnsi, SchemeAnsi, Double)] = []
+		for (text, textValue) in zip(SchemeAnsi.allCases, named) {
+			for (background, backgroundValue) in zip(SchemeAnsi.allCases, named) where text != background {
+				table.append((text, background, ratio(textValue, backgroundValue)))
+			}
+		}
+		return table
+	}
+
 	// MARK: - The app half
 
 	/// The ground a text role is drawn on, and whether it is meant to recede.

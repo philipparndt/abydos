@@ -508,6 +508,10 @@ struct LaunchOptions {
 	/// the question a picture cannot settle: which row a line landed on, and
 	/// whether what was above it went into history or under it.
 	var terminalScreenAt: [Double] = []
+	/// `--terminal-pairs <row>[@<seconds>]`: every run of cells on that row with
+	/// the colours the renderer resolves them to, drawn, and the contrast ratio
+	/// of each pair — so what a program painted is a number and not a picture.
+	var terminalPairs: (row: Int, at: Double)?
 	/// `--terminal-link <row>:<column>[:click|:bare]`: the pointer on that cell
 	/// with ⌘ held, as the events would put it, and what the pane makes of it —
 	/// the link's columns and address; with `click` a ⌘-click through

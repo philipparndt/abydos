@@ -301,6 +301,13 @@ extension AppDelegate {
 			}
 		}
 
+		if let pairs = options.terminalPairs {
+			DispatchQueue.main.asyncAfter(deadline: .now() + pairs.at) {
+				print(controller?.panelForTesting.terminalPairsReportForTesting(row: pairs.row) ?? "PAIR: no window")
+				fflush(stdout)
+			}
+		}
+
 		for seconds in options.terminalScreenAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
 				print(controller?.panelForTesting.terminalScreenReportForTesting(label: "\(seconds)s") ?? "TERMINAL SCREEN: no window")

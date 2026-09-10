@@ -508,7 +508,7 @@ final class TerminalMetalRenderer {
 				var foreground = TerminalPalette.components(
 					for: resolved.foreground,
 					isForeground: !cell.attributes.inverse,
-					bold: cell.attributes.bold,
+					bold: cell.attributes.brightensBold,
 					defaultForeground: frame.foreground,
 					defaultBackground: frame.background
 				)

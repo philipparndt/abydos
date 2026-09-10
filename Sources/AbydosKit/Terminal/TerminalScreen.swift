@@ -32,6 +32,26 @@ public struct TerminalAttributes: Equatable, Sendable {
 	public var resolved: (foreground: TerminalColor, background: TerminalColor) {
 		inverse ? (background, foreground) : (foreground, background)
 	}
+
+	/// Whether bold may brighten this cell's foreground from one of the first
+	/// eight colours to its bright twin — on the ground only.
+	///
+	/// Bold has brightened the base eight since xterm, and prompts still rely
+	/// on it for their highlight colour. **Not on a background a program
+	/// painted.** A program that pairs black text with an aqua background chose
+	/// both — k9s does, for its selected row and its crumbs — and brightening
+	/// the black turns it into `brightBlack`, the palette's dim grey, on that
+	/// aqua. Under a palette whose dim grey is light enough to read on dark, the
+	/// pair came out at 1.5:1 and the row could not be read: the report of
+	/// 2026-09-10, traced to this rule through the cells the pane held
+	/// (`indexed(0)` bold on `indexed(14)`). A painted background is the
+	/// program's pairing, and the terminal keeps out of it.
+	public var brightensBold: Bool {
+		guard bold else { return false }
+		let (foreground, background) = resolved
+		guard case let .indexed(index) = foreground, index < 8 else { return false }
+		return background == .default
+	}
 }
 
 /// One character cell.

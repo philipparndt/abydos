@@ -391,7 +391,17 @@ public enum TmuxMirror {
 	/// older the right outcome is the old behaviour rather than an error printed
 	/// into somebody's shell.
 	public static func attachArguments(to session: String) -> [String] {
-		["new", "-A", "-s", session, ";", "set-option", "-q", "-t", session, "allow-passthrough", "on"]
+		// `-T RGB`: this client's terminal shows true colour, said to tmux
+		// outright. Left to work it out, tmux reads the outer terminal's
+		// terminfo — `xterm-256color`, which claims 256 — and downgrades every
+		// 24-bit colour a program sends to the nearest of those; a black k9s
+		// painted as `rgb(0,0,0)` reached this terminal as ANSI black, and went
+		// on to be brightened by the bold rule into a grey that could not be
+		// read on the aqua beside it. `COLORTERM=truecolor` in the pane's
+		// environment did not persuade it. The feature flag is tmux 3.2, the
+		// same era as `allow-passthrough` below; on anything older tmux would
+		// refuse the flag, and that is the version floor this app already has.
+		["-T", "RGB", "new", "-A", "-s", session, ";", "set-option", "-q", "-t", session, "allow-passthrough", "on"]
 	}
 
 	/// Hides — or gives back — tmux's own status bar, for one session only.

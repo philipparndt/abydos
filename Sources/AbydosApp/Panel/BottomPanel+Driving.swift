@@ -76,6 +76,12 @@ extension BottomPanel {
 		existingBacklogPane?.cardGeometryReportForTesting ?? "no pane"
 	}
 
+	/// The colours a row is drawn in, pair by pair, with their contrast.
+	func terminalPairsReportForTesting(row: Int) -> String {
+		guard let terminal = showTerminal()?.terminalView else { return "PAIR: no terminal" }
+		return terminal.pairsReportForTesting(row: row)
+	}
+
 	/// What the terminal makes of the cell at a row and column with ⌘ held.
 	func terminalLinkReportForTesting(row: Int, column: Int, click: Bool, bare: Bool) -> String {
 		guard let terminal = showTerminal()?.terminalView else { return "LINK: no terminal" }
