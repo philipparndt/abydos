@@ -680,6 +680,19 @@ extension TerminalView {
 		// byte apart otherwise, and no program can tell them apart.
 		if let modified = modifiedKeySequence(for: event) { return modified }
 
+		// Shift+Return breaks the line as ⌥⏎ does, for a program that has not
+		// asked for the protocol above. `TerminalKeys.shiftReturnSequence` has
+		// the argument.
+		if let newline = TerminalKeys.shiftReturnSequence(
+			keyCode: event.keyCode,
+			shift: flags.contains(.shift),
+			control: flags.contains(.control),
+			option: flags.contains(.option),
+			command: flags.contains(.command)
+		) {
+			return newline
+		}
+
 		// Keys with a fixed sequence, and the Option-as-Meta rule that goes with
 		// them. Applied here rather than after the switch: returning early was
 		// how ⌥Return came to send a bare carriage return, which submits the

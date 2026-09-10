@@ -128,6 +128,32 @@ public enum TerminalKeys {
 		return "\u{1B}[Z"
 	}
 
+	/// What Shift+Return sends: ESC then CR, and nil for anything else.
+	///
+	/// **The same bytes ⌥⏎ sends here**, for the same reason ⌥⏎ sends them: a
+	/// program that treats a bare Return as "submit" — a shell, an agent's
+	/// prompt — reads ESC Return as "newline without submitting". Claude Code
+	/// documents Shift+Enter as that newline, and its own `/terminal-setup`
+	/// binds Shift+Enter to exactly this sequence in the terminals that do not
+	/// send it themselves. Reported 2026-09-10 by somebody who reached for
+	/// Shift+Return, found it submitted, and was told the app wanted Option.
+	/// Most terminals answer both; so does this one now.
+	///
+	/// Answered *after* the modified-key protocols: a program that asked to be
+	/// told which key was pressed gets `CSI 13;2u` for Shift+Return, which is
+	/// the same fact said the way it asked for it.
+	///
+	/// Only Shift. ⌃⏎ is somebody else's chord, and ⌥⏎ goes through the meta
+	/// rule, which reaches the same bytes by its own reasoning.
+	public static func shiftReturnSequence(
+		keyCode: UInt16, shift: Bool, control: Bool, option: Bool, command: Bool
+	) -> String? {
+		guard keyCode == Key.Return.rawValue || keyCode == Key.keypadEnter.rawValue,
+		      shift, !control, !option, !command
+		else { return nil }
+		return "\u{1B}\r"
+	}
+
 	/// Where a key moves the pane's own history, or nil when it is the program's.
 	///
 	/// There were no such keys: Page Up, Page Down, Home and End all reached the

@@ -1380,3 +1380,35 @@ reach the program on either screen.
 - **GIVEN** `less` on the alternate screen
 - **WHEN** ⇧⇞ is pressed
 - **THEN** `less` receives what it received before this change
+
+### Requirement: Shift+Return breaks the line, as Option+Return does
+
+The terminal SHALL send ESC then CR for Shift+Return and for Shift on the
+keypad's Enter, when the program has not asked for a modified-key protocol —
+the same bytes Option+Return sends, so a program that treats a bare Return as
+"submit" reads either key as a newline without submitting. A program that has
+asked to be told which key was pressed SHALL be sent the protocol's own form of
+Shift+Return instead, as before. Plain Return SHALL stay a bare CR, and a Return
+with Control or Command held SHALL not be treated as this.
+
+Reported 2026-09-10: the usual line break is Shift+Return, most terminals answer
+it, and this one answered Option only — Shift+Return sent the byte Return sends
+and submitted the half-written message.
+
+#### Scenario: a newline in an agent's prompt
+
+- **GIVEN** a shell or an agent's prompt, which has not asked for a keyboard protocol
+- **WHEN** Shift+Return is pressed
+- **THEN** the program receives ESC CR, exactly what Option+Return sends
+
+#### Scenario: a program that asked for the protocol
+
+- **GIVEN** a program that has enabled modified-key reporting
+- **WHEN** Shift+Return is pressed
+- **THEN** it receives `CSI 13;2u`, as it did before
+
+#### Scenario: Return itself
+
+- **WHEN** Return is pressed with no modifier
+- **THEN** the program receives a bare CR, as it always has
+
