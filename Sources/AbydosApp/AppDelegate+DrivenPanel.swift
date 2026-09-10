@@ -291,6 +291,16 @@ extension AppDelegate {
 			}
 		}
 
+		// After `--send-bytes` has put the address there, and before a screen
+		// report at seven can read the row it landed on.
+		if let link = options.terminalLink {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+				print(controller?.panelForTesting.terminalLinkReportForTesting(
+					row: link.row, column: link.column, click: link.click, bare: link.bare) ?? "LINK: no window")
+				fflush(stdout)
+			}
+		}
+
 		for seconds in options.terminalScreenAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
 				print(controller?.panelForTesting.terminalScreenReportForTesting(label: "\(seconds)s") ?? "TERMINAL SCREEN: no window")

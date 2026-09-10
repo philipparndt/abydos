@@ -230,6 +230,12 @@ extension LaunchOptions {
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true
+			case "--terminal-link":
+				let parts = (next() ?? "").split(separator: ":").map(String.init)
+				if parts.count >= 2, let row = Int(parts[0]), let column = Int(parts[1]) {
+					let mode = parts.count > 2 ? parts[2] : ""
+					options.terminalLink = (row, column, mode == "click" || mode == "bare", mode == "bare")
+				}
 			case "--terminal-screen-at":
 				options.terminalScreenAt = (next() ?? "5").split(separator: ",").compactMap { Double($0) }
 			case "--tip-report":

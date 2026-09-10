@@ -108,7 +108,7 @@ final class TerminalMetalRenderer {
 		var foreground: SIMD4<Float>
 		var baselineFromTop: CGFloat
 		var scale: CGFloat
-		var hoveredLink: UInt16
+		var hoveredLink: LinkRange?
 		var ligatures: Bool
 		var faces: ObjectIdentifier
 		var atlas: ObjectIdentifier
@@ -369,9 +369,18 @@ final class TerminalMetalRenderer {
 		var thickness: Float = 1.5
 	}
 
-	/// The hyperlink under the pointer, which is drawn underlined so it is
-	/// visible that it can be clicked at all.
-	var hoveredLink: UInt16 = 0
+	/// The cells of the link under the pointer while ⌘ is held, which are drawn
+	/// underlined so it is visible that ⌘-click would open something.
+	///
+	/// A range rather than a link id, because a printed address has no id —
+	/// see `TerminalView.HoveredLink`. The underline on a bare hover that used
+	/// to be drawn from the id is gone with it: bare hover draws nothing under
+	/// the convention, and it had been this renderer's behaviour alone.
+	struct LinkRange: Equatable {
+		var row: Int
+		var columns: Range<Int>
+	}
+	var hoveredLink: LinkRange?
 
 	/// A thin filled rectangle: an underline, or a line through.
 	private func rule(x: Float, width: Float, y: Float, colour: SIMD4<Float>) -> CellInstance {
@@ -628,7 +637,8 @@ final class TerminalMetalRenderer {
 				// Lines through and under the text, which the GPU path never
 				// drew at all: a man page's underlined headings and a diff's
 				// struck-out text came out plain.
-				let isLinked = cursor == nil && cell.attributes.link != 0 && cell.attributes.link == hoveredLink
+				let isLinked = cursor == nil
+					&& hoveredLink.map { $0.row == index && $0.columns.contains(column) } == true
 				if cell.attributes.underline || isLinked {
 					built.append(rule(x: x, width: width, y: y + underlineOffset, colour: foreground))
 				}

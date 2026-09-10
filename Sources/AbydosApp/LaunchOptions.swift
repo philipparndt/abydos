@@ -508,6 +508,12 @@ struct LaunchOptions {
 	/// the question a picture cannot settle: which row a line landed on, and
 	/// whether what was above it went into history or under it.
 	var terminalScreenAt: [Double] = []
+	/// `--terminal-link <row>:<column>[:click|:bare]`: the pointer on that cell
+	/// with ⌘ held, as the events would put it, and what the pane makes of it —
+	/// the link's columns and address; with `click` a ⌘-click through
+	/// `mouseDown` and what it would open; with `bare` a click without ⌘, which
+	/// must open nothing and start a selection.
+	var terminalLink: (row: Int, column: Int, click: Bool, bare: Bool)?
 	/// Where the backlog pane's header is against the strip, at these seconds:
 	/// `--backlog-geometry 3,5,7`.
 	var backlogGeometryAt: [Double] = []

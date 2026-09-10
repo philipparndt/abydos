@@ -279,9 +279,27 @@ extension TerminalView {
 		}
 
 		drawImages(from: firstRow, to: lastRow, above: true)
+		drawHoveredLink(from: firstRow, to: lastRow)
 
 		drawCursor()
 		drawDropHighlight()
+	}
+
+	/// The rule under the link the pointer is on while ⌘ is held.
+	///
+	/// A pass of its own, after the rows, because the cells it spans may sit in
+	/// several runs of attributes and the run drawing knows nothing of links.
+	/// This renderer never drew one at all — the underline on a hovered link
+	/// was the GPU path's alone — so the two renderers disagreed about whether a
+	/// link could be seen.
+	private func drawHoveredLink(from firstRow: Int, to lastRow: Int) {
+		guard let link = hoveredLink, (firstRow..<lastRow).contains(link.row) else { return }
+		let y = Self.verticalInset + CGFloat(link.row) * cellHeight
+		let x = (Self.horizontalInset + CGFloat(link.columns.lowerBound) * cellWidth).rounded()
+		let endX = (Self.horizontalInset + CGFloat(link.columns.upperBound) * cellWidth).rounded()
+		let thickness = max(1, (cellHeight / 14).rounded())
+		TerminalPalette.foreground.setFill()
+		NSRect(x: x, y: (y + baselineFromTop + thickness).rounded(), width: endX - x, height: thickness).fill()
 	}
 
 	/// Draws the pictures whose rows fall in the band being repainted.

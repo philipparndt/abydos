@@ -200,10 +200,17 @@ extension TerminalView {
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
 
-		// A link under the pointer is what the click is for — unless a program
-		// is taking the mouse, in which case it is the program's click.
-		if mouseSelects, event.clickCount == 1, let link = link(at: event) {
-			NSWorkspace.shared.open(link.url)
+		// ⌘-click over a link opens it, and that is all it does: no selection
+		// begins, and a program tracking the mouse is not told. It used to be a
+		// bare click that opened a marked link — the one place in the pane
+		// where starting a selection did something else, sprung on exactly the
+		// text somebody wanted to copy. ⌘ is the modifier every other terminal
+		// here uses, and it is kept from a tracking program the way iTerm2
+		// keeps it, because a pane inside tmux with the mouse on is where most
+		// of this project's addresses appear.
+		if event.modifierFlags.contains(.command), event.clickCount == 1,
+		   let link = link(atWindowPoint: event.locationInWindow) {
+			LinkOpener.open(link.url)
 			return
 		}
 
@@ -245,7 +252,7 @@ extension TerminalView {
 	/// open, which is how the item under the pointer comes to be highlighted.
 	/// Without this the menu appears and then sits there, dead.
 	override func mouseMoved(with event: NSEvent) {
-		updateHoveredLink(at: event)
+		updateHoveredLink(at: event.locationInWindow, flags: event.modifierFlags)
 		guard emulator.mouseTracking == .anyEvent else { return }
 		// Not while the program is behind on what it has already been sent. A
 		// motion report says where the pointer was; delivered after a long
@@ -268,19 +275,75 @@ extension TerminalView {
 	}
 
 
-	private func updateHoveredLink(at event: NSEvent) {
-		let link = self.link(at: event)?.id ?? 0
+	/// ⌘ pressed or released with the pointer still.
+	///
+	/// The gesture is "hold ⌘ and look", and looking does not move the
+	/// pointer, so the underline has to follow the key and not only the mouse.
+	/// This reaches the view only while it is first responder; a pane without
+	/// the keyboard gets the underline on the next pointer move, which is the
+	/// moment before a click anyway.
+	override func flagsChanged(with event: NSEvent) {
+		if let window {
+			updateHoveredLink(at: window.mouseLocationOutsideOfEventStream, flags: event.modifierFlags)
+		}
+		super.flagsChanged(with: event)
+	}
+
+	func updateHoveredLink(at windowPoint: NSPoint, flags: NSEvent.ModifierFlags) {
+		let link = flags.contains(.command) ? self.link(atWindowPoint: windowPoint) : nil
 		guard link != hoveredLink else { return }
 		hoveredLink = link
 		// A pointer over something clickable should say so, and stop saying so
-		// the moment it leaves.
-		if link != 0 { NSCursor.pointingHand.set() } else { NSCursor.iBeam.set() }
+		// the moment it leaves — or the moment ⌘ is let go.
+		if link != nil { NSCursor.pointingHand.set() } else { NSCursor.iBeam.set() }
 		repaint()
 	}
 
-	/// The hyperlink under a pointer event, if the cell has one.
-	private func link(at event: NSEvent) -> (id: UInt16, url: URL)? {
-		let point = convert(event.locationInWindow, from: nil)
+	/// The pointer put on a cell with ⌘ held, as the events would put it, and
+	/// what the pane makes of that — for `--terminal-link`.
+	///
+	/// Through `updateHoveredLink` and `LinkOpener`, which is the path a real
+	/// ⌘ and a real click take, so a run cannot pass with the lookup wired to
+	/// nothing. `underlined` is whether the range both renderers draw from is
+	/// set; the rule itself is a picture, and `--screenshot` beside this is how
+	/// to look at it.
+	func linkReportForTesting(row: Int, column: Int, click: Bool, bare: Bool = false) -> String {
+		let point = NSPoint(
+			x: Self.horizontalInset + (CGFloat(column) + 0.5) * cellWidth,
+			y: Self.verticalInset + (CGFloat(row) + 0.5) * cellHeight
+		)
+		updateHoveredLink(at: convert(point, to: nil), flags: [.command])
+		var out = "LINK row=\(row) column=\(column) renderer=\(metal == nil ? "coregraphics" : "metal")"
+		guard let link = hoveredLink else { return out + " none underlined=false" }
+		out += " columns=\(link.columns.lowerBound)…\(link.columns.upperBound - 1)"
+			+ " url=\(link.url.absoluteString) marked=\(link.isMarked) underlined=true"
+		// The click as `mouseDown` receives it, with ⌘ or without, so what is
+		// exercised is the handler's own order — the ⌘ branch ahead of the
+		// tracking guard and of selection — and not a call to the opener.
+		guard click, let window else { return out }
+		let opened = LinkOpener.openedForTesting.count
+		let flags: NSEvent.ModifierFlags = bare ? [] : [.command]
+		if let down = NSEvent.mouseEvent(
+			with: .leftMouseDown, location: convert(point, to: nil), modifierFlags: flags,
+			timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+			context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+		) {
+			mouseDown(with: down)
+		}
+		out += bare ? " bare-click:" : " cmd-click:"
+		out += " opened=\(LinkOpener.openedForTesting.count - opened) selecting=\(isSelecting)"
+			+ " tracking=\(emulator.mouseTracking != .off)"
+		return out
+	}
+
+	/// The link under a point in the window, marked or printed, or nil.
+	///
+	/// One row is read, the one under the pointer: a marked link by the id its
+	/// cell carries — the program said what it meant, and a printed address
+	/// inside a marked run defers to it — and otherwise the row's own text,
+	/// scanned for an address. Never the scrollback, and never per frame.
+	func link(atWindowPoint windowPoint: NSPoint) -> HoveredLink? {
+		let point = convert(windowPoint, from: nil)
 		let row = Int((point.y - Self.verticalInset) / max(1, cellHeight))
 		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth))
 		guard row >= 0, column >= 0,
@@ -289,10 +352,18 @@ extension TerminalView {
 		else { return nil }
 
 		let id = line.cells[column].attributes.link
-		guard id != 0, let text = emulator.link(for: id), let url = URL(string: text) else {
+		if id != 0, let text = emulator.link(for: id), let url = URL(string: text) {
+			// The whole run the program marked, so the underline covers what
+			// it meant and not the one cell the pointer happens to be on.
+			var start = column, end = column + 1
+			while start > 0, line.cells[start - 1].attributes.link == id { start -= 1 }
+			while end < line.cells.count, line.cells[end].attributes.link == id { end += 1 }
+			return HoveredLink(row: row, columns: start..<end, url: url, isMarked: true)
+		}
+		guard let found = line.webAddresses().first(where: { $0.columns.contains(column) }) else {
 			return nil
 		}
-		return (id, url)
+		return HoveredLink(row: row, columns: found.columns, url: found.url, isMarked: false)
 	}
 
 	/// `--wobble <points>`: the gesture that was emptying the clipboard.

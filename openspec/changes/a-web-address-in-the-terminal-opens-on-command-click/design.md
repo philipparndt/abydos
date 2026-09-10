@@ -110,13 +110,41 @@ hands the URL to a `LinkOpener` that on a driven run prints instead of calling
 The address is put into the pane with `--send-bytes`, wrapped so that one
 lands on a row with a wide character before it.
 
-## What is left open
+## What was measured, 2026-09-10
 
-- Whether a found address should be underlined for its whole run when only
-  part of it is on screen — a URL wrapped across two rows is two rows here,
-  and the finder sees one. Decided on the driven run: if a wrapped address is
-  common in agents' output, the finder joins a row with the one it wrapped
-  from; if not, it is two rows and the design says so.
+Every run is `--terminal-link <row>:<column>` on a scratch project, the pane
+inside this machine's own `tmux`, an address put there with `--send-bytes` —
+one after an emoji, one in a sentence with brackets — and the report read back.
+The pane's engine was ours; a picture beside each run shows the rule.
+
+| Case | Cell | Result |
+| --- | --- | --- |
+| after a wide character, GPU renderer | 0:5 | `columns=3…41`, the address, `marked=false` |
+| the same, CoreGraphics renderer | 0:5 | the same range, `renderer=coregraphics`, the rule in the picture |
+| brackets: `(see https://…/Diff_(computing)).` | 1:12 | `columns=5…50`, `…Diff_(computing)` — the address's bracket kept, the sentence's dropped |
+| a cell after the address | 0:46 | `none` |
+| ⌘-click, through `mouseDown` | 0:5:click | `opened=1 selecting=false`, `LINK would open …`, no browser |
+| a bare click over the same link | 0:5:bare | `opened=0 selecting=true` |
+| a program tracking the mouse (`CSI ?1002 h` printed first) | 0:5:click | `tracking=true opened=1 selecting=false` |
+| a link the program marked (OSC 8 around `the docs`) | 0:7 | `columns=4…11`, the marked address, `marked=true` |
+| an address of 165 characters in a pane 120 wide | 0:5 | `columns=0…119`, the address cut at the row's end |
+
+The emoji is the reason the finder is over the cells: the address after it
+begins at column 3, and a range found in the row's text would have said 2.
+
+**The open question, decided: a wrapped address is two rows, and the design
+says so.** The last run is the case. An address longer than the pane wraps,
+the finder sees the first row and offers that much, and a ⌘-click on it opens
+a truncated address. Joining the rows would need the finder to know the row was
+*soft*-wrapped — that the program wrote past the right edge rather than
+printing a newline — and the emulator does not record that on a line
+(`TerminalLine` has no such flag), so the join cannot be made honestly: a row
+that merely ends in an address and a row that continues one look the same. The
+flag is a small addition to the emulator and to the Ghostty reader both, and
+the join is a few lines on top of it; it is a change of its own, filed when a
+wrapped address turns out to be common in what agents print. Until then the
+underline stops where the row does, which is at least where the address it
+offers stops.
 
 ## Release note
 

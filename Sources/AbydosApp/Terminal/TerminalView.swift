@@ -45,8 +45,24 @@ final class TerminalView: NSView, NSTextInputClient {
 	var bellRangAt: Date?
 	/// When the current frame was first held back, if it was.
 	var heldFrameSince: Date?
-	/// Which hyperlink the pointer is over, so it can be underlined and opened.
-	var hoveredLink: UInt16 = 0
+	/// The link under the pointer while ⌘ is held — its row, its columns and
+	/// where it points — or nil, which is most of the time.
+	///
+	/// A range and not an id, because most links are not marked. A program
+	/// that marks one with OSC 8 gives its cells an id; an address it merely
+	/// printed has no id and is found in the row's text (`webAddresses()`), so
+	/// the one thing both kinds have is the cells they span. Held only while ⌘
+	/// is down: the pointer resting on a page draws nothing, and ⌘ is how the
+	/// reader asks "is this one a link" — the convention of every other
+	/// terminal on this platform, and what a report on 2026-09-10 asked for.
+	struct HoveredLink: Equatable {
+		let row: Int
+		let columns: Range<Int>
+		let url: URL
+		/// Marked by the program, as against found in what it printed.
+		let isMarked: Bool
+	}
+	var hoveredLink: HoveredLink?
 	/// Whatever is emulating this pane.
 	///
 	/// A `TerminalEngine` rather than a `TerminalEmulator` since item 0485, which

@@ -76,6 +76,12 @@ extension BottomPanel {
 		existingBacklogPane?.cardGeometryReportForTesting ?? "no pane"
 	}
 
+	/// What the terminal makes of the cell at a row and column with ⌘ held.
+	func terminalLinkReportForTesting(row: Int, column: Int, click: Bool, bare: Bool) -> String {
+		guard let terminal = showTerminal()?.terminalView else { return "LINK: no terminal" }
+		return terminal.linkReportForTesting(row: row, column: column, click: click, bare: bare)
+	}
+
 	/// What the task tip is doing, and where the cards it can open over are.
 	func tipReportForTesting() -> String {
 		guard let pane = showBacklog() else { return "no project" }

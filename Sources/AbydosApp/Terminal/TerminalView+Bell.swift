@@ -93,7 +93,7 @@ extension TerminalView {
 				))
 			}
 		}
-		metal.renderer.hoveredLink = hoveredLink
+		metal.renderer.hoveredLink = hoveredLink.map { .init(row: $0.row, columns: $0.columns) }
 
 		var cursor: TerminalMetalRenderer.Cursor?
 		if let place = cursorPlace(), place.row < shownLineCount {
