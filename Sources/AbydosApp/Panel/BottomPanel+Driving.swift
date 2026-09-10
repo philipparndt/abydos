@@ -76,6 +76,12 @@ extension BottomPanel {
 		existingBacklogPane?.cardGeometryReportForTesting ?? "no pane"
 	}
 
+	/// What the task tip is doing, and where the cards it can open over are.
+	func tipReportForTesting() -> String {
+		guard let pane = showBacklog() else { return "no project" }
+		return TaskTip.shared.pointerReportForTesting + "\n" + pane.inProgressCardsForTesting
+	}
+
 	/// What the + and its chevron answer to, for the harness.
 	var terminalAddControlsForTesting: String { addControlsForTesting }
 

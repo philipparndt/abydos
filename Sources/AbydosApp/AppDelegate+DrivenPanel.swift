@@ -275,6 +275,15 @@ extension AppDelegate {
 			}
 		}
 
+		// The board's own cards and the tip's state, on a clock, so a process
+		// posting pointer moves from outside can read what its moves did.
+		for at in options.tipReportAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("TIP \(at)s: \(controller?.panelForTesting.tipReportForTesting() ?? "no window")")
+				fflush(stdout)
+			}
+		}
+
 		for at in options.backlogGeometryAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print("BACKLOG-GEOM \(Int(at))s: \(controller?.panelForTesting.backlogGeometryForTesting() ?? "no window")")

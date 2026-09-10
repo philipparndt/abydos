@@ -511,6 +511,9 @@ struct LaunchOptions {
 	/// Where the backlog pane's header is against the strip, at these seconds:
 	/// `--backlog-geometry 3,5,7`.
 	var backlogGeometryAt: [Double] = []
+	/// When to print what the task tip is doing and where the cards are, for a
+	/// run posting real pointer moves at the board.
+	var tipReportAt: [Double] = []
 	/// Turn blame on for the file that was opened.
 	var showsBlame = false
 	/// Resize the window part-way through, for layout that only settles once.

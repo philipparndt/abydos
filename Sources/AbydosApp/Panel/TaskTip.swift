@@ -59,6 +59,20 @@ final class TaskTip {
 	private var cardRect: NSRect = .zero
 	private var colour: NSColor = .controlAccentColor
 
+	/// The same three for the card being waited for, which is not the card the
+	/// tip is about until `open` promotes them.
+	///
+	/// **Two anchors, because the pointer is on the second card while the tip
+	/// still belongs to the first.** One set of them meant that brushing the
+	/// card below — which is what reaching a tip does — moved the *open* tip's
+	/// anchor to that card, and the next redraw placed the tip under a card it
+	/// was not about, out from under the pointer that was reaching for it. The
+	/// tip then closed on the grace, having been moved rather than dismissed.
+	/// Reported 2026-09-10, and the half of it that survived the first fix.
+	private weak var pendingHost: NSView?
+	private var pendingRect: NSRect = .zero
+	private var pendingColour: NSColor = .controlAccentColor
+
 	/// Told when a tick has been written, so the board can walk again without
 	/// waiting for the watcher.
 	///
@@ -83,6 +97,28 @@ final class TaskTip {
 
 	/// Which card the tip is about, for a column deciding whether to disturb it.
 	var identity: BoardEntry.Identity? { entry?.identity }
+
+	/// Whether the tip is up, which card it is about, and where it is — for a
+	/// run posting real pointer moves at it.
+	///
+	/// **Because the fault this was written for is a path and not a state.**
+	/// Reaching a tip means crossing the card below it, and whether that
+	/// crossing closes the tip cannot be asked of the tip from inside the
+	/// process — `openForTesting` puts one up without a pointer ever having
+	/// moved. A run posts the moves from outside and reads this.
+	var pointerReportForTesting: String {
+		let name: String
+		switch entry?.identity {
+		case let .change(change)?: name = change
+		case let .item(number)?:   name = String(format: "%04d", number)
+		case nil:                  name = "none"
+		}
+		let frame = window?.frame ?? .zero
+		return "TIP showing=\(isShowing) card=\(name) pending=\(pending != nil)"
+			+ " grace=\(graceTimer != nil) wait=\(delayTimer != nil)"
+			+ String(format: " frame=%.0f,%.0f,%.0f,%.0f",
+				frame.minX, frame.minY, frame.width, frame.height)
+	}
 
 	// MARK: - The pointer
 
@@ -110,14 +146,24 @@ final class TaskTip {
 		// The same card, still being waited for: the wait does not restart.
 		if pending?.identity == entry.identity, delayTimer != nil {
 			pending = entry
-			remember(rect, of: host, colour: colour)
+			rememberPending(rect, of: host, colour: colour)
 			return
 		}
 
-		// Another card in progress takes the tip's place, after the same wait.
-		hide()
+		// Another card in progress takes the tip's place, after the same wait —
+		// and the tip already up is left alone until it does.
+		//
+		// **This is how a tip was reached.** It opens under its card, and the
+		// card below is between the two: a pointer on its way down brushes it,
+		// and closing here made every card but the last of a column impossible
+		// to reach, since only the last has empty space beneath it and empty
+		// space is what the grace was written for. Reported 2026-09-10. The old
+		// tip now stays until one of three things happens — the wait below
+		// opens the new one over it, the pointer reaches the tip and
+		// `pointerIsInside` drops that wait, or the pointer lands on nothing
+		// and the grace closes it.
 		pending = entry
-		remember(rect, of: host, colour: colour)
+		rememberPending(rect, of: host, colour: colour)
 		delayTimer = Timer.scheduledTimer(withTimeInterval: Self.delay, repeats: false) { _ in
 			MainActor.assumeIsolated { self.open() }
 		}
@@ -129,6 +175,12 @@ final class TaskTip {
 		self.colour = colour
 	}
 
+	private func rememberPending(_ rect: NSRect, of host: NSView, colour: NSColor) {
+		pendingHost = host
+		pendingRect = rect
+		pendingColour = colour
+	}
+
 	/// The pointer is on no card of this column, or has left it altogether.
 	///
 	/// The wait is dropped at once — crossing a board must not leave a trail of
@@ -138,6 +190,7 @@ final class TaskTip {
 		delayTimer?.invalidate()
 		delayTimer = nil
 		pending = nil
+		pendingHost = nil
 		guard isShowing, graceTimer == nil else { return }
 		graceTimer = Timer.scheduledTimer(withTimeInterval: Self.grace, repeats: false) { _ in
 			MainActor.assumeIsolated { self.hide() }
@@ -146,9 +199,18 @@ final class TaskTip {
 
 	/// The pointer has come inside the tip, which is the gesture the grace
 	/// exists for.
+	///
+	/// The wait is dropped as well as the grace. The pointer is in the tip, so
+	/// it is on no card; a wait started by brushing the card below on the way
+	/// here would otherwise open that card's tip over the one being read, half
+	/// a second after it was reached.
 	fileprivate func pointerIsInside() {
 		graceTimer?.invalidate()
 		graceTimer = nil
+		delayTimer?.invalidate()
+		delayTimer = nil
+		pending = nil
+		pendingHost = nil
 	}
 
 	/// And has left it again.
@@ -161,9 +223,11 @@ final class TaskTip {
 	private func open() {
 		delayTimer?.invalidate()
 		delayTimer = nil
-		guard let entry = pending, let host, host.window != nil else { return }
+		guard let entry = pending, let host = pendingHost, host.window != nil else { return }
 		pending = nil
 		self.entry = entry
+		// The waiting card's anchor becomes the tip's, and only now.
+		remember(pendingRect, of: host, colour: pendingColour)
 		show()
 	}
 
@@ -648,20 +712,40 @@ private final class TaskTipView: NSView {
 
 	// MARK: What it draws
 
+	/// A task's words, with its markdown drawn rather than shown.
+	///
+	/// **These lines come out of a markdown checklist**, so they carry its
+	/// markup, and until this was written they were drawn exactly as the file
+	/// has them: a card showed `**Measure the build before settling this.**`
+	/// with the asterisks in the words, and `` `buildWorkspace` `` with the
+	/// backticks. Reported 2026-09-10. `InlineMarkdown` says which runs are
+	/// emphasis and this gives each run its face — the rule is in the Kit,
+	/// where it can be checked without a window, and the fonts are here, where
+	/// they are known.
 	private func words(_ text: String, ticked: Bool = false) -> NSAttributedString {
 		let paragraph = NSMutableParagraphStyle()
 		paragraph.lineBreakMode = .byWordWrapping
-		let line = NSMutableAttributedString(string: text, attributes: [
-			.font: rowFont,
-			// Full ink rather than the dimmed body `StyledTip` uses: these are
-			// the thing to read and the thing to press, not a note about a
-			// control. The row just ticked is the exception: dimmed, because it
-			// is done, with the one word that is not.
-			.foregroundColor: ticked
-				? Theme.current.sidebarText.withAlphaComponent(0.45)
-				: Theme.current.sidebarText,
-			.paragraphStyle: paragraph,
-		])
+		// Full ink rather than the dimmed body `StyledTip` uses: these are
+		// the thing to read and the thing to press, not a note about a
+		// control. The row just ticked is the exception: dimmed, because it
+		// is done, with the one word that is not.
+		let ink = ticked
+			? Theme.current.sidebarText.withAlphaComponent(0.45)
+			: Theme.current.sidebarText
+		let line = NSMutableAttributedString()
+		for span in InlineMarkdown.spans(of: text) {
+			// A code run is fixed pitch a size down: at the row's own size a
+			// monospaced face is visibly wider than the prose around it, and a
+			// task is mostly prose with one identifier in it.
+			let font: NSFont = span.code
+				? Theme.current.monoFont(10)
+				: Theme.current.uiFont(11, weight: span.bold ? .semibold : .regular)
+			line.append(NSAttributedString(string: span.text, attributes: [
+				.font: span.italic ? italicised(font) : font,
+				.foregroundColor: ink,
+				.paragraphStyle: paragraph,
+			]))
+		}
 		if ticked {
 			line.append(NSAttributedString(string: "  Undo", attributes: [
 				.font: Theme.current.uiFont(11, weight: .semibold),
@@ -670,6 +754,17 @@ private final class TaskTipView: NSView {
 			]))
 		}
 		return line
+	}
+
+	/// The same face, slanted.
+	///
+	/// Through the font manager rather than a second `Theme` call, because the
+	/// italic of a UI font is a trait of that font and not a font of its own;
+	/// where the family has none, the upright face comes back and the run is
+	/// drawn plain rather than in something else's italic.
+	private func italicised(_ font: NSFont) -> NSFont {
+		let slanted = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+		return slanted.fontName == font.fontName ? font : slanted
 	}
 
 	private func sentence(_ text: String) -> NSAttributedString {

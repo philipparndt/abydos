@@ -315,6 +315,9 @@ final class BacklogPane: NSView {
 	/// It prints the scale first, because `scaled(_:)` rounds and a small enough
 	/// scale would round a 3-point bar to nothing — which was the best theory
 	/// until the numbers came back `bar=3.0` on both machines and killed it.
+	/// Where the cards a tip can open over are, on the screen.
+	var inProgressCardsForTesting: String { boardView.inProgressCardsForTesting }
+
 	var cardGeometryReportForTesting: String {
 		let scale = Theme.current.scale
 		var lines = [

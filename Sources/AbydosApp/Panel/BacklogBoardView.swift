@@ -93,6 +93,30 @@ final class BacklogBoardView: NSView {
 	/// The columns themselves, for a report about what each is drawing.
 	var columnViewsForTesting: [BacklogColumnView] { columns }
 
+	/// Every card the tip can open over, and where it is on the screen.
+	///
+	/// Screen coordinates because the only thing that reads this is a process
+	/// posting mouse events, which knows nothing of anybody's views. The order
+	/// is the order down each column, so "the card above the last one" — the
+	/// case that was broken — can be picked without guessing.
+	var inProgressCardsForTesting: String {
+		var lines: [String] = []
+		for view in columns {
+			for (row, entry) in view.entriesForTesting.enumerated() where entry.isInProgress {
+				guard let screen = view.screenRectForTesting(row: row) else { continue }
+				let name: String
+				switch entry.identity {
+				case let .change(change): name = change
+				case let .item(number):   name = String(format: "%04d", number)
+				}
+				lines.append(String(format: "CARD %@ %@ row=%d %.0f,%.0f,%.0f,%.0f",
+					"\(view.column.key)", name, row,
+					screen.minX, screen.minY, screen.width, screen.height))
+			}
+		}
+		return lines.isEmpty ? "CARD none in progress" : lines.joined(separator: "\n")
+	}
+
 	func reload() {
 		columns.forEach { $0.reload() }
 	}
@@ -173,6 +197,15 @@ final class BacklogColumnView: NSView {
 
 	override func mouseExited(with event: NSEvent) {
 		TaskTip.shared.pointerIsOnNothing()
+	}
+
+	var entriesForTesting: [BoardEntry] { entries }
+
+	/// Where one card is on the screen, for a run posting pointer moves at it.
+	func screenRectForTesting(row: Int) -> NSRect? {
+		guard entries.indices.contains(row), let window else { return nil }
+		let card = convert(tableView.rect(ofRow: row), from: tableView)
+		return window.convertToScreen(convert(card, to: nil))
 	}
 
 	/// Opens the tip on a card, without the wait, for a driven run.
