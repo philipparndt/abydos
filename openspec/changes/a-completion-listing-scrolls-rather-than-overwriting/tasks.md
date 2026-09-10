@@ -6,16 +6,16 @@
 
 ## 2. Fix it
 
-- [ ] 2.1 Whatever 1.3 named, and nothing that was not named. **Open.** 1.3 named the configuration and the code path — our engine, tmux with the status bar hidden, the alternate screen's zero-history whole-screen scroll — and not the instruction. Next: a `TerminalScreen` unit test on that path, then the fix it points at.
+- [x] 2.1 Whatever 1.3 named, and nothing that was not named. `scrollUp` advanced `discardedLineCount` even when the scrollback's capacity was zero — the alternate screen — because `ScrollbackBuffer.append` hands the line back rather than storing it and the eviction branch could not tell that from a real shift. It leaves the count alone at capacity zero now. `AlternateScreenScrollTests` captured the bug (`discardedLineCount == 9`, should be 0) and holds the fix.
 
 ## 3. Proving it
 
-- [ ] 3.1 The run from 1.1 shows the rows above the prompt in the scrollback and the listing below it, in the configuration that failed.
+- [x] 3.1 The unit test is the deterministic proof — the driven run was intermittent by the design's own account. Driven on the fixed build in the failing configuration (our engine, tmux, status bar off, fill then `cd` tab tab): `lines-above=49`, the `seq` output in history and the listing under the prompt, output preserved. The `TerminalScreen` test proves the grid and `line(at:)` agree scroll for scroll.
 
 ## 4. Finishing
 
-- [ ] 4.1 Say it in the release notes, if anything changed.
-- [ ] 4.2 `make test` and `make warnings`, both clean, by their exit codes.
+- [x] 4.1 Say it in the release notes: the paragraph is in the design's release note. Something changed, so it is said.
+- [x] 4.2 `make test` and `make warnings`, both clean, by their exit codes. Green 2026-09-10: 4,442 tests in 568 suites, exit 0; `make warnings` exit 0.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 gone and its account is `openspec/specs`, where the `terminal` spec is what this

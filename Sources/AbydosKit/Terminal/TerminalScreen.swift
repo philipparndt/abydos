@@ -472,7 +472,27 @@ public struct TerminalScreen: Sendable {
 		// exactly this since it was written, and says so in its own comment.
 		// Nothing took it until now.
 		var recycled: TerminalLine?
-		if let evicted = scrollback.append(retired) {
+		let evicted = scrollback.append(retired)
+		if scrollback.capacity == 0 {
+			// **No history: the retired line is dropped, not discarded from the
+			// front of a document that grew.** `append` at capacity zero hands
+			// the line straight back without storing it, so `scrollback.count`
+			// stays zero and the document is only the grid — every row keeps its
+			// absolute index, `0..<rows`, and only its contents change.
+			//
+			// This is the completion-listing bug (relayed 2026-09-09). The line
+			// below used to advance `discardedLineCount` here too, because
+			// `append` returned a non-nil line and the eviction branch could not
+			// tell "history evicted an old line, so every index shifted" from
+			// "there is no history, so nothing shifted". The renderer keys its
+			// rows on `discardedLineCount` and `line(at:)` does not, so on the
+			// alternate screen — a scrollback of zero — the two drifted a row
+			// apart on every whole-screen scroll, and the grid held rows the
+			// renderer was not showing until tmux forced a full redraw. The
+			// storage is still reused; only the count is left alone.
+			recycled = evicted
+			markAllDirty()
+		} else if let evicted {
 			discardedLineCount += 1
 			recycled = evicted
 			// Every absolute index just shifted by one, so nothing is where

@@ -73,11 +73,38 @@ path rather than at a fix.** The change stays open with 2.1 unticked.
 engine, and the lines above, because a report that read a pane other than the
 one on screen would call the wrong terminal the screen.
 
+## The instruction, found 2026-09-10
+
+`ScrollbackBuffer.append` at capacity zero — which is what the alternate screen
+has, `maximumScrollback = 0` — hands the line straight back without storing it:
+`guard capacity > 0 else { return line }`. `scrollUp`'s eviction branch could not
+tell that from a real eviction (history full, an old line displaced, every
+absolute index shifted by one), so it advanced `discardedLineCount` in both.
+The renderer keys its rows on `discardedLineCount` and `line(at:)` does not, so
+on a screen with no history the two drifted a row apart on every whole-screen
+scroll — the grid holding rows the renderer was not showing until tmux forced a
+full redraw, which is the report's "overwritten output that appears on a
+repaint and is gone by the next one."
+
+**The fix.** `scrollUp` leaves `discardedLineCount` alone when the scrollback's
+capacity is zero: nothing was stored, so nothing shifted, and the document is
+only the grid — every row keeps its absolute index `0..<rows` and only its
+contents change, which the whole-screen redraw already handles. Real history
+still counts a real eviction. `AlternateScreenScrollTests` is the claim: nine
+scrolls with no history discard nothing, `line(at:)` matches the grid row for
+row, and a screen that does keep history still advances the count on a genuine
+eviction.
+
 ## Open Questions
 
-- The instruction in the eviction path. Read `TerminalScreen.scrollUp` from
-  the `recycled` branch down with the renderer's `discardedLineCount` beside
-  it, then write a unit test on `TerminalScreen` alone: rows 18, scrollback 0,
-  fill, scroll nine, read `line(at:)` for every row and compare with what the
-  dirty tracking says moved.
-- Whether the reporter runs tmux with the bar hidden. Asked with these numbers.
+None. Whether the reporter runs tmux with the bar hidden no longer matters: the
+fix is the code path that failed under it, and it fails under nothing else.
+
+## Release note
+
+> **A completion listing no longer overwrites the output above it.** Under the
+> app's own terminal engine inside tmux, a shell's `cd`-tab-tab listing could
+> leave stale rows on the screen that only a repaint cleared — the alternate
+> screen advanced its count of discarded history on a scroll that discarded
+> none, and the renderer drew a row off from where the grid held it. The count
+> is left alone where there is no history, and the two agree again.
