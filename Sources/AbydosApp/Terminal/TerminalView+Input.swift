@@ -205,6 +205,11 @@ extension TerminalView {
 	func renderWithMetalForTesting(to path: String) -> Bool {
 		let scale = window?.backingScaleFactor ?? 2
 		guard let renderer = TerminalMetalRenderer(scale: scale) else { return false }
+		// What the screen's renderer was told about the pointer, told to this
+		// one too — a fresh renderer knows no hovered link, so without this the
+		// capture could not show the underline whether or not the screen did,
+		// which is how a missing underline on the GPU path went unseen.
+		renderer.hoveredLink = hoveredLink.map { .init(row: $0.row, columns: $0.columns) }
 
 		// A screenful, laid out as the view would.
 		let rows = 40

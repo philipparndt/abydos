@@ -132,6 +132,22 @@ The pane's engine was ours; a picture beside each run shows the rule.
 The emoji is the reason the finder is over the cells: the address after it
 begins at column 3, and a range found in the row's text would have said 2.
 
+**Corrected the same day.** The maintainer, on the GPU renderer: *"links are
+working but not highlighted (only by the mouse cursor)"*. Two faults, one
+behind the other, and the table above had been blind to both. The rule in the
+Metal row builder stood behind `cursor == nil &&`, where `cursor` is the
+*frame's* cursor and not the cell under it — so the rule was drawn only in a
+frame with no cursor at all, which a terminal never has; the underline on a
+hovered link had never once appeared on the GPU path, before this change or
+after it. And the driven proof could not see that: a `--screenshot` is drawn
+from the view hierarchy, which is the CoreGraphics pass, so the GPU renderer's
+row said `renderer=metal` over a picture the other renderer had drawn.
+`--metal-shot` is the picture of the GPU renderer, and it had a blindness of
+its own: it builds a fresh renderer, which knows no hovered link, so it could
+not have shown the rule whether or not the screen did. The clause is gone, the
+capture's renderer is told what the screen's was, and the Metal picture shows
+the rule under the address beside an SGR underline drawn the same way.
+
 **The open question, decided: a wrapped address is two rows, and the design
 says so.** The last run is the case. An address longer than the pane wraps,
 the finder sees the first row and offers that much, and a ⌘-click on it opens

@@ -637,8 +637,16 @@ final class TerminalMetalRenderer {
 				// Lines through and under the text, which the GPU path never
 				// drew at all: a man page's underlined headings and a diff's
 				// struck-out text came out plain.
-				let isLinked = cursor == nil
-					&& hoveredLink.map { $0.row == index && $0.columns.contains(column) } == true
+				// **Not `cursor == nil &&`, which is what stood in front of this.**
+				// `cursor` here is the frame's cursor and not the cell under it, so
+				// the clause was "only in a frame with no cursor at all" — which a
+				// terminal never draws — and the underline on a hovered link had
+				// never once appeared on the GPU path. Reported 2026-09-10 as
+				// "links work but are not highlighted", and a driven `--screenshot`
+				// had not caught it because that capture is drawn from the view
+				// hierarchy, which is the CoreGraphics pass; `--metal-shot` is the
+				// picture of this renderer.
+				let isLinked = hoveredLink.map { $0.row == index && $0.columns.contains(column) } == true
 				if cell.attributes.underline || isLinked {
 					built.append(rule(x: x, width: width, y: y + underlineOffset, colour: foreground))
 				}
