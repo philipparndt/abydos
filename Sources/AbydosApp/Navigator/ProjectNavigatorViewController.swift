@@ -86,6 +86,9 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// At most one walk at a time. A second is not queued: when one lands it
 	/// reads again, and anything that arrived meanwhile is picked up then.
 	var walkingSessions = false
+	/// How often the sessions root has been rebuilt, for the `place` step to
+	/// print beside the scroll position.
+	var sessionRebuildsForTesting = 0
 	/// Whether the dependency walk is out, and what asked to be revealed while
 	/// it was.
 	///

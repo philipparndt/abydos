@@ -161,6 +161,7 @@ extension ProjectNavigatorViewController {
 		let selected = selectedPaths()
 		let place = rememberPlace()
 		sessions = node
+		sessionRebuildsForTesting += 1
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 		restoreSelection(paths: selected)

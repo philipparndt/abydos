@@ -82,10 +82,17 @@ extension ProjectNavigatorViewController {
 		let place = rememberPlace()
 		let visible = outlineView.rows(in: outlineView.visibleRect)
 		let top = place.topKey.map { ($0 as NSString).lastPathComponent } ?? "none"
+		// The count of session rebuilds beside the place, because two `place`
+		// lines that agree prove nothing unless something was rebuilt between
+		// them. A run whose event never arrived prints the same two lines as a
+		// run whose rebuild kept the place, and only this number tells them
+		// apart — which is how the first run of the reported case read as a
+		// pass while its tree had not been touched.
 		return String(
-			format: "y=%.0f top=%@ offset=%.0f rows=%d visible=%d…%d",
+			format: "y=%.0f top=%@ offset=%.0f rows=%d visible=%d…%d rebuilds=%d",
 			place.y, top, place.offsetInRow, outlineView.numberOfRows,
-			visible.location, max(visible.location, NSMaxRange(visible) - 1)
+			visible.location, max(visible.location, NSMaxRange(visible) - 1),
+			sessionRebuildsForTesting
 		)
 	}
 }
