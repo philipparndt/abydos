@@ -309,10 +309,35 @@ public struct TextDiff: Sendable, Equatable {
 enum Myers {
 	/// The matched pairs, in order.
 	///
+	/// **What cannot be matched is taken out before the search begins.** A line
+	/// that appears nowhere on the other side can be in no common subsequence,
+	/// so removing it changes none of them — this is an exact reduction and not
+	/// a heuristic — and it is what keeps the search inside its cost limit on
+	/// the inputs that most need it. Measured over 1,927 revision pairs of this
+	/// repository, our diff was longer than git's on eighteen of them, all of
+	/// them large rewrites: 9,932 changed lines against git's 3,640 on one file
+	/// of ten thousand. Those are exactly the pairs where most lines are on one
+	/// side only, so the edit distance the bounded search sees is far larger
+	/// than the number of lines that could ever pair up, and it gives up and
+	/// splits at a point it has not reasoned about. git's xdiff discards the
+	/// same records for the same reason before it runs Myers at all.
+	///
 	/// `editLimit` bounds the search for a middle snake: past that many edits a
 	/// region is taken as wholly replaced, with no matches inside it, so the
 	/// cost of two unrelated inputs is the limit times their length and not the
 	/// square of their length.
+	static func matches(_ a: [Int], _ b: [Int], editLimit: Int) -> [(Int, Int)] {
+		let inA = Set(a), inB = Set(b)
+		let keptA = a.indices.filter { inB.contains(a[$0]) }
+		let keptB = b.indices.filter { inA.contains(b[$0]) }
+		guard keptA.count < a.count || keptB.count < b.count else {
+			return core(a, b, editLimit: editLimit)
+		}
+		return core(keptA.map { a[$0] }, keptB.map { b[$0] }, editLimit: editLimit)
+			.map { (keptA[$0.0], keptB[$0.1]) }
+	}
+
+	/// Myers over the two sequences as given.
 	///
 	/// Iterative, with a work stack of regions. The matches of a region are
 	/// its common prefix, its common suffix, the body of its middle snake, and
@@ -320,7 +345,7 @@ enum Myers {
 	/// regions are visited in, because a match is a pair of absolute indices
 	/// and the set of them is monotone. So they are collected as found and
 	/// sorted once at the end, which is what lets the recursion go.
-	static func matches(_ a: [Int], _ b: [Int], editLimit: Int) -> [(Int, Int)] {
+	private static func core(_ a: [Int], _ b: [Int], editLimit: Int) -> [(Int, Int)] {
 		var matched: [(Int, Int)] = []
 		var work: [(Range<Int>, Range<Int>)] = [(0..<a.count, 0..<b.count)]
 		// Diagonals run from -(n+m) to n+m around an offset, and the search
@@ -375,6 +400,20 @@ enum Myers {
 	/// whichever is smaller: the same shape as xdiff's, so that a diff with a
 	/// few hundred edits is exact and a wholesale rewrite costs O((N+M)·√(N+M))
 	/// rather than the square.
+	///
+	/// **Sixteen times the root, and a floor of a thousand.** It was four times
+	/// and 256, chosen when this bound was the only thing standing between the
+	/// diff and the square of a hundred thousand lines. It is not any more:
+	/// `Myers.matches` now takes out the lines that can match nothing before the
+	/// search begins, and two files with nothing in common reduce to two empty
+	/// sequences rather than to the worst case. What is left inside the bound is
+	/// a region whose lines *do* mostly pair up, where giving up early costs a
+	/// visibly worse diff and saves nothing worth having. Measured over 1,927
+	/// revision pairs of this repository: at four times the root our diff was
+	/// longer than git's on five pairs, worst 5,044 changed lines against
+	/// git's 3,640; at sixteen it is longer on one, by a single line, and the
+	/// corpus total went from 170,474 to 167,834 — below git's own 168,383 —
+	/// for the same 11.1 seconds.
 	private static func middleSnake(
 		_ a: [Int], _ b: [Int], _ ra: Range<Int>, _ rb: Range<Int>,
 		vf: inout [Int], vb: inout [Int], editLimit: Int
@@ -385,7 +424,7 @@ enum Myers {
 		let odd = delta & 1 == 1
 		let offset = n + m + 1
 		let furthest = (n + m + 1) / 2
-		let costLimit = min(editLimit, max(256, Int(Double(n + m).squareRoot()) * 4))
+		let costLimit = min(editLimit, max(1024, Int(Double(n + m).squareRoot()) * 16))
 		vf[offset + 1] = 0
 		vb[offset + 1] = 0
 		// The furthest point reached so far, for the split when the search is

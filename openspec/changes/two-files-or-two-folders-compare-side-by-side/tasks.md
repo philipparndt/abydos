@@ -13,9 +13,23 @@
       `aCommaAddedIsMarkedAsACommaAndNotAParagraph`,
       `aLineReplacedWholesaleIsColouredWhole`,
       `twoIdenticalFilesHaveNoChanges`, `aMinifiedLineIsNotDiffedByCharacter`.
-- [ ] 1.5 Measure on the corpus (`Scripts/corpus.sh`) and decide the open
-      question — patience or histogram over plain Myers — with the numbers in
-      the design.
+- [x] 1.5 Measure and decide the open question — patience or histogram over
+      plain Myers. **Neither**, on 2,562 real revision pairs: git's own three
+      algorithms describe 97% of real edits identically and differ by fractions
+      of a percent on the rest, not consistently in one direction. Not on the
+      corpus `Scripts/corpus.sh` clones, which are `--depth 1` and so hold one
+      version of everything where a diff needs two; on revision pairs from this
+      repository's history and from one Eclipse repository cloned with history.
+      `TextDiffCorpusTests` is the harness and the tables are in the design.
+      The measurement found two faults in our own Myers that the algorithm
+      question would have hidden, both fixed: lines that can match nothing are
+      now removed before the search — exact, and what git does — and the cost
+      bound, which was the only guard before that, is now generous enough to
+      matter. Longer than git's diff on 18 of 1,927 pairs before, on one after,
+      by a single line. One gap is left and named in the design: our lone
+      trivial anchors are 2–3× git's, which no algorithm change can close
+      because git's three are all alike — it is the compaction post-pass, and
+      it is the work worth doing next.
 
 ## 2. Sources
 

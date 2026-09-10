@@ -144,6 +144,46 @@ struct TextDiffTests {
 		}
 	}
 
+	/// A line that appears on one side only can be in no common subsequence, so
+	/// taking it out before the search cannot change the answer — which is the
+	/// whole licence for doing it.
+	@Test func removingWhatCannotMatchDoesNotChangeTheDiff() {
+		// Lines unique to one side sit between lines that do pair up, so the
+		// reduction is doing something and the alignment still has to be right.
+		let left = "keep\nonly left\nalso left\nshared\ntail\n"
+		let right = "keep\nonly right\nshared\nanother right\ntail\n"
+		let diff = TextDiff(left, right)
+		let equal = diff.rows.filter { $0.kind == .equal }
+			.map { (diff.leftLines[$0.left!], diff.rightLines[$0.right!]) }
+		#expect(equal.map(\.0) == ["keep", "shared", "tail"])
+		#expect(equal.allSatisfy { $0.0 == $0.1 })
+	}
+
+	/// **The bug the corpus found.** A large file rewritten wholesale has most
+	/// of its lines on one side only, so the bounded search saw an edit distance
+	/// far larger than the number of lines that could ever pair up, gave up, and
+	/// split at a point it had not reasoned about — 9,932 changed lines where
+	/// git said 3,640. Both halves keep a scattering of lines in common, which
+	/// is what a real rewrite looks like and what the reduction cannot remove.
+	@Test func aWholesaleRewriteIsNotLongerThanItsChangedLines() {
+		var left: [String] = []
+		var right: [String] = []
+		for index in 0..<4_000 {
+			left.append("old line \(index)")
+			right.append("new line \(index)")
+			if index % 50 == 0 {
+				left.append("survives \(index)")
+				right.append("survives \(index)")
+			}
+		}
+		let diff = TextDiff(leftLines: left, rightLines: right)
+		// Every line that appears on both sides is matched, and nothing else can
+		// be: the answer is exact here rather than merely bounded.
+		#expect(diff.rows.count { $0.kind == .equal } == 80)
+		let changed = diff.counts.additions + diff.counts.deletions + diff.counts.changes * 2
+		#expect(changed == 8_000, "\(changed)")
+	}
+
 	@Test func aChangeWithNothingOnOneSideAnchorsBetweenItsNeighbours() {
 		let diff = TextDiff("a\nb\nc\n", "a\nb\nX\nc\n")
 		let change = diff.changes[0]

@@ -68,10 +68,19 @@ half the shorter line surviving, so that a line replaced wholesale is coloured
 wholesale rather than as confetti. Lines are compared as `Substring`s of the
 two texts so nothing is copied.
 
-**Open**: whether patience or histogram refinement is worth its cost. Myers
-gives a diff that is minimal and occasionally silly — a closing brace matched
-to the wrong function. The corpus `Scripts/corpus.sh` fetches is the place to
-measure both before deciding; the seam is one function.
+**Decided on 2,562 real edits: neither.** The measurement is below. git
+implements all three algorithms, so what they do differently was asked of git
+rather than written twice here, and they describe 97% of real edits
+identically. Where they differ the metrics move by fractions of a percent, and
+not consistently in one direction: histogram gives 1% fewer changes than Myers
+on Swift and 0.3% *more* on Java. Nothing anybody would notice is on the table,
+so plain Myers stays and `Myers.matches` remains the seam if that is ever
+revisited.
+
+The measurement was worth taking anyway, because it found two faults in our own
+Myers that the algorithm question would have hidden — both fixed here, and both
+about what the search is given rather than which search it is. See *What was
+measured*.
 
 ### 2. The file diff is a new view sharing `DiffView`'s parts, not `DiffView`
 
@@ -266,9 +275,82 @@ directory, never a real one (item 0522).
 - [`git difftool --dir-diff` copy-back] → open question above; until it is
   answered the README says so beside the alias.
 
+## What was measured, 2026-09-10
+
+**The subject is a revision pair** — a file as one commit found it and as that
+commit left it. The corpus `Scripts/corpus.sh` clones cannot supply one: those
+clones are `--depth 1`, so they hold exactly one version of everything and a
+diff is of two. Any repository with history is full of pairs instead. Two
+corpora, both real edits by the people who wrote them: 1,927 pairs from this
+repository, and 635 Java pairs from one Eclipse repository cloned with 300
+commits of history — Java because it is the shape the silly match is most
+likely in, a language where a great many lines are a closing brace and nothing
+else.
+
+`TextDiffCorpusTests` is the harness, under `SCALE=1`, and it prints the table
+below. Three numbers, none of them a duration: **changes**, the maximal runs of
+non-equal rows that the reader walks; **changed lines**, removals and additions
+together, where a shorter diff of the same edit is a better description of it;
+and **lone anchors**, an unchanged *trivial* line with a change on either side
+of it — a brace, a blank, a comment terminator. That last one is the silly
+match named in this design, made countable: the diff claimed the brace closing
+one function is the brace closing another and split the edit around it.
+
+This repository, 1,927 pairs. git's three describe 58 of them differently
+(3.0%):
+
+| | changes | changed lines | lone anchors | seconds |
+| --- | --- | --- | --- | --- |
+| `TextDiff` | 9,167 | **167,834** | 797 | 11.1 |
+| git myers | 8,612 | 168,383 | 283 | 64.6 |
+| git patience | 8,557 | 167,957 | 254 | 18.6 |
+| git histogram | 8,525 | 168,087 | 257 | 18.7 |
+
+Java, 635 pairs. git's three describe 24 of them differently (3.8%):
+
+| | changes | changed lines | lone anchors | seconds |
+| --- | --- | --- | --- | --- |
+| `TextDiff` | 3,556 | **20,993** | 416 | 1.2 |
+| git myers | 3,379 | 21,061 | 179 | 11.9 |
+| git patience | 3,390 | 21,047 | 194 | 6.1 |
+| git histogram | 3,390 | 21,049 | 211 | 6.1 |
+
+**What the algorithm question is worth: nothing.** Read down git's own three
+rows. The seconds are process spawns and say nothing about the algorithms.
+
+**What the measurement found instead, both fixed.**
+
+*Lines that can match nothing are taken out before the search.* A line
+appearing nowhere on the other side can be in no common subsequence, so
+removing it changes none of them — an exact reduction, not a heuristic, and
+what git's xdiff does before it runs Myers at all. Without it a large rewrite
+presents the bounded search with an edit distance far larger than the number of
+lines that could ever pair up, and the search gives up and splits at a point it
+has not reasoned about. Our diff was longer than git's on **18 of 1,927** pairs
+before, worst 9,932 changed lines against git's 3,640 on a file of ten
+thousand; with the reduction, four.
+
+*And then the bound can afford to be generous.* It was four times the root of
+the region with a floor of 256, chosen when it was the only thing standing
+between the diff and the square of a hundred thousand lines. The reduction is
+that now, so what remains inside the bound is a region whose lines do mostly
+pair up, where giving up early costs a visibly worse diff and saves nothing.
+Sixteen times the root with a floor of a thousand: longer than git on **one**
+pair of 1,927, by a single line, and the corpus total fell to 167,834 — below
+git's own — for the same 11.1 seconds.
+
+**One gap left, and it is not the algorithm.** Our lone anchors are two to
+three times git's — 797 against 254 to 283, 416 against 179 to 211 — and git's
+three are all alike, so no change of algorithm can close it. What git has and
+we do not is the post-pass: `xdl_change_compact` slides a run of changed lines
+up or down where the alignment is equally valid, and the indent heuristic
+picks which of those equally valid placements reads best. It moves no line in
+or out of the diff, which is why our changed-line total is already the shorter
+one; it decides where a run is said to begin. That is a separate piece of work
+with a measurement already written for it, and it is the one worth doing next.
+
 ## Open Questions
 
-- Patience or histogram over plain Myers — decided on the corpus, not on taste.
 - How `abydos-diff --wait` learns the tab closed, rather than being told by
   a person pressing Return.
 - Whether a compare tab is restored by `sessions` when a side was a temporary
