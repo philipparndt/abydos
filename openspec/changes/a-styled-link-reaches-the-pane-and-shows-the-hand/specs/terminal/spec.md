@@ -56,7 +56,9 @@ bracket the address did not open — as a link, and SHALL treat a hyperlink a
 program marked with OSC 8 as one, the marked address winning where both apply.
 While the pointer is over a link the program marked, the terminal SHALL
 underline the link's cells in both renderers and show a hand, whether or not ⌘
-is held. While ⌘ is held and the pointer is over a printed address, the
+is held, and SHALL offer the link's address as a tooltip over those cells,
+since the text of a styled link says nothing about where it goes; a printed
+address, being its own text, gets no tooltip. While ⌘ is held and the pointer is over a printed address, the
 terminal SHALL underline it and show a hand; without ⌘ it SHALL draw nothing
 over a printed address and show the I-beam. ⌘-click over a link of either kind
 SHALL open the address and SHALL NOT start a selection nor be forwarded to a
@@ -105,8 +107,14 @@ was about to select; the release decides now, so a drag still selects.
 
 - **GIVEN** a program that marked `#211` as a hyperlink
 - **WHEN** the pointer rests on it with no modifier held
-- **THEN** the four cells are underlined in both renderers and the pointer is a
-  hand
+- **THEN** the four cells are underlined in both renderers, the pointer is a
+  hand, and a tooltip over those cells reads the address
+
+#### Scenario: no tooltip over a printed address
+
+- **GIVEN** the pointer over `https://example.org/x` a program printed, ⌘ held
+- **WHEN** it rests there
+- **THEN** the address is underlined and no tooltip is offered
 
 #### Scenario: a plain click over a marked link
 

@@ -31,6 +31,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// been had it landed on any other cell.
 	var pressedLink: (link: HoveredLink, press: NSEvent)?
 
+	/// The tooltip rect over the hovered marked link, so the address behind
+	/// `#211` can be read before it is clicked; removed as the pointer leaves.
+	var linkTipTag: NSView.ToolTipTag?
+
 	/// Drag reports the program has been sent, counted only so a driven run can
 	/// say whether an unsteady click reached it.
 	var forwardedDragsForTesting = 0

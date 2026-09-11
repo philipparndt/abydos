@@ -352,7 +352,39 @@ extension TerminalView {
 		// the moment it leaves — or, for a printed address, the moment ⌘ is
 		// let go.
 		if link != nil { NSCursor.pointingHand.set() } else { NSCursor.iBeam.set() }
+		updateLinkTip()
 		repaint()
+	}
+
+	/// The address behind a marked link, shown as a tooltip while the pointer
+	/// rests on it.
+	///
+	/// `#211` says nothing about where it goes, and a browser answers that in
+	/// its status bar before the click (the maintainer, 2026-09-11: *"maybe we
+	/// should show the link as hover"*). A printed address is its own text and
+	/// gets no tip. A rect over the link's cells rather than the view's
+	/// `toolTip`, so the tip belongs to the link and goes with it; owned by
+	/// the view with the text read off `hoveredLink`, because AppKit does not
+	/// retain a string passed as the owner — see `DebugToolbar`.
+	private func updateLinkTip() {
+		if let tag = linkTipTag {
+			removeToolTip(tag)
+			linkTipTag = nil
+		}
+		guard let link = hoveredLink, link.isMarked else { return }
+		let rect = NSRect(
+			x: Self.horizontalInset + CGFloat(link.columns.lowerBound) * cellWidth,
+			y: Self.verticalInset + CGFloat(link.row) * cellHeight,
+			width: CGFloat(link.columns.count) * cellWidth,
+			height: cellHeight
+		)
+		linkTipTag = addToolTip(rect, owner: self, userData: nil)
+	}
+
+	/// What the tip over the hovered link would say, or nil for none.
+	var linkTipForTesting: String? {
+		guard linkTipTag != nil, let link = hoveredLink, link.isMarked else { return nil }
+		return link.url.absoluteString
 	}
 
 	/// The pointer put on a cell with ⌘ held — or, with `hover`, with nothing
@@ -377,6 +409,7 @@ extension TerminalView {
 		guard let link = hoveredLink else { return out + " none underlined=false" }
 		out += " columns=\(link.columns.lowerBound)…\(link.columns.upperBound - 1)"
 			+ " url=\(link.url.absoluteString) marked=\(link.isMarked) underlined=true"
+			+ " tip=\(linkTipForTesting.map { $0.debugDescription } ?? "none")"
 		// The click as `mouseDown` and `mouseUp` receive it, with ⌘ or without,
 		// so what is exercised is the handlers' own order — the ⌘ branch ahead
 		// of the tracking guard and of selection, the held press decided on the
@@ -693,5 +726,17 @@ extension TerminalView {
 		// wheel drives the program's own cursor instead of doing nothing.
 		let key: TerminalEmulator.ArrowKey = steps > 0 ? .up : .down
 		pty.write(String(repeating: emulator.encodeArrow(key), count: abs(steps)))
+	}
+}
+
+extension TerminalView: NSViewToolTipOwner {
+	func view(
+		_ view: NSView,
+		stringForToolTip tag: NSView.ToolTipTag,
+		point: NSPoint,
+		userData: UnsafeMutableRawPointer?
+	) -> String {
+		guard tag == linkTipTag, let link = hoveredLink, link.isMarked else { return "" }
+		return link.url.absoluteString
 	}
 }

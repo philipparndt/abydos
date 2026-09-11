@@ -37,6 +37,11 @@
 - [x] 3a.3 Driven: `bare` on the marked link opens once and selects nothing;
       `drag` on it opens nothing; `bare` on the printed address opens nothing.
 
+## 3b. Where it goes
+
+- [x] 3b.1 A tooltip rect over a hovered marked link, reading the address;
+      none over a printed address. The driven report says `tip=`.
+
 ## 4. Before finishing
 
 - [x] 4.1 Say it in the release notes: the paragraph in the design.
@@ -45,6 +50,8 @@
       suites, exit 0, under a load that reached 42 as the suite ran; `make
       warnings` exit 0; the change valid. Green again after the click was
       reversed: the same 4,446, exit 0, load 19; `make warnings` exit 0.
+      And once more with the tooltip: 4,446, exit 0, load 24; `make warnings`
+      exit 0; the change valid.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 gone and its account is `openspec/specs`, where `terminal` is what this change

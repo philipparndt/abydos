@@ -112,6 +112,19 @@ guard.* The first click of a double-click on a link opens it, as it does in a
 browser; the second selects a word, which is harmless beside the page that is
 already opening.
 
+**The address as a tooltip over a marked link.** `#211` is a promise with no
+destination in it; a browser shows where a link goes in its status bar before
+the click, and the maintainer asked for the same (*"maybe we should show the
+link as hover"*, 2026-09-11). A tooltip rect over the link's cells, made when
+the hover begins and removed when it ends, owned by the view and reading the
+address off `hoveredLink` — AppKit does not retain a string handed to it as
+the owner, which `DebugToolbar` learnt the hard way. A printed address is its
+own text and gets none.
+
+*Ruled out: the view's `toolTip` property.* It is one tip for the whole view,
+shown wherever the pointer rests, and would say the last link's address over
+plain text a moment after leaving it.
+
 **`--terminal-link <row>:<column>:hover`** reports the hover with no modifier,
 beside the existing ⌘ hover, `click` and `bare`. The claim is two lines from
 one run: a marked link underlined without ⌘, a printed address not.
@@ -133,6 +146,8 @@ drawing:
 | `0:1:drag` — a press on the marked link that travels two cells | `opened=0`; the press and the drag went to the program, which was tracking the mouse |
 | `0:12:bare` — a plain click on the printed address | `opened=0`; the click went to the program |
 | `0:1:click` — ⌘-click on the marked link, after the reversal | `opened=1`, as before |
+| `0:1:hover` — the marked link, once the tooltip was added | `tip="https://github.com/o/r/pull/211"` |
+| `0:12` — the printed address under ⌘, the same build | `tip=none` |
 
 The first row is also the tmux half of the proof: the link was written by
 `printf` inside the pane's tmux, and `marked=true` at the pane means the client
@@ -148,7 +163,8 @@ bytes reached the pane as plain text, which is the report.
 > forwards one — and a program in a pane without tmux is told the same in the
 > word the `supports-hyperlinks` convention reads. A styled link is underlined
 > and the pointer is a hand as soon as the pointer rests on it, no ⌘ needed;
-> a plain click opens it, and a drag that starts on it still selects. A plain
+> a plain click opens it, a tooltip says where it goes, and a drag that
+> starts on it still selects. A plain
 > web address a program printed still shows itself under ⌘, and ⌘-click opens
 > either.
 
