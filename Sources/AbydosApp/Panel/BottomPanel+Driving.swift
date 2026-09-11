@@ -82,10 +82,15 @@ extension BottomPanel {
 		return terminal.pairsReportForTesting(row: row)
 	}
 
-	/// What the terminal makes of the cell at a row and column with ⌘ held.
-	func terminalLinkReportForTesting(row: Int, column: Int, click: Bool, bare: Bool) -> String {
+	/// What the terminal makes of the cell at a row and column with ⌘ held, or
+	/// with nothing held when `hover`.
+	func terminalLinkReportForTesting(
+		row: Int, column: Int, click: Bool, bare: Bool, hover: Bool
+	) -> String {
 		guard let terminal = showTerminal()?.terminalView else { return "LINK: no terminal" }
-		return terminal.linkReportForTesting(row: row, column: column, click: click, bare: bare)
+		return terminal.linkReportForTesting(
+			row: row, column: column, click: click, bare: bare, hover: hover
+		)
 	}
 
 	/// What the task tip is doing, and where the cards it can open over are.

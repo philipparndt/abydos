@@ -220,13 +220,26 @@ struct TmuxAttachTests {
 	/// turned it on. Without this, `abydos <file>` and `abydos-icat` do nothing
 	/// in the terminal this app starts — the one they are certain to be run in.
 	@Test func attachingAsksTheSessionToCarryEscapes() {
-		// `-T RGB` first: the client says outright that this terminal shows true
-		// colour, so tmux does not downgrade a program's 24-bit colours to the
-		// nearest of 256 on the way in (2026-09-10, the k9s row).
+		// `-T RGB,hyperlinks` first: the client says outright that this terminal
+		// shows true colour, so tmux does not downgrade a program's 24-bit
+		// colours to the nearest of 256 on the way in (2026-09-10, the k9s
+		// row); and that it shows hyperlinks, so tmux forwards a program's
+		// OSC 8 instead of stripping it (2026-09-11, Claude Code's `#211`).
 		#expect(TmuxMirror.attachArguments(to: "abydos") == [
-			"-T", "RGB", "new", "-A", "-s", "abydos",
+			"-T", "RGB,hyperlinks", "new", "-A", "-s", "abydos",
 			";", "set-option", "-q", "-t", "abydos", "allow-passthrough", "on",
 		])
+	}
+
+	/// tmux forwards an OSC 8 hyperlink only to a client whose terminal has
+	/// declared the feature; a scratch server forwarded none of a pane's links
+	/// to a `-T RGB` client and all of them to one that also said this.
+	@Test func theClientSaysItShowsHyperlinks() {
+		let arguments = TmuxMirror.attachArguments(to: "abydos")
+		let features = arguments[1].split(separator: ",").map(String.init)
+		#expect(arguments[0] == "-T")
+		#expect(features.contains("hyperlinks"))
+		#expect(features.contains("RGB"))
 	}
 
 	/// One session, not the server: nothing is written to anybody's config and

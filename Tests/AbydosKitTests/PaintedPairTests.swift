@@ -56,7 +56,7 @@ struct PaintedPairTests {
 	/// 256 — which is how a true black became ANSI black in the first place.
 	@Test func tmuxIsToldTheTerminalShowsRGB() {
 		let arguments = TmuxMirror.attachArguments(to: "abydos")
-		#expect(arguments.prefix(2) == ["-T", "RGB"])
+		#expect(arguments.prefix(2) == ["-T", "RGB,hyperlinks"])
 		#expect(arguments.contains("allow-passthrough"))
 	}
 

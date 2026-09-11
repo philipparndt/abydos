@@ -118,6 +118,21 @@ struct TerminalControlCodeTests {
 		#expect(cells[4].attributes.link == 0, "the marker closed the link")
 	}
 
+	/// tmux forwards a pane's hyperlink with a parameter of its own,
+	/// `id=tmux1`, ahead of the address. The parameters are the first field
+	/// and the address the rest, so the id is not in what a ⌘-click opens.
+	@Test func tmuxsOwnParameterIsNotPartOfTheAddress() {
+		let terminal = emulator()
+		terminal.write("\u{1B}]8;id=tmux1;https://github.com/o/r/pull/211\u{1B}\\#211\u{1B}]8;;\u{1B}\\ plain")
+
+		let cells = terminal.screen.line(at: 0)?.cells ?? []
+		let linked = cells[0].attributes.link
+		#expect(linked != 0)
+		#expect(terminal.link(for: linked) == "https://github.com/o/r/pull/211")
+		#expect(cells[3].attributes.link == linked, "the whole of `#211` is the link")
+		#expect(cells[4].attributes.link == 0, "the marker closed it")
+	}
+
 	/// The same address twice is one entry, not two: a page of links to the
 	/// same place should not grow the table by a page.
 	@Test func theSameAddressIsRemembered() {

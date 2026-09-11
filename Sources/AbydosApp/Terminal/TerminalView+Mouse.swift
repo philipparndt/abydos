@@ -289,31 +289,50 @@ extension TerminalView {
 		super.flagsChanged(with: event)
 	}
 
+	/// A marked link shows itself on plain hover; a printed address waits for ⌘.
+	///
+	/// The program that wrote OSC 8 has already said "this is a link", and the
+	/// hand and the underline are the terminal agreeing — asking for ⌘ first was
+	/// asking twice (the maintainer, 2026-09-11: *"would be also nice to have a
+	/// different mouse pointer over them"*). A printed address is this
+	/// terminal's guess from a regular expression, and a guess drawn over text
+	/// as the pointer crosses it is noise, so that keeps ⌘ as Terminal.app and
+	/// iTerm2 keep it. The click is ⌘ for both: the underline changes what the
+	/// pointer says, not what a bare click does.
+	///
+	/// Runs on every mouse move now, not only with ⌘ held. What keeps a plain
+	/// move cheap is inside `link(atWindowPoint:scanningText:)`: without ⌘ it
+	/// reads one cell's attribute and never scans the row.
 	func updateHoveredLink(at windowPoint: NSPoint, flags: NSEvent.ModifierFlags) {
-		let link = flags.contains(.command) ? self.link(atWindowPoint: windowPoint) : nil
+		let link = self.link(atWindowPoint: windowPoint, scanningText: flags.contains(.command))
 		guard link != hoveredLink else { return }
 		hoveredLink = link
 		// A pointer over something clickable should say so, and stop saying so
-		// the moment it leaves — or the moment ⌘ is let go.
+		// the moment it leaves — or, for a printed address, the moment ⌘ is
+		// let go.
 		if link != nil { NSCursor.pointingHand.set() } else { NSCursor.iBeam.set() }
 		repaint()
 	}
 
-	/// The pointer put on a cell with ⌘ held, as the events would put it, and
-	/// what the pane makes of that — for `--terminal-link`.
+	/// The pointer put on a cell with ⌘ held — or, with `hover`, with nothing
+	/// held — as the events would put it, and what the pane makes of that, for
+	/// `--terminal-link`.
 	///
 	/// Through `updateHoveredLink` and `LinkOpener`, which is the path a real
 	/// ⌘ and a real click take, so a run cannot pass with the lookup wired to
 	/// nothing. `underlined` is whether the range both renderers draw from is
 	/// set; the rule itself is a picture, and `--screenshot` beside this is how
 	/// to look at it.
-	func linkReportForTesting(row: Int, column: Int, click: Bool, bare: Bool = false) -> String {
+	func linkReportForTesting(
+		row: Int, column: Int, click: Bool, bare: Bool = false, hover: Bool = false
+	) -> String {
 		let point = NSPoint(
 			x: Self.horizontalInset + (CGFloat(column) + 0.5) * cellWidth,
 			y: Self.verticalInset + (CGFloat(row) + 0.5) * cellHeight
 		)
-		updateHoveredLink(at: convert(point, to: nil), flags: [.command])
+		updateHoveredLink(at: convert(point, to: nil), flags: hover ? [] : [.command])
 		var out = "LINK row=\(row) column=\(column) renderer=\(metal == nil ? "coregraphics" : "metal")"
+			+ " modifier=\(hover ? "none" : "cmd")"
 		guard let link = hoveredLink else { return out + " none underlined=false" }
 		out += " columns=\(link.columns.lowerBound)…\(link.columns.upperBound - 1)"
 			+ " url=\(link.url.absoluteString) marked=\(link.isMarked) underlined=true"
@@ -340,9 +359,12 @@ extension TerminalView {
 	///
 	/// One row is read, the one under the pointer: a marked link by the id its
 	/// cell carries — the program said what it meant, and a printed address
-	/// inside a marked run defers to it — and otherwise the row's own text,
-	/// scanned for an address. Never the scrollback, and never per frame.
-	func link(atWindowPoint windowPoint: NSPoint) -> HoveredLink? {
+	/// inside a marked run defers to it — and otherwise, when `scanningText`,
+	/// the row's own text, scanned for an address. The scan is the costly half
+	/// and the half that is only a guess, so a plain hover does not ask for it
+	/// and a ⌘ hover or a ⌘-click does. Never the scrollback, and never per
+	/// frame.
+	func link(atWindowPoint windowPoint: NSPoint, scanningText: Bool = true) -> HoveredLink? {
 		let point = convert(windowPoint, from: nil)
 		let row = Int((point.y - Self.verticalInset) / max(1, cellHeight))
 		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth))
@@ -360,9 +382,9 @@ extension TerminalView {
 			while end < line.cells.count, line.cells[end].attributes.link == id { end += 1 }
 			return HoveredLink(row: row, columns: start..<end, url: url, isMarked: true)
 		}
-		guard let found = line.webAddresses().first(where: { $0.columns.contains(column) }) else {
-			return nil
-		}
+		guard scanningText,
+		      let found = line.webAddresses().first(where: { $0.columns.contains(column) })
+		else { return nil }
 		return HoveredLink(row: row, columns: found.columns, url: found.url, isMarked: false)
 	}
 

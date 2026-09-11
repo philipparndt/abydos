@@ -35,6 +35,16 @@ extension PseudoTerminal {
 		merged["TERM"] = merged["TERM"] ?? "xterm-256color"
 		merged["COLORTERM"] = merged["COLORTERM"] ?? "truecolor"
 		merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
+		// This terminal shows OSC 8 hyperlinks, said in the one word the
+		// `supports-hyperlinks` convention reads. Claude Code writes a styled
+		// link — its `#211` for a pull request — only for a terminal it
+		// recognises by `TERM_PROGRAM`, or inside tmux 3.4 or newer, or when
+		// this is set; a bare pane of ours is none of the first and was plain
+		// text where Ghostty had a link (reported 2026-09-11). Defaulted, so a
+		// `0` somebody exported to say no is theirs; and not `TERM_PROGRAM`
+		// set to a terminal this is not, which is the lie the comment below is
+		// about.
+		merged["FORCE_HYPERLINK"] = merged["FORCE_HYPERLINK"] ?? "1"
 		// **`PAGER` is deliberately not set.** It was `cat` here, to stop a
 		// pager hanging a pane waiting for a keypress — true of a terminal that
 		// could not run a full-screen program, and this one runs `vim`, `htop`,

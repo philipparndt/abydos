@@ -233,6 +233,24 @@ struct PseudoTerminalEnvironmentTests {
 		#expect(merged["COLORTERM"] == "truecolor")
 	}
 
+	/// A program asking the `supports-hyperlinks` question in a bare pane is
+	/// told yes — and is not told the pane is some other terminal to get there.
+	/// Claude Code wrote its pull-request link as plain text here while
+	/// Ghostty underlined it, 2026-09-11.
+	@Test func saysItShowsHyperlinksWithoutClaimingToBeAnotherTerminal() {
+		let merged = PseudoTerminal.mergedEnvironment(nil, bundled: nil, inherited: [:])
+		#expect(merged["FORCE_HYPERLINK"] == "1")
+		#expect(merged["TERM_PROGRAM"] == "Abydos")
+	}
+
+	/// Somebody who exported `FORCE_HYPERLINK=0` said no, and keeps it.
+	@Test func aNoSomebodyExportedIsKept() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			nil, bundled: nil, inherited: ["FORCE_HYPERLINK": "0"]
+		)
+		#expect(merged["FORCE_HYPERLINK"] == "0")
+	}
+
 	/// **Nothing is set**, so `git log` opens `less` with git's own `LESS=FRX`
 	/// the way it does in every other terminal. This was `cat`, which cost the
 	/// pager in every pane and was found by a user unsetting it by hand.

@@ -429,7 +429,16 @@ public enum TmuxMirror {
 		// environment did not persuade it. The feature flag is tmux 3.2, the
 		// same era as `allow-passthrough` below; on anything older tmux would
 		// refuse the flag, and that is the version floor this app already has.
-		["-T", "RGB", "new", "-A", "-s", session, ";", "set-option", "-q", "-t", session, "allow-passthrough", "on"]
+		//
+		// `hyperlinks` beside it: tmux keeps every OSC 8 a pane writes and
+		// forwards it only to a client whose terminal declared this feature —
+		// it is not read off `xterm-256color`'s terminfo. Without it Claude
+		// Code's `#211` arrived here as plain text while Ghostty underlined it
+		// (reported 2026-09-11); a scratch server forwarded 0 of 2 links to a
+		// `-T RGB` client and 2 of 2 to this one, as `ESC ] 8 ; id=tmux1 ; url`.
+		// Said for this client only, the way `RGB` is, and not as a
+		// `terminal-features` line for every client somebody attaches.
+		["-T", "RGB,hyperlinks", "new", "-A", "-s", session, ";", "set-option", "-q", "-t", session, "allow-passthrough", "on"]
 	}
 
 	/// Hides — or gives back — tmux's own status bar, for one session only.
