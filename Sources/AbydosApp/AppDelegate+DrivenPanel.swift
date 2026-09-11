@@ -305,7 +305,8 @@ extension AppDelegate {
 		if let link = options.terminalLink {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
 				print(controller?.panelForTesting.terminalLinkReportForTesting(
-					row: link.row, column: link.column, click: link.click, bare: link.bare, hover: link.hover
+					row: link.row, column: link.column, click: link.click, bare: link.bare,
+					hover: link.hover, drag: link.drag
 				) ?? "LINK: no window")
 				fflush(stdout)
 			}

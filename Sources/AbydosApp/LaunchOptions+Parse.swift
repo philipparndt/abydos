@@ -237,8 +237,9 @@ extension LaunchOptions {
 				let parts = (next() ?? "").split(separator: ":").map(String.init)
 				if parts.count >= 2, let row = Int(parts[0]), let column = Int(parts[1]) {
 					let mode = parts.count > 2 ? parts[2] : ""
+					let presses = mode == "click" || mode == "bare" || mode == "drag"
 					options.terminalLink = (
-						row, column, mode == "click" || mode == "bare", mode == "bare", mode == "hover"
+						row, column, presses, mode == "bare" || mode == "drag", mode == "hover", mode == "drag"
 					)
 				}
 			case "--terminal-pairs":

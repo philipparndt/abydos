@@ -25,6 +25,12 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// drag the program hears about. See `ClickSlack` for what it is guarding.
 	var clickSlack = ClickSlack()
 
+	/// A plain press that landed on a link the program marked, held until the
+	/// release says what it was: a click, which opens the link, or the start of
+	/// a drag, which selects or is forwarded exactly as the press would have
+	/// been had it landed on any other cell.
+	var pressedLink: (link: HoveredLink, press: NSEvent)?
+
 	/// Drag reports the program has been sent, counted only so a driven run can
 	/// say whether an unsteady click reached it.
 	var forwardedDragsForTesting = 0

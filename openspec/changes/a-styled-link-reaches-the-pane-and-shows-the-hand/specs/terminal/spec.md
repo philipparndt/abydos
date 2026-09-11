@@ -60,16 +60,25 @@ is held. While ⌘ is held and the pointer is over a printed address, the
 terminal SHALL underline it and show a hand; without ⌘ it SHALL draw nothing
 over a printed address and show the I-beam. ⌘-click over a link of either kind
 SHALL open the address and SHALL NOT start a selection nor be forwarded to a
-program tracking the mouse; a bare click over a link SHALL select text as over
-any other character. An address without a scheme SHALL NOT be a link. A driven
-run SHALL print what a ⌘-click would open and SHALL NOT open it, and SHALL be
-able to report the hover with no modifier held.
+program tracking the mouse. A plain press on a link the program marked SHALL be
+held until its release: released within a cell of where it landed it is a
+click and SHALL open the address, forwarding neither press nor release to a
+program tracking the mouse and selecting nothing; a press that travels a cell
+first SHALL become the selection, or the forwarded press, it would have been on
+any other cell, and SHALL open nothing. Shift held SHALL make any press a
+selection. A bare click over a printed address SHALL select text as over any
+other character. An address without a scheme SHALL NOT be a link. A driven run
+SHALL print what a click would open and SHALL NOT open it, and SHALL be able
+to report the hover with no modifier held and a press that drags.
 
 Feedback of 2026-09-10: ⌘ over a link should underline it and a click open it in
 the browser, as Terminal.app and iTerm2 do. The terminal knew only marked links,
 opened those on a bare click, and underlined them in one renderer. Feedback of
 2026-09-11: a link the program styled should show a different pointer — the
-program has already said it is one.
+program has already said it is one. And the same day, once it did: *"this is
+unintuitive as it already underlines/hovers"* — a hand that then needs ⌘ to
+click. The bare click of 2026-09-10 was removed for springing on text somebody
+was about to select; the release decides now, so a drag still selects.
 
 #### Scenario: an address a program printed
 
@@ -99,10 +108,27 @@ program has already said it is one.
 - **THEN** the four cells are underlined in both renderers and the pointer is a
   hand
 
-#### Scenario: a bare click over a marked link
+#### Scenario: a plain click over a marked link
 
-- **GIVEN** a program that marked a run of cells as a hyperlink
-- **WHEN** the run is clicked without ⌘
+- **GIVEN** a program that marked `#211` as a hyperlink
+- **WHEN** it is pressed and released without ⌘, the pointer staying within a
+  cell
+- **THEN** the address opens on the release, nothing is selected, and a
+  program tracking the mouse receives neither press nor release
+
+#### Scenario: a drag that begins on a marked link
+
+- **GIVEN** the same marked link
+- **WHEN** it is pressed without ⌘ and the pointer travels two cells before
+  the release
+- **THEN** nothing opens and the text from the press to the release is
+  selected — or, when a program tracks the mouse, the press and the drag are
+  forwarded to it as they would be from any cell
+
+#### Scenario: a bare click over a printed address
+
+- **GIVEN** the pointer over an address a program printed
+- **WHEN** it is clicked without ⌘
 - **THEN** nothing opens and a selection begins, as over any text
 
 #### Scenario: without ⌘
@@ -130,3 +156,11 @@ program has already said it is one.
 - **WHEN** its `--terminal-link` step hovers each with `hover`
 - **THEN** the run reports the marked link underlined and the printed address
   not
+
+#### Scenario: a driven click and drag without ⌘
+
+- **GIVEN** a driven run with a marked link in a pane
+- **WHEN** its `--terminal-link` step presses and releases it with `bare`, and
+  in another run presses and travels with `drag`
+- **THEN** the first reports one opening and nothing selected, the second
+  nothing opened

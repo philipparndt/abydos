@@ -27,13 +27,24 @@
       first of them is the tmux proof too: the link was written inside the
       pane's tmux and arrived marked.
 
+## 3a. The click, reversed the same day
+
+- [x] 3a.1 A plain press on a marked link is held; the release within the
+      slack opens it and forwards nothing, a drag past the slack begins the
+      selection or the forwarded press late. Shift still selects.
+- [x] 3a.2 `--terminal-link` sends the release too, and gains `drag`; the
+      report says what opened and what was selected.
+- [x] 3a.3 Driven: `bare` on the marked link opens once and selects nothing;
+      `drag` on it opens nothing; `bare` on the printed address opens nothing.
+
 ## 4. Before finishing
 
 - [x] 4.1 Say it in the release notes: the paragraph in the design.
 - [x] 4.2 `make test` and `make warnings`, both clean, by their exit codes;
       `openspec validate` on the change. Green 2026-09-11: 4,446 tests in 568
       suites, exit 0, under a load that reached 42 as the suite ran; `make
-      warnings` exit 0; the change valid.
+      warnings` exit 0; the change valid. Green again after the click was
+      reversed: the same 4,446, exit 0, load 19; `make warnings` exit 0.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 gone and its account is `openspec/specs`, where `terminal` is what this change

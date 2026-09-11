@@ -214,6 +214,22 @@ extension TerminalView {
 			return
 		}
 
+		// A plain click on a link the program marked opens it too — decided on
+		// the release, not here. The hand and the underline are already shown
+		// without ⌘ for these, and a hand that then needs ⌘ to click was
+		// called unintuitive the day it shipped (the maintainer, 2026-09-11).
+		// What the bare click of 2026-09-10 was removed for — springing on
+		// text somebody was about to select — is kept off by the slack: a
+		// press that travels a cell becomes the selection or the forwarded
+		// press it would have been, and only a press released where it landed
+		// is a click. Shift stays the escape hatch that means "select".
+		if !event.modifierFlags.contains(.shift), event.clickCount == 1,
+		   let link = link(atWindowPoint: event.locationInWindow, scanningText: false) {
+			pressedLink = (link, event)
+			clickSlack.pressed(at: convert(event.locationInWindow, from: nil))
+			return
+		}
+
 		guard mouseSelects || event.modifierFlags.contains(.shift) else {
 			clickSlack.pressed(at: convert(event.locationInWindow, from: nil))
 			_ = forwardMouse(event, button: .left, isRelease: false)
@@ -235,7 +251,32 @@ extension TerminalView {
 		}
 	}
 
+	/// The press a marked link held back, begun now that it has become a drag:
+	/// the selection or the forwarded press it would have been.
+	private func beginHeldPress(_ event: NSEvent) {
+		guard mouseSelects else {
+			_ = forwardMouse(event, button: .left, isRelease: false)
+			return
+		}
+		let position = selectionPosition(for: event)
+		isSelecting = true
+		setSelection(TerminalSelection(
+			anchor: position, head: position, isBlock: event.modifierFlags.contains(.option)
+		))
+	}
+
 	override func mouseUp(with event: NSEvent) {
+		if let pressed = pressedLink {
+			// Released where it landed: a click. The press was never forwarded,
+			// so no release is either, and no selection was begun to clear.
+			pressedLink = nil
+			clickSlack.released()
+			if let under = link(atWindowPoint: event.locationInWindow, scanningText: false),
+			   under.url == pressed.link.url {
+				LinkOpener.open(under.url)
+			}
+			return
+		}
 		clickSlack.released()
 		if isSelecting {
 			isSelecting = false
@@ -324,7 +365,7 @@ extension TerminalView {
 	/// set; the rule itself is a picture, and `--screenshot` beside this is how
 	/// to look at it.
 	func linkReportForTesting(
-		row: Int, column: Int, click: Bool, bare: Bool = false, hover: Bool = false
+		row: Int, column: Int, click: Bool, bare: Bool = false, hover: Bool = false, drag: Bool = false
 	) -> String {
 		let point = NSPoint(
 			x: Self.horizontalInset + (CGFloat(column) + 0.5) * cellWidth,
@@ -336,21 +377,31 @@ extension TerminalView {
 		guard let link = hoveredLink else { return out + " none underlined=false" }
 		out += " columns=\(link.columns.lowerBound)…\(link.columns.upperBound - 1)"
 			+ " url=\(link.url.absoluteString) marked=\(link.isMarked) underlined=true"
-		// The click as `mouseDown` receives it, with ⌘ or without, so what is
-		// exercised is the handler's own order — the ⌘ branch ahead of the
-		// tracking guard and of selection — and not a call to the opener.
+		// The click as `mouseDown` and `mouseUp` receive it, with ⌘ or without,
+		// so what is exercised is the handlers' own order — the ⌘ branch ahead
+		// of the tracking guard and of selection, the held press decided on the
+		// release — and not a call to the opener. With `drag` the pointer
+		// travels two cells to the right between the press and the release,
+		// which is what turns a press on a marked link back into a selection.
 		guard click, let window else { return out }
 		let opened = LinkOpener.openedForTesting.count
 		let flags: NSEvent.ModifierFlags = bare ? [] : [.command]
-		if let down = NSEvent.mouseEvent(
-			with: .leftMouseDown, location: convert(point, to: nil), modifierFlags: flags,
-			timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-			context: nil, eventNumber: 0, clickCount: 1, pressure: 1
-		) {
-			mouseDown(with: down)
+		let release = drag ? NSPoint(x: point.x + cellWidth * 2, y: point.y) : point
+		func event(_ type: NSEvent.EventType, at spot: NSPoint) -> NSEvent? {
+			NSEvent.mouseEvent(
+				with: type, location: convert(spot, to: nil), modifierFlags: flags,
+				timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+				context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1
+			)
 		}
-		out += bare ? " bare-click:" : " cmd-click:"
-		out += " opened=\(LinkOpener.openedForTesting.count - opened) selecting=\(isSelecting)"
+		if let down = event(.leftMouseDown, at: point) { mouseDown(with: down) }
+		if drag, let dragged = event(.leftMouseDragged, at: release) { mouseDragged(with: dragged) }
+		let selectingAfterPress = isSelecting
+		if let up = event(.leftMouseUp, at: release) { mouseUp(with: up) }
+		out += drag ? " bare-drag:" : bare ? " bare-click:" : " cmd-click:"
+		let selected = selection.map { emulator.grid.text(in: $0) } ?? ""
+		out += " opened=\(LinkOpener.openedForTesting.count - opened) selecting=\(selectingAfterPress)"
+			+ " selected=\(selected.debugDescription)"
 			+ " tracking=\(emulator.mouseTracking != .off)"
 		return out
 	}
@@ -447,6 +498,15 @@ extension TerminalView {
 	}
 
 	override func mouseDragged(with event: NSEvent) {
+		if let pressed = pressedLink {
+			// Still inside the slack: nothing has been decided.
+			guard clickSlack.hasLeftTheSlack(
+				at: convert(event.locationInWindow, from: nil),
+				cellWidth: cellWidth, cellHeight: cellHeight
+			) else { return }
+			pressedLink = nil
+			beginHeldPress(pressed.press)
+		}
 		guard isSelecting else {
 			// A hand that moves two points between pressing and releasing is
 			// clicking, not dragging. Telling tmux otherwise makes it select

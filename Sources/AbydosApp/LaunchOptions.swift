@@ -521,14 +521,16 @@ struct LaunchOptions {
 	/// the colours the renderer resolves them to, drawn, and the contrast ratio
 	/// of each pair — so what a program painted is a number and not a picture.
 	var terminalPairs: (row: Int, at: Double)?
-	/// `--terminal-link <row>:<column>[:click|:bare|:hover]`: the pointer on
-	/// that cell with ⌘ held, as the events would put it, and what the pane
-	/// makes of it — the link's columns and address; with `click` a ⌘-click
-	/// through `mouseDown` and what it would open; with `bare` a click without
-	/// ⌘, which must open nothing and start a selection; with `hover` the
-	/// pointer resting there with nothing held, which underlines a marked link
-	/// and not a printed address.
-	var terminalLink: (row: Int, column: Int, click: Bool, bare: Bool, hover: Bool)?
+	/// `--terminal-link <row>:<column>[:click|:bare|:drag|:hover]`: the
+	/// pointer on that cell with ⌘ held, as the events would put it, and what
+	/// the pane makes of it — the link's columns and address; with `click` a
+	/// ⌘-click through `mouseDown` and what it would open; with `bare` a press
+	/// and release without ⌘, which opens a marked link and selects over
+	/// anything else; with `drag` a press without ⌘ that travels two cells
+	/// before the release, which must select and open nothing; with `hover`
+	/// the pointer resting there with nothing held, which underlines a marked
+	/// link and not a printed address.
+	var terminalLink: (row: Int, column: Int, click: Bool, bare: Bool, hover: Bool, drag: Bool)?
 	/// Where the backlog pane's header is against the strip, at these seconds:
 	/// `--backlog-geometry 3,5,7`.
 	var backlogGeometryAt: [Double] = []
