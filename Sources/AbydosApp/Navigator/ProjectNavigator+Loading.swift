@@ -21,9 +21,14 @@ extension ProjectNavigatorViewController {
 		rootNode = root
 		// Until the tree is coloured: the rows are listed in a moment, and the
 		// gap between them and their colours is what opening a large
-		// repository costs.
-		beginReading()
-		readingUntilColoured = true
+		// repository costs. The previous project's reads are its own and are
+		// forgotten first, whatever was still out.
+		readGeneration += 1
+		readsInFlight = 0
+		readingUntilColoured = false
+		activity?.finish()
+		activity = nil
+		beginReadingUntilColoured()
 		// The previous project's, which must not be shown against this one even
 		// for the moment before the read below lands.
 		dependencies = nil
@@ -199,12 +204,15 @@ extension ProjectNavigatorViewController {
 		let root = project.root
 		isReadingDependencies = true
 		beginReading()
+		let generation = readGeneration
 
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 			let sets = ExternalDependencies.read(project: root)
 			DispatchQueue.main.async {
 				guard let self else { return }
-				self.endReading()
+				// Only this project's read: a walk for the project that was
+				// switched away from has already been forgotten by `load`.
+				if generation == self.readGeneration { self.endReading() }
 				// The project may have been switched again while this walked.
 				// Applying it would put one project's packages under another's
 				// name, which is worse than not having them yet.
@@ -441,11 +449,34 @@ extension ProjectNavigatorViewController {
 		activity = nil
 	}
 
+	/// One read that the next colouring ends — armed, not counted, so that
+	/// arming it twice is still one read.
+	func beginReadingUntilColoured() {
+		guard !readingUntilColoured else { return }
+		readingUntilColoured = true
+		beginReading()
+	}
+
+	/// The window has finished looking for the repository.
+	///
+	/// A folder that is no working copy is never coloured, so the read that
+	/// was waiting for colour ends here; a repository is coloured, which ends
+	/// it the ordinary way.
+	func repositoryWasRead() {
+		guard project?.git != nil else {
+			if readingUntilColoured {
+				readingUntilColoured = false
+				endReading()
+			}
+			return
+		}
+		refreshGitStatus()
+	}
+
 	/// The header's fourth button: the folder and the working copy read again,
 	/// with the strip under the header until the tree is coloured.
 	func refreshFromHeader() {
-		beginReading()
-		readingUntilColoured = true
+		beginReadingUntilColoured()
 		reloadTree()
 	}
 

@@ -94,7 +94,9 @@ extension MainWindowController {
 			}
 			// The capsule only gets its width once it has a name to show.
 			self.titlebar.relayout()
-			self.navigator.refreshGitStatus()
+			// Or, for a folder that is no working copy, that there is nothing
+			// to colour — which is what ends the tree's waiting strip there.
+			self.navigator.repositoryWasRead()
 			// The gutter's marks were asked for before the inventory existed,
 			// so a file inside a submodule had none. See `refreshChangeMarks`.
 			self.editor.refreshChangeMarks()

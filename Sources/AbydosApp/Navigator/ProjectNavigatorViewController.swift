@@ -110,7 +110,13 @@ final class ProjectNavigatorViewController: NSViewController {
 	var readsInFlight = 0
 	/// Whether the next colouring of the tree ends a read — the one a load or a
 	/// header refresh started, which is finished by `refreshGitStatus` landing.
+	/// One read however often it is armed: a second load or a second press of
+	/// refresh before the colours land used to begin a second read that no
+	/// colouring ended, and the strip swept for ever over a coloured tree.
 	var readingUntilColoured = false
+	/// Which project's reads are current. A dependency walk that comes back
+	/// after the project was switched must not end the new project's read.
+	var readGeneration = 0
 	var deferredReveals: [URL] = []
 
 	// Kept in the body because a stored property cannot live in an
