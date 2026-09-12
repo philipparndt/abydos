@@ -13,9 +13,15 @@ final class StructurePane: NSView {
 	private var fileName: String?
 	private var filterText = ""
 
-	private var filterField: NSSearchField!
+	private var filterField: ScaledSearchField!
 	private var outlineView: NSOutlineView!
-	private var placeholder: NSTextField!
+	private var placeholder: ScaledLabel!
+
+	/// The rows re-measured on a zoom. The field and the label above them are
+	/// the library's own and follow on their own; the outline draws its rows
+	/// from `Theme.current` and is right on the next draw, which a zoom does
+	/// not cause without this.
+	private let heights = ScaledHeights()
 
 	/// Wraps a symbol so `NSOutlineView`, which needs reference identity, can
 	/// hold on to it.
@@ -43,10 +49,12 @@ final class StructurePane: NSView {
 	// MARK: - Layout
 
 	private func build() {
-		filterField = NSSearchField()
-		filterField.placeholderString = "Filter symbols"
-		filterField.font = Theme.current.uiFont(12)
-		filterField.focusRingType = .none
+		// **The library's field, not a bare `NSSearchField`.** Reported
+		// 2026-09-11: this and the label below at the size they had at 1.0
+		// while the pane around them had grown. A field given a font once
+		// keeps it; a member of the library is asked again on every zoom, and
+		// nothing here has to remember to ask.
+		filterField = ScaledSearchField(placeholder: "Filter symbols")
 		filterField.delegate = self
 		filterField.sendsWholeSearchString = false
 
@@ -75,10 +83,9 @@ final class StructurePane: NSView {
 		scrollView.backgroundColor = Theme.current.sidebarBackground
 		scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
 
-		placeholder = NSTextField(labelWithString: "No symbols")
-		placeholder.font = Theme.current.uiFont(12)
-		placeholder.textColor = Theme.current.gitIgnored
+		placeholder = ScaledLabel("No symbols", size: 12) { Theme.current.gitIgnored }
 		placeholder.alignment = .center
+		heights.follow(self.outlineView)
 
 		for view in [filterField, scrollView, placeholder] as [NSView] {
 			addSubview(view)
@@ -149,13 +156,6 @@ final class StructurePane: NSView {
 		let row = outlineView.clickedRow >= 0 ? outlineView.clickedRow : outlineView.selectedRow
 		guard row >= 0, let node = outlineView.item(atRow: row) as? Node else { return }
 		onSelectSymbol?(node.symbol.line)
-	}
-
-	func applyThemeChange() {
-		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
-		filterField.font = Theme.current.uiFont(12)
-		outlineView.indentationPerLevel = Theme.current.scaled(14)
-		outlineView.reloadData()
 	}
 }
 

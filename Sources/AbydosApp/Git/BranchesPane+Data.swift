@@ -33,7 +33,8 @@ extension BranchesPane {
 	/// counts *and* refusing to admit it.
 	private func fetch(pruning: Bool) {
 		activity = PaneActivityView.install(
-			over: self, message: pruning ? "Fetching and pruning…" : "Fetching…"
+			over: self, message: pruning ? "Fetching and pruning…" : "Fetching…",
+			paneIsEmpty: false
 		)
 		let root = self.root
 		Task { @MainActor [weak self] in

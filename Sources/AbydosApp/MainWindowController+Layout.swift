@@ -400,6 +400,9 @@ extension MainWindowController {
 			self.editor.openArchiveEntry(at: url, origin: origin, focusEditor: pinned)
 		}
 		navigator.onBlame = { [weak self] url in self?.blame(url) }
+		navigator.onDiscard = { [weak self] target in
+			Task { @MainActor in await self?.discardFromTree(target) }
+		}
 		editor.onBlameRequested = { [weak self] url in self?.blame(url) }
 		editor.onRevealCommit = { [weak self] entry, url in self?.reveal(commit: entry, of: url) }
 		navigator.onOpenAsHex = { [weak self] url in

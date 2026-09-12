@@ -25,6 +25,79 @@ public enum GitDiscard {
 		case rows
 	}
 
+	/// What a discard over some rows would take: the paths git is given, the
+	/// unstaged changes they cover, and the row it is named after.
+	///
+	/// One value for the changes pane and the project tree both, so that the
+	/// two menus over the same file cannot count it differently. What either
+	/// menu says and what its confirmation asks are read off this and nothing
+	/// else.
+	public struct Target: Equatable, Sendable {
+		public let paths: [String]
+		public let changes: [GitChange]
+		public let subject: Subject
+
+		public init(paths: [String], changes: [GitChange], subject: Subject) {
+			self.paths = paths
+			self.changes = changes
+			self.subject = subject
+		}
+
+		/// How many files it covers, and how many of those git has never seen.
+		public var files: Int { changes.count }
+		public var untracked: Int { changes.filter { $0.kind == .untracked }.count }
+
+		public var menuTitle: String { GitDiscard.menuTitle(subject: subject, files: files, untracked: untracked) }
+		public var question: String { GitDiscard.question(subject: subject, files: files, untracked: untracked) }
+		public var explanation: String { GitDiscard.explanation(files: files, untracked: untracked) }
+		public var buttonTitle: String { GitDiscard.buttonTitle(files: files, untracked: untracked) }
+	}
+
+	/// What discarding these rows would take, or nil when the menu should not
+	/// offer it.
+	///
+	/// The rows are reduced to what git is handed — a folder stands for the
+	/// files under it, and a file whose folder is also selected is dropped —
+	/// and the unstaged changes under those paths are what will go. Nothing
+	/// under them is nil: there is nothing to discard. **A conflict among them
+	/// is nil too.** `git checkout -- <unmerged path>` refuses with "path is
+	/// unmerged", so the entry would be one that always fails; and throwing
+	/// away a half-resolved merge is a different question, with more than one
+	/// right answer, that this item did not decide.
+	///
+	/// Only *unstaged* changes count, and that is a decision rather than an
+	/// omission. `checkout --` restores the work tree from the index, so over
+	/// a staged change it would throw away nothing that is staged: the change
+	/// would survive, and the menu would have offered to destroy something and
+	/// then not done it. Unstage first — that is recoverable, and it puts the
+	/// change where discard already is.
+	///
+	/// - Parameter isFolder: whether the one path left after reduction is a
+	///   folder, when the caller knows; nil when it does not, and the subject
+	///   is then the rows rather than a name.
+	public static func target(
+		over selected: [String],
+		unstaged: [GitChange],
+		isFolder: (String) -> Bool?
+	) -> Target? {
+		let paths = GitChangeTree.reduce(selected)
+		let changes = Self.changes(unstaged, under: paths)
+		guard !changes.isEmpty else { return nil }
+		guard !changes.contains(where: { $0.kind == .conflicted }) else { return nil }
+
+		// One path may still be a folder standing for forty files, and it is
+		// not necessarily the row that was clicked: `reduce` drops a file whose
+		// folder is selected too, and the folder is what git is handed.
+		let subject: Subject
+		if paths.count == 1, let folder = isFolder(paths[0]) {
+			let name = (paths[0] as NSString).lastPathComponent
+			subject = folder ? .folder(name) : .file(name)
+		} else {
+			subject = .rows
+		}
+		return Target(paths: paths, changes: changes, subject: subject)
+	}
+
 	/// The changes these paths cover.
 	///
 	/// A folder path covers everything beneath it, which is the same rule

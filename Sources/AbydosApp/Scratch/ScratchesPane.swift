@@ -29,9 +29,14 @@ final class ScratchesPane: NSView {
 	private var rows: [Row] = []
 	private var query = ""
 
-	private var searchField: NSSearchField!
+	private var searchField: ScaledSearchField!
 	private var tableView: ScratchTableView!
-	private var emptyLabel: NSTextField!
+	private var emptyLabel: ScaledLabel!
+
+	/// The rows and the section headers re-measured on a zoom: both draw from
+	/// `Theme.current` and were right on the next reload, which a zoom did
+	/// not cause.
+	private let heights = ScaledHeights()
 
 	private enum Row {
 		case header(String)
@@ -68,10 +73,10 @@ final class ScratchesPane: NSView {
 	// MARK: - Layout
 
 	private func build() {
-		searchField = NSSearchField()
-		searchField.placeholderString = "Search scratches"
-		searchField.font = Theme.current.uiFont(12)
-		searchField.focusRingType = .none
+		// The library's field, for the reason the two buttons under it are
+		// the library's buttons: reported 2026-09-11 at its 1.0 size beside
+		// *New Scratch* and *New Global* at the zoom's.
+		searchField = ScaledSearchField(placeholder: "Search scratches")
 		searchField.delegate = self
 		searchField.sendsWholeSearchString = false
 
@@ -113,10 +118,9 @@ final class ScratchesPane: NSView {
 		scrollView.backgroundColor = Theme.current.sidebarBackground
 		scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
 
-		emptyLabel = NSTextField(labelWithString: "No scratches yet")
-		emptyLabel.font = Theme.current.uiFont(12)
-		emptyLabel.textColor = Theme.current.gitIgnored
+		emptyLabel = ScaledLabel("No scratches yet", size: 12) { Theme.current.gitIgnored }
 		emptyLabel.alignment = .center
+		heights.follow(self.tableView)
 
 		for view in [searchField, newButton, globalButton, scrollView, emptyLabel] as [NSView] {
 			addSubview(view)

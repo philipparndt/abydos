@@ -437,6 +437,9 @@ struct LaunchOptions {
 	/// A comma-separated script for the project tree: `down`, `up`, `right`,
 	/// `left`, `collapse`, `locate`.
 	var treeSteps: String?
+	/// `--hold-activity`: every pane's waiting strip stays up once shown, so a
+	/// wait of a tenth of a second can be captured and reported.
+	var holdsActivity = false
 	/// A comma-separated script for the changes tree: `report`, `stage:<path>`,
 	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`.
 	var changesSteps: String?

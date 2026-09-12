@@ -438,6 +438,17 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				// recipe could be — the row, never the tree. See 0482.
 				item.isHidden = !(node.map { !$0.isDirectory && ModelPreview.holdsAModel($0.url) } ?? false)
 					|| !ModelPreview.isAvailable
+			case #selector(contextDiscard):
+				// Only where git has something to put back or remove, asked of
+				// the same status the colours come from — a folder counts the
+				// files under it, a file whose only change is staged is refused
+				// as the changes pane refuses it — and never over a conflict.
+				// Absent rather than greyed, the way Blame is absent off a
+				// repository: an offer to do nothing is not an offer.
+				let target = discardTarget
+				item.isHidden = target == nil
+				item.isEnabled = target != nil
+				item.title = target?.menuTitle ?? "Discard Changes\u{2026}"
 			case #selector(contextOpenSubproject):
 				// Only a folder, and not the one already being worked on.
 				let folder = node?.isDirectory == true && !isRoot

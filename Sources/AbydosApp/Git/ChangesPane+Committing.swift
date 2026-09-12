@@ -27,7 +27,7 @@ extension ChangesPane {
 	///
 	/// The selection when the click landed inside it and the clicked row
 	/// otherwise — the rule stash and every other list here follows.
-	func discardable() -> (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)? {
+	func discardable() -> GitDiscard.Target? {
 		guard let clicked = clickedNode, !clicked.isStaged else { return nil }
 		return discardable(node: clicked.node)
 	}
@@ -35,40 +35,18 @@ extension ChangesPane {
 	/// The same question asked about a row by name, so that what the menu would
 	/// say can be printed without a right-click. `clickedRow` is set by the
 	/// event and by nothing else, which is what makes the split worth having.
-	func discardable(
-		node: GitChangeNode
-	) -> (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)? {
+	///
+	/// The arithmetic — the reduction to what git is handed, the count, the
+	/// refusal over a conflict — is `GitDiscard.target`'s, because the project
+	/// tree asks the same question of the same file and the two menus must not
+	/// count it differently.
+	func discardable(node: GitChangeNode) -> GitDiscard.Target? {
 		guard let table = unstagedTable else { return nil }
 		let selected = selectedPaths(in: table)
-		let paths = GitChangeTree.reduce(
-			selected.contains(node.path) ? selected : [node.path]
-		)
-		let changes = GitDiscard.changes(status.unstaged, under: paths)
-		guard !changes.isEmpty else { return nil }
-
-		// Never over a conflict. `git checkout -- <unmerged path>` refuses with
-		// "path is unmerged", so the entry would be one that always fails; and
-		// throwing away a half-resolved merge is a different question, with
-		// more than one right answer, that this item did not decide.
-		guard !changes.contains(where: { $0.kind == .conflicted }) else { return nil }
-
-		// One path may still be a folder standing for forty files, and it is not
-		// necessarily the row that was clicked: `reduce` drops a file whose
-		// folder is selected too, and the folder is what git is handed.
-		let subject: GitDiscard.Subject
-		if paths.count == 1, let only = unstagedSide.byPath[paths[0]] {
-			subject = only.isFolder ? .folder(only.name) : .file(only.name)
-		} else {
-			subject = .rows
-		}
-		return (paths, changes, subject)
-	}
-
-	/// How many files a discard covers, and how many of those git has never seen.
-	func discardCounts(
-		_ target: (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)
-	) -> (files: Int, untracked: Int) {
-		(target.changes.count, target.changes.filter { $0.kind == .untracked }.count)
+		return GitDiscard.target(
+			over: selected.contains(node.path) ? selected : [node.path],
+			unstaged: status.unstaged
+		) { unstagedSide.byPath[$0]?.isFolder }
 	}
 
 	/// Asks, and only then throws the work away.
@@ -79,57 +57,30 @@ extension ChangesPane {
 	/// git object left afterwards, so it is the one entry that asks.
 	@objc func discardClicked() {
 		guard let target = discardable() else { return }
-		let counts = discardCounts(target)
-
-		let alert = NSAlert()
-		alert.messageText = GitDiscard.question(
-			subject: target.subject, files: counts.files, untracked: counts.untracked
-		)
-		alert.informativeText = GitDiscard.explanation(
-			files: counts.files, untracked: counts.untracked
-		)
-		alert.addButton(withTitle: GitDiscard.buttonTitle(
-			files: counts.files, untracked: counts.untracked
-		))
-		alert.addButton(withTitle: "Cancel")
-		alert.buttons.first?.hasDestructiveAction = true
-
-		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-			guard response == .alertFirstButtonReturn else { return }
+		DestructiveAsk.askToDiscard(target, over: window) { [weak self] in
 			self?.performDiscard(target)
-		}
-		if let window {
-			alert.beginSheetModal(for: window, completionHandler: act)
-		} else {
-			act(alert.runModal())
 		}
 	}
 
 	/// What pressing the confirmation's button does.
-	func performDiscard(
-		_ target: (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)
-	) {
+	///
+	/// The insurance, the discard across every repository the paths fall in
+	/// and the toast are the window's `discard(paths:)`, which the project
+	/// tree's *Discard Changes* calls too — one rule for losing work, one ref
+	/// made before it, one toast afterwards. What stays here is the pane's
+	/// own bookkeeping: where the selection lands once the rows are gone, and
+	/// the refresh `runAcrossOwners` does for every operation that moves rows.
+	func performDiscard(_ target: GitDiscard.Target) {
 		// Discarding empties rows out of the tree exactly as staging does, so
 		// the selection is given somewhere to land first.
 		rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
 
-		// **The most-used destructive verb in the app, now insured.** The
-		// question above is `GitDiscard`'s and stays that way — it names the
-		// folder and counts what git has never seen, which no general dialog
-		// could — so what is borrowed from the safety net is the ref, made
-		// before anything is restored, and the toast that says where it went.
-		// **The safety net is asked once for the whole operation and every
-		// repository is insured before any file is discarded.** Insuring and
-		// discarding repository by repository has no way back from a failure
-		// part way through — the ones before it have moved and only some were
-		// recorded. Two hundred questions is also no question at all: a dialogue
-		// repeated per repository is answered by holding Return, and two hundred
-		// toasts afterwards are read by nobody.
-		runAcrossOwners(target.paths, reporting: false) { paths, estate in
-			let insured = await DestructiveAsk.insureEstate(estate.grouped(paths))
-			let outcomes = await GitEstateOperation.discard(paths: paths, in: estate)
-			DestructiveAsk.sayWhatHappened("discarded", outcomes, insured: insured)
-			return outcomes
+		guard let controller = window?.windowController as? MainWindowController else {
+			Toast.post("Could not discard", detail: "The changes pane is not in a project window.", kind: .error)
+			return
+		}
+		runAcrossOwners(target.paths, reporting: false) { paths, _ in
+			await controller.discard(paths: paths)
 		}
 	}
 

@@ -114,6 +114,7 @@ extension LaunchOptions {
 			case "--push":       options.pushChanges = true
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
+			case "--hold-activity": options.holdsActivity = true
 			case "--changes-tree": options.changesSteps = next()
 			// The same steps again, later: a switch-and-return proof has to
 			// compose before the switch and read after it, which one script

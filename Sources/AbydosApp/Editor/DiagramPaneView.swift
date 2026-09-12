@@ -82,7 +82,10 @@ class DiagramPaneView: NSView {
 	/// hidden as well as stopped now that it is in a stack, and a subclass
 	/// reaching for `startAnimation` directly would leave the hole `spin(_:)`
 	/// exists to close.
-	private let spinner = NSProgressIndicator()
+	/// The waiting strip at the pane's top edge while a tool is being run — the
+	/// same one every pane has, in place of the spinner that sat above the
+	/// message. Driven by `spin(_:)`, which subclasses still call.
+	private var activity: PaneActivityView?
 
 	/// The message itself. See `noticeStack`.
 	private let noticeLabel = NSTextField(labelWithString: "")
@@ -166,10 +169,6 @@ class DiagramPaneView: NSView {
 		canvas.pane = self
 		addSubview(scrollView)
 
-		spinner.style = .spinning
-		spinner.controlSize = .small
-		spinner.isDisplayedWhenStopped = false
-
 		// **The message wraps, and goes on wrapping.** 0511 made the Cadova
 		// pane's notice one line truncated in the middle, and that is right
 		// there and wrong here: that notice is the last line `swift build`
@@ -195,7 +194,7 @@ class DiagramPaneView: NSView {
 		// The indicator first, so it is the one on top: a vertical stack fills
 		// from the top down in the stack's own geometry, whatever the view under
 		// it thinks about which way y runs.
-		noticeStack.setViews([spinner, noticeLabel], in: .center)
+		noticeStack.setViews([noticeLabel], in: .center)
 		noticeStack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(noticeStack)
 		noticeWidth = noticeLabel.widthAnchor.constraint(equalToConstant: 80)
@@ -291,8 +290,13 @@ class DiagramPaneView: NSView {
 	/// in for as long as somebody leaves it, unlike the Cadova pane, where 0511
 	/// found the lone notice was over before the first frame.
 	func spin(_ turning: Bool) {
-		if turning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
-		spinner.isHidden = !turning
+		if turning {
+			guard activity == nil else { return }
+			activity = PaneActivityView.install(over: self, paneIsEmpty: image == nil)
+		} else {
+			activity?.finish()
+			activity = nil
+		}
 	}
 
 	/// Puts the message in its label, and takes the label out when there is none.
@@ -756,7 +760,7 @@ class DiagramPaneView: NSView {
 		let state = image != nil ? "picture" : (notice == nil ? "nothing" : "message")
 		return "DIAGRAM: state=\(state) bounds=\(Int(bounds.width))x\(Int(bounds.height)) "
 			+ "centre=\(bounds.midY) notice=\(rectangleForTesting(noticeLabel)) "
-			+ "spinner=\(rectangleForTesting(spinner)) said=\(notice ?? "")"
+			+ "strip=\(activity?.reportForTesting ?? "none") said=\(notice ?? "")"
 	}
 
 	/// One view's rectangle in the pane's own coordinates, or `none` when it is

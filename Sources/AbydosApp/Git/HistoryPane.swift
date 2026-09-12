@@ -185,9 +185,11 @@ final class HistoryPane: NSView, ScaleFollowing {
 	/// Shown until the first log comes back — see `ChangesPane.activity` for why
 	/// it is the first only.
 	private var activity: PaneActivityView?
+	/// The search field and the scope switch, which the strip sits under.
+	private var head: NSStackView!
 
 	private func beginFirstRead() {
-		activity = PaneActivityView.install(over: self, message: "Reading history…")
+		activity = PaneActivityView.install(over: self, message: "Reading history…", below: head)
 	}
 
 	private func finishFirstRead() {
@@ -466,7 +468,7 @@ final class HistoryPane: NSView, ScaleFollowing {
 		split.translatesAutoresizingMaskIntoConstraints = false
 		pageSplit = split
 
-		let head = NSStackView(views: [searchField, scopeControl])
+		head = NSStackView(views: [searchField, scopeControl])
 		head.orientation = .horizontal
 		head.spacing = Theme.current.scaled(8)
 		head.translatesAutoresizingMaskIntoConstraints = false

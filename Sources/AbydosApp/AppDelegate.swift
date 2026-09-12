@@ -373,6 +373,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
+		PaneActivityView.holdsForTesting = options.holdsActivity
 
 		// **What a driven run opens is decided here, before any of the
 		// arrangements written for somebody double-clicking the app.**

@@ -13,6 +13,10 @@ final class NavigatorHeaderView: NSView {
 	var onCollapseAll: (() -> Void)?
 	var onSelectOpenFile: (() -> Void)?
 	var onToggleCompactPackages: (() -> Void)?
+	/// The fourth, asked for 2026-09-12: read the folder and the working copy
+	/// again, on demand — what a build writing files does to the tree, without
+	/// waiting for the watcher to say so.
+	var onRefresh: (() -> Void)?
 
 	/// Whether the third button is on, which is the one thing about this header
 	/// that is a state rather than a gesture — so it is the one thing drawn
@@ -33,6 +37,10 @@ final class NavigatorHeaderView: NSView {
 		symbol: "rectangle.compress.vertical",
 		action: #selector(toggleCompactPackages)
 	)
+	private lazy var refreshButton = button(
+		symbol: "arrow.clockwise",
+		action: #selector(refresh)
+	)
 
 	/// Which of the three the pointer is on, and what each says.
 	///
@@ -47,10 +55,13 @@ final class NavigatorHeaderView: NSView {
 	)
 	private var trackingArea: NSTrackingArea?
 
-	enum Action { case collapse, locate, compact }
+	enum Action { case collapse, locate, compact, refresh }
 
 	private func actionRects() -> [(Action, NSRect)] {
-		[(.locate, locateButton.frame), (.collapse, collapseButton.frame), (.compact, compactButton.frame)]
+		[
+			(.locate, locateButton.frame), (.collapse, collapseButton.frame),
+			(.compact, compactButton.frame), (.refresh, refreshButton.frame),
+		]
 	}
 
 	private func words(for action: Action) -> StyledTip.Tip {
@@ -64,6 +75,11 @@ final class NavigatorHeaderView: NSView {
 			return StyledTip.Tip(
 				title: "Select the file in the editor",
 				detail: "Finds whatever is in front, opening the folders on the way to it."
+			)
+		case .refresh:
+			return StyledTip.Tip(
+				title: "Re-read the project",
+				detail: "Reads the folder and the working copy's status again, as a build writing files would make it."
 			)
 		case .compact:
 			return isCompactingPackages
@@ -80,7 +96,7 @@ final class NavigatorHeaderView: NSView {
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
-		for view in [locateButton, collapseButton, compactButton] { addSubview(view) }
+		for view in [locateButton, collapseButton, compactButton, refreshButton] { addSubview(view) }
 		compactButton.wantsLayer = true
 		layoutButtons()
 	}
@@ -141,7 +157,7 @@ final class NavigatorHeaderView: NSView {
 	/// would tell somebody, for a driven run.
 	func hoverActionForTesting(_ name: String) -> String {
 		tips.hoverForTesting(
-			name, ["collapse": .collapse, "locate": .locate, "compact": .compact], in: self
+			name, ["collapse": .collapse, "locate": .locate, "compact": .compact, "refresh": .refresh], in: self
 		)
 	}
 
@@ -149,7 +165,7 @@ final class NavigatorHeaderView: NSView {
 		let size = Theme.current.scaled(20)
 		var x = bounds.maxX - Theme.current.scaled(8) - size
 		// Rightmost first.
-		for view in [locateButton, collapseButton, compactButton] {
+		for view in [locateButton, collapseButton, compactButton, refreshButton] {
 			view.frame = NSRect(x: x, y: (bounds.height - size) / 2, width: size, height: size)
 			x -= size + Theme.current.scaled(2)
 		}
@@ -171,6 +187,10 @@ final class NavigatorHeaderView: NSView {
 			"rectangle.compress.vertical", size: Theme.current.scaled(11),
 			color: Theme.current.sidebarHeaderText, weight: .medium
 		)
+		refreshButton.image = Theme.symbol(
+			"arrow.clockwise", size: Theme.current.scaled(11),
+			color: Theme.current.sidebarHeaderText, weight: .medium
+		)
 		// On is a pill behind the symbol rather than a colour on it: the symbol
 		// is eleven points of line work, and a tint on something that small
 		// reads as a rendering artefact on one theme and as nothing at all on
@@ -185,6 +205,7 @@ final class NavigatorHeaderView: NSView {
 	@objc private func collapseAll() { onCollapseAll?() }
 	@objc private func selectOpenFile() { onSelectOpenFile?() }
 	@objc private func toggleCompactPackages() { onToggleCompactPackages?() }
+	@objc private func refresh() { onRefresh?() }
 
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.sidebarBackground.setFill()

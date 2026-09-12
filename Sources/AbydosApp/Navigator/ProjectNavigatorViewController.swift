@@ -100,6 +100,17 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// the question. Rather than hold the window still until the walk finishes,
 	/// the reveal is done again when it lands, and the section wins then.
 	var isReadingDependencies = false
+
+	/// The waiting strip under the header, while a read the tree asked for is
+	/// out — opening a project, a reload from the header, the dependency walk.
+	/// Not the watcher's reads: a build writing files would keep it sweeping
+	/// all afternoon. See `beginReading`.
+	var activity: PaneActivityView?
+	/// How many announced reads are out; the strip stays while any is.
+	var readsInFlight = 0
+	/// Whether the next colouring of the tree ends a read — the one a load or a
+	/// header refresh started, which is finished by `refreshGitStatus` landing.
+	var readingUntilColoured = false
 	var deferredReveals: [URL] = []
 
 	// Kept in the body because a stored property cannot live in an
@@ -192,6 +203,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onOpenAsHex: ((URL) -> Void)?
 	/// A file row's *Blame*: open it and show who last touched each line.
 	var onBlame: ((URL) -> Void)?
+	/// *Discard Changes*, once its question has been answered with the
+	/// destructive button. The window does the discarding: see
+	/// `MainWindowController.discard(paths:)`.
+	var onDiscard: ((GitDiscard.Target) -> Void)?
 	/// An entry inside a shown archive should open, from the file the cache
 	/// holds it in, read only and named for where it came from; the flag says
 	/// whether the tab is pinned.
@@ -322,6 +337,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		header.onCollapseAll = { [weak self] in self?.collapseAll() }
 		header.onSelectOpenFile = { [weak self] in self?.selectFileInEditor() }
 		header.onToggleCompactPackages = { [weak self] in self?.toggleCompactPackages() }
+		header.onRefresh = { [weak self] in self?.refreshFromHeader() }
 		header.isCompactingPackages = Settings.shared.compactsPackages
 		headerView = header
 		let outline = NavigatorOutlineView()

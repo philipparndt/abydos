@@ -112,6 +112,12 @@ extension ProjectNavigatorViewController {
 		menu.addItem(moveItem)
 		menu.addItem(.separator())
 		menu.addItem(item("Add to .gitignore\u{2026}", #selector(contextIgnore)))
+		// Beside the other verb that talks to git about the row, and not under
+		// Compare though the report suggested it: Compare is three ways of
+		// looking, and an item that changes the file among three that do not
+		// is the one somebody picks by mistake. Titled per click by
+		// `menuNeedsUpdate`, since a folder says how many files it will take.
+		menu.addItem(item("Discard Changes\u{2026}", #selector(contextDiscard)))
 		menu.addItem(item("Copy Relative Path", #selector(contextCopyRelativePath)))
 		// Only ever shown over a diagram, so it costs nothing to be here for
 		// every other file: `menuNeedsUpdate` hides it.

@@ -32,6 +32,25 @@ struct GitStatusTests {
 		#expect(await repo.status(forRelativePath: "untouched.txt", isDirectory: false) == .unmodified)
 	}
 
+	/// The same records, kept the changes pane's way for the project tree's
+	/// *Discard Changes*: staged and unstaged apart, which the colours
+	/// collapse. A change that is only staged is in neither the tree's offer
+	/// nor the pane's.
+	@Test func theWorkingCopyIsKeptWithTheSidesApart() async {
+		let repo = await repository("""
+		 M modified.txt
+		A  added.txt
+		?? untracked.txt
+		!! ignored.txt
+		MM both.txt
+		""")
+		let copy = repo.lastKnownWorkingCopy
+		// Sorted by path, as the pane's read sorts them.
+		#expect(copy.unstaged.map(\.path) == ["both.txt", "modified.txt", "untracked.txt"])
+		#expect(copy.staged.map(\.path) == ["added.txt", "both.txt"])
+		#expect(copy.unstaged.first { $0.path == "untracked.txt" }?.kind == .untracked)
+	}
+
 	// MARK: - Directory rollups
 
 	/// The regression this file exists for: a tracked directory that merely

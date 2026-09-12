@@ -295,6 +295,29 @@ extension MainWindowController {
 			case "blame":
 				print("TREE " + navigator.blameSelectedForTesting())
 				continue
+			// *Discard Changes* over the selected rows: the item and the sheet's
+			// words, discarding nothing; and the sheet's button, on the run's
+			// scratch checkout, printing the porcelain status when done. Async.
+			case "discard":
+				print("TREE " + navigator.discardWordingForTesting())
+				continue
+			case "discard-confirm":
+				guard let target = navigator.discardTarget else {
+					print("TREE discard-confirm: not offered")
+					continue
+				}
+				print("TREE discard-confirm: git \(target.paths.joined(separator: " "))")
+				Task { @MainActor in
+					await self.discardFromTree(target)
+					guard let root = self.project?.estate.root else { return }
+					let status = await GitRepository.run(
+						["status", "--porcelain", "--"] + target.paths, in: root
+					)
+					let lines = status.stdout.split(separator: "\n").joined(separator: " | ")
+					print("TREE discard-confirm status: \(lines.isEmpty ? "clean" : lines)")
+					fflush(stdout)
+				}
+				continue
 			case "show-contents":
 				print("TREE " + navigator.showContentsForTesting())
 				continue
@@ -308,6 +331,11 @@ extension MainWindowController {
 				print("TREE " + navigator.extractForTesting())
 				continue
 			case "collapse": navigator.collapseAll()
+			// The window's zoom verbs: `command:Zoom In` wants a key window.
+			case "zoom-in": zoomIn(nil)
+			case "zoom-out": zoomOut(nil)
+			// Every waiting strip on screen, with where it sits under its header.
+			case "activity": print("TREE " + PaneActivityView.reportAllForTesting())
 			case "locate": navigator.selectFileInEditor()
 			// How far the text in front can be scrolled sideways. Here rather
 			// than in `--navigate` for the same reason `type:` is: only this

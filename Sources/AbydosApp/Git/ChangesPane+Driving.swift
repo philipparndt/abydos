@@ -513,14 +513,12 @@ extension ChangesPane {
 		guard !staged, let target = discardable(node: node) else {
 			return "DISCARD \(path): not offered"
 		}
-		let (files, untracked) = discardCounts(target)
-		let subject = target.subject
 		return [
 			"DISCARD \(path)",
-			"  menu: " + GitDiscard.menuTitle(subject: subject, files: files, untracked: untracked),
-			"  asks: " + GitDiscard.question(subject: subject, files: files, untracked: untracked),
-			"  says: " + GitDiscard.explanation(files: files, untracked: untracked),
-			"  button: " + GitDiscard.buttonTitle(files: files, untracked: untracked),
+			"  menu: " + target.menuTitle,
+			"  asks: " + target.question,
+			"  says: " + target.explanation,
+			"  button: " + target.buttonTitle,
 			"  git: " + target.paths.joined(separator: " "),
 		].joined(separator: "\n")
 	}

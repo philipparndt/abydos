@@ -75,12 +75,14 @@ final class BacklogPane: NSView {
 	private var source: Source = .backlog
 
 	private var header: NSStackView!
+	/// The waiting strip under the header while the folder is being read.
+	private var activity: PaneActivityView?
 	private var headerHeight: NSLayoutConstraint!
-	private var modeControl: NSSegmentedControl!
-	private var sourceControl: NSSegmentedControl!
-	private var summaryLabel: NSTextField!
-	private var startButton: NSButton!
-	private var newButton: NSButton!
+	private var modeControl: DrawnChoice!
+	private var sourceControl: DrawnChoice!
+	private var summaryLabel: ScaledLabel!
+	private var startButton: DrawnButton!
+	private var newButton: DrawnButton!
 	private var contentArea: NSView!
 	private var listView: BacklogListView!
 	var boardView: BacklogBoardView!
@@ -155,47 +157,33 @@ final class BacklogPane: NSView {
 	// MARK: - Building
 
 	private func build() {
-		modeControl = NSSegmentedControl(
-			labels: ["List", "Board"],
-			trackingMode: .selectOne,
-			target: self,
-			action: #selector(modeChanged)
-		)
-		modeControl.selectedSegment = mode.rawValue
-		modeControl.font = Theme.current.uiFont(11)
+		// **The library's controls, not bezels.** Reported 2026-09-11 with a
+		// screenshot at a large zoom: *List / Board* small beside its counts.
+		// `applySettings` re-set its font, and an `NSSegmentedControl` takes
+		// its height from `controlSize` however large the font is — the case
+		// `DrawnChoice` was written for, and what the pull-request list's
+		// *Only me / My teams too* already is. The buttons follow for the same
+		// reason: one drawn button beside two bezelled ones is three sizes.
+		modeControl = DrawnChoice(
+			segments: [.words("List"), .words("Board")], selectedIndex: mode.rawValue
+		) { [weak self] index in self?.modeChanged(to: index) }
 
-		sourceControl = NSSegmentedControl(
-			labels: ["Backlog", "OpenSpec"],
-			trackingMode: .selectOne,
-			target: self,
-			action: #selector(sourceChanged)
-		)
-		sourceControl.selectedSegment = source.rawValue
-		sourceControl.font = Theme.current.uiFont(11)
+		sourceControl = DrawnChoice(
+			segments: [.words("Backlog"), .words("OpenSpec")], selectedIndex: source.rawValue
+		) { [weak self] index in self?.sourceChanged(to: index) }
 
-		summaryLabel = NSTextField(labelWithString: "")
-		summaryLabel.font = Theme.current.uiFont(11)
-		summaryLabel.textColor = Theme.current.gitIgnored
+		summaryLabel = ScaledLabel(size: 11) { Theme.current.gitIgnored }
 
-		startButton = NSButton(title: "Start the next ready item", target: self, action: #selector(startNext))
-		startButton.bezelStyle = .rounded
-		startButton.controlSize = .small
-		startButton.font = Theme.current.uiFont(11)
+		startButton = DrawnButton(title: "Start the next ready item") { [weak self] in self?.startNext() }
 
 		// Beside "start the next ready item" and deliberately not next to a
 		// column: a button that belonged to a column would have to be offered
 		// on `ready` too, and pressing it there would be the app making a
 		// promise that only a person can make. There is one place a new item
 		// goes, so there is one button and it does not ask.
-		newButton = NSButton(title: "New item\u{2026}", target: self, action: #selector(newItemClicked))
-		newButton.bezelStyle = .rounded
-		newButton.controlSize = .small
-		newButton.font = Theme.current.uiFont(11)
+		newButton = DrawnButton(title: "New item\u{2026}") { [weak self] in self?.newItemClicked() }
 
-		let refresh = NSButton(title: "Refresh", target: self, action: #selector(refreshClicked))
-		refresh.bezelStyle = .rounded
-		refresh.controlSize = .small
-		refresh.font = Theme.current.uiFont(11)
+		let refresh = DrawnButton(title: "Refresh") { [weak self] in self?.reload() }
 
 		let spacer = NSView()
 		spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -258,7 +246,7 @@ final class BacklogPane: NSView {
 		// Only where the project has both. One record is not a choice, and a
 		// switch to something that is not there does nothing twice.
 		sourceControl.isHidden = !(hasBacklog && hasOpenSpec)
-		sourceControl.selectedSegment = source.rawValue
+		sourceControl.selectedIndex = source.rawValue
 
 		// **Neither applies to a change.** Starting one means a worktree and an
 		// agent, which `BacklogRun` keys by an item's number and a change has
@@ -279,14 +267,14 @@ final class BacklogPane: NSView {
 		])
 	}
 
-	@objc private func modeChanged() {
-		mode = Mode(rawValue: modeControl.selectedSegment) ?? .board
+	private func modeChanged(to index: Int) {
+		mode = Mode(rawValue: index) ?? .board
 		showContent()
 		refreshViews()
 	}
 
-	@objc private func sourceChanged() {
-		source = Source(rawValue: sourceControl.selectedSegment) ?? .backlog
+	private func sourceChanged(to index: Int) {
+		source = Source(rawValue: index) ?? .backlog
 		showContent()
 		refreshViews()
 	}
@@ -403,7 +391,7 @@ final class BacklogPane: NSView {
 	/// Which record is showing, set from outside for `--backlog openspec`.
 	func showOpenSpec(_ wanted: Bool) {
 		source = wanted ? .openSpec : .backlog
-		sourceControl.selectedSegment = source.rawValue
+		sourceControl.selectedIndex = source.rawValue
 		showContent()
 		refreshViews()
 	}
@@ -411,12 +399,10 @@ final class BacklogPane: NSView {
 	/// Which presentation is showing, set from outside for `--backlog list`.
 	func showList(_ list: Bool) {
 		mode = list ? .list : .board
-		modeControl.selectedSegment = mode.rawValue
+		modeControl.selectedIndex = mode.rawValue
 		showContent()
 		refreshViews()
 	}
-
-	@objc private func refreshClicked() { reload() }
 
 	/// The theme or the zoom changed.
 	///
@@ -426,11 +412,8 @@ final class BacklogPane: NSView {
 	/// `heightOfRow` at the new scale.
 	func applySettings() {
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
-		modeControl.font = Theme.current.uiFont(11)
-		summaryLabel.font = Theme.current.uiFont(11)
-		summaryLabel.textColor = Theme.current.gitIgnored
-		startButton.font = Theme.current.uiFont(11)
-		newButton.font = Theme.current.uiFont(11)
+		// The header's controls are the library's and re-take their own fonts;
+		// nothing about them is set here, which is the point of the library.
 		// **The same rule as `showContent`, and that is the whole of the fix.**
 		// This read `hasBacklog` while `showContent` read `hasSomething`, so a
 		// project kept in `openspec/changes` alone — which this one became on
@@ -469,6 +452,11 @@ final class BacklogPane: NSView {
 	func reload() {
 		let backlog = self.backlog
 		let openSpec = self.openSpec
+		// The board stays up and the strip says the folder is being read: the
+		// columns are never empty beneath it, so there is no sentence.
+		if activity == nil {
+			activity = PaneActivityView.install(over: self, below: header, paneIsEmpty: false)
+		}
 		DispatchQueue.global(qos: .userInitiated).async {
 			// Asked here rather than on the main thread, and asked every time:
 			// `abydos-backlog init` in a terminal is the other way a project
@@ -497,6 +485,8 @@ final class BacklogPane: NSView {
 			}
 
 			DispatchQueue.main.async {
+				self.activity?.finish()
+				self.activity = nil
 				self.cardsByState = found
 				self.changesByState = changes
 				if exists != self.hasBacklog || hasOpenSpec != self.hasOpenSpec {

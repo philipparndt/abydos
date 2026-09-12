@@ -70,17 +70,23 @@ final class CadovaPreviewView: DelayedPaneView {
 	/// Where the viewer lives once there is something to show.
 	private var viewer: ModelContainerView?
 
-	/// One line, in the middle, with the spinner over it.
+	/// One line, in the middle, while the strip sweeps at the top edge.
 	private var notice: String?
 	/// Why there is no model, when there is a reason worth reading. Shown in the
 	/// text view rather than as a notice: a compiler says four lines, not four
 	/// words.
 	private let failureText = NSTextView()
 	private let failureScroll = NSScrollView()
-	private let spinner = NSProgressIndicator()
+	/// The waiting strip at the pane's top edge while a run is going — the
+	/// same one every pane has, chosen 2026-09-12 over the spinner that used
+	/// to sit above the notice. A preview has no header, so the strip sits at
+	/// the top edge; a rerun over a model that is still on screen shows the
+	/// strip alone, since the build's chatter over the model is not something
+	/// anybody asked to read.
+	private var activity: PaneActivityView?
 	/// The notice itself. See `noticeStack`.
 	private let noticeLabel = NSTextField(labelWithString: "")
-	/// The spinner above the notice, as one thing.
+	/// The notice, centred, as one thing that used to hold a spinner too.
 	///
 	/// **0511 was these two placed separately against the same centre.** The
 	/// spinner sat at `centerY - 18` and the notice was drawn from an origin of
@@ -122,10 +128,6 @@ final class CadovaPreviewView: DelayedPaneView {
 		self.model = model
 		super.init(color: Theme.current.editorBackground)
 
-		spinner.style = .spinning
-		spinner.controlSize = .small
-		spinner.isDisplayedWhenStopped = false
-
 		noticeLabel.font = Theme.current.uiFont(12)
 		noticeLabel.textColor = Theme.current.sidebarText.withAlphaComponent(0.85)
 		noticeLabel.alignment = .center
@@ -152,7 +154,7 @@ final class CadovaPreviewView: DelayedPaneView {
 		// the top down, in the stack's own geometry, whatever the view under it
 		// thinks about which way y runs. That is the whole of what used to be a
 		// pair of constants with opposite signs and the same effect.
-		noticeStack.setViews([spinner, noticeLabel], in: .center)
+		noticeStack.setViews([noticeLabel], in: .center)
 		noticeStack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(noticeStack)
 		NSLayoutConstraint.activate([
@@ -161,7 +163,6 @@ final class CadovaPreviewView: DelayedPaneView {
 			// The same 32 points a side the drawn notice kept, now stated once.
 			noticeLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -64),
 		])
-		// Stopped, and therefore not in the stack at all. See `spin(_:)`.
 		spin(false)
 
 		failureText.isEditable = false
@@ -464,8 +465,13 @@ final class CadovaPreviewView: DelayedPaneView {
 	/// the centre of the pane, which is precisely the offset this item says a
 	/// notice should not have when there is nothing spinning above it.
 	private func spin(_ turning: Bool) {
-		if turning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
-		spinner.isHidden = !turning
+		if turning {
+			guard activity == nil else { return }
+			activity = PaneActivityView.install(over: self, paneIsEmpty: viewer == nil)
+		} else {
+			activity?.finish()
+			activity = nil
+		}
 	}
 
 	/// Puts the notice in its label, and takes the label out when there is none.
@@ -547,7 +553,7 @@ final class CadovaPreviewView: DelayedPaneView {
 			// pane's own coordinates, so whether they overlap is arithmetic anybody
 			// can do on the line — or `spinner=none` when nothing is turning, which
 			// is the state the notice has to look right in on its own.
-			+ "notice=\(rectangle(noticeLabel)) spinner=\(rectangle(spinner)) "
+			+ "notice=\(rectangle(noticeLabel)) strip=\(activity?.reportForTesting ?? "none") "
 			+ "said=\(said)"
 	}
 

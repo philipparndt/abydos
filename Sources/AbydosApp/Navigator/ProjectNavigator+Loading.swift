@@ -19,6 +19,11 @@ extension ProjectNavigatorViewController {
 		self.project = project
 		let root = FileNode(url: project.root, isDirectory: true)
 		rootNode = root
+		// Until the tree is coloured: the rows are listed in a moment, and the
+		// gap between them and their colours is what opening a large
+		// repository costs.
+		beginReading()
+		readingUntilColoured = true
 		// The previous project's, which must not be shown against this one even
 		// for the moment before the read below lands.
 		dependencies = nil
@@ -193,11 +198,13 @@ extension ProjectNavigatorViewController {
 		lastDependencyRead = Date()
 		let root = project.root
 		isReadingDependencies = true
+		beginReading()
 
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 			let sets = ExternalDependencies.read(project: root)
 			DispatchQueue.main.async {
 				guard let self else { return }
+				self.endReading()
 				// The project may have been switched again while this walked.
 				// Applying it would put one project's packages under another's
 				// name, which is worse than not having them yet.
@@ -398,6 +405,10 @@ extension ProjectNavigatorViewController {
 			// of the session, and a mark that moved each time would report how
 			// long ago the last build was rather than what opening cost.
 			LaunchClock.mark("tree coloured")
+			if readingUntilColoured {
+				readingUntilColoured = false
+				endReading()
+			}
 			onChangeCount?(await git.changedFileCount())
 
 			// And the greying-out, which is a slower question asked less often.
@@ -407,6 +418,35 @@ extension ProjectNavigatorViewController {
 			// the tree recolouring for as long as that takes.
 			refreshIgnoredIfRulesChanged()
 		}
+	}
+
+	// MARK: - Saying that it is reading
+
+	/// Puts the waiting strip under the header, or keeps it there, for a read
+	/// the tree asked for. Balanced by `endReading`; the strip goes when the
+	/// last of them lands.
+	func beginReading() {
+		readsInFlight += 1
+		guard activity == nil else { return }
+		activity = PaneActivityView.install(
+			over: view, message: "Reading the project…", below: headerView,
+			paneIsEmpty: rootNode == nil
+		)
+	}
+
+	func endReading() {
+		readsInFlight = max(0, readsInFlight - 1)
+		guard readsInFlight == 0 else { return }
+		activity?.finish()
+		activity = nil
+	}
+
+	/// The header's fourth button: the folder and the working copy read again,
+	/// with the strip under the header until the tree is coloured.
+	func refreshFromHeader() {
+		beginReading()
+		readingUntilColoured = true
+		reloadTree()
 	}
 
 	/// Re-reads what git ignores, when the ignore rules have moved.

@@ -138,6 +138,56 @@ struct GitDiscardWordingTests {
 		#expect(GitDiscard.paths(["."], coveringAnyOf: ["README.md"]) == ["."])
 		#expect(GitDiscard.paths(["."], coveringAnyOf: []).isEmpty)
 	}
+
+	// MARK: - The target, which both menus read
+
+	/// The changes pane and the project tree ask this of the same file, and
+	/// the counts in their two menus come from here so they cannot differ.
+	@Test func aFolderIsNamedAndItsFilesCounted() {
+		let target = GitDiscard.target(over: ["Sources/App"], unstaged: unstaged) { _ in true }
+		#expect(target?.paths == ["Sources/App"])
+		#expect(target?.subject == .folder("App"))
+		#expect(target?.files == 2)
+		#expect(target?.untracked == 1)
+		#expect(target?.menuTitle == "Discard Changes in “App” (2 files, 1 untracked)\u{2026}")
+	}
+
+	/// A file whose folder is selected too is dropped, and the folder is what
+	/// git is handed — so the folder is the subject, not the row under the
+	/// pointer.
+	@Test func aFileUnderASelectedFolderIsTheFoldersDiscard() {
+		let target = GitDiscard.target(
+			over: ["Sources/App/Main.swift", "Sources/App"], unstaged: unstaged
+		) { $0 == "Sources/App" }
+		#expect(target?.paths == ["Sources/App"])
+		#expect(target?.subject == .folder("App"))
+	}
+
+	@Test func severalRowsAreTheRows() {
+		let target = GitDiscard.target(over: ["README.md", "Sources/Kit"], unstaged: unstaged) { _ in nil }
+		#expect(target?.subject == .rows)
+		#expect(target?.files == 2)
+	}
+
+	/// `checkout --` restores from the index, so a change that is only staged
+	/// would survive its own discard. Not offered, as the pane never offered it.
+	@Test func aFileWhoseOnlyChangeIsStagedIsNotOffered() {
+		#expect(GitDiscard.target(over: ["README.md"], unstaged: []) { _ in false } == nil)
+	}
+
+	@Test func anUnchangedFileIsNotOffered() {
+		#expect(GitDiscard.target(over: ["Package.swift"], unstaged: unstaged) { _ in false } == nil)
+	}
+
+	/// `git checkout -- <unmerged path>` refuses, and throwing away a
+	/// half-resolved merge is a different question this item did not decide.
+	@Test func aConflictAnywhereUnderTheRowsIsNotOffered() {
+		let merging = unstaged + [GitChange(path: "Sources/App/Merge.swift", kind: .conflicted, isStaged: false)]
+		#expect(GitDiscard.target(over: ["Sources/App"], unstaged: merging) { _ in true } == nil)
+		#expect(GitDiscard.target(over: ["Sources/App/Merge.swift"], unstaged: merging) { _ in false } == nil)
+		// The conflict is under App, not Kit.
+		#expect(GitDiscard.target(over: ["Sources/Kit"], unstaged: merging) { _ in true } != nil)
+	}
 }
 
 /// Against a real repository, because discard is where being wrong costs

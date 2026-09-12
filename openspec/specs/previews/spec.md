@@ -106,12 +106,12 @@ model shows what the compiler said in place of the model rather than a shape
 that is not the one the code describes.
 
 What the pane says while it builds is the build's own last line, so it is text
-of no known length: it is shown **on one line, truncated in the middle**, with
-the turning indicator **above** it rather than through it. The two are one
-arrangement centred in the pane, so no length of line and no width of pane can
-put them on top of each other — and when nothing is turning the line is centred
-on its own, rather than held at an offset that only makes sense with something
-above it.
+of no known length: it is shown **on one line, truncated in the middle**,
+centred in the pane on its own. What turns while it builds is the waiting
+strip every pane has, at the pane's top edge — a preview has no header to sit
+under — so no length of line and no width of pane can put the two on top of
+each other. A rebuild over a model still on screen shows the strip alone: the
+model stays, and the build's chatter is not drawn over it.
 
 Any of the target's sources counts, not only the file with the model in it:
 running the target is what makes the shape, so a helper file changes it just as
@@ -131,22 +131,24 @@ the work, and a viewer rebuilt from nothing would put the camera back.
 - **Given** `Sources/spike/main.swift`, whose target depends on Cadova
 - **When** it is opened
 - **Then** the pane says it is building, naming the product, and shows what the
-  build is saying while it runs
+  build is saying while it runs, with the strip sweeping at the top edge
 - **And** when the build finishes the model it wrote is shown beside the source
+  and the strip is gone
 
 #### Scenario: a build line longer than the pane is wide
 
 - **Given** a Cadova model building in a narrow pane
 - **When** the build prints a line too long to fit
-- **Then** the line is shown on one line with its middle elided, and the turning
-  indicator is clear above it rather than drawn over the letters
+- **Then** the line is shown on one line with its middle elided, and the strip
+  is at the top edge, clear of the letters
 
 #### Scenario: changing a constant
 
 - **Given** that model on screen
 - **When** a dimension in the source is changed and saved
-- **Then** the target is built and run again, and the new shape replaces the old
-  one without the view of it being reset
+- **Then** the target is built and run again with the strip sweeping over the
+  model that is still on screen and no line drawn over it, and the new shape
+  replaces the old one without the view of it being reset
 
 #### Scenario: a build the compiler refuses
 
@@ -469,8 +471,8 @@ and it reads the declared `output:` on purpose.
 
 ### Requirement: A video opens as a player, silent until asked
 
-A video whose container the system decodes natively (`.mp4`, `.mov`, `.m4v`)
-SHALL open in the editor area as a player showing its first frame, paused,
+A video SHALL open as a player when its container is one the system decodes
+natively (`.mp4`, `.mov`, `.m4v`): in the editor area, showing its first frame, paused,
 with the system's transport controls — a tab shaped like a picture's, with no
 document and no dirty state. It SHALL NOT play sound until play is pressed,
 and switching away from the tab SHALL pause it. A container the system cannot

@@ -143,6 +143,35 @@ enum DestructiveAsk {
 		}
 	}
 
+	/// Puts `GitDiscard`'s question and runs `work` on the destructive button.
+	///
+	/// The one ask that is not `GitDestructive`'s: it names the folder and
+	/// counts what git has never seen, which no general dialog could say, so
+	/// the wording is the target's and only the presenting is here. Here rather
+	/// than in either menu because two menus put it — the changes pane's and
+	/// the project tree's — and a question worded once and drawn twice would
+	/// be the two rules this entry exists to avoid.
+	static func askToDiscard(
+		_ target: GitDiscard.Target, over window: NSWindow?, then work: @escaping () -> Void
+	) {
+		let alert = NSAlert()
+		alert.messageText = target.question
+		alert.informativeText = target.explanation
+		alert.addButton(withTitle: target.buttonTitle)
+		alert.addButton(withTitle: "Cancel")
+		alert.buttons.first?.hasDestructiveAction = true
+
+		let act: (NSApplication.ModalResponse) -> Void = { response in
+			guard response == .alertFirstButtonReturn else { return }
+			work()
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: act)
+		} else {
+			act(alert.runModal())
+		}
+	}
+
 	/// Keeps the working copy on a backup branch and says where it went.
 	///
 	/// For a caller that already asks its own question. `ChangesPane`'s discard

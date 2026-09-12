@@ -38,7 +38,9 @@ final class PullRequestsPane: NSView {
 	private var scroll: NSScrollView!
 	private var scopeControl: DrawnChoice!
 	private var refreshButton: DrawnButton!
-	private var troubleView: NSTextField!
+	private var troubleView: ScaledLabel!
+	/// The switch and the glyph, which the waiting strip sits under.
+	private var head: NSStackView!
 	private var activity: PaneActivityView?
 	/// Which `gh`, for a driven run — see `reportForTesting`.
 	private var cliVersion: String?
@@ -53,7 +55,6 @@ final class PullRequestsPane: NSView {
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		build()
-		activity = PaneActivityView.install(over: self, message: "Asking GitHub…")
 		reload()
 	}
 
@@ -120,14 +121,20 @@ final class PullRequestsPane: NSView {
 		// **A sentence, not an empty list.** The three answers that are not
 		// errors land here, and the whole reason they exist is that a blank pane
 		// says "this repository has no pull requests" whatever the truth is.
-		troubleView = NSTextField(wrappingLabelWithString: "")
-		troubleView.font = Theme.current.uiFont(11.5)
-		troubleView.textColor = Theme.current.gitIgnored
+		// A member of the library, as the two controls above it are: it was
+		// the one thing in this pane that kept its 1.0 font through a zoom.
+		// What `wrappingLabelWithString` would have set, set by hand.
+		troubleView = ScaledLabel(size: 11.5) { Theme.current.gitIgnored }
 		troubleView.alignment = .left
 		troubleView.isSelectable = true
+		troubleView.lineBreakMode = .byWordWrapping
+		troubleView.maximumNumberOfLines = 0
+		troubleView.usesSingleLineMode = false
+		troubleView.cell?.wraps = true
+		troubleView.cell?.isScrollable = false
 		troubleView.isHidden = true
 
-		let head = NSStackView(views: [scopeControl, refreshButton])
+		head = NSStackView(views: [scopeControl, refreshButton])
 		head.orientation = .horizontal
 		head.spacing = Theme.current.scaled(6)
 
@@ -161,9 +168,19 @@ final class PullRequestsPane: NSView {
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			self.refreshButton.isEnabled = false
+			// The strip under the switch, with the sentence only while there is
+			// nothing beneath it: a refresh with rows on screen keeps the rows,
+			// which is the case the maintainer chose this treatment for.
+			if self.activity == nil {
+				self.activity = PaneActivityView.install(
+					over: self, message: "Looking for gh…", below: self.head,
+					paneIsEmpty: self.requests.isEmpty && self.troubleView.isHidden
+				)
+			}
 			if self.cliVersion == nil {
 				self.cliVersion = await GitHubCLI.version(in: self.root)
 			}
+			self.activity?.say("Asking GitHub…")
 			let reply = await GitHubPullRequests.list(in: self.root, scope: asked)
 			self.refreshButton.isEnabled = true
 			self.activity?.finish()

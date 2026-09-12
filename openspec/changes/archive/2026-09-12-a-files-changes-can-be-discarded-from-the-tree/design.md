@@ -80,9 +80,69 @@ run's scratch copy, which is the only checkout a run may touch, and prints
 `git status --porcelain` of the file afterwards. A driven run is never on a real
 checkout, by the house rule every run keeps.
 
-## What was measured
+## What was measured, 2026-09-11
 
-*(the runs, once made)*
+Three driven runs on a scratch checkout under the session's scratchpad, built
+as `de.rnd7.abydos.discard` with an unpinned UUID: `README.md` modified,
+`notes/` holding `a.txt` and `b.txt` modified and `new.txt` untracked,
+`plain.txt` untouched, and `conflict.txt` left `UU` by a merge of two
+branches. Load averages 3.9–10.2 across the runs; nothing here is timed.
+
+**What each row offers**, `--tree "reveal:…,menu,discard,…"` over the four
+rows in turn:
+
+| Row | `menu` | `discard` |
+| --- | --- | --- |
+| `README.md` | `… Add to .gitignore… \| Discard Changes… \| Copy Relative Path …` | menu `Discard Changes…`, asks `Discard changes to “README.md”?`, button `Discard`, git `README.md` |
+| `notes` | — | menu `Discard Changes in “notes” (3 files, 1 untracked)…`, asks `Discard changes in 3 files under “notes”?`, says `1 of them is untracked and is deleted from the disk … The other 2 go back to the version in the index …` |
+| `plain.txt` | — | `not offered` |
+| `conflict.txt` | — | `not offered` |
+
+The item sits where decision 2 put it and nowhere under Compare. The folder's
+count is the pane's count for the same rows: three files, one of them untracked.
+
+**The open tab**, `--file README.md --tree "reveal:README.md,line:0,discard-confirm,settle:4,line:0,toasts"`:
+
+    EDITOR line 0: README edited in the working copy
+    TREE discard-confirm: git README.md
+    TREE discard-confirm status: clean
+    EDITOR line 0: README as committed
+    TREE TOASTS: [1 repositories discarded: .: discarded · kept on backup/2026-09-11-2030-wip]
+
+The tab shows the file as the last commit had it, the porcelain status of the
+path is empty, and the toast is the pane's toast naming the safety-net ref.
+`git branch --list 'backup/*'` on the checkout afterwards lists that ref.
+
+**The folder, with a compare tab open on a file under it**,
+`--tree "reveal:notes/a.txt,compare-head,tabs,reveal:notes,discard-confirm,settle:4,tabs,ls:notes"`:
+
+    TREE tabs: a.txt~
+    TREE discard-confirm: git notes
+    TREE discard-confirm status: clean
+    TREE tabs: a.txt~
+    TREE ls notes: a.txt b.txt
+
+`new.txt` is gone from the disk, the two modified files are back, and the
+compare tab is still open under its name. What that tab's body shows after the
+discard is not read back by any tree step — the tree's driving has no verb for
+a diff tab's text — so decision 4's "shows no changes" rests on the compare
+page's existing re-read on the watcher, as the decision said, and was not
+measured here.
+
+**Seen on the way, not this change's.** Two discards in the same minute were
+both "kept on `backup/2026-09-11-2030-wip`": the safety net names its ref by
+the minute, so the second insurance replaced the first. The changes pane has
+always had this; the tree merely makes two discards a minute easier to do.
+
+**Where the signature landed.** The window's verb is `discard(paths:)` rather
+than the `discard(paths:subject:)` decision 1 wrote down: the subject names
+the question, which is asked before the verb runs and is `GitDiscard.Target`'s
+now — one value both menus read their wording off, with the reduction, the
+count and the refusal over a conflict in `GitDiscard.target`. The pane's
+`discardable` and the tree's `discardTarget` each call it. What the tree asks
+it with is `GitRepository.lastKnownWorkingCopy`, the porcelain the colours
+come from, parsed the pane's way and kept beside the head snapshot, so a
+menu opening on the main thread has its title without a hop onto the actor.
 
 ## Release note
 

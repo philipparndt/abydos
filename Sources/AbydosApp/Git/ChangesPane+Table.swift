@@ -58,14 +58,8 @@ extension ChangesPane: NSMenuDelegate {
 		// recoverable version of the same wish is the line above it, which is
 		// what the confirmation goes on to name.
 		if let target = discardable() {
-			let counts = discardCounts(target)
 			menu.addItem(.separator())
-			menu.addItem(item(
-				GitDiscard.menuTitle(
-					subject: target.subject, files: counts.files, untracked: counts.untracked
-				),
-				#selector(discardClicked)
-			))
+			menu.addItem(item(target.menuTitle, #selector(discardClicked)))
 		}
 		menu.addItem(.separator())
 		menu.addItem(item("Reveal in Finder", #selector(revealClicked)))

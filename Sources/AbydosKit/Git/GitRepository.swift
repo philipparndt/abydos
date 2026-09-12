@@ -79,7 +79,24 @@ public actor GitRepository {
 	/// string that is already in memory — and it used to sit behind a queue of
 	/// rollup scans over a hundred thousand paths, which is what "clicking the
 	/// branch takes ages" was.
-	private nonisolated let headSnapshot = HeadSnapshot()
+	private nonisolated let headSnapshot = Snapshot(Head.detached(nil))
+
+	/// The working copy as the last status read found it, staged and unstaged
+	/// kept apart, readable without touching the actor.
+	///
+	/// For the tree's *Discard Changes*. The colours collapse a path's two
+	/// porcelain codes into one status, and a discard cannot be decided from
+	/// that: `checkout --` restores the work tree from the index, so a file
+	/// whose only change is staged has nothing it would take, and the changes
+	/// pane refuses it. The pane reads `GitWorkingCopy.status`, which runs the
+	/// very command `refresh` runs, so this is that answer parsed the pane's
+	/// way from the bytes already in hand — the tree counts what the pane
+	/// would count for the same rows, and neither is read twice.
+	///
+	/// Without the actor for the reason `headSnapshot` is: a context menu is
+	/// opening on the main thread and wants its title now, not after a queue
+	/// of rollup scans.
+	private nonisolated let workingCopySnapshot = Snapshot(GitWorkingCopyStatus())
 
 	public init(root: URL) {
 		self.root = root
@@ -256,6 +273,9 @@ public actor GitRepository {
 	/// the menu under it. `currentHead()` is the same value and is the one to
 	/// use when the caller is already on the actor's side of the fence.
 	public nonisolated var lastKnownHead: Head { headSnapshot.value }
+
+	/// The working copy as the last `refresh` found it. See `workingCopySnapshot`.
+	public nonisolated var lastKnownWorkingCopy: GitWorkingCopyStatus { workingCopySnapshot.value }
 
 	/// How many entries the working copy has that HEAD does not agree with.
 	///
@@ -582,6 +602,10 @@ public actor GitRepository {
 		}
 
 		statusCache = files
+		// The same records, kept the pane's way — see `workingCopySnapshot`.
+		workingCopySnapshot.value = separator == "\0"
+			? GitWorkingCopy.parse(porcelainZ: porcelain)
+			: GitWorkingCopy.parse(porcelain: porcelain)
 		// Replaced, not filtered. This used to keep every ignored directory it
 		// had ever seen — the filter dropped the memoised rollups and left the
 		// explicit entries from earlier parses behind — so a folder that stopped
@@ -847,17 +871,21 @@ public actor GitRepository {
 	}
 }
 
-/// A `Head` that can be read from anywhere, holding a lock rather than an actor.
+/// A value the actor keeps that can be read from anywhere, holding a lock
+/// rather than the actor.
 ///
-/// Exists for one caller: the branch pill, which wants to show a name it already
-/// knows without joining the queue for an actor that is busy with a hundred
-/// thousand paths. A lock held for the length of one assignment is the whole
+/// Written for one caller: the branch pill, which wants to show a name it
+/// already knows without joining the queue for an actor that is busy with a
+/// hundred thousand paths. The tree's context menu is the second, for the
+/// working copy. A lock held for the length of one assignment is the whole
 /// cost, against a hop and a continuation for the alternative.
-final class HeadSnapshot: @unchecked Sendable {
+final class Snapshot<Value: Sendable>: @unchecked Sendable {
 	private let lock = NSLock()
-	private var stored: GitRepository.Head = .detached(nil)
+	private var stored: Value
 
-	var value: GitRepository.Head {
+	init(_ initial: Value) { stored = initial }
+
+	var value: Value {
 		get { lock.withLock { stored } }
 		set { lock.withLock { stored = newValue } }
 	}

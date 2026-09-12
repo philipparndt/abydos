@@ -389,7 +389,8 @@ final class SidebarController: NSObject {
 		// click had missed — and clicking again did nothing, because the second
 		// ask is the one this guard drops.
 		let waiting = PaneActivityView.install(
-			over: primaryContainer, message: "Reading repository…"
+			over: primaryToolView ?? primaryContainer, message: "Reading repository…",
+			paneIsEmpty: primaryToolView == nil
 		)
 
 		Task { @MainActor [weak self] in

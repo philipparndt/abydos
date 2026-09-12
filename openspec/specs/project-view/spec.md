@@ -1083,3 +1083,88 @@ was taking screenshots — which is a session event every few seconds.
 - **GIVEN** a driven run with a tree longer than its pane
 - **WHEN** the tree steps `end,place,reload,place` run
 - **THEN** the two `place` lines print the same top row and offset
+
+### Requirement: A changed file's changes can be discarded from the tree
+
+The tree's context menu SHALL offer *Discard Changes*, worded by the same rule
+the Changes pane uses, over any selection of rows that git could discard — a
+file whose status is not unmodified or ignored, a folder holding such files —
+and SHALL hide it otherwise, over a conflicted row included. Choosing it SHALL
+ask the same question the Changes pane asks, naming the folder and counting
+untracked files, SHALL make the safety-net ref before restoring anything, and
+SHALL discard through the one operation the pane uses, with the same toast.
+The verb SHALL be reachable without the Changes pane being open. Afterwards an
+editor tab on the file SHALL reload from disk and the tree's colour SHALL
+follow.
+
+Reported 2026-09-10: the menu offered every way of looking at a changed file
+and no way to put it back.
+
+#### Scenario: a modified file
+
+- **GIVEN** a file the tree colours as modified
+- **WHEN** it is right-clicked
+- **THEN** the menu offers *Discard Changes*, and choosing it and confirming
+  leaves the file as the last commit had it, with the tree's colour gone
+
+#### Scenario: a folder with changes under it
+
+- **GIVEN** a folder holding two modified files and one untracked one
+- **WHEN** it is right-clicked
+- **THEN** the item's title counts them the way the Changes pane would, and the
+  question names the folder
+
+#### Scenario: an unchanged file
+
+- **GIVEN** a file the tree colours as unmodified
+- **WHEN** it is right-clicked
+- **THEN** the item is absent
+
+#### Scenario: a conflict
+
+- **GIVEN** a conflicted file
+- **WHEN** it is right-clicked
+- **THEN** the item is absent, as the Changes pane refuses one
+
+#### Scenario: an open tab
+
+- **GIVEN** the modified file open in the editor
+- **WHEN** its changes are discarded from the tree
+- **THEN** the tab shows the file as the last commit had it
+
+#### Scenario: a driven run
+
+- **GIVEN** a driven run on a scratch checkout with a modified file selected
+- **WHEN** its `discard` step runs
+- **THEN** it prints the item's title and the question, and discards nothing;
+  `discard-confirm` discards and prints the file's status as clean
+
+### Requirement: The tree says when it is reading, and can be asked to
+
+The project tree SHALL show the same hairline sweep under its header while a
+project is being loaded and while a reload's status sweep and dependency walk
+run, and SHALL NOT show it for the watcher's per-event status reads. The
+tree's header SHALL offer a refresh button, after its three existing buttons,
+that re-reads the folder and the working copy's status.
+
+Asked for 2026-09-12: the waiting strip as a general feature of every pane,
+and a refresh on the project pane.
+
+#### Scenario: Opening a large repository
+
+- **GIVEN** a repository whose status sweep takes a moment
+- **WHEN** it is opened
+- **THEN** the sweep runs under the tree's header until the tree is coloured, and stops
+
+#### Scenario: Pressing refresh
+
+- **GIVEN** a build has written files the watcher has not yet reported
+- **WHEN** the header's refresh button is pressed
+- **THEN** the tree is re-read from disk and recoloured, with the sweep under the header until both have answered
+
+#### Scenario: A file saved
+
+- **GIVEN** the tree showing
+- **WHEN** a file is written and the watcher re-reads the status
+- **THEN** no sweep is shown
+
