@@ -39,8 +39,6 @@ final class PullRequestsPane: NSView {
 	private var scopeControl: DrawnChoice!
 	private var refreshButton: DrawnButton!
 	private var troubleView: ScaledLabel!
-	/// The switch and the glyph, which the waiting strip sits under.
-	private var head: NSStackView!
 	private var activity: PaneActivityView?
 	/// Which `gh`, for a driven run — see `reportForTesting`.
 	private var cliVersion: String?
@@ -134,7 +132,7 @@ final class PullRequestsPane: NSView {
 		troubleView.cell?.isScrollable = false
 		troubleView.isHidden = true
 
-		head = NSStackView(views: [scopeControl, refreshButton])
+		let head = NSStackView(views: [scopeControl, refreshButton])
 		head.orientation = .horizontal
 		head.spacing = Theme.current.scaled(6)
 
@@ -168,12 +166,15 @@ final class PullRequestsPane: NSView {
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			self.refreshButton.isEnabled = false
-			// The strip under the switch, with the sentence only while there is
-			// nothing beneath it: a refresh with rows on screen keeps the rows,
-			// which is the case the maintainer chose this treatment for.
+			// The strip at the pane's top edge — asked for there on 2026-09-12,
+			// after a release with it under the switch: at that seam it read as
+			// a rule under the controls rather than the pane being busy. The
+			// sentence only while there is nothing beneath it: a refresh with
+			// rows on screen keeps the rows, which is the case the maintainer
+			// chose this treatment for.
 			if self.activity == nil {
 				self.activity = PaneActivityView.install(
-					over: self, message: "Looking for gh…", below: self.head,
+					over: self, message: "Looking for gh…",
 					paneIsEmpty: self.requests.isEmpty && self.troubleView.isHidden
 				)
 			}

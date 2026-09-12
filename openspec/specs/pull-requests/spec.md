@@ -258,11 +258,13 @@ The pull-request list's scope control and the glyph beside it SHALL take their s
 - **WHEN** the zoom is raised with the pull-request list showing
 - **THEN** `Only me` / `My teams too` and the glyph beside them are at the new size, and the rows and the controls read as one pane
 
-### Requirement: The list says it is asking GitHub with a hairline under its header
+### Requirement: The list says it is asking GitHub with a hairline at its top edge
 
 The pane SHALL show, while the pull-request list is being read, a two-point
-strip at the seam under its header with a run of the accent colour sweeping
-along it, and SHALL NOT cover or dim the pane. When nothing is showing
+strip along its top edge with a run of the accent colour sweeping along it,
+and SHALL NOT cover or dim the pane. At the top edge and not at the seam under
+the switch, where 0.20.6 put it: there it read as a rule under the controls
+rather than as the pane being busy. When nothing is showing
 beneath the strip the pane SHALL say what it is waiting for in a small
 centred sentence and SHALL add that it is still waiting after five seconds;
 when rows are showing beneath, the pane SHALL keep them on screen and show
@@ -275,13 +277,13 @@ Reported 2026-09-11: the boxed spinner in the middle of an empty pane. Chosen
 
 - **GIVEN** the pull-request list opened with `gh` installed
 - **WHEN** GitHub has not yet answered
-- **THEN** a sweep runs under *Only me / My teams too*, the sentence *Asking GitHub…* sits centred beneath, and the rows replace the sentence when they arrive
+- **THEN** a sweep runs along the pane's top edge, above *Only me / My teams too*, the sentence *Asking GitHub…* sits centred beneath, and the rows replace the sentence when they arrive
 
 #### Scenario: A refresh with rows showing
 
 - **GIVEN** the list showing three pull requests
 - **WHEN** the refresh glyph is pressed
-- **THEN** the three rows stay on screen, the sweep runs under the header, and no sentence is drawn over the rows
+- **THEN** the three rows stay on screen, the sweep runs along the top edge, and no sentence is drawn over the rows
 
 #### Scenario: A long wait
 
