@@ -17,6 +17,14 @@ struct ImagePreviewTests {
 		#expect(FilePreview.kind(for: URL(fileURLWithPath: "/tmp/main.swift")) == nil)
 	}
 
+	/// A render's output: OpenEXR and Radiance, which ImageIO decodes, open as
+	/// the picture rather than as a hex dump.
+	@Test func aRendersHighDynamicRangeOutputIsAPicture() {
+		for name in ["beauty.exr", "PASS.EXR", "sky.hdr"] {
+			#expect(FilePreview.kind(for: URL(fileURLWithPath: "/tmp/\(name)")) == .image)
+		}
+	}
+
 	/// A picture opens as the picture.
 	@Test func opensRendered() {
 		#expect(FilePreview.defaultMode(for: URL(fileURLWithPath: "/tmp/diagram.png")) == .preview)

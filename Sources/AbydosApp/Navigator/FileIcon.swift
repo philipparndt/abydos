@@ -195,7 +195,7 @@ enum FileIcon {
 		case "pdf":                  return Spec(symbol: "doc.richtext.fill", color: .hex(0xCB5F4D))
 
 		// Media
-		case "png", "jpg", "jpeg", "gif", "webp", "svg", "heic":
+		case "png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "exr", "hdr":
 			return Spec(symbol: "photo.fill", color: .hex(0x5AA469))
 		case "mp4", "mov", "avi":    return Spec(symbol: "film.fill", color: .hex(0x9B6FD0))
 		case "mp3", "wav", "flac":   return Spec(symbol: "music.note", color: .hex(0xC264B8))

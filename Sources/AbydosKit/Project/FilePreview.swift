@@ -143,7 +143,10 @@ public enum FilePreview {
 			return .markdown
 		case "scad", "stl", "3mf":
 			return .model
-		case "png", "jpg", "jpeg", "gif", "heic", "heif", "tiff", "tif", "bmp", "webp", "ico", "icns":
+		// `exr` and `hdr` too: ImageIO decodes OpenEXR and Radiance, so a
+		// render's output opens as the picture it is. Asked for 2026-09-12.
+		case "png", "jpg", "jpeg", "gif", "heic", "heif", "tiff", "tif", "bmp", "webp", "ico", "icns",
+			"exr", "hdr":
 			return .image
 		case "svg":
 			// A drawing that is also a file somebody edits, so it has both.
