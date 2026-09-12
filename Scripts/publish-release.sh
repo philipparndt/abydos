@@ -102,10 +102,11 @@ git push origin "$TAG"
 # What changed, written by hand, with the install lines appended.
 #
 # `docs/release-notes-<version>.md` is the release's own notes: grouped by what
-# somebody would notice rather than by what changed, and carrying the
-# measurements that decided things. Written before the tag, reviewed like
-# anything else, and versioned — which is the point of it being a file rather
-# than something typed into a box at the end.
+# somebody would notice rather than by what changed, one short paragraph per
+# heading, and carrying a measurement only where it decided something — the
+# style is in CLAUDE.md. Written before the tag, reviewed like anything else,
+# and versioned — which is the point of it being a file rather than something
+# typed into a box at the end.
 #
 # A version with no such file stops here rather than publishing a release whose
 # only description is a list of commit subjects. Writing them is part of cutting

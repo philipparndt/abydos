@@ -166,6 +166,15 @@ A number without the load beside it cannot be told from a regression.
 `MachineLoad.said` prints it; `Stopwatch.maySay` decides whether a bound may be
 asserted at all, and `make timing` is the run that asks for one.
 
+## Release notes are notes, not a novel
+
+`docs/release-notes-<version>.md` is read to learn what changed, in a minute.
+One `##` per thing somebody would notice, and under it one short paragraph:
+what it does now and the rule or two that matter. No opener, no story of how
+the bug was found, no mechanism. A measurement stays only if it decided
+something. 0.20.6 is the shape; the ten releases before it were rewritten
+to it after they came out at three to four times the length.
+
 ## Before you finish
 
 `make test` and `make warnings`, both clean. `make warnings` is a separate verb
