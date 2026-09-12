@@ -143,10 +143,16 @@ public final class Project {
 		loading = task
 		await task.value
 		loading = nil
+		hasLookedForGit = true
 	}
 
 	/// The load in flight, so a second caller joins it instead of starting one.
 	@MainActor private var loading: Task<Void, Never>?
+
+	/// Whether `git` has been looked for at least once, so a nil `git` can be
+	/// told apart: no repository here, or not asked yet. The tree's waiting
+	/// strip ends on the first and must not on the second.
+	@MainActor public private(set) var hasLookedForGit = false
 
 	/// The repository *and the submodules it holds*, for the verbs that have to
 	/// know which of them owns a path.

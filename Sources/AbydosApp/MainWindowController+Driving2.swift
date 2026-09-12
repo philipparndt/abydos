@@ -334,8 +334,10 @@ extension MainWindowController {
 			// The window's zoom verbs: `command:Zoom In` wants a key window.
 			case "zoom-in": zoomIn(nil)
 			case "zoom-out": zoomOut(nil)
-			// Every waiting strip on screen, with where it sits under its header.
-			case "activity": print("TREE " + PaneActivityView.reportAllForTesting())
+			// Every waiting strip on screen, and the tree's own read count.
+			case "activity": print("TREE " + PaneActivityView.reportAllForTesting()
+				+ " reads=\(navigator.readsInFlight) untilColoured=\(navigator.readingUntilColoured)")
+			case "header-refresh": navigator.refreshFromHeader()
 			case "locate": navigator.selectFileInEditor()
 			// How far the text in front can be scrolled sideways. Here rather
 			// than in `--navigate` for the same reason `type:` is: only this

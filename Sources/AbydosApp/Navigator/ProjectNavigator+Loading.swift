@@ -330,7 +330,16 @@ extension ProjectNavigatorViewController {
 	// MARK: - Version control
 
 	func refreshGitStatus() {
-		guard let project, let git = project.git, let rootNode else { return }
+		guard let project, let git = project.git, let rootNode else {
+			// **Nothing to colour ends a wait for colour** — once git has been
+			// looked for; before that the answer is still on its way, and
+			// `repositoryWasRead` asks again when it lands. The header's refresh
+			// on a folder with no repository waited here for ever: this returned
+			// before the line that ends the read, so the strip swept on over a
+			// tree that had long been re-read. Reported after 0.20.6.
+			if project?.hasLookedForGit == true { endReadingUntilColoured() }
+			return
+		}
 
 		// One `git status` at a time, with at most one more queued behind it.
 		// The tree asks for this on every watcher event, and a project being
@@ -346,7 +355,11 @@ extension ProjectNavigatorViewController {
 				isReadingGitStatus = false
 				if wantsAnotherGitStatus {
 					wantsAnotherGitStatus = false
+					// The next pass ends the wait, on whichever way it leaves.
 					refreshGitStatus()
+				} else {
+					// Every way out of this pass, not only the one that colours.
+					endReadingUntilColoured()
 				}
 			}
 
@@ -413,10 +426,7 @@ extension ProjectNavigatorViewController {
 			// of the session, and a mark that moved each time would report how
 			// long ago the last build was rather than what opening cost.
 			LaunchClock.mark("tree coloured")
-			if readingUntilColoured {
-				readingUntilColoured = false
-				endReading()
-			}
+			endReadingUntilColoured()
 			onChangeCount?(await git.changedFileCount())
 
 			// And the greying-out, which is a slower question asked less often.
@@ -457,19 +467,17 @@ extension ProjectNavigatorViewController {
 		beginReading()
 	}
 
-	/// The window has finished looking for the repository.
-	///
-	/// A folder that is no working copy is never coloured, so the read that
-	/// was waiting for colour ends here; a repository is coloured, which ends
-	/// it the ordinary way.
+	/// Ends the read that was waiting for colour, if one is.
+	func endReadingUntilColoured() {
+		guard readingUntilColoured else { return }
+		readingUntilColoured = false
+		endReading()
+	}
+
+	/// The window has finished looking for the repository: the status read
+	/// colours the tree, or finds there is nothing to colour, and either ends
+	/// the wait.
 	func repositoryWasRead() {
-		guard project?.git != nil else {
-			if readingUntilColoured {
-				readingUntilColoured = false
-				endReading()
-			}
-			return
-		}
 		refreshGitStatus()
 	}
 
