@@ -222,15 +222,26 @@ final class NavigatorHeaderView: NSView {
 			)
 		}
 
+		// The title gives way to the buttons, not the other way round. Four
+		// buttons at a large zoom in a sidebar of its default width reach the
+		// word, and the fourth was drawn over its last letter on 2026-09-12.
+		// The buttons are what the header is for, the rail already says which
+		// pane this is, and a word cut to an ellipsis says less than no word:
+		// where it does not fit whole it is not drawn.
 		let attributed = NSAttributedString(string: "Project", attributes: [
 			.font: Theme.current.uiFont(13, weight: .semibold),
 			.foregroundColor: Theme.current.sidebarHeaderText,
 		])
+		let textX = Theme.current.scaled(12)
+		let buttonsStart = [locateButton, collapseButton, compactButton, refreshButton]
+			.map(\.frame.minX).min() ?? bounds.maxX
+		let room = buttonsStart - Theme.current.scaled(8) - textX
 		let size = attributed.size()
-		attributed.draw(at: NSPoint(x: Theme.current.scaled(12), y: bounds.midY - size.height / 2))
+		guard size.width + Theme.current.scaled(15) <= room else { return }
+		attributed.draw(at: NSPoint(x: textX, y: bounds.midY - size.height / 2))
 
 		let path = NSBezierPath()
-		let x = Theme.current.scaled(12) + size.width + Theme.current.scaled(8)
+		let x = textX + size.width + Theme.current.scaled(8)
 		path.move(to: NSPoint(x: x, y: bounds.midY - 2))
 		path.line(to: NSPoint(x: x + 3.5, y: bounds.midY + 2))
 		path.line(to: NSPoint(x: x + 7, y: bounds.midY - 2))

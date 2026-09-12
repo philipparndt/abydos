@@ -197,10 +197,14 @@ extension Toast {
 
 /// Shows toasts in the corner of a window, newest at the bottom.
 @MainActor
-final class ToastPresenter {
+final class ToastPresenter: ScaleFollowing {
 	private weak var window: NSWindow?
 	private var host: ToastHostView?
 	private var shown: [ToastView] = []
+	/// The corner's own three numbers, re-taken on a zoom. Reported 2026-09-12:
+	/// the host was built once, on the first toast, at the scale in force
+	/// then, and every toast after a zoom sat in a corner of the old width.
+	private var hostConstraints: [(NSLayoutConstraint, CGFloat)] = []
 
 	private static let maximumVisible = 4
 	private static let lifetime: TimeInterval = 8
@@ -240,16 +244,17 @@ final class ToastPresenter {
 			let created = ToastHostView()
 			created.translatesAutoresizingMaskIntoConstraints = false
 			contentView.addSubview(created, positioned: .above, relativeTo: nil)
-			NSLayoutConstraint.activate([
-				created.trailingAnchor.constraint(
-					equalTo: contentView.trailingAnchor, constant: -Theme.current.scaled(16)
-				),
-				created.bottomAnchor.constraint(
-					equalTo: contentView.bottomAnchor, constant: -Theme.current.scaled(16)
-				),
-				created.widthAnchor.constraint(equalToConstant: Theme.current.scaled(340)),
-			])
+			let trailing = created.trailingAnchor.constraint(
+				equalTo: contentView.trailingAnchor, constant: -Theme.current.scaled(16)
+			)
+			let bottom = created.bottomAnchor.constraint(
+				equalTo: contentView.bottomAnchor, constant: -Theme.current.scaled(16)
+			)
+			let width = created.widthAnchor.constraint(equalToConstant: Theme.current.scaled(340))
+			NSLayoutConstraint.activate([trailing, bottom, width])
+			hostConstraints = [(trailing, -16), (bottom, -16), (width, 340)]
 			self.host = created
+			ScaledControls.register(self)
 			return created
 		}()
 
@@ -327,6 +332,7 @@ final class ToastPresenter {
 	/// put back" cannot tell that apart from a refusal that explained nothing.
 	func reportForTesting() -> String {
 		guard !shown.isEmpty else { return "TOASTS: (none)" }
+		host?.layoutSubtreeIfNeeded()
 		return "TOASTS: " + shown.map { view in
 			let answers = view.answerTitlesForTesting
 			let detail = view.detailForTesting ?? ""
@@ -334,8 +340,27 @@ final class ToastPresenter {
 				+ (detail.isEmpty ? "" : ": \(detail)")
 				+ (view.expires ? "" : " (stays)")
 				+ (answers.isEmpty ? "" : " {\(answers.joined(separator: " | "))}")
-				+ "]"
+				// Its size, which is what a zoom changes and a title cannot show.
+				+ " \(Int(view.frame.width))x\(Int(view.frame.height))]"
 		}.joined(separator: " ")
+	}
+
+	/// The corner and every toast in it re-take their metrics: the zoom
+	/// changed while a toast was up, or before the next one is posted.
+	///
+	/// The protocol's requirement is not isolated and this class is; the
+	/// registry calls it on the main actor, which is asserted rather than
+	/// crossed into.
+	nonisolated func applyTheme() {
+		MainActor.assumeIsolated { retakeScale() }
+	}
+
+	private func retakeScale() {
+		for (constraint, design) in hostConstraints {
+			constraint.constant = Theme.current.scaled(design)
+		}
+		host?.applyTheme()
+		for view in shown { view.applyTheme() }
 	}
 
 	/// Presses one of a question's answers by its words, the way a click does.
@@ -368,7 +393,7 @@ private final class ToastHostView: NSView {
 		super.init(frame: frameRect)
 		stack.orientation = .vertical
 		stack.alignment = .trailing
-		stack.spacing = 8
+		stack.spacing = Theme.current.scaled(8)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 		NSLayoutConstraint.activate([
@@ -384,6 +409,10 @@ private final class ToastHostView: NSView {
 	func add(_ view: ToastView) {
 		stack.addArrangedSubview(view)
 		view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+	}
+
+	func applyTheme() {
+		stack.spacing = Theme.current.scaled(8)
 	}
 
 	/// Only the toasts themselves take clicks; the rest of the corner belongs
@@ -404,6 +433,12 @@ private final class ToastView: NSView {
 
 	private let toast: Toast
 	private var trackingArea: NSTrackingArea?
+	/// Every number this view was built with, by its design value, so a zoom
+	/// while it is up can take them again. The drawing reads the theme as it
+	/// draws and needs only to be asked to draw.
+	private var scaledConstants: [(NSLayoutConstraint, CGFloat)] = []
+	private var body: NSTextField?
+	private var column: NSStackView?
 
 	/// Whether the corner may take this one away to make room. A question may
 	/// not be: see `ToastPresenter.show`.
@@ -433,10 +468,25 @@ private final class ToastView: NSView {
 
 		toolTip = toast.detail ?? toast.title
 		translatesAutoresizingMaskIntoConstraints = false
-		heightAnchor.constraint(
-			greaterThanOrEqualToConstant: Theme.current.scaled(44)
-		).isActive = true
+		let height = heightAnchor.constraint(greaterThanOrEqualToConstant: Theme.current.scaled(44))
+		height.isActive = true
+		scaledConstants.append((height, 44))
 		buildAnswers()
+	}
+
+	/// The layer's shape, the minimum height, the paragraph's font and every
+	/// inset, at the scale now in force; and a redraw, which takes the rest.
+	func applyTheme() {
+		layer?.cornerRadius = Theme.current.scaled(8)
+		layer?.shadowRadius = Theme.current.scaled(10)
+		layer?.shadowOffset = CGSize(width: 0, height: -Theme.current.scaled(2))
+		for (constraint, design) in scaledConstants {
+			constraint.constant = Theme.current.scaled(design)
+		}
+		body?.font = Theme.current.uiFont(11)
+		column?.spacing = Theme.current.scaled(4)
+		invalidateIntrinsicContentSize()
+		needsDisplay = true
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -464,6 +514,7 @@ private final class ToastView: NSView {
 		body.isSelectable = false
 		body.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(body)
+		self.body = body
 
 		let column = NSStackView(views: toast.answers.map { answer in
 			let button = DrawnButton(title: answer.title) { [weak self] in self?.onAnswered?(answer) }
@@ -475,25 +526,28 @@ private final class ToastView: NSView {
 		column.spacing = Theme.current.scaled(4)
 		column.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(column)
+		self.column = column
 
-		var constraints = [
-			body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: textX),
-			body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-			body.topAnchor.constraint(equalTo: topAnchor, constant: Theme.current.scaled(28)),
-			column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: textX),
-			column.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
-			column.topAnchor.constraint(equalTo: body.bottomAnchor, constant: Theme.current.scaled(8)),
-			column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.current.scaled(10)),
+		// Each with the design value it scales from, so a zoom can take it again.
+		var constraints: [(NSLayoutConstraint, CGFloat)] = [
+			(body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: textX), 34),
+			(body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset), -12),
+			(body.topAnchor.constraint(equalTo: topAnchor, constant: Theme.current.scaled(28)), 28),
+			(column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: textX), 34),
+			(column.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset), -12),
+			(column.topAnchor.constraint(equalTo: body.bottomAnchor, constant: Theme.current.scaled(8)), 8),
+			(column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.current.scaled(10)), -10),
 		]
 		// A name long enough to run off the end is clamped rather than allowed to
 		// widen the corner: the toast is one width and everything in it lives
 		// inside it.
 		for button in column.arrangedSubviews {
-			constraints.append(
-				button.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset)
-			)
+			constraints.append((
+				button.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset), -12
+			))
 		}
-		NSLayoutConstraint.activate(constraints)
+		NSLayoutConstraint.activate(constraints.map(\.0))
+		scaledConstants += constraints
 	}
 
 	override var isFlipped: Bool { true }
