@@ -45,6 +45,13 @@ read -ra JOB_FLAGS <<< "${SWIFT_JOBS:-}"
 #
 # Nothing in Sources cares which it is: there is no `#if arch` anywhere, and
 # the one prebuilt library (`Vendor/ghostty-vt.xcframework`) ships both slices.
+#
+# **The native build system is asked for by name.** Xcode 27's SwiftPM defaults
+# to `swiftbuild`, under which every `--arch` build lands in the one
+# `.build/out/Products/<config>` — so the second architecture overwrote the
+# first and `lipo` was handed the same file twice, which is how 0.20.6 stopped
+# at "Assembling". `--build-system native` is the per-architecture layout the
+# rest of this script was written against.
 read -ra ARCH_LIST <<< "${ARCHS:-}"
 BIN_DIRS=()
 if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
@@ -54,8 +61,8 @@ if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
 else
 	for arch in "${ARCH_LIST[@]}"; do
 		echo "==> Building ($CONFIG, $arch)"
-		"${SWIFT[@]}" build "${JOB_FLAGS[@]}" --arch "$arch" -c "$CONFIG"
-		BIN_DIRS+=("$("${SWIFT[@]}" build "${JOB_FLAGS[@]}" --arch "$arch" -c "$CONFIG" --show-bin-path)")
+		"${SWIFT[@]}" build "${JOB_FLAGS[@]}" --build-system native --arch "$arch" -c "$CONFIG"
+		BIN_DIRS+=("$("${SWIFT[@]}" build "${JOB_FLAGS[@]}" --build-system native --arch "$arch" -c "$CONFIG" --show-bin-path)")
 	done
 fi
 # Resources come from the first build; executables from all of them.
