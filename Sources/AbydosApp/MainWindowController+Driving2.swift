@@ -338,6 +338,12 @@ extension MainWindowController {
 			case "activity": print("TREE " + PaneActivityView.reportAllForTesting()
 				+ " reads=\(navigator.readsInFlight) untilColoured=\(navigator.readingUntilColoured)")
 			case "header-refresh": navigator.refreshFromHeader()
+			case "changes-zoom": print("TREE changes-zoom \(Date().timeIntervalSince1970): " + (sidebar.changesPane?.zoomReportForTesting ?? "no pane"))
+			case "branches-zoom": print("TREE branches-zoom \(Date().timeIntervalSince1970): " + (sidebar.branchesPane.map { pane in
+				let table = pane.tableView!
+				let cell = table.numberOfRows > 0 ? Int(table.view(atColumn: 0, row: 0, makeIfNecessary: false)?.frame.height ?? -1) : -1
+				return "rows=\(table.numberOfRows) row0=\(table.numberOfRows > 0 ? Int(table.rect(ofRow: 0).height) : -1) cell0=\(cell) scale=\(Theme.current.scale)"
+			} ?? "no pane"))
 			case "locate": navigator.selectFileInEditor()
 			// How far the text in front can be scrolled sideways. Here rather
 			// than in `--navigate` for the same reason `type:` is: only this

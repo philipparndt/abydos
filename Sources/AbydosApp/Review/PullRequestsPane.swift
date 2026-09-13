@@ -18,7 +18,7 @@ import AbydosKit
 /// has rate limits, and a sidebar that re-asks on every filesystem event — which
 /// is what the other git panes do, because git is local and cheap — would spend
 /// somebody's API budget on nothing.
-final class PullRequestsPane: NSView {
+final class PullRequestsPane: NSView, ScaleFollowing {
 	/// Somebody chose one to read.
 	var onOpen: ((PullRequest) -> Void)?
 	/// Check its branch out beside the project, or finish with that checkout.
@@ -54,6 +54,17 @@ final class PullRequestsPane: NSView {
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		build()
 		reload()
+		// The rows are drawn from the theme but only asked for again on a
+		// reload, and this list reloads when somebody presses refresh: without
+		// this a zoom left them at the old height until then.
+		ScaledControls.register(self)
+	}
+
+	/// The rows at the scale now in force, the selection kept.
+	func applyTheme() {
+		let selected = table.selectedRowIndexes
+		table.reloadData()
+		table.selectRowIndexes(selected, byExtendingSelection: false)
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }

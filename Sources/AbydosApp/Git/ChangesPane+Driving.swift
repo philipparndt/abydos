@@ -543,6 +543,17 @@ extension ChangesPane {
 		if expanded { outline.expandItem(node) } else { outline.collapseItem(node) }
 	}
 
+	/// What the zoom has reached in this pane, for a run that zooms with it up:
+	/// the first row's height, the message field's type, and the pane's own
+	/// background — the three a zoom changes and a picture is too slow to catch.
+	var zoomReportForTesting: String {
+		let row = unstagedTable.numberOfRows > 0 ? Int(unstagedTable.rect(ofRow: 0).height) : -1
+		let cell = unstagedTable.numberOfRows > 0
+			? Int(unstagedTable.view(atColumn: 0, row: 0, makeIfNecessary: false)?.frame.height ?? -1) : -1
+		return "rows=\(unstagedTable.numberOfRows) row0=\(row) cell0=\(cell) "
+			+ "subject=\(subjectField.font?.pointSize ?? 0) scale=\(Theme.current.scale)"
+	}
+
 	/// **This existed and nothing called it.** Written to re-take the pane's
 	/// type on a theme change, and never wired to anything — so the commit page
 	/// followed a zoom only where the sidebar rebuilt it, and the page in a tab

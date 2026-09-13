@@ -817,9 +817,14 @@ extension BranchesPane {
 		)
 	}
 
+	/// The zoom or the palette moved: the registry calls this at once.
+	func applyTheme() { applyThemeChange() }
+
 	func applyThemeChange() {
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		filterStrip?.applyThemeChange()
+		// The same fourteen points `build` indents by, at the scale now in force.
+		tableView.indentationPerLevel = Theme.current.scaled(14)
 		// The palette moved, the rows did not: a theme change used to be the
 		// one way to lose the selection without touching the repository.
 		reloadKeepingSelection { tableView.reloadData() }

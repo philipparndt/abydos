@@ -7,7 +7,7 @@ import AbydosKit
 /// A filter field at the top, because the useful case is a repository with more
 /// branches than fit on screen — a list you have to scroll is one you would
 /// rather have typed into.
-final class BranchesPane: NSView {
+final class BranchesPane: NSView, ScaleFollowing {
 
 	// Kept in the body because a stored property cannot live in an
 	// extension; what each is for is said where it is used.
@@ -273,6 +273,11 @@ final class BranchesPane: NSView {
 		build()
 		beginFirstRead()
 		refresh()
+		// **On the zoom's one path.** This pane was on none: `applyThemeChange`
+		// had no caller, so a zoom reached the rows only when the next git
+		// refresh happened to reload them — about a second later, while the
+		// rest of the window had already moved. Reported 2026-09-13.
+		ScaledControls.register(self)
 
 		NotificationCenter.default.addObserver(
 			self,
