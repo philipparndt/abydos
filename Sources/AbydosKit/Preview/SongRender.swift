@@ -59,21 +59,22 @@ public enum SongRender {
 		return String(format: "%012llx", hash & 0xffffffffffff)
 	}
 
-	/// The render directories of this song that belong to processes no longer
-	/// running — what a crash or a kill left — so a pane can sweep them when
-	/// it opens the song again.
+	/// The render directories that belong to processes no longer running —
+	/// what a crash, a kill or a quit left, of any song — so a pane can sweep
+	/// them when it opens. Every song's and not only this one's, because a
+	/// process keeps its last render of each song it showed until it quits,
+	/// and the songs it showed are not the songs the next one will.
 	public static func staleRenderDirectories(
-		for song: URL, under temporary: URL = FileManager.default.temporaryDirectory,
+		under temporary: URL = FileManager.default.temporaryDirectory,
 		isRunning: (Int32) -> Bool = { kill($0, 0) == 0 || errno == EPERM }
 	) -> [URL] {
 		let parent = temporary.appendingPathComponent("abydos-song", isDirectory: true)
 		guard let entries = try? FileManager.default.contentsOfDirectory(
 			at: parent, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
 		) else { return [] }
-		let prefix = songDigest(song) + "-"
 		return entries.filter { entry in
 			let name = entry.lastPathComponent
-			guard name.hasPrefix(prefix), let pid = Int32(name.dropFirst(prefix.count)) else { return false }
+			guard let dash = name.lastIndex(of: "-"), let pid = Int32(name[name.index(after: dash)...]) else { return false }
 			return !isRunning(pid)
 		}
 	}

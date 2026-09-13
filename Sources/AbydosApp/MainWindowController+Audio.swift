@@ -155,6 +155,18 @@ extension MainWindowController {
 		case "wave", "spectrum", "both": pane.showForTesting(mode: step)
 		case "play": pane.playForTesting()
 		case "loop": pane.loopForTesting()
+		case "reopen":
+			// The tab closed and the file opened again — a new pane, which is
+			// what going to another file and back makes. The rest of the steps
+			// run on the new pane, once it has a render, which is the point:
+			// whether it needed one.
+			guard let url = editor.activeGroup?.activeTab?.url else { return }
+			_ = editor.activeGroup?.closeTab(showing: url)
+			editor.open(fileURL: url, focusEditor: true)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+				self?.driveSongForTesting(rest.joined(separator: ","))
+			}
+			return
 		default:
 			let parts = step.split(separator: ":", maxSplits: 2).map(String.init)
 			switch parts.first {

@@ -108,8 +108,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		self.sourceText = sourceText
 		executable = SongRender.executable()
 		outputRoot = SongRender.outputRoot(for: url)
-		// What a killed run of this song left behind: see `SongRender.outputRoot`.
-		for stale in SongRender.staleRenderDirectories(for: url) {
+		// What a process that is gone left behind: see `SongRender.outputRoot`.
+		for stale in SongRender.staleRenderDirectories() {
 			try? FileManager.default.removeItem(at: stale)
 		}
 		super.init(color: Theme.current.editorBackground)
@@ -125,8 +125,19 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		} else {
 			show(notice: "Waiting to render \(url.lastPathComponent)…")
 			whenShown = { [weak self] in
-				self?.watch()
-				self?.render()
+				guard let self else { return }
+				self.watch()
+				// The last render of this file, when the file has not changed
+				// since: the pane before this one was torn down with its tab, and
+				// rendering again would be twenty seconds for nothing.
+				let now = self.currentFingerprint()
+				if let kept = SongRenderCache.shared.entry(for: self.url, fingerprint: now) {
+					self.fingerprint = now
+					self.infoLabel.stringValue = kept.info
+					self.load(directory: kept.directory, manifest: kept.manifest, mix: kept.files[0], kept: kept)
+				} else {
+					self.render()
+				}
 			}
 		}
 	}
@@ -140,9 +151,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		ticker?.invalidate()
 		running?.terminate()
 		// The playback and its engine: a pane that went with its split, or
-		// with the tab switching to source, must not keep sounding.
+		// with the tab switching to source, must not keep sounding. The render
+		// itself stays, in `SongRenderCache`, for the next pane on this file.
 		MainActor.assumeIsolated { rendered?.playback.tearDown() }
-		try? FileManager.default.removeItem(at: outputRoot)
 	}
 
 	/// Stops for good: the tab is closing, or its window is.
@@ -319,7 +330,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 		fingerprint = currentFingerprint()
 		runs += 1
-		let directory = outputRoot.appendingPathComponent("run-\(runs)", isDirectory: true)
+		// Named at random rather than by count: two panes on one song in one
+		// process share the root, and would otherwise both write `run-1`.
+		let directory = outputRoot.appendingPathComponent(
+			"run-" + UUID().uuidString.prefix(8), isDirectory: true
+		)
 		do {
 			try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 		} catch {
@@ -403,7 +418,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		lastDiagnostics = []
 		errorStrip.isHidden = true
 		infoLabel.stringValue = Self.info(of: manifest, rendered: SongRender.renderedLine(in: output))
-		load(directory: directory, manifest: manifest, mix: mixURL)
+		load(directory: directory, manifest: manifest, mix: mixURL, kept: nil)
 	}
 
 	/// The sound stays; the error goes over it. Unless there was never a
@@ -435,7 +450,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	/// Puts a render on: the new playback takes the old one's place and
 	/// state, the old files go, and the stems are read for the drawing.
-	private func load(directory: URL, manifest: SongRender.Manifest, mix: URL) {
+	///
+	/// - Parameter kept: the cache's entry when this render is the last one
+	///   rather than a new one, with whatever of it has been read already.
+	private func load(directory: URL, manifest: SongRender.Manifest, mix: URL, kept: SongRenderCache.Entry?) {
 		let stems = manifest.layers.map {
 			directory.appendingPathComponent(SongRender.stemsDirectory).appendingPathComponent($0.file)
 		}
@@ -447,6 +465,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			try? FileManager.default.removeItem(at: directory)
 			failed(with: "The render could not be opened: \(error.localizedDescription)")
 			return
+		}
+		if kept == nil {
+			SongRenderCache.shared.store(SongRenderCache.Entry(
+				fingerprint: fingerprint ?? currentFingerprint(), directory: directory, manifest: manifest,
+				files: files, info: infoLabel.stringValue, overviews: Array(repeating: nil, count: files.count)
+			), for: url)
 		}
 
 		let previous = rendered
@@ -463,7 +487,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			playback.play()
 			if playback.isPlaying { OnePlayer.started(self) }
 		}
-		if let previous { try? FileManager.default.removeItem(at: previous.directory) }
+		// The previous render's directory is the cache's to delete, which it
+		// did when the new one was stored.
 
 		canvas.duration = playback.duration
 		canvas.barSeconds = manifest.barSeconds
@@ -477,28 +502,30 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// The lanes at once, named and empty, so ten stems of neon.song are ten
 		// headers with switches while their waves are still being read, rather
 		// than a blank pane for the seconds that takes.
-		overviews = Array(repeating: nil, count: files.count)
+		overviews = kept?.overviews ?? Array(repeating: nil, count: files.count)
 		rebuildLanes()
-		analyse(files: files, manifest: manifest)
+		analyse(files: files, manifest: manifest, directory: directory)
 		// Settled at the render, not at the drawing: the sound is what the pane
 		// is for, and a driver reading the lanes before they are read sees
 		// them marked unread rather than waiting on a dozen stems of neon.song.
 		settle()
 	}
 
-	/// Reads the mix and every stem off the main thread, and draws them as
-	/// they land — the mix first, since it is what the pane opens on.
-	private func analyse(files: [URL], manifest: SongRender.Manifest) {
+	/// Reads the mix and every stem not yet read off the main thread, and
+	/// draws them as they land — the mix first, since it is what the pane
+	/// opens on. Each reading goes to the cache too, for the next pane.
+	private func analyse(files: [URL], manifest: SongRender.Manifest, directory: URL) {
 		analysis?.flag.set()
 		let flag = CancelFlag()
+		var overviews = self.overviews
 		let task = Task { @MainActor [weak self] in
-			var overviews: [AudioOverview?] = Array(repeating: nil, count: files.count)
-			for (index, file) in files.enumerated() {
+			for (index, file) in files.enumerated() where overviews[index] == nil {
 				let reading = await Task.detached(priority: .userInitiated) { () -> AudioOverview? in
 					try? AudioAnalysis.read(file) { flag.isSet }
 				}.value
 				guard let self, !flag.isSet else { return }
 				overviews[index] = reading
+				if let reading { SongRenderCache.shared.read(reading, at: index, of: directory, for: self.url) }
 				self.showLanes(overviews, manifest: manifest)
 			}
 		}

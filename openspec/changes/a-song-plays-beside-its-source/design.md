@@ -221,6 +221,44 @@ every node and silence padded to the longest, and a listen is the proof.
 - [The restart at a re-render is audible once] → at the save, which is when
   the song changed anyway.
 
+### 9. The last render is kept for the next pane
+
+*Added the first evening, after the first real use:* going to another file
+and back rendered the song again, twenty seconds for `neon.song`. A single
+click in the tree opens a provisional tab and the next click replaces it, so
+the song's pane is torn down and made again on every look elsewhere.
+`SongRenderCache` keeps one render per song for the process, keyed by the
+file's fingerprint, with the readings of its stems as they land; a new pane
+on an unchanged file plays the last render at once and draws what was read.
+The render directories are the cache's to delete now, not the pane's, and
+what a process leaves when it quits is swept by the next pane to open —
+which is why `staleRenderDirectories` covers every song and not only the one
+being opened.
+
+## What the stems are, and why they do not sum to the mix
+
+*Found the first evening, listening:* the stems played together are not the
+song, and a stem's level is not its level in the mix. Read off `mat`'s
+render (`crates/mat-cli/src/main.rs`, `--stems`): **each stem is a solo
+render of the whole pipeline** — the timeline with every other layer removed,
+through the master chain: the keyed sidechain, gain, EQ, width, saturation,
+compressor, clip and limiter. The linear stages commute with the sum; the
+others do not. A stem's limiter and compressor see one layer's peaks rather
+than the song's, so each stem is shaped and levelled on its own, and the
+drums are not ducking the pad in the pad's stem because the pad's stem has no
+drums to key from.
+
+What would make the stems sum to the mix is a change in `mat`, not here: one
+render pass that keeps a mix bus per layer — track gain, pan and sends, the
+delay and reverb wet from that layer's sends (both linear), the master
+sidechain keyed from the *whole* song's key tracks, then master gain, EQ and
+width — and stops before saturation, compressor, clip and limiter, writing
+into the manifest what was applied and what was not, and the master's
+settings, so a player knows the sum is the pre-limiter mix and can put a
+limiter of its own on it. That is the "mixing manifest" the request named.
+Until then the *Mix* view is the song and the *Stems* view is an
+approximation of it, and the pane says nothing else.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

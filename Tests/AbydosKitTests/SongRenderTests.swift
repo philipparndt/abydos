@@ -122,8 +122,8 @@ struct SongRenderTests {
 		#expect(mine.deletingLastPathComponent().lastPathComponent == "abydos-song")
 		#expect(mine.lastPathComponent != theirs.lastPathComponent.replacingOccurrences(of: "-300", with: "-100"))
 
-		let stale = SongRender.staleRenderDirectories(for: song, under: temporary) { $0 == 100 }
-		#expect(stale.map(\.lastPathComponent) == [dead.lastPathComponent])
+		let stale = SongRender.staleRenderDirectories(under: temporary) { $0 == 100 }
+		#expect(Set(stale.map(\.lastPathComponent)) == [dead.lastPathComponent, theirs.lastPathComponent])
 	}
 
 	@Test func theRenderedLineIsFound() {
