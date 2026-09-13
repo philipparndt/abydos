@@ -570,14 +570,21 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	/// The mix is heard in the mix view and the stems in the stems view, each
-	/// stem at full or at nothing; every file plays throughout, so a switch of
-	/// view or of stem is instant and keeps the place.
+	/// stem at its share or at nothing; every file plays throughout, so a
+	/// switch of view or of stem is instant and keeps the place.
+	///
+	/// The share is `Manifest.stemGain`: the stems sum to the mix before its
+	/// limiter, which peaks above the ceiling on any loud song, and the sum
+	/// of them at full would clip in the engine. Turned down to the ceiling,
+	/// the stems view is the song at the level the limiter would have left
+	/// it, short of the limiter's own squeeze.
 	private func applyVolumes() {
 		guard let rendered else { return }
 		rendered.playback.setVolume(view == .mix ? 1 : 0, ofVoice: 0)
+		let share = Float(rendered.manifest.stemGain)
 		for (index, layer) in rendered.manifest.layers.enumerated() {
 			let heard = view == .stems && !silenced.contains(layer.name)
-			rendered.playback.setVolume(heard ? 1 : 0, ofVoice: index + 1)
+			rendered.playback.setVolume(heard ? share : 0, ofVoice: index + 1)
 		}
 	}
 
@@ -806,6 +813,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			+ " tempo=\(Int(manifest?.tempo ?? 0)) stems=\(manifest?.layers.count ?? 0)"
 			+ " lanes=[\(lanes.joined(separator: " "))] lit=[\(lit.sorted().joined(separator: " "))]"
 			+ " loop=\(playback?.isLooping == true ? "on" : "off")"
+			+ " drift=[\((playback?.driftForTesting ?? []).map(String.init).joined(separator: " "))]"
 			+ String(format: " window=%.3f+%.3fs", canvas.windowStart, canvas.windowSpan)
 			+ " info=\"\(infoLabel.stringValue)\" error=\(error)"
 	}

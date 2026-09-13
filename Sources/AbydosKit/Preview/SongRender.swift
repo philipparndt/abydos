@@ -126,10 +126,21 @@ public enum SongRender {
 		public var seconds: Double
 		public var layers: [Layer]
 		public var sections: [Section]
+		/// The peak of the stems' sum, in dBFS, when the manifest says. Since
+		/// 2026-09-13 `mat` cuts the stems from one render, so they sum to
+		/// the mix as it was before the master's dynamics — which peaks above
+		/// the limiter's ceiling, and a player summing them turns them down
+		/// by the difference. Nil from an older `mat`, whose stems were solo
+		/// renders through the limiter each.
+		public var stemsPeakDb: Double?
+		/// The master limiter's ceiling in dBFS, when the manifest carries the
+		/// master; nil when the limiter is off or the manifest is older.
+		public var limiterCeilingDb: Double?
 
 		public init(
 			title: String? = nil, tempo: Double, meter: [Int], barSeconds: Double,
-			seconds: Double, layers: [Layer], sections: [Section] = []
+			seconds: Double, layers: [Layer], sections: [Section] = [],
+			stemsPeakDb: Double? = nil, limiterCeilingDb: Double? = nil
 		) {
 			self.title = title
 			self.tempo = tempo
@@ -138,6 +149,17 @@ public enum SongRender {
 			self.seconds = seconds
 			self.layers = layers
 			self.sections = sections
+			self.stemsPeakDb = stemsPeakDb
+			self.limiterCeilingDb = limiterCeilingDb
+		}
+
+		/// How much to turn every stem down so that their sum peaks where the
+		/// mix's limiter would have held it: 1 when nothing is known, and
+		/// never above 1 — a quiet song is not made louder.
+		public var stemGain: Double {
+			guard let stemsPeakDb else { return 1 }
+			let ceiling = limiterCeilingDb ?? -1
+			return min(1, pow(10, (ceiling - stemsPeakDb) / 20))
 		}
 
 		/// The bar a moment is in, 1-based, and how far through it.
@@ -184,6 +206,9 @@ public enum SongRender {
 			      let start = number(entry["start"]), let end = number(entry["end"]) else { return nil }
 			return Manifest.Section(name: name, start: start, end: end)
 		}
+		let mixing = top["mixing"] as? [String: Any]
+		let limiter = (top["master"] as? [String: Any])?["limiter"] as? [String: Any]
+		let limiterOn = (limiter?["enabled"] as? Bool) ?? false
 		return Manifest(
 			title: top["title"] as? String,
 			tempo: number(top["tempo"]) ?? 0,
@@ -191,7 +216,9 @@ public enum SongRender {
 			barSeconds: number(top["bar_seconds"]) ?? 0,
 			seconds: number(top["seconds"]) ?? 0,
 			layers: layers,
-			sections: sections
+			sections: sections,
+			stemsPeakDb: number(mixing?["sum_peak_db"]),
+			limiterCeilingDb: limiterOn ? number(limiter?["ceiling_db"]) : nil
 		)
 	}
 
