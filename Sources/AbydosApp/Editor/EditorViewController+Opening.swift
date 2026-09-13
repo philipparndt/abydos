@@ -258,6 +258,10 @@ extension EditorViewController {
 				// second. Only the containers AVFoundation plays natively
 				// arrive here; a `.webm` keeps the notice and its Quick Look.
 				return makeVideoTab(for: fileURL, preview: preview)
+			case .audio:
+				// Sound is the video's case without the frames: a player, and
+				// its wave and spectrum drawn beside the transport.
+				return makeAudioTab(for: fileURL, preview: preview)
 			default:
 				// A `.drawio` opens rendered and has no source half, and it is
 				// still a document this app owns: it goes the ordinary way and

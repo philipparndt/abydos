@@ -70,10 +70,18 @@ extension ProjectNavigatorViewController {
 			openSelection(focusEditor: true)
 			return true
 		case 49: // Space
-			// **Quick Look for what Quick Look is for.** An image, a video, a
-			// PDF: the provisional open this used to do put a notice in the
-			// editor with a Quick Look button on it, which is two presses to
-			// reach the thing Space reaches everywhere else on this machine.
+			// **Play and pause a sound or a video.** Its tab is the player, so
+			// Space on its row does what Space does in the player — asked for
+			// 2026-09-13, when this opened a Quick Look panel over a tab that was
+			// already showing the file.
+			if let playable = singleSelectedFile(), FilePreview.isPlayable(playable),
+			   onTogglePlayback?(playable) == true {
+				return true
+			}
+			// **Quick Look for what Quick Look is for** — a file the system
+			// renders that has no tab of its own to show it in: a font, a
+			// presentation, a spreadsheet. A picture, a PDF and a player open in
+			// the editor instead, which is what the provisional open below does.
 			//
 			// Everything else keeps the provisional open, which is what Space
 			// is for in a tree of source files — and `offersQuickLook` is the
@@ -103,11 +111,20 @@ extension ProjectNavigatorViewController {
 		outlineView.selectedRowIndexes.sorted().compactMap { row in
 			guard let node = outlineView.item(atRow: row) as? FileNode, !node.isDirectory
 			else { return nil }
-			guard FileNotice.offersQuickLook(forExtension: node.url.pathExtension) else {
-				return nil
-			}
+			guard FileNotice.offersQuickLook(forExtension: node.url.pathExtension),
+			      !FilePreview.hasDedicatedViewer(node.url)
+			else { return nil }
 			return node.url
 		}
+	}
+
+	/// The one selected row's file, when exactly one file is selected.
+	private func singleSelectedFile() -> URL? {
+		guard outlineView.numberOfSelectedRows == 1,
+		      let node = outlineView.item(atRow: outlineView.selectedRow) as? FileNode,
+		      !node.isDirectory
+		else { return nil }
+		return node.url
 	}
 
 	/// Opens the panel from the menu, on the row that was clicked.

@@ -119,6 +119,11 @@ public enum FilePreview {
 		/// to offer a hex dump. Shown by PDFKit, which is the same choice the
 		/// owner's own scanner app made for the same job.
 		case pdf
+		/// Sound: a player, the file's wave and its spectrogram. The containers
+		/// Core Audio's own file reader decodes on macOS 14 and nothing else —
+		/// an `.ogg` here would be a player that never starts, which is worse
+		/// than the notice that says what the file is.
+		case audio
 
 		/// Whether this kind is a diagram with an Export beside it.
 		public var isDiagram: Bool {
@@ -169,9 +174,28 @@ public enum FilePreview {
 			return .pdf
 		case "mp4", "mov", "m4v":
 			return .video
+		case "wav", "mp3", "m4a", "aac", "aif", "aiff", "flac", "caf":
+			return .audio
 		default:
 			return nil
 		}
+	}
+
+	/// Whether the file opens in a tab that shows it as it is — a picture, a
+	/// PDF, a player — so a Quick Look panel would only show the same thing in a
+	/// floating window that belongs to no tab.
+	public static func hasDedicatedViewer(_ url: URL) -> Bool {
+		switch kind(for: url) {
+		case .image, .pdf, .video, .audio: return true
+		default: return false
+		}
+	}
+
+	/// Whether the file's tab plays: Space there, and on its row, plays and
+	/// pauses it.
+	public static func isPlayable(_ url: URL) -> Bool {
+		let kind = kind(for: url)
+		return kind == .video || kind == .audio
 	}
 
 	public static func hasPreview(_ url: URL, facts: PreviewFacts = .unknown) -> Bool {
@@ -214,9 +238,9 @@ public enum FilePreview {
 			// A PDF is the finished document and nothing else. Its bytes are a
 			// compressed object graph, so there is no source half to offer.
 			return .preview
-		case .video:
-			// A picture's case at twenty-five frames a second: nothing to edit,
-			// no source to read.
+		case .video, .audio:
+			// A picture's case at twenty-five frames a second, and sound is the
+			// same case without the frames: nothing to edit, no source to read.
 			return .preview
 		case .model where facts.looksLikeRecipe && Go3mfRecipe.hasRecipeExtension(url):
 			// A go3mf recipe opens as its text, and the model is *asked for*. Not
@@ -310,6 +334,8 @@ public enum FilePreview {
 		// A PDF is a mesh's case exactly: deflated streams and an object graph,
 		// with nothing in it a person would read as text.
 		if kind(for: url) == .pdf { return false }
+		// Sound is samples; there is nothing in it to read as text.
+		if kind(for: url) == .audio { return false }
 		return !["stl", "3mf"].contains(url.pathExtension.lowercased())
 	}
 

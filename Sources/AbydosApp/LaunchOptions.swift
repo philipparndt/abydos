@@ -732,6 +732,17 @@ struct LaunchOptions {
 	var imageZoom: String?
 	/// Print what the front tab's video player is doing.
 	var videoReport = false
+	/// `--audio-report`, `--audio-seek <s>` and `--audio-view wave|spectrum|both`:
+	/// the front sound tab, once its analysis has landed.
+	var audioReport = false
+	var audioSeek: Double?
+	var audioView: String?
+	/// `--audio-zoom <start>:<end>`, `--audio-loop`, `--audio-play`, and
+	/// `--audio-wait <s>` before the report.
+	var audioZoom: (Double, Double)?
+	var audioLoop = false
+	var audioPlay = false
+	var audioWait: Double = 0
 	/// Drive the secret covers: report, reveal, caret, toggle.
 	var secretsSteps: String?
 	/// `--sops <steps>`: the SOPS chip, driven — see `sopsForTesting`.

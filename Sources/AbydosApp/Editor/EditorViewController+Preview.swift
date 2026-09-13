@@ -111,6 +111,8 @@ extension EditorViewController {
 			return PdfFileView(url: tab.url)
 		case .video:
 			return VideoFileView(url: tab.url)
+		case .audio:
+			return AudioFileView(url: tab.url)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -260,6 +262,25 @@ extension EditorViewController {
 
 	/// The player the file in front is showing, when it is showing one.
 	var videoPreview: VideoFileView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
+
+	/// Plays or pauses the tab showing `url`, whichever kind of player it is.
+	/// Answers whether there was one.
+	func togglePlayback(showing url: URL) -> Bool {
+		guard let tab = tabs.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL })
+		else { return false }
+		if let audio: AudioFileView = Self.pane(in: tab.contentView) {
+			audio.togglePlayback()
+			return true
+		}
+		if let video: VideoFileView = Self.pane(in: tab.contentView) {
+			video.togglePlayback()
+			return true
+		}
+		return false
+	}
+
+	/// The sound the file in front is showing, when it is showing one.
+	var audioPreview: AudioFileView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
 
 	/// The first pane of a kind anywhere under a view.
 	///
@@ -540,6 +561,28 @@ extension EditorViewController {
 			isPreview: preview
 		)
 		tab.previewMode = .preview
+		return tab
+	}
+
+	/// A tab that is the sound player, paused — see `AudioFileView`.
+	///
+	/// Its icon is a speaker while it plays: it keeps playing when another tab
+	/// is in front, and a sound playing out of sight is one glance from found.
+	func makeAudioTab(for fileURL: URL, preview: Bool) -> Tab {
+		let player = AudioFileView(url: fileURL)
+		let tab = Tab(
+			url: fileURL,
+			document: nil,
+			codeView: nil,
+			contentView: player,
+			isPreview: preview
+		)
+		tab.previewMode = .preview
+		player.onPlayingChanged = { [weak self, weak tab] playing in
+			guard let tab else { return }
+			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil
+			self?.refreshTabBar()
+		}
 		return tab
 	}
 

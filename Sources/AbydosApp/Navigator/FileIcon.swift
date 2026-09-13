@@ -198,7 +198,8 @@ enum FileIcon {
 		case "png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "exr", "hdr":
 			return Spec(symbol: "photo.fill", color: .hex(0x5AA469))
 		case "mp4", "mov", "avi":    return Spec(symbol: "film.fill", color: .hex(0x9B6FD0))
-		case "mp3", "wav", "flac":   return Spec(symbol: "music.note", color: .hex(0xC264B8))
+		case "mp3", "wav", "flac", "m4a", "aac", "aif", "aiff", "caf", "ogg", "opus", "wma":
+			return Spec(symbol: "waveform", color: .hex(0xC264B8))
 		case "zip", "gz", "tar", "7z":
 			return Spec(symbol: "archivebox.fill", color: .hex(0xB58A2B))
 

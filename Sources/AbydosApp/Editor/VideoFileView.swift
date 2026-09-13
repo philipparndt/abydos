@@ -1,3 +1,4 @@
+import AbydosKit
 import AVKit
 import AppKit
 
@@ -19,15 +20,28 @@ import AppKit
 /// scare. Leaving the tab pauses for the same reason the open does not play:
 /// a hidden tab with a voice in it is a haunted window. Neither the open nor
 /// the return presses play; only somebody watching does.
-final class VideoFileView: NSView {
+final class VideoFileView: NSView, PlaysMedia {
 	private let playerView = AVPlayerView()
 	private let url: URL
+	/// Watches for the player starting — from its own controls, Space in the
+	/// player, or the tree — so a sound or another video playing stops.
+	private var playing: NSKeyValueObservation?
 
 	init(url: URL) {
 		self.url = url
 		super.init(frame: .zero)
 
 		playerView.player = AVPlayer(url: url)
+		// A driven run proves whether it plays, not what it sounds like, and a
+		// machine that starts making sound while somebody works is a jump scare.
+		playerView.player?.isMuted = DrivenRun.isActive
+		playing = playerView.player?.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+			guard player.timeControlStatus == .playing else { return }
+			DispatchQueue.main.async {
+				guard let self else { return }
+				OnePlayer.started(self)
+			}
+		}
 		playerView.controlsStyle = .inline
 		playerView.showsFullScreenToggleButton = true
 		// An editor tab is not the machine's media session: a paused clip in
@@ -48,6 +62,26 @@ final class VideoFileView: NSView {
 	/// Pauses without losing the position, for the tab leaving the front.
 	func pause() {
 		playerView.player?.pause()
+	}
+
+	/// Another tab started playing.
+	func pauseForAnother() {
+		pause()
+	}
+
+	/// Space on the video's row in the tree: what Space does in the player.
+	func togglePlayback() {
+		guard let player = playerView.player else { return }
+		if player.rate != 0 {
+			player.pause()
+		} else {
+			// From the start again once it has run to the end.
+			if let duration = player.currentItem?.duration.seconds, duration.isFinite,
+			   player.currentTime().seconds >= duration - 0.05 {
+				player.seek(to: .zero)
+			}
+			player.play()
+		}
 	}
 
 	/// The window watches nothing when the view leaves it, and a view leaving

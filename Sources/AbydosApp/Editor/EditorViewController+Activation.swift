@@ -240,6 +240,9 @@ extension EditorViewController {
 	}
 
 	func teardown(_ tab: Tab) {
+		// A sound keeps playing while its tab is out of sight, so closing the
+		// tab is what stops it.
+		(tab.contentView as? AudioFileView)?.tearDown()
 		if let scrollView = tab.contentView as? NSScrollView {
 			NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
 		}

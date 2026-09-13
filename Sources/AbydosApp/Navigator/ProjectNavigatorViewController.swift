@@ -209,6 +209,9 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onOpenAsHex: ((URL) -> Void)?
 	/// A file row's *Blame*: open it and show who last touched each line.
 	var onBlame: ((URL) -> Void)?
+	/// Space on a sound's or a video's row: play or pause its tab, opening it
+	/// first. Answers whether there was a player to press.
+	var onTogglePlayback: ((URL) -> Bool)?
 	/// *Discard Changes*, once its question has been answered with the
 	/// destructive button. The window does the discarding: see
 	/// `MainWindowController.discard(paths:)`.

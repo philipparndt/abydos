@@ -422,6 +422,7 @@ extension MainWindowController {
 				// to follow. It prints which package the file turned out to be
 				// in and where that package came from, which is what a
 				// screenshot cannot say.
+				if audioStepForTesting(step) { continue }
 				if step.hasPrefix("reveal:") {
 					navigator.revealForTesting(String(step.dropFirst("reveal:".count)))
 					continue

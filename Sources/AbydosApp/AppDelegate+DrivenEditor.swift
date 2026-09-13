@@ -379,6 +379,17 @@ extension AppDelegate {
 			}
 		}
 
+		if options.audioReport || options.audioSeek != nil || options.audioView != nil
+			|| options.audioZoom != nil || options.audioLoop || options.audioPlay {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+				controller?.driveAudioForTesting(AudioDriving(
+					view: options.audioView, seek: options.audioSeek, zoom: options.audioZoom,
+					loop: options.audioLoop, play: options.audioPlay, wait: options.audioWait,
+					report: options.audioReport
+				))
+			}
+		}
+
 		if let raw = options.imageZoom {
 			let at = options.isScreenshotRun ? max(1.3, options.screenshotDelay - 0.9) : 2.2
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {

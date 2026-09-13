@@ -482,6 +482,15 @@ extension LaunchOptions {
 			case "--image-fit":  options.imageFit = next()
 			case "--image-zoom": options.imageZoom = next()
 			case "--video-report": options.videoReport = true
+			case "--audio-report": options.audioReport = true
+			case "--audio-seek": options.audioSeek = next().flatMap(Double.init)
+			case "--audio-view": options.audioView = next()
+			case "--audio-zoom":
+				let parts = (next() ?? "").split(separator: ":").compactMap { Double($0) }
+				if parts.count == 2 { options.audioZoom = (parts[0], parts[1]) }
+			case "--audio-loop": options.audioLoop = true
+			case "--audio-play": options.audioPlay = true
+			case "--audio-wait": options.audioWait = next().flatMap(Double.init) ?? 0
 			case "--secrets":    options.secretsSteps = next()
 			case "--sops":       options.sopsSteps = next()
 			case "--indent":     options.indentSteps = next()

@@ -427,8 +427,12 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				// menu item that opens a panel showing a large grey icon is an
 				// offer to do nothing, which is the argument `offersQuickLook`
 				// was written for.
+				// And not for a file whose tab already shows it — a picture, a
+				// PDF, a player — where the panel is the same thing again in a
+				// window that belongs to no tab.
 				item.isHidden = !(node.map {
 					!$0.isDirectory && FileNotice.offersQuickLook(forExtension: $0.url.pathExtension)
+						&& !FilePreview.hasDedicatedViewer($0.url)
 				} ?? false)
 			case #selector(contextPreviewModel):
 				// `holdsAModel` rather than `canPreview`, for the same reason Export
