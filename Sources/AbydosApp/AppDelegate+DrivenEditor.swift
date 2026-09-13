@@ -391,6 +391,12 @@ extension AppDelegate {
 			}
 		}
 
+		if let steps = options.songSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+				controller?.driveSongForTesting(steps)
+			}
+		}
+
 		if let raw = options.imageZoom {
 			let at = options.isScreenshotRun ? max(1.3, options.screenshotDelay - 0.9) : 2.2
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {

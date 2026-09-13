@@ -200,6 +200,8 @@ enum FileIcon {
 		case "mp4", "mov", "avi":    return Spec(symbol: "film.fill", color: .hex(0x9B6FD0))
 		case "mp3", "wav", "flac", "m4a", "aac", "aif", "aiff", "caf", "ogg", "opus", "wma":
 			return Spec(symbol: "waveform", color: .hex(0xC264B8))
+		// A musik-as-text song: notes written down, in the sound files' colour.
+		case "song":                 return Spec(symbol: "music.note.list", color: .hex(0xC264B8))
 		case "zip", "gz", "tar", "7z":
 			return Spec(symbol: "archivebox.fill", color: .hex(0xB58A2B))
 

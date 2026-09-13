@@ -124,6 +124,11 @@ public enum FilePreview {
 		/// an `.ogg` here would be a player that never starts, which is worse
 		/// than the notice that says what the file is.
 		case audio
+		/// A musik-as-text song: text that makes sound, the way a `.scad` is
+		/// text that makes a shape. Rendered by `mat` into a mix and one stem
+		/// per layer, and shown beside the source as the wave and spectrum of
+		/// each. Asked for 2026-09-13.
+		case song
 
 		/// Whether this kind is a diagram with an Export beside it.
 		public var isDiagram: Bool {
@@ -176,6 +181,8 @@ public enum FilePreview {
 			return .video
 		case "wav", "mp3", "m4a", "aac", "aif", "aiff", "flac", "caf":
 			return .audio
+		case "song":
+			return .song
 		default:
 			return nil
 		}
@@ -227,6 +234,12 @@ public enum FilePreview {
 			// Both halves at once: the text is what is edited and the diagram
 			// is what it is for, and checking one against the other is the
 			// whole of the work.
+			return .splitRight
+		case .song:
+			// The `.scad` case with sound for a shape: the text is written to be
+			// heard, and the pane renders it with `mat` the way the model pane
+			// runs OpenSCAD. A render is a subprocess and costs no frames, and
+			// the pane starts it only once it has been looked at.
 			return .splitRight
 		case .drawio:
 			// The opposite, and for the opposite reason. A `.drawio` is not text

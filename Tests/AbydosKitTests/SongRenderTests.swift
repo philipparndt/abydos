@@ -1,0 +1,134 @@
+import Foundation
+import Testing
+@testable import AbydosKit
+
+/// What a `mat render` run is asked and what is read back from it, against
+/// output measured from the real tool on 2026-09-13.
+struct SongRenderTests {
+	@Test func theCommandRendersTheMixAndTheStemsIntoTheOutputDirectory() {
+		let command = SongRender.command(
+			executable: "/Users/me/.cargo/bin/mat",
+			song: URL(fileURLWithPath: "/Users/me/my songs/neon.song"),
+			output: URL(fileURLWithPath: "/tmp/abydos-song/1234/run-3")
+		)
+		#expect(command == "/Users/me/.cargo/bin/mat render '/Users/me/my songs/neon.song' "
+			+ "-o /tmp/abydos-song/1234/run-3/mix.wav --stems /tmp/abydos-song/1234/run-3/stems")
+	}
+
+	/// `mat`'s own manifest, as written for `examples/drunken-sailor.song`.
+	private let manifest = """
+	{
+	  "bar_seconds": 1.8181818181818181,
+	  "bars": 37.0,
+	  "layers": [
+	    { "file": "low_strings.wav", "layer": "low_strings", "tracks": ["low_strings"] },
+	    { "file": "chords.wav", "layer": "chords", "tracks": ["pad", "keys"] }
+	  ],
+	  "loop": false,
+	  "meter": [4, 4],
+	  "sample_rate": 48000,
+	  "seconds": 67.27272727272727,
+	  "sections": [{ "name": "chorus", "start": 29.09, "end": 58.18 }],
+	  "tempo": 132.0,
+	  "title": "Drunken Sailor (epic synth arrangement)"
+	}
+	"""
+
+	@Test func theManifestSaysWhichFileIsWhichLayer() throws {
+		let read = try SongRender.manifest(from: Data(manifest.utf8))
+		#expect(read.title == "Drunken Sailor (epic synth arrangement)")
+		#expect(read.tempo == 132)
+		#expect(read.meter == [4, 4])
+		#expect(read.layers.map(\.name) == ["low_strings", "chords"])
+		#expect(read.layers[1].file == "chords.wav")
+		#expect(read.layers[1].tracks == ["pad", "keys"])
+		#expect(read.sections == [.init(name: "chorus", start: 29.09, end: 58.18)])
+		#expect(abs(read.seconds - 67.2727) < 0.001)
+	}
+
+	/// Bar 1 starts at 0; at 132 bpm in 4/4 a bar is 1.818 s, so 2 s is in
+	/// bar 2, a tenth of the way in.
+	@Test func aMomentHasABarAndABeat() throws {
+		let read = try SongRender.manifest(from: Data(manifest.utf8))
+		#expect(read.bar(at: 0).bar == 1)
+		let (bar, beat) = read.bar(at: 2.0)
+		#expect(bar == 2)
+		#expect(abs(beat - 0.4) < 0.001)
+	}
+
+	@Test func aManifestThatIsNotOneIsRefusedInWords() {
+		#expect(throws: SongRender.Failure.self) { try SongRender.manifest(from: Data("[]".utf8)) }
+		#expect(throws: SongRender.Failure.self) { try SongRender.manifest(from: Data("not json".utf8)) }
+	}
+
+	/// The exact shape `mat` prints for a misspelt instrument, twice.
+	private let failed = """
+	error: unknown instrument 'brasss'
+	   --> /tmp/scratch/broken.song:137:14
+	    |
+	137 |   instrument brasss
+	    |              ^^^^^^
+	    = hint: did you mean 'brass'?
+	error: unknown instrument 'brasss'
+	   --> /tmp/scratch/broken.song:149:14
+	    |
+	149 |   instrument brasss
+	    |              ^^^^^^
+	    = hint: did you mean 'brass'?
+	2 error(s) in /tmp/scratch/broken.song
+	"""
+
+	@Test func anErrorNamesItsLineAndKeepsItsHint() {
+		let diagnostics = SongRender.diagnostics(in: failed)
+		#expect(diagnostics.count == 2)
+		#expect(diagnostics[0].line == 137)
+		#expect(diagnostics[0].column == 14)
+		#expect(diagnostics[0].message == "unknown instrument 'brasss' — did you mean 'brass'?")
+		#expect(diagnostics[1].line == 149)
+		#expect(SongRender.complaint(in: failed).hasPrefix("137:14: unknown instrument 'brasss'"))
+	}
+
+	/// An error with no place in the file — a sample that could not be
+	/// opened — is still an error, without a line.
+	@Test func anErrorWithNoPlaceIsKept() {
+		let diagnostics = SongRender.diagnostics(in: "error: cannot open stems/Vocals.wav\n")
+		#expect(diagnostics == [.init(message: "cannot open stems/Vocals.wav")])
+		#expect(SongRender.complaint(in: "error: cannot open stems/Vocals.wav\n") == "cannot open stems/Vocals.wav")
+	}
+
+	/// A run that said nothing `mat`-shaped — a shell that could not find it —
+	/// shows its tail rather than nothing.
+	@Test func aSilentFailureShowsItsTail() {
+		#expect(SongRender.complaint(in: "zsh: command not found: mat\n") == "zsh: command not found: mat")
+		#expect(SongRender.complaint(in: "") == "The render said nothing and wrote no sound.")
+	}
+
+	/// A render directory is named for the song and the process, so what a
+	/// killed process left can be told from what a live one is playing.
+	@Test func whatAKilledProcessLeftIsStaleAndWhatALiveOneHasIsNot() throws {
+		let temporary = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("song-render-\(UUID().uuidString)")
+		defer { try? FileManager.default.removeItem(at: temporary) }
+		let song = URL(fileURLWithPath: "/songs/neon.song")
+		let other = URL(fileURLWithPath: "/songs/undertow.song")
+
+		let mine = SongRender.outputRoot(for: song, under: temporary, pid: 100)
+		let dead = SongRender.outputRoot(for: song, under: temporary, pid: 200)
+		let theirs = SongRender.outputRoot(for: other, under: temporary, pid: 300)
+		for directory in [mine, dead, theirs] {
+			try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		}
+		#expect(mine.lastPathComponent.hasSuffix("-100"))
+		#expect(mine.deletingLastPathComponent().lastPathComponent == "abydos-song")
+		#expect(mine.lastPathComponent != theirs.lastPathComponent.replacingOccurrences(of: "-300", with: "-100"))
+
+		let stale = SongRender.staleRenderDirectories(for: song, under: temporary) { $0 == 100 }
+		#expect(stale.map(\.lastPathComponent) == [dead.lastPathComponent])
+	}
+
+	@Test func theRenderedLineIsFound() {
+		let said = "rendered 1:10.6 in 0.83s (85x realtime), peak -1.0 dBFS, rms -16.0 dBFS\nwrote /tmp/x/mix.wav\n"
+		#expect(SongRender.renderedLine(in: said) == "rendered 1:10.6 in 0.83s (85x realtime), peak -1.0 dBFS, rms -16.0 dBFS")
+		#expect(SongRender.renderedLine(in: "wrote /tmp/x/mix.wav") == nil)
+	}
+}

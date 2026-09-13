@@ -113,10 +113,40 @@ extension EditorViewController {
 			return VideoFileView(url: tab.url)
 		case .audio:
 			return AudioFileView(url: tab.url)
+		case .song:
+			return makeSongView(for: tab)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
 	}
+
+	/// A song's sound beside its text — see `SongPreviewView`.
+	///
+	/// Wired both ways: the caret tells the pane which block it is in, and a
+	/// click on a stem's name or on the error strip tells the source which
+	/// line to show. The pane reads the buffer for the block under the caret
+	/// and the disk for the render, which is the same split the Cadova pane
+	/// makes: `mat` reads the disk.
+	private func makeSongView(for tab: Tab) -> NSView {
+		let view = SongPreviewView(url: tab.url, sourceText: { [weak tab] in tab?.document?.rope.string })
+		view.onRevealLine = { [weak tab] line, column in
+			tab?.codeView?.reveal(line: line, column: column)
+			if let codeView = tab?.codeView { codeView.window?.makeFirstResponder(codeView) }
+		}
+		view.onPlayingChanged = { [weak self, weak tab] playing in
+			guard let tab else { return }
+			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil
+			self?.refreshTabBar()
+		}
+		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
+		// Where the caret already is: a pane made for a tab whose caret sits in
+		// a track should light that track from the start.
+		tab.codeView?.reportCaretPosition()
+		return view
+	}
+
+	/// The song pane the file in front is showing, when it is showing one.
+	var songPreview: SongPreviewView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
 
 	private func makePreviewView(for tab: Tab) -> NSView {
 		// On the page's own layout manager, which is what paints the pills
@@ -270,6 +300,10 @@ extension EditorViewController {
 		}
 		if let video: VideoFileView = Self.pane(in: tab.contentView) {
 			video.togglePlayback()
+			return true
+		}
+		if let song: SongPreviewView = Self.pane(in: tab.contentView) {
+			song.togglePlayback()
 			return true
 		}
 		return false

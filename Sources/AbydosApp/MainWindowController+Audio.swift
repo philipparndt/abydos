@@ -110,6 +110,102 @@ extension MainWindowController {
 		return true
 	}
 
+	/// `--song <steps>`: the front song pane, driven once its first render has
+	/// landed, then one step at a time. Steps, separated by commas:
+	///
+	///  * `report` — the pane's line; `wait:<s>` — that long before the next step.
+	///  * `mix`, `stems` — which view; `wave`, `spectrum`, `both` — what is drawn.
+	///  * `off:<layer>`, `on:<layer>` — a stem's switch.
+	///  * `caret:<line>` — the caret in the source, which lights the stem it is in.
+	///  * `play`, `loop`, `seek:<s>`.
+	///  * `edit:<line>:<text>` — that line of the file on disk replaced, the way
+	///    a save would leave it, so the pane renders again; `rendered:<n>` —
+	///    waits until that many renders have finished.
+	func driveSongForTesting(_ steps: String, attempt: Int = 0) {
+		guard let pane = editor.songPreview else {
+			if attempt < 20 {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+					self?.driveSongForTesting(steps, attempt: attempt + 1)
+				}
+			} else {
+				let groups = editor.groups
+				print("SONG: no song pane — " + (groups.isEmpty ? "no editor group"
+					: groups.map(\.activeTabDescriptionForTesting).joined(separator: " | ")))
+				fflush(stdout)
+			}
+			return
+		}
+		let list = steps.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+		pane.whenRendered { [weak self, weak pane] in
+			guard let self, let pane else { return }
+			self.songStep(list[...], on: pane)
+		}
+	}
+
+	private func songStep(_ steps: ArraySlice<String>, on pane: SongPreviewView) {
+		guard let step = steps.first else { return }
+		let rest = steps.dropFirst()
+		var delay = 0.0
+		switch step {
+		case "report":
+			print(pane.reportForTesting)
+			fflush(stdout)
+		case "mix": pane.show(.mix)
+		case "stems": pane.show(.stems)
+		case "wave", "spectrum", "both": pane.showForTesting(mode: step)
+		case "play": pane.playForTesting()
+		case "loop": pane.loopForTesting()
+		default:
+			let parts = step.split(separator: ":", maxSplits: 2).map(String.init)
+			switch parts.first {
+			case "wait": delay = Double(parts.dropFirst().first ?? "") ?? 0
+			case "off": pane.setLane(parts.dropFirst().first ?? "", enabled: false)
+			case "on": pane.setLane(parts.dropFirst().first ?? "", enabled: true)
+			case "seek": pane.seekForTesting(seconds: Double(parts.dropFirst().first ?? "") ?? 0)
+			case "caret":
+				if let line = Int(parts.dropFirst().first ?? ""),
+				   let codeView = editor.activeGroup?.activeTab?.codeView {
+					codeView.reveal(line: line)
+				}
+			case "edit":
+				if parts.count == 3, let line = Int(parts[1]),
+				   let url = editor.activeGroup?.activeTab?.url,
+				   let text = try? String(contentsOf: url, encoding: .utf8) {
+					var lines = text.components(separatedBy: "\n")
+					if lines.indices.contains(line - 1) {
+						lines[line - 1] = parts[2]
+						try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+					}
+				}
+			case "rendered":
+				// Polled rather than waited on: a render that never comes would
+				// otherwise leave the run hanging, and the report after the
+				// timeout says how many there were.
+				let wanted = Int(parts.dropFirst().first ?? "") ?? 0
+				waitForSongRenders(wanted, on: pane, tries: 0) { [weak self] in
+					self?.songStep(rest, on: pane)
+				}
+				return
+			default:
+				print("SONG: unknown step \(step)")
+				fflush(stdout)
+			}
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 + delay) { [weak self] in
+			self?.songStep(rest, on: pane)
+		}
+	}
+
+	private func waitForSongRenders(_ wanted: Int, on pane: SongPreviewView, tries: Int, then: @escaping () -> Void) {
+		if pane.runsForTesting >= wanted, !pane.reportForTesting.contains("state=rerendering") || tries >= 240 {
+			pane.whenRendered(then)
+			return
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+			self?.waitForSongRenders(wanted, on: pane, tries: tries + 1, then: then)
+		}
+	}
+
 	/// Space on a sound's or a video's row: the tab showing it plays or pauses,
 	/// in whichever group has it, and a file with no tab yet is opened first —
 	/// provisionally, as the row's selection would have — and then played.
