@@ -56,6 +56,35 @@ struct SongRenderTests {
 		#expect(abs(beat - 0.4) < 0.001)
 	}
 
+	/// The stems sum to the mix before its limiter, and the manifest says how
+	/// loud that sum peaks; a player turns them down to the ceiling.
+	@Test func theStemsAreTurnedDownToTheLimitersCeiling() throws {
+		let newer = """
+		{ "tempo": 120, "meter": [4, 4], "bar_seconds": 2, "seconds": 8, "layers": [],
+		  "mixing": { "stems_sum_to": "the mix before saturation, compressor, clip and limiter",
+		              "applied": ["gain"], "skipped": ["limiter"], "sum_peak_db": 1.34 },
+		  "master": { "gain_db": 3.0, "limiter": { "enabled": true, "ceiling_db": -1.0, "release_ms": 80.0 } } }
+		"""
+		let read = try SongRender.manifest(from: Data(newer.utf8))
+		#expect(read.stemsPeakDb == 1.34)
+		#expect(read.limiterCeilingDb == -1)
+		// 2.34 dB down: 10^(-2.34/20).
+		#expect(abs(read.stemGain - 0.7639) < 0.001)
+
+		// A quiet song is left alone rather than turned up.
+		let quiet = newer.replacingOccurrences(of: "\"sum_peak_db\": 1.34", with: "\"sum_peak_db\": -6.0")
+		#expect(try SongRender.manifest(from: Data(quiet.utf8)).stemGain == 1)
+
+		// The limiter off: the ceiling is taken as -1 dBFS, the limiter's own default.
+		let unlimited = newer.replacingOccurrences(of: "\"enabled\": true", with: "\"enabled\": false")
+		let readUnlimited = try SongRender.manifest(from: Data(unlimited.utf8))
+		#expect(readUnlimited.limiterCeilingDb == nil)
+		#expect(abs(readUnlimited.stemGain - 0.7639) < 0.001)
+
+		// An older mat says nothing, and nothing is changed.
+		#expect(try SongRender.manifest(from: Data(manifest.utf8)).stemGain == 1)
+	}
+
 	@Test func aManifestThatIsNotOneIsRefusedInWords() {
 		#expect(throws: SongRender.Failure.self) { try SongRender.manifest(from: Data("[]".utf8)) }
 		#expect(throws: SongRender.Failure.self) { try SongRender.manifest(from: Data("not json".utf8)) }

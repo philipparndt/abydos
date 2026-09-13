@@ -248,16 +248,33 @@ than the song's, so each stem is shaped and levelled on its own, and the
 drums are not ducking the pad in the pad's stem because the pad's stem has no
 drums to key from.
 
-What would make the stems sum to the mix is a change in `mat`, not here: one
-render pass that keeps a mix bus per layer — track gain, pan and sends, the
-delay and reverb wet from that layer's sends (both linear), the master
-sidechain keyed from the *whole* song's key tracks, then master gain, EQ and
-width — and stops before saturation, compressor, clip and limiter, writing
-into the manifest what was applied and what was not, and the master's
-settings, so a player knows the sum is the pre-limiter mix and can put a
-limiter of its own on it. That is the "mixing manifest" the request named.
-Until then the *Mix* view is the song and the *Stems* view is an
-approximation of it, and the pane says nothing else.
+Worse than the limiter, and found by measuring: **a stem was a different
+take.** `render_track` seeds a note's randomness — drift, unison spread, an
+LFO's phase — from the track's index in the timeline, and a solo timeline
+puts every track at index 0. Cross-correlating the old stems against the mix
+gave a residual as large as the mix itself (RMS 0.149 against 0.158) and
+single stems tens of milliseconds off it: the "out of sync" that was heard.
+The player nodes themselves reported zero drift throughout, which is what
+`drift=` in the report is for.
+
+**Fixed in `mat` the same evening** (`render_layers` in `mat-core`): one
+render pass, every track rendered once as itself, mixed into its layer's
+buses; each layer goes through its sends' delay and reverb, the master
+sidechain keyed from the whole song, and the master's gain, EQ and width;
+the mix is the layers' sum, and only then saturation, compressor, clip and
+limiter. Measured on the shanty: the residual fell to RMS 0.0024 (the
+limiter's doing), the lag to zero, every stem the mix's length, and the
+render from 3.3 s to 2.1 s since it is one pass instead of six. The manifest
+now carries `mixing` — what was applied, what was skipped, and
+`sum_peak_db`, the peak of the stems' sum — and the `master` settings.
+
+**What the pane does with it.** The stems' sum peaks above the limiter's
+ceiling on any loud song (1.17 on the shanty), so at full volume the stems
+view would clip in the engine. `Manifest.stemGain` turns every stem down by
+the difference between `sum_peak_db` and the limiter's ceiling, never up, so
+the stems view sits where the limiter would have held the mix, short of the
+limiter's own squeeze. An older `mat` says nothing and the stems play at
+full, as before.
 
 ## Open Questions
 

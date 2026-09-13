@@ -168,6 +168,18 @@ final class AudioPlayback {
 		sampleRate > 0 ? Double(currentFrame) / sampleRate : 0
 	}
 
+	/// How far each voice's own sample clock is from the first's, in frames,
+	/// read at one moment — zero everywhere when the stems are in step. What a
+	/// driven run reads instead of listening for a flam.
+	var driftForTesting: [Int64] {
+		guard isPlaying, let renderTime = node.lastRenderTime,
+		      let first = node.playerTime(forNodeTime: renderTime) else { return [] }
+		return voices.map { voice in
+			guard let own = voice.node.playerTime(forNodeTime: renderTime) else { return Int64.min }
+			return own.sampleTime - first.sampleTime
+		}
+	}
+
 	func play() {
 		guard !isPlaying, frameCount > 0 else { return }
 		if !engine.isRunning {
