@@ -1,0 +1,286 @@
+import Foundation
+
+/// Rendering a `.song` with `mat`, and reading what the run said.
+///
+/// A song is text that makes sound the way a `.scad` is text that makes a
+/// shape, and it is rendered the same way: a program is run and the pane shows
+/// what it wrote. `mat render <song> -o <dir>/mix.wav --stems <dir>/stems`
+/// writes the whole mix, one file per *layer* — a stem group a track names
+/// with `layer`, or the track's own name — and `manifest.json`, which is what
+/// says which file is which layer and which tracks are in it.
+///
+/// Kept apart from the pane so the parts that read output are tested against
+/// real output: the manifest is `mat`'s own JSON, and a failed render is
+/// `error: …` with a `-->` line naming the place in the file.
+public enum SongRender {
+	/// The tool. `mat` is a Rust binary somebody has `cargo install`ed, so it
+	/// is looked for the way every tool is — the process's own `PATH`, the
+	/// login shell's, then the well-known directories, of which `~/.cargo/bin`
+	/// is one.
+	public static let tool = "mat"
+
+	public static func executable() -> String? { Executables.locate(tool) }
+
+	/// What to say when the tool is not there, with the way to get it.
+	public static let missingMessage =
+		"mat is not installed. In a checkout of musik-as-text, run:\n"
+		+ "cargo install --path crates/mat-cli"
+
+	// MARK: - Where a render goes
+
+	/// The directory a pane renders into: under the temporary directory, named
+	/// for the song and for this process.
+	///
+	/// **The process is in the name so what a crash leaves can be told from
+	/// what is in use.** A pane deletes its directory when it goes, and a
+	/// process that was killed — a driven run, a crash — never gets to. Six
+	/// stems of a three-minute song are a hundred megabytes; the first
+	/// afternoon's driven runs left a gigabyte. The song's hash keeps two
+	/// panes on two files apart, and the pid keeps two panes on one file in
+	/// two processes apart; two panes on one file in one process share it,
+	/// which is the case where they also share the tab.
+	public static func outputRoot(
+		for song: URL, under temporary: URL = FileManager.default.temporaryDirectory,
+		pid: Int32 = ProcessInfo.processInfo.processIdentifier
+	) -> URL {
+		temporary.appendingPathComponent("abydos-song", isDirectory: true)
+			.appendingPathComponent("\(songDigest(song))-\(pid)", isDirectory: true)
+	}
+
+	static func songDigest(_ song: URL) -> String {
+		// Not a cryptographic need: twelve hex characters of the path's hash
+		// tell two songs apart, and the name has to stay short enough for a
+		// directory listing to read.
+		var hash: UInt64 = 0xcbf29ce484222325
+		for byte in song.standardizedFileURL.path.utf8 {
+			hash ^= UInt64(byte)
+			hash = hash &* 0x100000001b3
+		}
+		return String(format: "%012llx", hash & 0xffffffffffff)
+	}
+
+	/// The render directories of this song that belong to processes no longer
+	/// running — what a crash or a kill left — so a pane can sweep them when
+	/// it opens the song again.
+	public static func staleRenderDirectories(
+		for song: URL, under temporary: URL = FileManager.default.temporaryDirectory,
+		isRunning: (Int32) -> Bool = { kill($0, 0) == 0 || errno == EPERM }
+	) -> [URL] {
+		let parent = temporary.appendingPathComponent("abydos-song", isDirectory: true)
+		guard let entries = try? FileManager.default.contentsOfDirectory(
+			at: parent, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		) else { return [] }
+		let prefix = songDigest(song) + "-"
+		return entries.filter { entry in
+			let name = entry.lastPathComponent
+			guard name.hasPrefix(prefix), let pid = Int32(name.dropFirst(prefix.count)) else { return false }
+			return !isRunning(pid)
+		}
+	}
+
+	/// The mix file's name in an output directory.
+	public static let mixName = "mix.wav"
+	public static let stemsDirectory = "stems"
+	public static let manifestName = "manifest.json"
+
+	/// The command line for rendering `song` into `output`: the mix beside a
+	/// directory of stems. Quoted for the shell, since a song sits in a
+	/// project and a project sits wherever somebody keeps them.
+	public static func command(executable: String, song: URL, output: URL) -> String {
+		[
+			executable, "render", song.path,
+			"-o", output.appendingPathComponent(mixName).path,
+			"--stems", output.appendingPathComponent(stemsDirectory).path,
+		].map(quoted).joined(separator: " ")
+	}
+
+	static func quoted(_ argument: String) -> String {
+		if argument.allSatisfy({ $0.isLetter || $0.isNumber || "-_./=:".contains($0) }) { return argument }
+		return "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
+	}
+
+	// MARK: - The manifest
+
+	/// What `mat render --stems` wrote beside the stems.
+	public struct Manifest: Equatable, Sendable {
+		public struct Layer: Equatable, Sendable {
+			public var name: String
+			/// The stem's file name, relative to the stems directory.
+			public var file: String
+			/// The tracks rendered into it, in the song's order.
+			public var tracks: [String]
+		}
+
+		public struct Section: Equatable, Sendable {
+			public var name: String
+			public var start: Double
+			public var end: Double
+		}
+
+		public var title: String?
+		public var tempo: Double
+		/// Beats per bar and the beat's note value: `[4, 4]`.
+		public var meter: [Int]
+		public var barSeconds: Double
+		public var seconds: Double
+		public var layers: [Layer]
+		public var sections: [Section]
+
+		public init(
+			title: String? = nil, tempo: Double, meter: [Int], barSeconds: Double,
+			seconds: Double, layers: [Layer], sections: [Section] = []
+		) {
+			self.title = title
+			self.tempo = tempo
+			self.meter = meter
+			self.barSeconds = barSeconds
+			self.seconds = seconds
+			self.layers = layers
+			self.sections = sections
+		}
+
+		/// The bar a moment is in, 1-based, and how far through it.
+		public func bar(at seconds: Double) -> (bar: Int, beat: Double) {
+			guard barSeconds > 0 else { return (1, 0) }
+			let bars = seconds / barSeconds
+			let beatsPerBar = Double(meter.first ?? 4)
+			return (Int(bars.rounded(.down)) + 1, (bars - bars.rounded(.down)) * beatsPerBar)
+		}
+	}
+
+	public enum Failure: Error, LocalizedError, Equatable {
+		case unreadableManifest(String)
+
+		public var errorDescription: String? {
+			switch self {
+			case .unreadableManifest(let why): return "The stems' manifest could not be read: \(why)"
+			}
+		}
+	}
+
+	/// Reads `manifest.json` as `mat` writes it — measured against a real one:
+	///
+	///     { "bar_seconds": 1.818, "bars": 37.0, "layers": [{ "file": "drums.wav",
+	///       "layer": "drums", "tracks": ["drums"] }], "loop": false, "meter": [4, 4],
+	///       "sample_rate": 48000, "seconds": 67.27, "sections": [], "tempo": 132.0,
+	///       "title": "…" }
+	public static func manifest(from data: Data) throws -> Manifest {
+		let object: Any
+		do {
+			object = try JSONSerialization.jsonObject(with: data)
+		} catch {
+			throw Failure.unreadableManifest(error.localizedDescription)
+		}
+		guard let top = object as? [String: Any] else {
+			throw Failure.unreadableManifest("it is not a JSON object")
+		}
+		let layers = (top["layers"] as? [[String: Any]] ?? []).compactMap { entry -> Manifest.Layer? in
+			guard let name = entry["layer"] as? String, let file = entry["file"] as? String else { return nil }
+			return Manifest.Layer(name: name, file: file, tracks: entry["tracks"] as? [String] ?? [])
+		}
+		let sections = (top["sections"] as? [[String: Any]] ?? []).compactMap { entry -> Manifest.Section? in
+			guard let name = entry["name"] as? String,
+			      let start = number(entry["start"]), let end = number(entry["end"]) else { return nil }
+			return Manifest.Section(name: name, start: start, end: end)
+		}
+		return Manifest(
+			title: top["title"] as? String,
+			tempo: number(top["tempo"]) ?? 0,
+			meter: (top["meter"] as? [Any])?.compactMap { number($0).map(Int.init) } ?? [4, 4],
+			barSeconds: number(top["bar_seconds"]) ?? 0,
+			seconds: number(top["seconds"]) ?? 0,
+			layers: layers,
+			sections: sections
+		)
+	}
+
+	private static func number(_ value: Any?) -> Double? {
+		if let double = value as? Double { return double }
+		if let int = value as? Int { return Double(int) }
+		return nil
+	}
+
+	// MARK: - What went wrong
+
+	/// One thing `mat` refused, and where.
+	public struct Diagnostic: Equatable, Sendable {
+		public var message: String
+		/// 1-based, when the error named a place in the song; nil for one
+		/// that did not — a sample file it could not open, say.
+		public var line: Int?
+		public var column: Int?
+
+		public init(message: String, line: Int? = nil, column: Int? = nil) {
+			self.message = message
+			self.line = line
+			self.column = column
+		}
+	}
+
+	/// The errors in a failed render's output, in order.
+	///
+	/// Measured, from a song with a misspelt instrument:
+	///
+	///     error: unknown instrument 'brasss'
+	///        --> /…/broken.song:137:14
+	///         |
+	///     137 |   instrument brasss
+	///         |              ^^^^^^
+	///         = hint: did you mean 'brass'?
+	///     2 error(s) in /…/broken.song
+	///
+	/// The `error:` line is the message, the `-->` under it the place, and the
+	/// hint is worth keeping on the message since it is the one line somebody
+	/// will act on.
+	public static func diagnostics(in output: String) -> [Diagnostic] {
+		var found: [Diagnostic] = []
+		for raw in output.split(whereSeparator: \.isNewline) {
+			let line = raw.trimmingCharacters(in: .whitespaces)
+			if line.hasPrefix("error:") {
+				let message = line.dropFirst("error:".count).trimmingCharacters(in: .whitespaces)
+				found.append(Diagnostic(message: message))
+			} else if line.hasPrefix("-->"), var last = found.popLast(), last.line == nil {
+				let place = line.dropFirst("-->".count).trimmingCharacters(in: .whitespaces)
+				// `path:line:col` — the path may hold colons of its own, so the
+				// numbers are the last two pieces.
+				let pieces = place.split(separator: ":")
+				if pieces.count >= 3, let row = Int(pieces[pieces.count - 2]), let column = Int(pieces[pieces.count - 1]) {
+					last.line = row
+					last.column = column
+				}
+				found.append(last)
+			} else if line.hasPrefix("= hint:"), var last = found.popLast() {
+				last.message += " — " + line.dropFirst("= hint:".count).trimmingCharacters(in: .whitespaces)
+				found.append(last)
+			}
+		}
+		return found
+	}
+
+	/// What to show when a run wrote nothing: its errors when it said any,
+	/// and the tail of what it said otherwise — a shell that could not find
+	/// `mat`, a crash.
+	public static func complaint(in output: String) -> String {
+		let errors = diagnostics(in: output)
+		if !errors.isEmpty {
+			return errors.map { diagnostic in
+				let place = diagnostic.line.map { line in
+					diagnostic.column.map { "\(line):\($0): " } ?? "\(line): "
+				} ?? ""
+				return place + diagnostic.message
+			}.joined(separator: "\n")
+		}
+		let tail = output.split(whereSeparator: \.isNewline).suffix(12).joined(separator: "\n")
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		return tail.isEmpty ? "The render said nothing and wrote no sound." : tail
+	}
+
+	/// The line `mat` prints when it has rendered: `rendered 1:10.6 in 0.83s
+	/// (85x realtime), peak -1.0 dBFS, rms -16.0 dBFS`. Shown in the strip
+	/// once, since the peak is what somebody mastering a song wants to know.
+	public static func renderedLine(in output: String) -> String? {
+		output.split(whereSeparator: \.isNewline)
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.last { $0.hasPrefix("rendered ") }
+	}
+}

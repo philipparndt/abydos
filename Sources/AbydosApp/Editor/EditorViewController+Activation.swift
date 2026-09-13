@@ -243,6 +243,8 @@ extension EditorViewController {
 		// A sound keeps playing while its tab is out of sight, so closing the
 		// tab is what stops it.
 		(tab.contentView as? AudioFileView)?.tearDown()
+		// A song's pane is half of a split, so it is found rather than cast.
+		if let song: SongPreviewView = Self.pane(in: tab.contentView) { song.tearDown() }
 		if let scrollView = tab.contentView as? NSScrollView {
 			NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
 		}

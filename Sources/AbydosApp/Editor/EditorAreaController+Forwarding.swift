@@ -622,6 +622,12 @@ extension EditorAreaController {
 		return groups.compactMap(\.cadovaPreview).first
 	}
 
+	/// The song pane somebody is looking at, found the same way.
+	var songPreview: SongPreviewView? {
+		if let front = (activeGroup ?? groups.first)?.songPreview { return front }
+		return groups.compactMap(\.songPreview).first
+	}
+
 	func showFind() { activeGroup.showFind() }
 	func goToOffset() { activeGroup.goToOffset() }
 	func openActiveAsHex() { activeGroup.openActiveAsHex() }

@@ -106,6 +106,11 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	var desiredColumnX: CGFloat?
 
 	var onCaretMoved: ((Int, Int) -> Void)?   // line, column (1-based)
+	/// The same move, for a preview that follows the caret — the song pane
+	/// lights the stem the caret is in. A second closure rather than a second
+	/// caller of the first, because `onCaretMoved` is the status bar's and is
+	/// rebound whenever a tab moves between groups.
+	var onCaretLine: ((Int) -> Void)?
 	var onDirtyChanged: ((Bool) -> Void)?
 
 	/// Search matches to highlight, and which one is current.
