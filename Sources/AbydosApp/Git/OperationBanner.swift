@@ -34,7 +34,7 @@ import AbydosKit
 ///
 /// And it is a card inset from the pane rather than a full-bleed wash with hard
 /// edges. Nothing has failed here: git is waiting.
-final class OperationBanner: NSView {
+final class OperationBanner: NSView, ScaleFollowing {
 	/// Opens every conflicted file at once — still offered, behind `⋯`, for a
 	/// stop with more files in it than the list will draw.
 	var onOpenFiles: (() -> Void)?
@@ -69,9 +69,15 @@ final class OperationBanner: NSView {
 	private var buttons: NSStackView!
 	private var stack: NSStackView!
 
-	private let carryOnButton: NSButton
-	private let skipButton: NSButton
-	private let moreButton: NSButton
+	private var carryOnButton: DrawnButton!
+	private var skipButton: DrawnButton!
+	private var moreButton: DrawnButton!
+
+	/// Every inset and width the card was laid out with, by its design value,
+	/// so a zoom can take them again. Reported 2026-09-13: the card kept the
+	/// size it was built at — its words, its buttons and its padding — while
+	/// the pane around it zoomed.
+	private var scaledConstants: [(NSLayoutConstraint, CGFloat)] = []
 
 	/// The names for the two halves of this conflict, in the words of this
 	/// operation — never "ours" and "theirs", which swap meaning between a
@@ -84,20 +90,17 @@ final class OperationBanner: NSView {
 	private var overflow = 0
 
 	override init(frame frameRect: NSRect) {
-		func button(_ title: String) -> NSButton {
-			let made = NSButton(title: title, target: nil, action: nil)
-			made.bezelStyle = .rounded
-			made.controlSize = .small
-			made.font = Theme.current.uiFont(10.5)
-			return made
-		}
-		carryOnButton = button("Continue")
-		skipButton = button("Skip")
-		moreButton = button("⋯")
+		super.init(frame: frameRect)
+		// **The app's own buttons, not small bezels.** A bezel takes its height
+		// from `controlSize`, which has a largest value, so the three stayed
+		// twenty points tall at any zoom. A drawn button is sized by the theme
+		// and follows the zoom on its own.
+		carryOnButton = DrawnButton(title: "Continue", fontSize: 10.5) { [weak self] in self?.carryOn() }
+		carryOnButton.prominence = .prominent
+		skipButton = DrawnButton(title: "Skip", fontSize: 10.5) { [weak self] in self?.skip() }
+		moreButton = DrawnButton(title: "⋯", fontSize: 10.5) { [weak self] in self?.showMore() }
 		moreButton.toolTip = "Everything else this operation can do"
 		moreButton.setAccessibilityLabel("More")
-
-		super.init(frame: frameRect)
 		let theme = Theme.current
 
 		// **A card, not a banner.** A full-bleed wash with hard edges top and
@@ -112,7 +115,6 @@ final class OperationBanner: NSView {
 		rule.layer?.backgroundColor = theme.gitConflict.cgColor
 		isHidden = true
 
-		label.font = theme.uiFont(11.5, weight: .semibold)
 		label.textColor = theme.gitConflict
 		// **It wraps rather than truncating.** The headline is two branch names
 		// now, and a name is the half a truncation eats. Two lines in a strip
@@ -121,13 +123,10 @@ final class OperationBanner: NSView {
 		label.maximumNumberOfLines = 3
 		label.cell?.usesSingleLineMode = false
 
-		position.font = theme.uiFont(10.5)
 		position.textColor = theme.sidebarText
 		position.lineBreakMode = .byTruncatingTail
-		state.font = theme.uiFont(10.5, weight: .medium)
 		state.textColor = theme.sidebarHeaderText
 		state.lineBreakMode = .byTruncatingTail
-		why.font = theme.uiFont(9.5)
 		why.textColor = theme.sidebarText.withAlphaComponent(0.6)
 		why.lineBreakMode = .byWordWrapping
 		why.maximumNumberOfLines = 2
@@ -138,20 +137,12 @@ final class OperationBanner: NSView {
 		bar.controlSize = .small
 		bar.minValue = 0
 
-		for (made, action) in [
-			(carryOnButton, #selector(carryOn)),
-			(skipButton, #selector(skip)),
-			(moreButton, #selector(showMore)),
-		] as [(NSButton, Selector)] {
-			made.target = self
-			made.action = action
-		}
 		// The default button: ⏎ on this pane finishes what git started.
 		carryOnButton.keyEquivalent = "\r"
 		// **The primary verb takes the width it can get.** It is the reason the
 		// strip is here. The other two size to their titles.
 		carryOnButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
-		for made in [skipButton, moreButton] {
+		for made in [skipButton!, moreButton!] {
 			made.setContentCompressionResistancePriority(.required, for: .horizontal)
 			made.setContentHuggingPriority(.required, for: .horizontal)
 		}
@@ -161,9 +152,8 @@ final class OperationBanner: NSView {
 		files.alignment = .leading
 		files.spacing = 0
 
-		buttons = NSStackView(views: [carryOnButton, skipButton, moreButton])
+		buttons = NSStackView(views: [carryOnButton!, skipButton!, moreButton!])
 		buttons.orientation = .horizontal
-		buttons.spacing = theme.scaled(6)
 		buttons.alignment = .centerY
 		buttons.distribution = .fill
 
@@ -177,9 +167,6 @@ final class OperationBanner: NSView {
 		let rows = NSStackView(views: [label, bar, position, state, files, buttons, why])
 		rows.orientation = .vertical
 		rows.alignment = .leading
-		rows.spacing = theme.scaled(3)
-		rows.setCustomSpacing(theme.scaled(6), after: state)
-		rows.setCustomSpacing(theme.scaled(6), after: files)
 		rows.setHuggingPriority(.required, for: .vertical)
 		stack = rows
 
@@ -189,23 +176,22 @@ final class OperationBanner: NSView {
 		for view in [card, rule, rows] as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
-		let outer = theme.scaled(8)
-		let inner = theme.scaled(9)
-		NSLayoutConstraint.activate([
-			card.topAnchor.constraint(equalTo: topAnchor, constant: outer / 2),
-			card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -outer / 2),
-			card.leadingAnchor.constraint(equalTo: leadingAnchor, constant: outer),
-			card.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -outer),
-
+		// Each with the design value it scales from, so a zoom can take it again.
+		scaledConstants = [
+			(card.topAnchor.constraint(equalTo: topAnchor), 4),
+			(card.bottomAnchor.constraint(equalTo: bottomAnchor), -4),
+			(card.leadingAnchor.constraint(equalTo: leadingAnchor), 8),
+			(card.trailingAnchor.constraint(equalTo: trailingAnchor), -8),
+			(rule.widthAnchor.constraint(equalToConstant: 2), 2),
+			(rows.topAnchor.constraint(equalTo: card.topAnchor), 7),
+			(rows.bottomAnchor.constraint(equalTo: card.bottomAnchor), -7),
+			(rows.leadingAnchor.constraint(equalTo: card.leadingAnchor), 9),
+			(rows.trailingAnchor.constraint(equalTo: card.trailingAnchor), -9),
+		]
+		NSLayoutConstraint.activate(scaledConstants.map(\.0) + [
 			rule.leadingAnchor.constraint(equalTo: card.leadingAnchor),
 			rule.topAnchor.constraint(equalTo: card.topAnchor),
 			rule.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-			rule.widthAnchor.constraint(equalToConstant: theme.scaled(2)),
-
-			rows.topAnchor.constraint(equalTo: card.topAnchor, constant: theme.scaled(7)),
-			rows.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -theme.scaled(7)),
-			rows.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: inner),
-			rows.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -inner),
 
 			// The bar and the buttons span the card; everything else sizes to
 			// its text.
@@ -215,9 +201,33 @@ final class OperationBanner: NSView {
 			label.widthAnchor.constraint(equalTo: rows.widthAnchor),
 			why.widthAnchor.constraint(equalTo: rows.widthAnchor),
 		])
+		applyTheme()
+		ScaledControls.register(self)
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
+
+	/// The card at the scale now in force: its words, its padding, its corner
+	/// and the file rows, which are rebuilt because each one sized itself as it
+	/// was made. The buttons are drawn and follow on their own. The pane
+	/// measures the card again afterwards — see `BranchesPane.applyThemeChange`.
+	func applyTheme() {
+		let theme = Theme.current
+		card.layer?.cornerRadius = theme.scaled(7)
+		label.font = theme.uiFont(11.5, weight: .semibold)
+		position.font = theme.uiFont(10.5)
+		state.font = theme.uiFont(10.5, weight: .medium)
+		why.font = theme.uiFont(9.5)
+		buttons.spacing = theme.scaled(6)
+		stack.spacing = theme.scaled(3)
+		stack.setCustomSpacing(theme.scaled(6), after: state)
+		stack.setCustomSpacing(theme.scaled(6), after: files)
+		for (constraint, design) in scaledConstants {
+			constraint.constant = theme.scaled(design)
+		}
+		drawFiles()
+		needsLayout = true
+	}
 
 	// MARK: - What it says
 
@@ -477,7 +487,7 @@ final class OperationBanner: NSView {
 	/// pressable, and every row of the list with its state.
 	var reportForTesting: String {
 		let offered = [
-			("continue", carryOnButton), ("skip", skipButton), ("more", moreButton),
+			("continue", carryOnButton!), ("skip", skipButton!), ("more", moreButton!),
 		].compactMap { name, made -> String? in
 			guard !made.isHidden, !(made.superview?.isHidden ?? false) else { return nil }
 			return made.isEnabled ? name : "\(name)(off)"

@@ -825,6 +825,13 @@ extension BranchesPane {
 		filterStrip?.applyThemeChange()
 		// The same fourteen points `build` indents by, at the scale now in force.
 		tableView.indentationPerLevel = Theme.current.scaled(14)
+		// The operation card is measured for its height, so it takes the new
+		// scale first and is measured after — whichever order the registry
+		// happens to call the two of them in.
+		if !conflictBanner.isHidden {
+			conflictBanner.applyTheme()
+			conflictHeight.constant = conflictBanner.wantedHeight
+		}
 		// The palette moved, the rows did not: a theme change used to be the
 		// one way to lose the selection without touching the repository.
 		reloadKeepingSelection { tableView.reloadData() }
