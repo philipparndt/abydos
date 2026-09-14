@@ -15,6 +15,43 @@ struct SongRenderTests {
 			+ "-o /tmp/abydos-song/1234/run-3/mix.wav --stems /tmp/abydos-song/1234/run-3/stems")
 	}
 
+	/// The pane keeps the layers in a directory named for the song and not
+	/// for the process, so a relaunch finds them — and the sweep of what dead
+	/// processes left does not take it.
+	@Test func theCacheOutlivesTheProcessAndIsNotSwept() throws {
+		let temporary = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("song-cache-\(UUID().uuidString)")
+		defer { try? FileManager.default.removeItem(at: temporary) }
+		let song = URL(fileURLWithPath: "/songs/neon.song")
+		let cache = SongRender.cacheDirectory(for: song, under: temporary)
+		#expect(cache.lastPathComponent.hasSuffix("-cache"))
+		#expect(cache.deletingLastPathComponent() == SongRender.outputRoot(for: song, under: temporary, pid: 1).deletingLastPathComponent())
+		try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+		#expect(SongRender.staleRenderDirectories(under: temporary) { _ in false }.isEmpty)
+
+		let command = SongRender.command(
+			executable: "mat", song: song, output: URL(fileURLWithPath: "/tmp/out"), cache: URL(fileURLWithPath: "/tmp/c")
+		)
+		#expect(command.hasSuffix("--stems /tmp/out/stems --cache /tmp/c"))
+	}
+
+	/// What `mat` 23c5b97 writes for a layer with a cache.
+	@Test func aLayerSaysWhatItWasKeyedByAndWhetherItWasCached() throws {
+		let json = """
+		{ "tempo": 128, "meter": [4, 4], "bar_seconds": 1.875, "seconds": 228.4,
+		  "layers": [
+		    { "layer": "drums", "file": "drums.wav", "tracks": ["drums"], "key": "8a0c5e1f3b2d4c6e", "cached": true },
+		    { "layer": "hook", "file": "hook.wav", "tracks": ["hook"], "key": "0123456789abcdef", "cached": false }
+		  ] }
+		"""
+		let read = try SongRender.manifest(from: Data(json.utf8))
+		#expect(read.layers.map(\.key) == ["8a0c5e1f3b2d4c6e", "0123456789abcdef"])
+		#expect(read.layers.map(\.cached) == [true, false])
+		// An older manifest has neither.
+		let older = try SongRender.manifest(from: Data(manifest.utf8))
+		#expect(older.layers.allSatisfy { $0.key == nil && !$0.cached })
+	}
+
 	/// `mat`'s own manifest, as written for `examples/drunken-sailor.song`.
 	private let manifest = """
 	{

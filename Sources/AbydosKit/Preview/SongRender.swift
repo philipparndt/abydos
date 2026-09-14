@@ -79,20 +79,33 @@ public enum SongRender {
 		}
 	}
 
+	/// Where `mat` keeps this song's layers between renders: beside the render
+	/// directories, named for the song and **not** for the process, so a
+	/// relaunch finds them. `staleRenderDirectories` leaves it alone — its name
+	/// does not end in a pid — and `mat` deletes what no render has used for
+	/// half an hour.
+	public static func cacheDirectory(for song: URL, under temporary: URL = FileManager.default.temporaryDirectory) -> URL {
+		temporary.appendingPathComponent("abydos-song", isDirectory: true)
+			.appendingPathComponent("\(songDigest(song))-cache", isDirectory: true)
+	}
+
 	/// The mix file's name in an output directory.
 	public static let mixName = "mix.wav"
 	public static let stemsDirectory = "stems"
 	public static let manifestName = "manifest.json"
 
 	/// The command line for rendering `song` into `output`: the mix beside a
-	/// directory of stems. Quoted for the shell, since a song sits in a
-	/// project and a project sits wherever somebody keeps them.
-	public static func command(executable: String, song: URL, output: URL) -> String {
-		[
+	/// directory of stems, with the layers kept in `cache` so a render after an
+	/// edit renders only the layers it touched. Quoted for the shell, since a
+	/// song sits in a project and a project sits wherever somebody keeps them.
+	public static func command(executable: String, song: URL, output: URL, cache: URL? = nil) -> String {
+		var arguments = [
 			executable, "render", song.path,
 			"-o", output.appendingPathComponent(mixName).path,
 			"--stems", output.appendingPathComponent(stemsDirectory).path,
-		].map(quoted).joined(separator: " ")
+		]
+		if let cache { arguments += ["--cache", cache.path] }
+		return arguments.map(quoted).joined(separator: " ")
 	}
 
 	static func quoted(_ argument: String) -> String {
@@ -110,6 +123,13 @@ public enum SongRender {
 			public var file: String
 			/// The tracks rendered into it, in the song's order.
 			public var tracks: [String]
+			/// What `mat` keyed the layer by in its cache: everything its samples
+			/// are a function of. The same key is the same samples, so what was
+			/// drawn of a stem with this key is still true of it. Nil from a
+			/// render without a cache, or from an older `mat`.
+			public var key: String? = nil
+			/// Read back from the cache rather than rendered.
+			public var cached: Bool = false
 		}
 
 		public struct Section: Equatable, Sendable {
@@ -199,7 +219,10 @@ public enum SongRender {
 		}
 		let layers = (top["layers"] as? [[String: Any]] ?? []).compactMap { entry -> Manifest.Layer? in
 			guard let name = entry["layer"] as? String, let file = entry["file"] as? String else { return nil }
-			return Manifest.Layer(name: name, file: file, tracks: entry["tracks"] as? [String] ?? [])
+			return Manifest.Layer(
+				name: name, file: file, tracks: entry["tracks"] as? [String] ?? [],
+				key: entry["key"] as? String, cached: entry["cached"] as? Bool ?? false
+			)
 		}
 		let sections = (top["sections"] as? [[String: Any]] ?? []).compactMap { entry -> Manifest.Section? in
 			guard let name = entry["name"] as? String,

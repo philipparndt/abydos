@@ -17,15 +17,22 @@ final class ScaledLabel: NSTextField, ScaleFollowing {
 	private let fontSize: CGFloat
 	private let weight: NSFont.Weight
 	private let colour: () -> NSColor
+	private let fixedDigits: Bool
 
+	/// - Parameter fixedDigits: every digit the same width, for a label that
+	///   counts — a clock redrawn thirty times a second in proportional
+	///   figures changes width with every tick and shoves whatever sits beside
+	///   it back and forth.
 	init(
 		_ text: String = "",
 		size: CGFloat = 11,
 		weight: NSFont.Weight = .regular,
+		fixedDigits: Bool = false,
 		colour: @escaping () -> NSColor = { Theme.current.sidebarText }
 	) {
 		fontSize = size
 		self.weight = weight
+		self.fixedDigits = fixedDigits
 		self.colour = colour
 		super.init(frame: .zero)
 		stringValue = text
@@ -43,7 +50,21 @@ final class ScaledLabel: NSTextField, ScaleFollowing {
 	/// everything else here is: a stored colour is a palette change that did
 	/// not arrive.
 	func applyTheme() {
-		font = Theme.current.uiFont(fontSize, weight: weight)
+		let base = Theme.current.uiFont(fontSize, weight: weight)
+		if fixedDigits {
+			// The app's own face with tabular figures, rather than the system's
+			// monospaced-digit face: the label keeps the type everything around
+			// it has.
+			let descriptor = base.fontDescriptor.addingAttributes([
+				.featureSettings: [[
+					NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+					NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
+				]],
+			])
+			font = NSFont(descriptor: descriptor, size: base.pointSize) ?? base
+		} else {
+			font = base
+		}
 		textColor = colour()
 		invalidateIntrinsicContentSize()
 		needsDisplay = true

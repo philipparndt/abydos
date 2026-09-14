@@ -177,7 +177,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		playButton.tip = StyledTip.Tip(title: "Play", detail: "Space plays and pauses.")
 		loopButton = DrawnButton(symbol: "repeat", description: "Loop") { [weak self] in self?.toggleLoop() }
 		loopButton.tip = StyledTip.Tip(title: "Loop", detail: "Plays the song round and round.")
-		timeLabel = ScaledLabel("0:00 / 0:00", size: 11.5)
+		timeLabel = ScaledLabel("0:00.000 / 0:00", size: 11.5, fixedDigits: true)
 		infoLabel = ScaledLabel("", size: 11) { Theme.current.gitIgnored }
 		// The one thing in the strip that may give way: in a narrow pane the
 		// switches are worth more than the peak level, and a label that would
@@ -342,7 +342,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			return
 		}
 
-		let line = SongRender.command(executable: executable, song: url, output: directory)
+		let line = SongRender.command(
+			executable: executable, song: url, output: directory, cache: SongRender.cacheDirectory(for: url)
+		)
 		let invocation = UserShell.invocation(for: line)
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: invocation.executable)
@@ -502,7 +504,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// The lanes at once, named and empty, so ten stems of neon.song are ten
 		// headers with switches while their waves are still being read, rather
 		// than a blank pane for the seconds that takes.
-		overviews = kept?.overviews ?? Array(repeating: nil, count: files.count)
+		// What is already drawn: the last render's readings when this is that
+		// render, and otherwise the drawing of every stem whose layer key did
+		// not change — the mix is always new.
+		overviews = kept?.overviews ?? ([nil] + manifest.layers.map {
+			SongRenderCache.shared.overview(ofStem: $0.key, of: url)
+		})
 		rebuildLanes()
 		analyse(files: files, manifest: manifest, directory: directory)
 		// Settled at the render, not at the drawing: the sound is what the pane
@@ -525,7 +532,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 				}.value
 				guard let self, !flag.isSet else { return }
 				overviews[index] = reading
-				if let reading { SongRenderCache.shared.read(reading, at: index, of: directory, for: self.url) }
+				if let reading {
+					SongRenderCache.shared.read(reading, at: index, of: directory, for: self.url)
+					if index > 0, manifest.layers.indices.contains(index - 1) {
+						SongRenderCache.shared.remember(reading, ofStem: manifest.layers[index - 1].key, of: self.url)
+					}
+				}
 				self.showLanes(overviews, manifest: manifest)
 			}
 		}
@@ -680,7 +692,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		guard window != nil || !isPlaying else { return }
 		canvas.playhead = now
 		if isPlaying { canvas.follow(now) }
-		var clock = "\(AudioFileView.clock(now)) / \(AudioFileView.clock(duration))"
+		var clock = "\(AudioFileView.clock(now, milliseconds: true)) / \(AudioFileView.clock(duration))"
 		if let manifest, manifest.barSeconds > 0 {
 			let place = manifest.bar(at: now)
 			clock += " · bar \(place.bar)"
@@ -815,6 +827,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			+ " loop=\(playback?.isLooping == true ? "on" : "off")"
 			+ " drift=[\((playback?.driftForTesting ?? []).map(String.init).joined(separator: " "))]"
 			+ String(format: " window=%.3f+%.3fs", canvas.windowStart, canvas.windowSpan)
+			+ " clock=\"\(timeLabel.stringValue)\""
+			// Which stems `mat` read back instead of rendering, and how many of
+			// the pane's drawings were reused rather than read again — the two
+			// halves of what makes a save quick.
+			+ " cached=[\((manifest?.layers.filter(\.cached).map(\.name) ?? []).joined(separator: " "))]"
+			+ " drawn=\(overviews.compactMap { $0 }.count)/\(overviews.count)"
 			+ " info=\"\(infoLabel.stringValue)\" error=\(error)"
 	}
 }
