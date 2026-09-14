@@ -34,8 +34,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		var name: String { self == .mix ? "mix" : "stems" }
 	}
 
-	private let url: URL
-	private let executable: String?
+	let url: URL
+	let executable: String?
 	/// The text as it is in the buffer, for the block under the caret.
 	private let sourceText: () -> String?
 	/// The source should show a line: a lane's name was clicked, or the
@@ -49,6 +49,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private var playButton: DrawnButton!
 	private var loopButton: DrawnButton!
 	private var fitButton: DrawnButton!
+	/// Export ▸ — see `SongPreviewView+Export`.
+	var exportButton: DrawnButton!
+	var isExporting = false
 	private var timeLabel: ScaledLabel!
 	private var infoLabel: ScaledLabel!
 	private var viewChoice: DrawnChoice!
@@ -185,6 +188,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		infoLabel.lineBreakMode = .byTruncatingTail
 		infoLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 		fitButton = DrawnButton(title: "Fit") { [weak self] in self?.canvas.fit() }
+		exportButton = DrawnButton(symbol: "square.and.arrow.up", description: "Export") { [weak self] in
+			self?.showExportMenu()
+		}
+		exportButton.tip = StyledTip.Tip(
+			title: "Export", detail: "The mix, or the mix and its stems, as WAV, FLAC or M4A, beside the song."
+		)
 		fitButton.tip = StyledTip.Tip(title: "Show the whole song", detail: "Pinch or ⌥-scroll to zoom; scroll to move along.")
 		fitButton.isEnabled = false
 		viewChoice = DrawnChoice(segments: [.words("Mix"), .words("Stems")], selectedIndex: 0) { [weak self] index in
@@ -201,7 +210,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 		let spacer = NSView()
 		spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-		strip = NSStackView(views: [playButton, loopButton, timeLabel, infoLabel, spacer, viewChoice, fitButton, modeChoice])
+		strip = NSStackView(views: [playButton, loopButton, timeLabel, infoLabel, spacer, exportButton, viewChoice, fitButton, modeChoice])
 		strip.orientation = .horizontal
 		strip.alignment = .centerY
 		applyStripMetrics()
@@ -709,6 +718,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	// MARK: - Keyboard and window
 
+	/// Right-click anywhere on the pane: the Export menu.
+	override func menu(for event: NSEvent) -> NSMenu? {
+		executable == nil ? nil : exportMenu()
+	}
+
 	override var acceptsFirstResponder: Bool { true }
 
 	override func keyDown(with event: NSEvent) {
@@ -831,7 +845,6 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			+ " tempo=\(Int(manifest?.tempo ?? 0)) stems=\(manifest?.layers.count ?? 0)"
 			+ " lanes=[\(lanes.joined(separator: " "))] lit=[\(lit.sorted().joined(separator: " "))]"
 			+ " loop=\(playback?.isLooping == true ? "on" : "off")"
-			+ " drift=[\((playback?.driftForTesting ?? []).map(String.init).joined(separator: " "))]"
 			+ String(format: " window=%.3f+%.3fs", canvas.windowStart, canvas.windowSpan)
 			+ " clock=\"\(timeLabel.stringValue)\""
 			// Which stems `mat` read back instead of rendering, and how many of

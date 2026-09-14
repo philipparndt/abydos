@@ -168,22 +168,19 @@ final class AudioPlayback {
 		sampleRate > 0 ? Double(currentFrame) / sampleRate : 0
 	}
 
-	/// How far each voice's own sample clock is from the first's, in frames,
-	/// read at one moment — zero everywhere when the stems are in step. What a
-	/// driven run reads instead of listening for a flam.
-	var driftForTesting: [Int64] {
-		guard isPlaying, let renderTime = node.lastRenderTime,
-		      let first = node.playerTime(forNodeTime: renderTime) else { return [] }
-		return voices.map { voice in
-			guard let own = voice.node.playerTime(forNodeTime: renderTime) else { return Int64.min }
-			return own.sampleTime - first.sampleTime
-		}
-	}
 
 	func play() {
 		guard !isPlaying, frameCount > 0 else { return }
 		if !engine.isRunning {
 			do { try engine.start() } catch { return }
+			// Several files start on the output's sample clock, which exists
+			// once the engine has rendered; measured, it has by the time `start`
+			// returns, and this waits at most a tenth of a second if it has not.
+			if voices.count > 1 {
+				for _ in 0..<100 where engine.outputNode.lastRenderTime?.isSampleTimeValid != true {
+					usleep(1000)
+				}
+			}
 		}
 		// From the top again once it has run to the end.
 		start(from: restingFrame >= frameCount ? 0 : restingFrame)
@@ -221,10 +218,19 @@ final class AudioPlayback {
 
 		if voices.count == 1 {
 			node.play()
+		} else if let now = engine.outputNode.lastRenderTime, now.isSampleTimeValid {
+			// **Every node at one sample time on the output's clock.** Reported
+			// 2026-09-14: the stems sounded very slightly off. They were started
+			// at one *host* time, 20 ms out, and measured with a noise file and
+			// its inverse on two players through a silent mixer: started that
+			// way the pair did not cancel (residual 0.499 of a 0.5 noise), while
+			// the players' own clocks said they were in step — which is what the
+			// pane's drift report had read, and why it said zero. Started at one
+			// sample time, 1024 frames out, they cancel to 0.0000, eight trials
+			// of eight. `play()` one after the other was 512 frames apart.
+			let start = AVAudioTime(sampleTime: now.sampleTime + 1024, atRate: now.sampleRate)
+			for voice in voices { voice.node.play(at: start) }
 		} else {
-			// Every node at the same host time, a few milliseconds out, so the
-			// stems start on the same sample. Started one after another with
-			// `play()` they would be as far apart as the calls took.
 			let start = AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: 0.02))
 			for voice in voices { voice.node.play(at: start) }
 		}

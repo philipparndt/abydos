@@ -21,9 +21,12 @@ first error over it, and clicking it SHALL reveal the line `mat` named; a pane
 that never had a sound SHALL show the failure in place of the drawing. The
 lanes SHALL carry the bar grid and the song's sections, and the clock SHALL
 say the bar. The pane SHALL play and pause, loop, seek, zoom and scroll as the
-sound tab does, and SHALL say in words when `mat` is not installed.
+sound tab does, and SHALL say in words when `mat` is not installed. Stems SHALL
+start on the same sample. The pane SHALL export the mix, or the mix and its
+stems, as WAV, FLAC or M4A beside the song, SHALL ask before replacing a file
+that is there, and SHALL NOT offer a format the installed `mat` cannot write.
 
-Asked for 2026-09-13.
+Asked for 2026-09-13; export 2026-09-14.
 
 #### Scenario: a song opens rendered
 
@@ -73,3 +76,16 @@ Asked for 2026-09-13.
 - **WHEN** a `.song` is opened
 - **THEN** the pane says `mat is not installed` with the `cargo install` line,
   and nothing is run
+
+#### Scenario: exporting the song with its stems as FLAC
+
+- **GIVEN** `neon.song` open in the pane, with a `mat` that writes FLAC
+- **WHEN** *Mix and Stems as FLAC* is chosen from Export
+- **THEN** `neon.flac` is written beside the song and a FLAC per layer into
+  `neon stems/`, and a toast offers to reveal the file
+
+#### Scenario: an older mat
+
+- **GIVEN** a `mat` whose `render --help` names no `--bitrate`
+- **WHEN** the Export menu is opened
+- **THEN** only the WAV items can be chosen

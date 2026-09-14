@@ -35,6 +35,41 @@ struct SongRenderTests {
 		#expect(command.hasSuffix("--stems /tmp/out/stems --cache /tmp/c"))
 	}
 
+	/// An export writes beside the song, the stems in a folder of its name, in
+	/// the format the extension names.
+	@Test func anExportWritesBesideTheSongInTheChosenFormat() {
+		let song = URL(fileURLWithPath: "/Users/me/songs/neon.song")
+		let mix = SongRender.export(of: song, as: .flac, withStems: false)
+		#expect(mix.mix.path == "/Users/me/songs/neon.flac")
+		#expect(mix.stems == nil)
+		let both = SongRender.export(of: song, as: .m4a, withStems: true)
+		#expect(both.stems?.path == "/Users/me/songs/neon stems")
+		let command = SongRender.exportCommand(
+			executable: "mat", song: song, export: both, cache: URL(fileURLWithPath: "/tmp/c")
+		)
+		#expect(command == "mat render /Users/me/songs/neon.song -o /Users/me/songs/neon.m4a "
+			+ "--stems '/Users/me/songs/neon stems' --cache /tmp/c")
+	}
+
+	/// What would be replaced is found before anything runs.
+	@Test func anExportSaysWhatItWouldReplace() throws {
+		let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("export-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+		let song = directory.appendingPathComponent("neon.song")
+		let export = SongRender.export(of: song, as: .wav, withStems: true)
+		#expect(export.replaces.isEmpty)
+		try Data().write(to: export.mix)
+		#expect(export.replaces == [export.mix])
+	}
+
+	/// A `mat` from before formats writes WAV under any name; its help has no
+	/// `--bitrate`, which is how it is told apart.
+	@Test func aMatWithoutFormatsIsToldApartByItsHelp() {
+		#expect(SongRender.supportsFormats(help: "      --bitrate <BITRATE>  Bit rate of .m4a files in kbit/s"))
+		#expect(!SongRender.supportsFormats(help: "      --bits <BITS>  [default: 24] [possible values: 16, 24, 32f]"))
+	}
+
 	/// What `mat` 23c5b97 writes for a layer with a cache.
 	@Test func aLayerSaysWhatItWasKeyedByAndWhetherItWasCached() throws {
 		let json = """

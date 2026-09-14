@@ -108,6 +108,63 @@ public enum SongRender {
 		return arguments.map(quoted).joined(separator: " ")
 	}
 
+	// MARK: - Exporting
+
+	/// What a song can be exported as. `mat` picks the format from the output's
+	/// extension (4143e44), and writes stems in the same format.
+	public enum ExportFormat: String, CaseIterable, Sendable {
+		case wav, flac, m4a
+
+		/// The item's name: what the file is, and what kind.
+		public var title: String {
+			switch self {
+			case .wav: return "WAV (24-bit)"
+			case .flac: return "FLAC (lossless)"
+			case .m4a: return "M4A (AAC, 256 kbit/s)"
+			}
+		}
+	}
+
+	/// Where an export writes: beside the song, the mix under the song's name,
+	/// and the stems in a folder of the song's name.
+	public struct Export: Equatable, Sendable {
+		public var mix: URL
+		public var stems: URL?
+
+		/// The files and folders already there that this export would replace.
+		public var replaces: [URL] {
+			[mix, stems].compactMap { $0 }.filter { FileManager.default.fileExists(atPath: $0.path) }
+		}
+	}
+
+	public static func export(of song: URL, as format: ExportFormat, withStems: Bool) -> Export {
+		let base = song.deletingPathExtension()
+		return Export(
+			mix: base.appendingPathExtension(format.rawValue),
+			stems: withStems ? base.deletingLastPathComponent().appendingPathComponent("\(base.lastPathComponent) stems", isDirectory: true) : nil
+		)
+	}
+
+	/// The command line for an export: the same render, into the export's
+	/// files, through the pane's cache — so exporting a song the pane has just
+	/// rendered reads every layer back.
+	public static func exportCommand(executable: String, song: URL, export: Export, cache: URL?) -> String {
+		var arguments = [executable, "render", song.path, "-o", export.mix.path]
+		if let stems = export.stems { arguments += ["--stems", stems.path] }
+		if let cache { arguments += ["--cache", cache.path] }
+		return arguments.map(quoted).joined(separator: " ")
+	}
+
+	/// Whether a `mat` writes anything but WAV, from its `render --help`.
+	///
+	/// **Asked, because the answer was a silent wrong file.** A `mat` from
+	/// before 4143e44 takes `-o song.flac` and writes WAV data under that name:
+	/// no error, and a file every player refuses. `--bitrate` came with the
+	/// formats, so its presence is the question.
+	public static func supportsFormats(help: String) -> Bool {
+		help.contains("--bitrate")
+	}
+
 	static func quoted(_ argument: String) -> String {
 		if argument.allSatisfy({ $0.isLetter || $0.isNumber || "-_./=:".contains($0) }) { return argument }
 		return "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
