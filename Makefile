@@ -256,7 +256,7 @@ sign-check: ## Show the signing identity and notary profile the release will use
 		|| echo "  notary profile $(or $(NOTARY_PROFILE),notarytool) is not stored yet — see Scripts/release.sh"
 
 .PHONY: install
-install: build ## Copy the app into /Applications
+install: ## Copy the notarized app into /Applications (run make release first; does not rebuild, a rebuild would drop the notarization ticket)
 	@Scripts/install.sh $(APP)
 
 .PHONY: install-cli

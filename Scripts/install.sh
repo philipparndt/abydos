@@ -31,7 +31,30 @@ SOURCE="${1:-build/Abydos.app}"
 DESTINATION_DIR="${2:-/Applications}"
 DESTINATION="$DESTINATION_DIR/Abydos.app"
 
-[ -d "$SOURCE" ] || { echo "install: $SOURCE does not exist — run make build first" >&2; exit 1; }
+[ -d "$SOURCE" ] || { echo "install: $SOURCE does not exist — run make release first" >&2; exit 1; }
+
+# Only a notarized bundle goes into /Applications.
+#
+# `make build` signs with the Developer ID but does not notarize, and a bundle
+# written by a tracked process carries provenance, so Gatekeeper treats it as a
+# download: on first launch it finds no ticket and refuses it with "Apple could
+# not verify". Worse, the refusal is remembered against the bundle's folder, so
+# a notarized build copied into the same folder later is refused too. That is
+# what "the release is fine but it still will not start" turned out to be.
+#
+# The ticket is stapled by Scripts/release.sh; `stapler validate` is the check
+# that Gatekeeper itself would pass offline. ALLOW_UNNOTARIZED=1 installs anyway,
+# for the case where the destination is not /Applications or the refusal is
+# understood.
+if ! xcrun stapler validate "$SOURCE" >/dev/null 2>&1; then
+	if [ "${ALLOW_UNNOTARIZED:-0}" = "1" ]; then
+		echo "install: $SOURCE is not notarized — installing anyway (ALLOW_UNNOTARIZED=1); Gatekeeper will refuse it on first launch" >&2
+	else
+		echo "install: $SOURCE is not notarized — Gatekeeper would refuse it on first launch" >&2
+		echo "  run make release first, or ALLOW_UNNOTARIZED=1 make install to install it anyway" >&2
+		exit 1
+	fi
+fi
 
 # A copy that is running is left able to keep running.
 #
