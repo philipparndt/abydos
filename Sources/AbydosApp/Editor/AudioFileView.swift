@@ -98,7 +98,7 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		loopButton.tip = StyledTip.Tip(
 			title: "Loop", detail: "Plays the file round and round, with no gap at the seam."
 		)
-		timeLabel = ScaledLabel("0:00 / 0:00", size: 11.5)
+		timeLabel = ScaledLabel("0:00.000 / 0:00", size: 11.5, fixedDigits: true)
 		infoLabel = ScaledLabel("", size: 11) { Theme.current.gitIgnored }
 		fitButton = DrawnButton(title: "Fit") { [weak self] in self?.canvas.fit() }
 		fitButton.tip = StyledTip.Tip(
@@ -335,15 +335,23 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		guard window != nil || !isPlaying else { return }
 		canvas.playhead = now
 		if isPlaying { canvas.follow(now) }
-		timeLabel.stringValue = "\(Self.clock(now)) / \(Self.clock(duration))"
+		timeLabel.stringValue = "\(Self.clock(now, milliseconds: true)) / \(Self.clock(duration))"
 		playButton.setSymbol(isPlaying ? "pause.fill" : "play.fill", description: isPlaying ? "Pause" : "Play")
 	}
 
-	static func clock(_ seconds: Double) -> String {
-		let whole = Int(seconds.isFinite ? seconds : 0)
-		return whole >= 3600
+	/// `1:05`, `1:02:05` past the hour — and with `milliseconds`, `1:05.123`,
+	/// which is what the playhead reads: asked for on 2026-09-14, since a
+	/// beat at 132 bpm is 454 ms and a whole second does not say which one
+	/// the playhead is on. Truncated rather than rounded, so a clock at
+	/// 0:59.9996 does not read 1:00.000 while the playhead is still in the
+	/// minute before.
+	static func clock(_ seconds: Double, milliseconds: Bool = false) -> String {
+		let total = Int(((seconds.isFinite ? max(0, seconds) : 0) * 1000).rounded(.down))
+		let whole = total / 1000
+		let clock = whole >= 3600
 			? String(format: "%d:%02d:%02d", whole / 3600, whole / 60 % 60, whole % 60)
 			: String(format: "%d:%02d", whole / 60, whole % 60)
+		return milliseconds ? clock + String(format: ".%03d", total % 1000) : clock
 	}
 
 	// MARK: - Keyboard and window

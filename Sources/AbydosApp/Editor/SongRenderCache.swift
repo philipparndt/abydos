@@ -33,6 +33,11 @@ final class SongRenderCache {
 	static let shared = SongRenderCache()
 
 	private var entries: [String: Entry] = [:]
+	/// What was drawn of each stem, by the key `mat` gave its layer, per song.
+	/// A render after an edit renders one layer and links the rest, and a
+	/// linked stem is the same samples as before: reading it again was most
+	/// of a render's wait in the pane, ten stems of four minutes each.
+	private var stems: [String: [String: AudioOverview]] = [:]
 
 	private init() {}
 
@@ -52,6 +57,21 @@ final class SongRenderCache {
 			try? FileManager.default.removeItem(at: old.directory)
 		}
 		entries[key(song)] = entry
+		// Only the stems this render has: an overview of a layer that is gone
+		// is memory spent on nothing.
+		let current = Set(entry.manifest.layers.compactMap(\.key))
+		stems[key(song)] = stems[key(song)]?.filter { current.contains($0.key) }
+	}
+
+	/// What was drawn of a stem with this key, when anything was.
+	func overview(ofStem stemKey: String?, of song: URL) -> AudioOverview? {
+		guard let stemKey else { return nil }
+		return stems[key(song)]?[stemKey]
+	}
+
+	func remember(_ overview: AudioOverview, ofStem stemKey: String?, of song: URL) {
+		guard let stemKey else { return }
+		stems[key(song), default: [:]][stemKey] = overview
 	}
 
 	/// A reading of one of the entry's files landed.
