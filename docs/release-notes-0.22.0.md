@@ -12,3 +12,12 @@ a save that does not parse keeps the last sound and shows the error over it,
 and clicking that goes to the line. The lanes carry the bar grid and the
 sections. Needs `mat` on the login shell's PATH (`cargo install --path
 crates/mat-cli`).
+
+## A song has a language server
+
+`mat lsp` answers for `.song` files: problems as you type, with `mat`'s own
+hints; completion of keywords, of the settings an instrument's kind takes,
+of a setting's options and of the song's instrument, pattern and track names;
+hover on any of them; go to an instrument, pattern or track from where it is
+used; and the blocks in the structure pane. The same `mat` the pane renders
+with.
