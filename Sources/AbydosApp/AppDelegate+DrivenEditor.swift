@@ -381,12 +381,12 @@ extension AppDelegate {
 		}
 
 		if options.audioReport || options.audioSeek != nil || options.audioView != nil
-			|| options.audioZoom != nil || options.audioLoop || options.audioPlay {
+			|| options.audioZoom != nil || options.audioLoop || options.audioPlay || options.audioSteps != nil {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.driveAudioForTesting(AudioDriving(
 					view: options.audioView, seek: options.audioSeek, zoom: options.audioZoom,
 					loop: options.audioLoop, play: options.audioPlay, wait: options.audioWait,
-					report: options.audioReport
+					report: options.audioReport, steps: options.audioSteps
 				))
 			}
 		}

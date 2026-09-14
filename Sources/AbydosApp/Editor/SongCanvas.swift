@@ -70,6 +70,9 @@ final class SongCanvas: NSView {
 	var onRevealLane: ((Int) -> Void)?
 
 	private let playheadLine = NSView()
+	/// The press that is down began on a lane's header, so dragging it moves
+	/// nothing. See `mouseDragged`.
+	private var pressedHeader = false
 	static let shortestSpan = AudioCanvas.shortestSpan
 
 	override init(frame frameRect: NSRect) {
@@ -206,12 +209,14 @@ final class SongCanvas: NSView {
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(superview)
 		let point = convert(event.locationInWindow, from: nil)
+		pressedHeader = false
 		// A header first: its switch, then its name. Anywhere else is the
 		// timeline.
 		if showsHeaders {
 			for index in lanes.indices {
 				let header = headerRect(ofLane: index)
 				guard header.contains(point) else { continue }
+				pressedHeader = true
 				if switchRect(in: header).contains(point) {
 					onToggleLane?(index)
 				} else {
@@ -224,7 +229,32 @@ final class SongCanvas: NSView {
 	}
 
 	override func mouseDragged(with event: NSEvent) {
+		// **A press on a header is not a scrub.** Reported 2026-09-14: muting a
+		// stem moved the playhead "from time to time". The click went to the
+		// switch; a hand that moved a pixel while the button was down then sent
+		// a drag, and every drag here seeked — to wherever along the song the
+		// pointer was, which on a header near the left edge is the first bars.
+		guard !pressedHeader else { return }
 		seek(to: event)
+	}
+
+	/// A press on a lane's switch that moves a pixel before it lets go — the
+	/// hand that muted a stem and moved the playhead — sent as real events.
+	func wobbleSwitchForTesting(lane index: Int) {
+		guard lanes.indices.contains(index), let window else { return }
+		let box = switchRect(in: headerRect(ofLane: index))
+		let at = convert(NSPoint(x: box.midX, y: box.midY), to: nil)
+		for (type, dx) in [(NSEvent.EventType.leftMouseDown, 0.0), (.leftMouseDragged, 1.0), (.leftMouseDragged, 2.0), (.leftMouseUp, 2.0)] {
+			guard let event = NSEvent.mouseEvent(
+				with: type, location: NSPoint(x: at.x + dx, y: at.y), modifierFlags: [], timestamp: 0,
+				windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+			) else { continue }
+			switch type {
+			case .leftMouseDown: mouseDown(with: event)
+			case .leftMouseDragged: mouseDragged(with: event)
+			default: mouseUp(with: event)
+			}
+		}
 	}
 
 	private func seek(to event: NSEvent) {

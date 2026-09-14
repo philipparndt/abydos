@@ -23,9 +23,16 @@ import AVFoundation
 /// The file is analysed off the main thread when the tab is first shown — see
 /// `DelayedPaneView` — and play works before the drawing arrives.
 final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
-	private let url: URL
-	private let playback: AudioPlayback?
-	private let canvas = AudioCanvas()
+	let url: URL
+	var playback: AudioPlayback?
+	let canvas = AudioCanvas()
+	/// The marks, the working copy and its undo — see `AudioFileView+Cut`.
+	var cutState = CutState()
+	var keepButton: DrawnButton!
+	var deleteButton: DrawnButton!
+	var selectionLabel: ScaledLabel!
+	/// Told when a cut or a save changes whether the tab has unsaved edits.
+	var onDirtyChanged: (() -> Void)?
 	private let heights = ScaledHeights()
 
 	private var playButton: DrawnButton!
@@ -50,8 +57,8 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var onPlayingChanged: ((Bool) -> Void)?
 
 	/// What the analysis found, or why there is none.
-	private(set) var failure: String?
-	private var isSettled = false
+	var failure: String?
+	var isSettled = false
 	private var whenSettled: [() -> Void] = []
 
 	init(url: URL) {
@@ -76,6 +83,7 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// Stops for good. The tab is closing — see `EditorViewController.teardown`
 	/// — or its window is.
 	func tearDown() {
+		discardAllWorkingCopies()
 		cancelled.set()
 		detailRead?.flag.set()
 		ticker?.invalidate()
@@ -105,6 +113,14 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			title: "Show the whole file", detail: "Pinch or ⌥-scroll to zoom; scroll to move along."
 		)
 		fitButton.isEnabled = false
+		selectionLabel = ScaledLabel("", size: 11, fixedDigits: true) { Theme.current.caret }
+		selectionLabel.isHidden = true
+		keepButton = DrawnButton(title: "Keep Selection") { [weak self] in self?.keepSelection() }
+		keepButton.tip = StyledTip.Tip(title: "Keep only the selection", detail: "Nothing is written until you save.", shortcut: "K")
+		keepButton.isHidden = true
+		deleteButton = DrawnButton(title: "Delete Selection") { [weak self] in self?.deleteSelection() }
+		deleteButton.tip = StyledTip.Tip(title: "Delete the selection", detail: "Nothing is written until you save.", shortcut: "⌫")
+		deleteButton.isHidden = true
 		modeChoice = DrawnChoice(
 			segments: [.words("Wave"), .words("Spectrum"), .words("Both")],
 			selectedIndex: AudioCanvas.Mode.both.rawValue
@@ -114,7 +130,9 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 		let spacer = NSView()
 		spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-		strip = NSStackView(views: [playButton, loopButton, timeLabel, infoLabel, spacer, fitButton, modeChoice])
+		strip = NSStackView(views: [
+			playButton, loopButton, timeLabel, infoLabel, selectionLabel, keepButton, deleteButton, spacer, fitButton, modeChoice,
+		])
 		strip.orientation = .horizontal
 		strip.alignment = .centerY
 		strip.setCustomSpacing(Theme.current.scaled(4), after: playButton)
@@ -162,13 +180,20 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		canvas.applyTheme()
 	}
 
+	/// Undo and redo are offered only when there is a cut to step to.
+	override func responds(to selector: Selector!) -> Bool {
+		if selector == #selector(undo(_:)) { return !cutState.undo.isEmpty }
+		if selector == #selector(redo(_:)) { return !cutState.redo.isEmpty }
+		return super.responds(to: selector)
+	}
+
 	// MARK: - Reading
 
 	/// Decodes and analyses the file off the main thread, under the waiting
 	/// strip at the tab's top edge.
 	private func analyse() {
 		activity = PaneActivityView.install(over: self, message: "Reading \(url.lastPathComponent)…")
-		let url = self.url
+		let url = self.source
 		let cancelled = self.cancelled
 		Task { @MainActor [weak self] in
 			// The read captures nothing of the view: only the file and the flag
@@ -216,6 +241,19 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		waiting.forEach { $0() }
 	}
 
+	/// A cut, an undo or a save put another file in the tab: draw it again.
+	func reanalyse() {
+		detailRead?.flag.set()
+		detailRead = nil
+		canvas.detail = nil
+		isSettled = false
+		failure = nil
+		failureLabel.isHidden = true
+		analyse()
+	}
+
+	var currentSeconds: Double { playback?.currentSeconds ?? canvas.playhead }
+
 	/// The window moved: stretch the overview now, and read the window at the
 	/// width's detail once it has stopped moving.
 	private func windowChanged() {
@@ -255,7 +293,7 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 		detailRead?.flag.set()
 		let flag = CancelFlag()
-		let url = self.url
+		let url = self.source
 		let columns = min(8192, pixels * 2)
 		let task = Task { @MainActor [weak self] in
 			let reading = await Task.detached(priority: .userInitiated) { () -> AudioOverview? in
@@ -313,7 +351,7 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	/// Playing started or stopped: the button, the ticker and the tab.
-	private func playingChanged() {
+	func playingChanged() {
 		ticker?.invalidate()
 		ticker = nil
 		if isPlaying {
@@ -364,6 +402,18 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		if event.keyCode == 49, modifiers.isEmpty {
 			togglePlayback()
 			return
+		}
+		// `i` and `o` mark the selection at the playhead, as in every editor
+		// of sound or picture; `k` keeps it, ⌫ deletes it, Escape clears it.
+		if modifiers.isEmpty, failure == nil {
+			switch event.charactersIgnoringModifiers?.lowercased() {
+			case "i": markIn(); return
+			case "o": markOut(); return
+			case "k": keepSelection(); return
+			default: break
+			}
+			if event.keyCode == 51 || event.keyCode == 117 { deleteSelection(); return }
+			if event.keyCode == 53, cutState.inPoint != nil || cutState.outPoint != nil { clearSelection(); return }
 		}
 		// ← and →: five seconds, and one with ⇧. Five rather than ten, the web
 		// players' step, because many files here are loops of a few seconds,

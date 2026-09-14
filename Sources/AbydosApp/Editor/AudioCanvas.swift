@@ -49,6 +49,11 @@ final class AudioCanvas: NSView {
 		didSet { refresh() }
 	}
 
+	/// The selection's in- and out-points, in seconds, either or both.
+	var marks: (Double?, Double?) = (nil, nil) {
+		didSet { needsDisplay = true }
+	}
+
 	/// Where the playhead is, in seconds.
 	var playhead: Double = 0 {
 		didSet { placePlayhead() }
@@ -268,7 +273,26 @@ final class AudioCanvas: NSView {
 			Theme.current.separator.setFill()
 			NSRect(x: 0, y: (drawingBounds.height / 2).rounded(), width: bounds.width, height: 1).fill()
 		}
+		drawSelection()
 		if isZoomed { drawPositionBar() }
+	}
+
+	/// The selection across the wave and the spectrum: a band between the
+	/// marks, and a line at each.
+	private func drawSelection() {
+		let area = drawingBounds
+		let xs = [marks.0, marks.1].compactMap { $0 }.map { x(atSeconds: $0) }
+		guard !xs.isEmpty else { return }
+		if xs.count == 2 {
+			let (left, right) = (min(xs[0], xs[1]), max(xs[0], xs[1]))
+			Theme.current.selectionBackground.withAlphaComponent(0.35).setFill()
+			NSRect(x: left, y: 0, width: max(1, right - left), height: area.height).fill(using: .sourceOver)
+		}
+		let width = max(1, Theme.current.scaled(1))
+		Theme.current.caret.withAlphaComponent(0.8).setFill()
+		for x in xs where x >= -width && x <= bounds.width {
+			NSRect(x: x.rounded() - width / 2, y: 0, width: width, height: area.height).fill()
+		}
 	}
 
 	private func drawWave(_ source: AudioOverview, in rect: NSRect) {

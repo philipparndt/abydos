@@ -613,6 +613,11 @@ extension EditorViewController {
 			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil
 			self?.refreshTabBar()
 		}
+		// A cut is a commitment to the tab, as typing into a file is.
+		player.onDirtyChanged = { [weak self, weak tab] in
+			tab?.isPreview = false
+			self?.refreshTabBar()
+		}
 		return tab
 	}
 
