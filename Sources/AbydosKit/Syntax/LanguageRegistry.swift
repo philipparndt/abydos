@@ -239,6 +239,9 @@ public final class LanguageRegistry {
 		// the file is shown uncoloured until a grammar is worth vendoring.
 		"puml": "plantuml", "plantuml": "plantuml", "pu": "plantuml",
 		"iuml": "plantuml", "wsd": "plantuml",
+		// A musik-as-text song: the same case as PlantUML — no grammar, a
+		// name for the language server's benefit, uncoloured for now.
+		"song": "song",
 	]
 
 	static let filenameMap: [String: String] = [
@@ -319,6 +322,7 @@ public final class LanguageRegistry {
 	/// nobody would write on purpose.
 	static let grammarlessNames = [
 		"plantuml": "PlantUML",
+		"song": "Song",
 		"objc": "Objective-C",
 		"jsx": "JSX",
 	]
