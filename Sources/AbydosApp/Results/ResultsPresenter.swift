@@ -133,13 +133,38 @@ final class ResultsPresenter {
 	/// in one.
 	func showProjectSearch(query: String?) {
 		guard let pane = panel.makeSearchPaneIfNeeded() else { return }
-		pane.onPlace = { [weak self] home in self?.placeSearch(at: home) }
+		wire(pane)
 		placeSearch(at: searchPlacement, focusList: false)
 		if let query { pane.setQuery(query) }
 		// The field rather than the list: asking for search is asking a question,
 		// and the question is typed. A *move* puts the keyboard in the rows —
 		// that pane already has an answer in it.
 		pane.focusField()
+	}
+
+	/// ⇧⌘R: the pane in replace mode, with the keyboard in the replacement.
+	///
+	/// Seeded from the selection only when the pane was not up. A pane that is
+	/// showing has a question in it somebody is part-way through, and ⇧⌘R over
+	/// it is a switch of mode, not a new question — the same rule ⌘R keeps in
+	/// the find bar, where driving caught it replacing the wrong match.
+	func showProjectReplace(query: String?) {
+		let wasUp = panel.existingSearchPane != nil
+		guard let pane = panel.makeSearchPaneIfNeeded() else { return }
+		wire(pane)
+		placeSearch(at: searchPlacement, focusList: false)
+		if !wasUp, let query { pane.setQuery(query) }
+		pane.setReplacing(true)
+		pane.focusReplaceField()
+	}
+
+	/// What the pane needs from the window: where to go, and the editor's open
+	/// files for a replacement to be made in rather than on the disk under them.
+	private func wire(_ pane: SearchPane) {
+		pane.onPlace = { [weak self] home in self?.placeSearch(at: home) }
+		pane.editOpenFile = { [weak self] url, makeEdit in
+			self?.editor.editOpenFile(url, makeEdit) ?? 0
+		}
 	}
 
 	/// Works the usages list from the command line, the way `--search-steps`

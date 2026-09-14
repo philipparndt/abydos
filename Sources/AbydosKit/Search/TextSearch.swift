@@ -167,11 +167,19 @@ public enum TextSearch {
 	/// list nobody will scroll; a Replace All builds none of them, and one that
 	/// quietly stopped five thousand in would leave a file half-changed with
 	/// nothing said about the other half.
+	///
+	/// - Parameter keeping: which matches to replace, by their index in the
+	///   order `matches(in:query:options:)` reports them — so a row somebody
+	///   picked out of a list can be replaced and its neighbours left. A match
+	///   that is not kept is carried through inside the span exactly as the
+	///   text between matches is. `nil` keeps every match, which is what the
+	///   find bar's Replace All means.
 	public static func replaceAll(
 		in text: String,
 		query: String,
 		options: SearchOptions,
-		template: String
+		template: String,
+		keeping: ((Int) -> Bool)? = nil
 	) -> ReplaceAll? {
 		guard !query.isEmpty, let regex = makeRegex(query: query, options: options) else { return nil }
 		guard !options.isRegex || isUsable(template: template, with: regex) else { return nil }
@@ -181,11 +189,17 @@ public enum TextSearch {
 		var start: Int?
 		var cursor = 0
 		var count = 0
+		var index = -1
 
 		regex.enumerateMatches(in: text, range: NSRange(location: 0, length: ns.length)) { match, _, _ in
 			// The same guard the search keeps, so what is replaced is what was
 			// counted: a zero-length match is a thing only a regex can find.
 			guard let match, match.range.length > 0 || options.isRegex else { return }
+			// Counted before the filter, so the index is the one `matches` gave
+			// the row: a filter that skipped the count would shift every index
+			// after the first match it left alone.
+			index += 1
+			if let keeping, !keeping(index) { return }
 			if start == nil {
 				start = match.range.location
 				cursor = match.range.location

@@ -468,6 +468,34 @@ final class ResultChecklist: NSView {
 
 	func setDoneAtSelection(_ done: Bool?) { setDone(done, at: tableView.selectedRowIndexes) }
 
+	// MARK: - What a replacement acts on
+
+	/// The marks under the selected rows: a heading brings its whole file.
+	var selectedMarks: [SearchChecklist.Mark] { marks(under: tableView.selectedRowIndexes) }
+
+	var hasSelection: Bool { !tableView.selectedRowIndexes.isEmpty }
+
+	/// The files in the list, for a caller that has to find them on disk.
+	var fileResults: [FileSearchResult] { model.results }
+
+	/// The marks of every row showing, which is what Replace All means.
+	var showingMarks: [SearchChecklist.Mark] { model.showingMarks(marking: checklist) }
+
+	/// Told when the selection changed, so a Replace button above the list can
+	/// be enabled only while there is something for it to act on.
+	var onSelectionChanged: (() -> Void)?
+
+	/// One entry on this list's ⌘Z, for something that is not a tick.
+	///
+	/// The replacement the search pane makes is undone from the list, because
+	/// the list is where the keyboard is when it is asked for and its manager is
+	/// the one `undo:` reaches there. The handler registers its own inverse, so a
+	/// redo is the manager's business as it is for the ticks.
+	func registerUndo(named name: String, _ handler: @escaping () -> Void) {
+		markUndo.registerUndo(withTarget: undoTarget) { _ in handler() }
+		markUndo.setActionName(name)
+	}
+
 	/// Rebuilds and puts the selection back where the eye expects it.
 	///
 	/// With the done rows showing, the same indexes still name the same rows, so
@@ -793,6 +821,10 @@ extension ResultChecklist: NSMenuItemValidation {
 
 extension ResultChecklist: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int { model.count }
+
+	func tableViewSelectionDidChange(_ notification: Notification) {
+		onSelectionChanged?()
+	}
 
 	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
 		Theme.current.scaled(22)

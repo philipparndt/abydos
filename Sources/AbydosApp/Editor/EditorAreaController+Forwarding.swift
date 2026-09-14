@@ -386,6 +386,16 @@ extension EditorAreaController {
 		return changed
 	}
 
+	/// One edit into a file wherever it is open, for the search pane's replace.
+	///
+	/// - Returns: how many panes had the file open. None means it is not open
+	///   anywhere and belongs to the disk.
+	func editOpenFile(_ url: URL, _ makeEdit: (String) -> TextSearch.ReplaceAll?) -> Int {
+		var found = 0
+		for group in groups where group.editOpenFile(url, makeEdit) { found += 1 }
+		return found
+	}
+
 	/// Closes every tab on a file a workspace edit has moved or removed.
 	@discardableResult
 	func closeTab(showing url: URL) -> Bool {

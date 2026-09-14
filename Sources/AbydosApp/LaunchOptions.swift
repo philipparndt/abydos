@@ -788,7 +788,9 @@ struct LaunchOptions {
 	var searchQuery: String?
 	/// Steps to work the search results with, comma separated: `focus`, `down`,
 	/// `shift-down`, `space`, `hide`, `rerun`, `undo`, `redo`, `select:3+4`,
-	/// `rows`, `status`, and `settle` between them.
+	/// `rows`, `status`, and `settle` between them. The replace half is
+	/// `replacing`, `replacement:<text>`, `replace-field`, `replace`,
+	/// `replace-all`, `regex` and `read:<path>`, which prints the file as the disk has it.
 	///
 	/// The results are a checklist now, and every claim about one is about what
 	/// a row *is* rather than what it looks like: struck through, counted on its

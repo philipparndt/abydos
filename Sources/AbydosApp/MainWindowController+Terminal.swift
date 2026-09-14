@@ -689,6 +689,11 @@ extension MainWindowController {
 		results.showProjectSearch(query: editor.selectedTextForSearch())
 	}
 
+	/// Edit ▸ Replace in Project…, which is ⇧⌘R.
+	@objc func replaceInProject(_ sender: Any?) {
+		results.showProjectReplace(query: editor.selectedTextForSearch())
+	}
+
 	@objc func goRun(_ sender: Any?) { runGo(.run) }
 
 	@objc func goBuild(_ sender: Any?) { runGo(.build) }

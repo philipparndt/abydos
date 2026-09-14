@@ -321,6 +321,15 @@ extension AppDelegate {
 			action: #selector(MainWindowController.replaceInFile(_:)),
 			keyEquivalent: "r"
 		)
+		// ⌘F and ⌘R in the file, ⇧⌘F and ⇧⌘R in the project. ⇧⌘R was Review
+		// Branch's, which is barely used and keeps its item without a key.
+		let replaceInProject = NSMenuItem(
+			title: "Replace in Project…",
+			action: #selector(MainWindowController.replaceInProject(_:)),
+			keyEquivalent: "r"
+		)
+		replaceInProject.keyEquivalentModifierMask = [.command, .shift]
+		editMenu.addItem(replaceInProject)
 		editMenu.addItem(withTitle: "Find Next", action: #selector(MainWindowController.findNext(_:)), keyEquivalent: "g")
 		let findPrevious = NSMenuItem(
 			title: "Find Previous",
@@ -445,12 +454,13 @@ extension AppDelegate {
 		// meant to grow.
 		let agentMenuItem = NSMenuItem()
 		let agentMenu = NSMenu(title: "Agent")
+		// No key since ⇧⌘R went to Replace in Project…, 2026-09-14: review is
+		// barely used, and the key pairs with ⇧⌘F the way ⌘R pairs with ⌘F.
 		let reviewItem = NSMenuItem(
 			title: "Review Branch…",
 			action: #selector(MainWindowController.reviewBranch(_:)),
-			keyEquivalent: "r"
+			keyEquivalent: ""
 		)
-		reviewItem.keyEquivalentModifierMask = [.command, .shift]
 		agentMenu.addItem(reviewItem)
 
 		let uncommittedItem = NSMenuItem(

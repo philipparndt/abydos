@@ -191,6 +191,24 @@ public struct ResultRows {
 		return collected
 	}
 
+	/// The marks of every match the list is showing, folded files included.
+	///
+	/// What a Replace All in the search pane acts on. "Showing" is decided by
+	/// the hide-done toggle and not by folding: a folded file's matches are on
+	/// the list under its heading, and a heading somebody can see stands for
+	/// them. A done row the toggle is hiding is a row somebody has put away,
+	/// and a button that changed rows nobody could see would be the wrong
+	/// surprise in the direction that costs a file.
+	public func showingMarks(marking checklist: SearchChecklist) -> [SearchChecklist.Mark] {
+		var collected: [SearchChecklist.Mark] = []
+		for marks in marksByFile {
+			for mark in marks where !(hidesDone && checklist.isDone(mark, for: question)) {
+				collected.append(mark)
+			}
+		}
+		return collected
+	}
+
 	// MARK: - Flattening one file
 
 	/// One file's heading and its matches, appended.

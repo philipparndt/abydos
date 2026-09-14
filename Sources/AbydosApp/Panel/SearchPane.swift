@@ -11,6 +11,13 @@ import AbydosKit
 /// pane, which is the same job over a different question. This pane is the query
 /// field, the three options, the `✓` toggle and the status line — everything that
 /// is about *what is in* the list rather than about working through it.
+///
+/// And, since the pane learnt to replace, the replace half: a field for what
+/// the matches should become, a Replace for the rows that are selected and a
+/// Replace All for every row showing. What a replacement *is* — one edit per
+/// file, made against the file as it is now and keyed on the marks the ticks
+/// already use — is `ProjectReplace` in `AbydosKit`, where it has a test. What
+/// is here is which rows, which files are open, and the one ⌘Z.
 final class SearchPane: NSView, ResultsPane {
 	var onOpenResult: ((URL, Int, SearchMatch, ResultChecklist.Intent) -> Void)?
 	/// Asked to move to one of the four homes. Search goes wherever usages
@@ -35,6 +42,30 @@ final class SearchPane: NSView, ResultsPane {
 	private var placeControl: PlacementControl!
 	private let list = ResultChecklist()
 	private var debounce: DispatchWorkItem?
+
+	// The replace half.
+	private var replaceField: NSTextField!
+	private var replaceButton: NSButton!
+	private var replaceAllButton: NSButton!
+	private var replaceToggle: NSButton!
+	private var replaceRow: NSStackView!
+	/// Whether the replace half is showing. The pane's, one per window like
+	/// the query, and it survives a project switch with it.
+	private(set) var isReplacing = false
+
+	/// One edit into a file that is open in the editor, wherever it is open.
+	///
+	/// Handed a function of the text rather than an edit, because only the
+	/// editor has the buffer: the edit is made against the document's text as
+	/// it is now, a dirty tab's included. Answers how many open copies there
+	/// were — none means the file belongs to the disk and is written there.
+	var editOpenFile: ((URL, (String) -> TextSearch.ReplaceAll?) -> Int)?
+
+	/// What the last replacement came to, leading the status line until the
+	/// question changes: `143 replaced in 27 files`. The re-run that follows a
+	/// replacement would otherwise overwrite the only record of what happened
+	/// with `No results`.
+	private var replacementStatus: String?
 
 	/// Where the pane is showing.
 	private(set) var placement: ResultPlacement = .panel
@@ -97,6 +128,23 @@ final class SearchPane: NSView, ResultsPane {
 		// re-run it, this one only changes what is shown of what was found.
 		hideDoneButton = makeToggle("✓", "Hide the rows marked done (␣ marks the selection)")
 		hideDoneButton.action = #selector(hideDoneChanged)
+		// Nor this one: it shows the replace half and changes nothing found.
+		replaceToggle = makeToggle("⇄", "Replace in the project (⇧⌘R)")
+		replaceToggle.action = #selector(replaceToggleChanged)
+
+		// The replacement, under the query rather than beside it, as the find
+		// bar has it: the two fields line up at the same edge, which is what
+		// makes the second read as the answer to the first.
+		replaceField = NSTextField()
+		replaceField.placeholderString = "Replace with"
+		replaceField.font = Theme.current.uiFont(12)
+		replaceField.focusRingType = .none
+		replaceField.delegate = self
+
+		replaceButton = makePush("Replace", "Replace the selected rows (⏎)", #selector(replacePressed))
+		replaceAllButton = makePush(
+			"Replace All", "Replace every row showing, as one edit per file", #selector(replaceAllPressed)
+		)
 
 		placeControl = PlacementControl()
 		placeControl.onChoose = { [weak self] home in self?.onPlace?(home) }
@@ -113,14 +161,22 @@ final class SearchPane: NSView, ResultsPane {
 		optionRow.alignment = .centerY
 		optionRow.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
 
-		let controls = NSStackView(views: [queryRow, optionRow])
+		replaceRow = NSStackView(views: [replaceField, replaceButton, replaceAllButton])
+		replaceRow.orientation = .horizontal
+		replaceRow.spacing = 6
+		replaceRow.alignment = .centerY
+		replaceRow.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+		replaceRow.isHidden = true
+
+		let controls = NSStackView(views: [queryRow, optionRow, replaceRow])
 		controls.orientation = .vertical
 		controls.spacing = 4
 		controls.alignment = .leading
 		controls.distribution = .fillEqually
 		field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+		replaceField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 		// The rows are as wide as the pane, whichever of them is showing.
-		for row in [queryRow!, optionRow!] {
+		for row in [queryRow!, optionRow!, replaceRow!] {
 			row.widthAnchor.constraint(equalTo: controls.widthAnchor).isActive = true
 		}
 
@@ -134,6 +190,7 @@ final class SearchPane: NSView, ResultsPane {
 			self?.onOpenResult?(result.url, match.line + 1, match, intent)
 		}
 		list.onProgressChanged = { [weak self] in self?.updateStatus() }
+		list.onSelectionChanged = { [weak self] in self?.updateReplaceControls() }
 		list.onHideDoneChanged = { [weak self] in
 			guard let self else { return }
 			self.hideDoneButton.state = self.list.hidesDone ? .on : .off
@@ -183,7 +240,7 @@ final class SearchPane: NSView, ResultsPane {
 		isNarrow = narrow
 
 		let options: [NSView] = [
-			caseButton, wordButton, regexButton, hideDoneButton, statusLabel, placeControl,
+			caseButton, wordButton, regexButton, hideDoneButton, replaceToggle, statusLabel, placeControl,
 		]
 		let wanted = narrow ? optionRow! : queryRow!
 		for view in options {
@@ -193,7 +250,13 @@ final class SearchPane: NSView, ResultsPane {
 			wanted.addArrangedSubview(view)
 		}
 		optionRow.isHidden = !narrow
-		controlsHeight.constant = Theme.current.scaled(narrow ? 62 : 34)
+		controlsHeight.constant = wantedControlsHeight
+	}
+
+	/// One row of 34, and 28 for each further row showing: the options when
+	/// the pane is narrow, the replacement when the pane is replacing.
+	private var wantedControlsHeight: CGFloat {
+		Theme.current.scaled(34 + (isNarrow == true ? 28 : 0) + (isReplacing ? 28 : 0))
 	}
 
 	override func layout() {
@@ -207,6 +270,15 @@ final class SearchPane: NSView, ResultsPane {
 		button.bezelStyle = .rounded
 		button.controlSize = .small
 		button.font = Theme.current.uiFont(10, weight: .medium)
+		button.toolTip = tooltip
+		return button
+	}
+
+	private func makePush(_ title: String, _ tooltip: String, _ action: Selector) -> NSButton {
+		let button = NSButton(title: title, target: self, action: action)
+		button.bezelStyle = .rounded
+		button.controlSize = .small
+		button.font = Theme.current.uiFont(11)
 		button.toolTip = tooltip
 		return button
 	}
@@ -227,7 +299,12 @@ final class SearchPane: NSView, ResultsPane {
 		SearchChecklist.Question(query: field.stringValue, options: options)
 	}
 
-	@objc private func optionsChanged() { scheduleSearch() }
+	@objc private func optionsChanged() {
+		// A switch changes what the term means, so the question is a new one and
+		// what the last replacement did is no longer about it.
+		replacementStatus = nil
+		scheduleSearch()
+	}
 
 	@objc private func hideDoneChanged() {
 		list.setHidesDone(hideDoneButton.state == .on)
@@ -249,15 +326,206 @@ final class SearchPane: NSView, ResultsPane {
 
 	func setQuery(_ text: String) {
 		field.stringValue = text
+		replacementStatus = nil
 		scheduleSearch()
 	}
 
 	func applySettings() {
-		controlsHeight.constant = Theme.current.scaled(isNarrow == true ? 62 : 34)
+		controlsHeight.constant = wantedControlsHeight
 		field.font = Theme.current.uiFont(12)
+		replaceField.font = Theme.current.uiFont(12)
 		statusLabel.font = Theme.current.uiFont(11)
+		for button in [replaceButton!, replaceAllButton!] { button.font = Theme.current.uiFont(11) }
 		placeControl.applySettings()
 		list.applySettings()
+	}
+
+	// MARK: - Replacing
+
+	/// Shows or hides the replace half. Nothing found is touched either way.
+	func setReplacing(_ replacing: Bool) {
+		guard replacing != isReplacing else { return }
+		isReplacing = replacing
+		replaceRow.isHidden = !replacing
+		replaceToggle.state = replacing ? .on : .off
+		controlsHeight.constant = wantedControlsHeight
+		updateReplaceControls()
+		updateStatus()
+	}
+
+	func focusReplaceField() {
+		window?.makeFirstResponder(replaceField)
+		replaceField.currentEditor()?.selectAll(nil)
+	}
+
+	var replacement: String { replaceField.stringValue }
+
+	func setReplacement(_ text: String) {
+		replaceField.stringValue = text
+		updateReplaceControls()
+		updateStatus()
+	}
+
+	@objc private func replaceToggleChanged() {
+		setReplacing(replaceToggle.state == .on)
+		if isReplacing { focusReplaceField() }
+	}
+
+	@objc private func replacePressed() { replace(list.selectedMarks) }
+
+	@objc private func replaceAllPressed() {
+		// The list as a prefix of the project is not a list to replace all of:
+		// a replacement that stopped part-way through the project with nothing
+		// said is the failure the in-file Replace All was written to avoid, and
+		// the button is disabled for it — this guard is for a driven run, which
+		// calls the verb rather than the button.
+		guard searchFinished, !capped else { return }
+		replace(list.showingMarks)
+	}
+
+	/// Whether the replacement can be used with the pattern beside it.
+	///
+	/// The same question the find bar asks, for the same reason: Foundation
+	/// substitutes the empty string for a group the pattern does not have, so
+	/// `$7` against two captures would delete every chosen match rather than
+	/// refuse. Asked again whenever the query, the switches or the replacement
+	/// change, because it is a question about both.
+	private var isTemplateValid: Bool {
+		!isReplacing
+			|| TextSearch.isValid(template: replaceField.stringValue, query: field.stringValue, options: options)
+	}
+
+	/// Which of the two buttons can do anything right now.
+	///
+	/// Replace needs rows selected; Replace All needs a list that is whole and
+	/// finished. Both need a template the pattern can use.
+	private func updateReplaceControls() {
+		guard isReplacing else { return }
+		let usable = isTemplateValid && !field.stringValue.isEmpty
+		replaceButton.isEnabled = usable && list.hasSelection
+		replaceAllButton.isEnabled = usable && searchFinished && !capped && list.matchCount > 0
+	}
+
+	/// The replacement: every chosen mark, grouped by file, one edit per file.
+	///
+	/// An open file is edited through the editor so the tab is dirty and its
+	/// own ⌘Z works; a closed one is read again, edited and written back
+	/// atomically. Either way the edit is made against the text as it is *now*
+	/// and the rows are found in it by their marks, so a row whose line has
+	/// gone replaces nothing and is counted rather than replacing whatever now
+	/// sits at its old offset. Then one entry on the list's ⌘Z holding every
+	/// span, and the search run again so the replaced rows leave.
+	private func replace(_ marks: [SearchChecklist.Mark]) {
+		guard isReplacing, isTemplateValid, !marks.isEmpty else { return }
+		let template = replaceField.stringValue
+		let question = self.question
+		let chosen = Set(marks)
+		let wantedPaths = Set(marks.map(\.path))
+
+		var record = ProjectReplace.Record()
+		StallWatch.mark("project replace") {
+			for result in list.fileResults where wantedPaths.contains(result.relativePath) {
+				let path = result.relativePath
+				var span: ProjectReplace.Record.File?
+				var notFound = 0
+				var replaced = 0
+				let makeEdit: (String) -> TextSearch.ReplaceAll? = { text in
+					let outcome = ProjectReplace.edit(
+						in: text, path: path, question: question, template: template, choosing: chosen
+					)
+					notFound = outcome.notFound.count
+					guard let edit = outcome.edit else { return nil }
+					let before = (text as NSString).substring(
+						with: NSRange(location: edit.utf16Range.lowerBound, length: edit.utf16Range.count)
+					)
+					span = ProjectReplace.Record.File(
+						url: result.url, relativePath: path, start: edit.utf16Range.lowerBound,
+						before: before, after: edit.text, wasOpen: true
+					)
+					replaced = edit.count
+					return edit
+				}
+
+				let open = editOpenFile?(result.url, makeEdit) ?? 0
+				if open == 0 {
+					// Not open anywhere: the disk is the truth, by the same tests the
+					// search reads it with.
+					guard let text = ProjectReplace.readText(at: result.url) else { continue }
+					if let edit = makeEdit(text) {
+						do {
+							try ProjectReplace.write(ProjectReplace.applying(edit, to: text), to: result.url)
+							span = span.map {
+								ProjectReplace.Record.File(
+									url: $0.url, relativePath: $0.relativePath, start: $0.start,
+									before: $0.before, after: $0.after, wasOpen: false
+								)
+							}
+						} catch {
+							// A file that could not be written is a file where nothing
+							// was replaced, and it is counted with the rows not found.
+							span = nil
+							notFound += replaced
+							replaced = 0
+						}
+					}
+				}
+				if let span { record.files.append(span) }
+				record.replaced += replaced
+				record.notFound += notFound
+			}
+		}
+
+		guard record.replaced > 0 || record.notFound > 0 else { return }
+		if !record.files.isEmpty {
+			list.registerUndo(named: "Replace in Project") { [weak self] in
+				self?.revert(record, forward: false)
+			}
+		}
+		// `0 replaced in 0 files` is what a run of stale rows came to, and the
+		// second number says nothing the first did not.
+		replacementStatus = (record.files.isEmpty
+			? "0 replaced"
+			: "\(record.replaced) replaced in \(Self.files(record.fileCount))")
+			+ (record.notFound > 0 ? " · \(record.notFound) not found" : "")
+		runSearch()
+	}
+
+	/// ⌘Z over a replacement, and ⇧⌘Z back again.
+	///
+	/// Each span goes back only where it still reads what the replacement left
+	/// — the file has otherwise been changed since, and a blind write would take
+	/// somebody's edit with it. What was skipped is said. The inverse is
+	/// registered from inside the handler, which is what makes it a redo.
+	private func revert(_ record: ProjectReplace.Record, forward: Bool) {
+		var skipped = 0
+		StallWatch.mark("project replace undo") {
+			for file in record.files {
+				var applied = false
+				let makeEdit: (String) -> TextSearch.ReplaceAll? = { text in
+					let edit = ProjectReplace.reversal(of: file, in: text, forward: forward)
+					if edit != nil { applied = true }
+					return edit
+				}
+				let open = editOpenFile?(file.url, makeEdit) ?? 0
+				if open == 0 {
+					if let text = ProjectReplace.readText(at: file.url), let edit = makeEdit(text) {
+						applied = (try? ProjectReplace.write(ProjectReplace.applying(edit, to: text), to: file.url)) != nil
+					}
+				}
+				if !applied { skipped += 1 }
+			}
+		}
+		list.registerUndo(named: "Replace in Project") { [weak self] in
+			self?.revert(record, forward: !forward)
+		}
+		let verb = forward ? "replaced again" : "put back"
+		replacementStatus = "\(record.replaced) \(verb) in \(Self.files(record.fileCount - skipped))"
+			+ (skipped > 0 ? " · \(skipped) not \(verb)" : "")
+		runSearch()
+	}
+
+	private static func files(_ count: Int) -> String {
+		"\(count) file\(count == 1 ? "" : "s")"
 	}
 
 	// MARK: - Searching
@@ -302,7 +570,7 @@ final class SearchPane: NSView, ResultsPane {
 			return
 		}
 		field.textColor = .labelColor
-		statusLabel.stringValue = "Searching…"
+		updateStatus()
 
 		search.search(
 			query: query,
@@ -321,6 +589,7 @@ final class SearchPane: NSView, ResultsPane {
 				self.searchFinished = true
 				self.wasCapped = outcome.capped
 				self.updateStatus()
+				self.updateReplaceControls()
 			}
 		)
 	}
@@ -329,8 +598,19 @@ final class SearchPane: NSView, ResultsPane {
 		let matchCount = list.matchCount
 		let fileCount = list.fileCount
 		let prefix = searchFinished ? "" : "Searching… "
+		// What the last replacement did leads, and the count of what is left
+		// follows in the same line: `143 replaced in 27 files · No results`.
+		let lead = replacementStatus.map { "\($0) · " } ?? ""
+		// The template's trouble is said where the pattern's is, and it is said
+		// instead of a count: a count beside it would read as what Replace All
+		// is about to do, and it is about to do nothing.
+		guard isTemplateValid else {
+			statusLabel.stringValue = "Replacement cannot be used"
+			updateReplaceControls()
+			return
+		}
 		guard matchCount > 0 else {
-			statusLabel.stringValue = searchFinished ? "No results" : "Searching…"
+			statusLabel.stringValue = lead + (searchFinished ? "No results" : "Searching…")
 			return
 		}
 		// A capped list says it is capped, in the same breath as the count.
@@ -350,7 +630,10 @@ final class SearchPane: NSView, ResultsPane {
 		// that stops being true.
 		let done = list.doneCount
 		if done > 0 { text += " · \(done) done" }
-		statusLabel.stringValue = text
+		// Said in the same breath as the cap, because it is the cap's consequence
+		// for the button beside it.
+		if isReplacing && capped { text += " · too broad to replace all at once" }
+		statusLabel.stringValue = lead + text
 	}
 
 	// MARK: - Driving it from a script
@@ -378,10 +661,28 @@ final class SearchPane: NSView, ResultsPane {
 			}
 		case "rerun": runSearch()
 		case "list": focusList()
+		// The replace half, worked as the buttons and the key work it. `replace`
+		// and `replace-all` call the verbs the buttons call, so a run proves the
+		// path and not a private shortcut through it; `replace-field` puts the
+		// keyboard where ⇧⌘R leaves it, so `window-key:return` can then be ⏎.
+		case "replacing":
+			setReplacing(!isReplacing)
+			print("SEARCH replacing: \(isReplacing)")
+			fflush(stdout)
+		case "replace-field": focusReplaceField()
+		// The `.*` switch as the button flips it, so a template's `$1` can be
+		// asked about from a script.
+		case "regex":
+			regexButton.state = regexButton.state == .on ? .off : .on
+			optionsChanged()
+		case "replace": replacePressed()
+		case "replace-all": replaceAllPressed()
 		case "status":
 			print("SEARCH status: \(statusLabel.stringValue) "
 				+ "where=\(placement.rawValue) "
 				+ list.undoStateForTesting
+				+ " replacing=\(isReplacing)"
+				+ " replace-enabled=\(replaceButton.isEnabled) replace-all-enabled=\(replaceAllButton.isEnabled)"
 				+ " opened=[\(list.openedForTesting.joined(separator: " "))]")
 			fflush(stdout)
 		default:
@@ -408,6 +709,20 @@ final class SearchPane: NSView, ResultsPane {
 				setQuery(String(step.dropFirst("query:".count)))
 				return
 			}
+			if step.hasPrefix("replacement:") {
+				setReplacement(String(step.dropFirst("replacement:".count)))
+				return
+			}
+			// The file as the disk has it, read back so a run can say what a
+			// replacement did to it and not only what the list says it did.
+			if step.hasPrefix("read:") {
+				let path = String(step.dropFirst("read:".count))
+				let url = projectRoot.appendingPathComponent(path)
+				let text = ProjectReplace.readText(at: url) ?? "<unreadable>"
+				print("SEARCH read \(path): " + text.replacingOccurrences(of: "\n", with: "⏎"))
+				fflush(stdout)
+				return
+			}
 			list.stepForTesting(step)
 		}
 	}
@@ -415,14 +730,28 @@ final class SearchPane: NSView, ResultsPane {
 
 extension SearchPane: NSSearchFieldDelegate {
 	func controlTextDidChange(_ obj: Notification) {
+		// The replacement changing is not a new question: the rows stay and only
+		// the buttons' answer to "can this be used" moves. The query changing is.
+		if (obj.object as? NSControl) === replaceField {
+			updateReplaceControls()
+			updateStatus()
+			return
+		}
+		replacementStatus = nil
 		scheduleSearch()
 	}
 
-	/// ↓ out of the field and into the list.
+	/// ↓ out of the query field and into the list; ⏎ in the replacement field
+	/// is Replace, as it is in the find bar.
 	///
-	/// Without it the results can only be reached with the mouse, and a
+	/// Without the first the results can only be reached with the mouse, and a
 	/// checklist worked with ␣ that needs a click to get to is not one.
 	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+		if control === replaceField {
+			guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+			replacePressed()
+			return true
+		}
 		guard selector == #selector(NSResponder.moveDown(_:)) else { return false }
 		return list.takeKeyboardFromAbove()
 	}

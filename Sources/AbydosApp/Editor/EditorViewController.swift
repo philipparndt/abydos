@@ -489,6 +489,40 @@ final class EditorViewController: NSViewController {
 		return true
 	}
 
+	/// One edit into an open file, for the search pane's replace.
+	///
+	/// The pane cannot see the buffer, so it hands over a function of the text
+	/// rather than an edit: the document's text as it is *now* goes in — a dirty
+	/// tab's included — and the edit that comes back was made against it, so
+	/// nothing is replaced at an offset the file has since moved away from.
+	/// `nil` from the function means the file is open and nothing in it was
+	/// replaced, which is still an answer of `true`: the disk is not to be
+	/// written over a buffer somebody has open.
+	///
+	/// Through the view when there is one, as find's own Replace goes, so the
+	/// tab's undo, its dirty mark and its find matches are all told; through
+	/// the document when the tab has never been shown.
+	func editOpenFile(_ url: URL, _ makeEdit: (String) -> TextSearch.ReplaceAll?) -> Bool {
+		let path = FilePath.canonical(url)
+		guard let tab = tabs.first(where: { FilePath.canonical($0.url) == path }),
+		      let document = tab.document
+		else { return false }
+		guard let edit = makeEdit(document.rope.string) else { return true }
+
+		if let codeView = tab.codeView {
+			codeView.replace(utf16Range: edit.utf16Range, with: edit.text)
+		} else {
+			document.replace(
+				utf16Range: edit.utf16Range, with: edit.text, caretBefore: edit.utf16Range.lowerBound
+			)
+		}
+		// Written now where the setting allows, rather than after the auto-save's
+		// pause: the search is about to be run again, and it reads the disk.
+		_ = document.autoSaveIfNeeded()
+		refreshTabBar()
+		return true
+	}
+
 	/// Closes the tab on a file a workspace edit has moved or taken away.
 	///
 	/// A tab whose file is no longer at that path is a tab that will write it
