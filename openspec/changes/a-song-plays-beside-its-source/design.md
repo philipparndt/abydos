@@ -254,8 +254,18 @@ LFO's phase — from the track's index in the timeline, and a solo timeline
 puts every track at index 0. Cross-correlating the old stems against the mix
 gave a residual as large as the mix itself (RMS 0.149 against 0.158) and
 single stems tens of milliseconds off it: the "out of sync" that was heard.
-The player nodes themselves reported zero drift throughout, which is what
-`drift=` in the report is for.
+
+**And the players were not in step either, though they said they were.** A
+`drift=` report compared each player node's clock at one render time, read
+zero throughout, and was taken as proof the playback was aligned. The next
+day stems were still "very slightly off". Measured with a noise file and its
+inverse on two players into a silent, tapped mixer: started at one host time
+as the pane did, the pair's clocks agreed and the sound did not cancel
+(residual 0.499 of 0.5); started with `play()` in turn they were 512 frames
+apart; started at one sample time on the output node's clock they cancelled
+to 0.0000, eight trials of eight, with 1024 frames of margin or none.
+`AudioPlayback` starts several files that way now, and `drift=` is gone: a
+measure that cannot see the fault it was written for is worse than none.
 
 **Fixed in `mat` the same evening** (`render_layers` in `mat-core`): one
 render pass, every track rendered once as itself, mixed into its layer's
@@ -275,6 +285,23 @@ the difference between `sum_peak_db` and the limiter's ceiling, never up, so
 the stems view sits where the limiter would have held the mix, short of the
 limiter's own squeeze. An older `mat` says nothing and the stems play at
 full, as before.
+
+### 10. Export, beside the song
+
+*Added 2026-09-14, once `mat` wrote FLAC and M4A (4143e44).* Export ▸ in the
+strip and on right-click: the mix, or the mix and its stems, as WAV (24-bit),
+FLAC or M4A (AAC, 256 kbit/s). Written beside the song like a diagram's
+picture — `neon.flac`, `neon stems/` — through the pane's cache, so an export
+of a song just rendered costs the encode. It asks before replacing: unlike a
+picture beside a diagram, a `neon.wav` beside `neon.song` may be a recording
+the song plays from. A `mat` from before formats writes WAV data under any
+name without complaint, so the pane asks `mat render --help` once per
+executable and offers only WAV when `--bitrate` is not there.
+
+Driven on a copy of the shanty: the menu offered all six items; `flac`,
+`m4a:stems` and `wav` wrote `shanty.flac` (FLAC from a 24-bit source),
+`shanty.m4a` (AAC) with five `.m4a` stems and `manifest.json` in
+`shanty stems/`, and `shanty.wav` (24-bit PCM), each 70.676 s by `afinfo`.
 
 ## Open Questions
 

@@ -125,6 +125,8 @@ extension MainWindowController {
 	///  * `mix`, `stems` — which view; `wave`, `spectrum`, `both` — what is drawn.
 	///  * `off:<layer>`, `on:<layer>` — a stem's switch; `wobble:<layer>` — a
 	///    press on it that drags a pixel, as real mouse events.
+	///  * `export:<wav|flac|m4a>[:stems]` — an export beside the song, waited
+	///    for; `export-menu` — what the Export menu offers.
 	///  * `caret:<line>` — the caret in the source, which lights the stem it is in.
 	///  * `play`, `loop`, `seek:<s>`.
 	///  * `edit:<line>:<text>` — that line of the file on disk replaced, the way
@@ -183,6 +185,21 @@ extension MainWindowController {
 			case "off": pane.setLane(parts.dropFirst().first ?? "", enabled: false)
 			case "on": pane.setLane(parts.dropFirst().first ?? "", enabled: true)
 			case "wobble": pane.wobbleSwitchForTesting(layer: parts.dropFirst().first ?? "")
+			case "export":
+				// `export:<wav|flac|m4a>` or `export:flac:stems`, without the
+				// replace question — a driven run exports over a scratch copy —
+				// and the next step waits for the export to finish.
+				let format = SongRender.ExportFormat(rawValue: parts.dropFirst().first ?? "") ?? .wav
+				pane.export(as: format, withStems: parts.count > 2, confirm: false) { [weak self] said in
+					print("SONG-EXPORT \(format.rawValue): \(said)")
+					fflush(stdout)
+					self?.songStep(rest, on: pane)
+				}
+				return
+			case "export-menu":
+				let items = pane.exportMenu().items.filter { !$0.isSeparatorItem }
+				print("SONG-EXPORT menu: " + items.map { "\($0.title)\($0.isEnabled ? "" : " (disabled)")" }.joined(separator: " | "))
+				fflush(stdout)
 			case "seek": pane.seekForTesting(seconds: Double(parts.dropFirst().first ?? "") ?? 0)
 			case "caret":
 				if let line = Int(parts.dropFirst().first ?? ""),

@@ -46,6 +46,18 @@
       sections at 2.0; no `mat`; captures of the stems and the error strip at
       1.0 and the mix at 2.0; recorded in the design.
 
+## 3b. Asked for while it was being tried
+
+- [x] 3.3 The last render per song kept for the next pane (`SongRenderCache`);
+      `mat render --cache`, the layers' keys, drawings reused by key.
+- [x] 3.4 A press on a lane's switch that drags does not seek; `wobble:`.
+- [x] 3.5 Stems started on one sample time of the output's clock, measured
+      with a noise file and its inverse; `drift=` removed.
+- [x] 3.6 Export ▸ the mix, or the mix and stems, as WAV, FLAC or M4A beside
+      the song; asks before replacing; formats asked of `mat render --help`;
+      `export:` and `export-menu` steps; driven, the three files checked with
+      `afinfo`.
+
 ## 4. Before finishing
 
 - [x] 4.1 `docs/release-notes-0.22.0.md`.

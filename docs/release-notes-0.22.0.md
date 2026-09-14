@@ -30,6 +30,13 @@ four-minute song of ten stems, where it was ten. Muting a stem no longer
 moves the playhead when the click drags a pixel. Clocks show milliseconds,
 `0:31.123`.
 
+## Export a song
+
+Export ▸ in the song pane, or a right-click on it, writes the mix — or the mix
+and its stems — as WAV, FLAC or M4A beside the song, and asks before replacing
+a file. Stems now start on the same sample, so played together they sound
+like the mix.
+
 ## Cut a sound file
 
 In a sound tab, `i` and `o` mark a selection at the playhead; `k` keeps only
