@@ -155,8 +155,17 @@ final class AudioPlayback {
 
 	/// Where the playhead is, in frames, wrapped by the length while looping.
 	var currentFrame: AVAudioFramePosition {
+		// **A render time with no valid time in it crashes the app.** Right
+		// after nodes are started at a future sample time, `lastRenderTime` is
+		// an `AVAudioTime` with neither its sample time nor its host time valid,
+		// and `playerTime(forNodeTime:)` raises an Objective-C exception on it —
+		// which Swift cannot catch. Three crashes on 2026-09-14, all a render
+		// landing while a song played: the new player is started and asked
+		// where it is in the same turn. Until the node has rendered, it is
+		// where it was scheduled from.
 		guard isPlaying,
 		      let renderTime = node.lastRenderTime,
+		      renderTime.isSampleTimeValid,
 		      let playerTime = node.playerTime(forNodeTime: renderTime)
 		else { return restingFrame }
 		let played = scheduledFrom + max(0, playerTime.sampleTime)
