@@ -36,6 +36,17 @@ extension CodeView {
 		)
 		updateBlameHover(at: hoverPoint)
 
+		// Over a song's timeline bar: where the line is heard, in bars and time.
+		if let timeline {
+			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+			if gutterZone(at: hoverPoint, scrollX: scrollX) == .timeline {
+				let docLine = documentLine(forVisualRow: max(0, Int(hoverPoint.y / lineHeight)))
+				let said = timeline.summary(line: docLine)
+				if toolTip != said { toolTip = said }
+				return
+			}
+		}
+
 		guard hasDiagnostics, let document else {
 			if toolTip != nil { toolTip = nil }
 			return

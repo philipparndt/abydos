@@ -131,6 +131,28 @@ language as *Song*, beside the song pane showing its own failure for the
 same mistake — the file was broken before it was first rendered, so there
 was no last good render to keep playing.
 
+### 9. Where each line is heard, beside its number
+
+*Added 2026-09-14.* `mat lsp` sends `mat/timeline` after each analysis that
+parses: the song's length, its bar length, and per line the stretches, in
+seconds, where it is heard. A notification rather than a request, so it
+arrives with the diagnostics for the same text; withheld when the text does not
+parse, because lines placed from the last song that did would be drawn beside
+lines that have since moved. The pass that computes it lives beside `arrange`
+rather than in it: `arrange`'s timeline is what the render cache hashes, and a
+source line in it would invalidate every layer when a comment is added.
+
+The gutter draws a column of bars between the breakpoint strip and the numbers,
+only while the file has a timeline: a faint bar the song's length, lit where the
+line is heard, nothing on a line heard nowhere. Hover says `bars 3–4 ·
+0:04.000–0:08.000`, or `2 times: bars …` for more than one stretch.
+
+Driven on a copy of the shanty (`timeline:<line>`): `pattern verse` lit at
+0.108–0.324 and 0.541–0.757 of the song, "2 times: bars 5–12, 21–28"; its first
+line "bars 5–6, 21–22"; the first `play verse` "bars 5–12 · 0:07.272–0:21.818";
+`track drums` the whole song; an `osc` line nothing. The capture shows the
+gallop patterns lit nearly across, and each verse line as two short dashes.
+
 ## Risks / Trade-offs
 
 - [The keyword tables drift from the parser] → the parser's own

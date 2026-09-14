@@ -196,6 +196,17 @@ extension MainWindowController {
 					self?.songStep(rest, on: pane)
 				}
 				return
+			case "timeline":
+				// `timeline:<line>`, 1-based: what the gutter holds for that line.
+				let line = Int(parts.dropFirst().first ?? "") ?? 1
+				let codeView = editor.activeGroup?.activeTab?.codeView
+				let timeline = codeView?.timeline
+				let fractions = timeline?.fractions(line: line - 1)
+					.map { String(format: "%.3f-%.3f", $0.lowerBound, $0.upperBound) } ?? []
+				print("LINE-TIMELINE line=\(line) column=\(timeline == nil ? "none" : "shown")"
+					+ " gutter=\(Int(codeView?.gutterWidth ?? 0)) lit=[\(fractions.joined(separator: " "))]"
+					+ " summary=\"\(timeline?.summary(line: line - 1) ?? "none")\"")
+				fflush(stdout)
 			case "export-menu":
 				let items = pane.exportMenu().items.filter { !$0.isSeparatorItem }
 				print("SONG-EXPORT menu: " + items.map { "\($0.title)\($0.isEnabled ? "" : " (disabled)")" }.joined(separator: " | "))

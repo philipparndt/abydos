@@ -4,6 +4,8 @@ import AbydosKit
 extension Notification.Name {
 	/// Diagnostics arrived for a file. The object is its URL.
 	static let ideaiDiagnosticsChanged = Notification.Name("abydos.diagnosticsChanged")
+	/// A song's `mat/timeline` arrived; the object is the file's URL.
+	static let abydosTimelineChanged = Notification.Name("abydos.timelineChanged")
 	/// A language server started, stopped, or failed to be found.
 	static let ideaiLanguageServersChanged = Notification.Name("abydos.languageServersChanged")
 	/// A project's servers moved between this machine and its devcontainer, so
@@ -79,6 +81,14 @@ final class LanguageService {
 
 	/// Diagnostics per file, newest wins.
 	var diagnostics: [String: [LSPDiagnostic]] = [:]
+
+	/// Where each line of a song is heard, per file, newest wins — see
+	/// `LineTimeline`.
+	var timelines: [String: LineTimeline] = [:]
+
+	func timeline(for url: URL) -> LineTimeline? {
+		timelines[uri(for: url)]
+	}
 
 	/// How a server's own edit gets applied, set by the window in front.
 	///

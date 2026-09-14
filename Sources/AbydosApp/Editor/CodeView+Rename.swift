@@ -163,6 +163,11 @@ extension CodeView {
 				onToggleBreakpoint?(docLine)
 			}
 
+		case .timeline:
+			// A bar is read, not clicked: a click here must not make a
+			// breakpoint on a line of a song.
+			break
+
 		case .fold:
 			// Only here. The line number belongs to breakpoints now, and a
 			// click that folded the code somebody was aiming a breakpoint at

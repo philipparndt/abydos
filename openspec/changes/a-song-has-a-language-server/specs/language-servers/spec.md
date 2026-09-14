@@ -50,3 +50,31 @@ Asked for 2026-09-13.
 - **WHEN** a song is opened
 - **THEN** the banner offers the `cargo install` line, and the text is edited
   without a server
+
+### Requirement: A song's lines show where in the song they are heard
+
+The song server SHALL send, after each analysis of text that parses, where each
+line is heard — a `play` step across its repeats, a pattern's line wherever the
+pattern plays from its first note to the end of its last, a track's or an
+instrument's header wherever what it names is heard, a section across its bars
+— and the editor SHALL draw beside each such line's number a bar the length of
+the song, lit where the line is heard, and SHALL say the bars and times when the
+pointer is over it. A line heard nowhere SHALL draw no bar, a click on a bar
+SHALL NOT make a breakpoint, and text that does not parse SHALL leave the last
+bars in place.
+
+Asked for 2026-09-14.
+
+#### Scenario: a pattern played twice
+
+- **GIVEN** `pattern verse`, played at bars 5–12 and again at bars 21–28
+- **WHEN** the song is opened
+- **THEN** the pattern's header shows two lit stretches, its first line two
+  short ones at bars 5–6 and 21–22, and hovering the header says
+  `2 times: bars 5–12, 21–28`
+
+#### Scenario: a setting
+
+- **GIVEN** an `osc` line inside an instrument
+- **WHEN** the song is opened
+- **THEN** the line has no bar

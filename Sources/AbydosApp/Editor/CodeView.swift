@@ -315,6 +315,16 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	var charWidth: CGFloat = 7
 	var gutterWidth: CGFloat = 60
 
+	/// Where each line is heard, when the file is a song whose server says —
+	/// drawn as a bar beside each line's number. See `LineTimeline`.
+	var timeline: LineTimeline? {
+		didSet {
+			guard timeline != oldValue else { return }
+			if (timeline == nil) != (oldValue == nil) { updateFrameSize() }
+			needsDisplay = true
+		}
+	}
+
 	/// Which lines differ from HEAD, for the gutter's change marks. 1-based
 	/// document lines, as `GitChangedLines` reads them off the diff.
 	var changedLines = GitChangedLines()
@@ -553,6 +563,9 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	/// Clickable strip on the far left of the gutter, where a runnable line
 	/// gets its play triangle.
 	static var breakpointColumnWidth: CGFloat { Theme.current.scaled(18) }
+	/// The column of song-timeline bars, between the breakpoint strip and the
+	/// numbers; there only while a timeline is.
+	static var timelineColumnWidth: CGFloat { Theme.current.scaled(34) }
 	/// The strip at the right of the gutter that folds and unfolds.
 	///
 	/// Its own column now: a click on the line number makes a breakpoint, so

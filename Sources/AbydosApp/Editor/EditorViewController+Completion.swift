@@ -362,6 +362,14 @@ extension EditorViewController {
 	}
 
 	/// Applies whatever a server last said about the files that are open.
+	/// A song's server said where its lines are heard: the gutter draws it.
+	@objc func timelineChanged(_ notification: Notification) {
+		guard let url = notification.object as? URL else { return }
+		for tab in tabs where tab.url.absoluteString == url.absoluteString {
+			tab.codeView?.timeline = LanguageService.shared.timeline(for: tab.url)
+		}
+	}
+
 	@objc func diagnosticsChanged(_ notification: Notification) {
 		guard let url = notification.object as? URL else { return }
 		for tab in tabs where tab.url.absoluteString == url.absoluteString {

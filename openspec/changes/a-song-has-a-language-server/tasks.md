@@ -26,6 +26,17 @@
       has no `lsp`; recorded in the design. Found and fixed on the way: a
       file opened before *Trust* never reached a server.
 
+## 2b. Where lines are heard
+
+- [x] 2.3 `mat` b0083ad: `placement::placements` — per line, where it is heard;
+      pattern events, audio steps and sections carry their line, outside the
+      render cache's key; `mat/timeline` after each parse, advertised as
+      `experimental.timeline`.
+- [x] 2.4 Abydos: `LineTimeline` and its tests; the client hands unknown
+      notifications on; the language service keeps a timeline per file; the
+      gutter's bar column, its hover, and no breakpoint on a click;
+      `timeline:<line>` step; driven on the shanty, recorded in the design.
+
 ## 3. Before finishing
 
 - [x] 3.1 A paragraph in `docs/release-notes-0.22.0.md`.

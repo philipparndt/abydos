@@ -37,6 +37,8 @@ extension CodeView {
 				drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX + blameWidth)
 			}
 
+			if let timeline { drawTimeline(timeline, docLine: docLine, y: y, scrollX: scrollX) }
+
 			// On the marker when there is one, and the number goes white on it:
 			// the tag is the breakpoint, so it has to be legible on top of it.
 			let mark = breakpointLines[docLine]
@@ -83,6 +85,33 @@ extension CodeView {
 		}
 	}
 
+	/// The left edge of the timeline column.
+	func timelineColumnX(scrollX: CGFloat) -> CGFloat {
+		scrollX + blameWidth + Self.breakpointColumnWidth
+	}
+
+	/// A line's bar: the whole song, faint, and lit where the line is heard.
+	/// A line heard nowhere draws nothing, so the column is quiet beside
+	/// settings and comments.
+	private func drawTimeline(_ timeline: LineTimeline, docLine: Int, y: CGFloat, scrollX: CGFloat) {
+		let fractions = timeline.fractions(line: docLine)
+		guard !fractions.isEmpty else { return }
+		let inset = Theme.current.scaled(4)
+		let width = Self.timelineColumnWidth - inset * 2
+		let height = max(2, Theme.current.scaled(4)).rounded()
+		let left = timelineColumnX(scrollX: scrollX) + inset
+		let top = (y + (lineHeight - height) / 2).rounded()
+		Theme.current.gutterText.withAlphaComponent(0.22).setFill()
+		NSRect(x: left, y: top, width: width, height: height).fill()
+		Theme.current.gitModified.setFill()
+		for range in fractions {
+			// At least a pixel: a single hit in a four-minute song is still there.
+			let from = (left + CGFloat(range.lowerBound) * width).rounded(.down)
+			let to = max(from + 1, (left + CGFloat(range.upperBound) * width).rounded(.up))
+			NSRect(x: from, y: top, width: to - from, height: height).fill()
+		}
+	}
+
 	/// A small wedge pointing at the boundary lines were deleted from.
 	private func drawDeletionMark(atY y: CGFloat, x: CGFloat) {
 		let size = Theme.current.scaled(7)
@@ -119,11 +148,14 @@ extension CodeView {
 		case number
 		/// The chevron at the right, which folds and nothing else.
 		case fold
+		/// A song's timeline bars, which are for reading.
+		case timeline
 	}
 
 	func gutterZone(at point: NSPoint, scrollX: CGFloat) -> GutterZone {
 		if point.x >= scrollX + gutterWidth - Self.foldColumnWidth { return .fold }
 		if point.x < scrollX + blameWidth + Self.breakpointColumnWidth { return .run }
+		if timeline != nil, point.x < timelineColumnX(scrollX: scrollX) + Self.timelineColumnWidth { return .timeline }
 		return .number
 	}
 
