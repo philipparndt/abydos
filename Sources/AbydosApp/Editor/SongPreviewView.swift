@@ -608,6 +608,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		canvas.setEnabled(!silenced.contains(name), at: index)
 	}
 
+	/// `wobble:<layer>`: a press on the layer's switch that drags a pixel.
+	func wobbleSwitchForTesting(layer name: String) {
+		guard let manifest, let index = manifest.layers.firstIndex(where: { $0.name == name }) else { return }
+		canvas.wobbleSwitchForTesting(lane: index)
+	}
+
 	func setLane(_ name: String, enabled: Bool) {
 		guard let manifest, let index = manifest.layers.firstIndex(where: { $0.name == name }) else { return }
 		if enabled != !silenced.contains(name) { toggleLane(at: index) }

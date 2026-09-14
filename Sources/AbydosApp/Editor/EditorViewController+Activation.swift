@@ -211,7 +211,11 @@ extension EditorViewController {
 			// feature exists not to do.
 			if tab.isDecrypted { return encryptAndSaveSync(tab) }
 			do {
-				try tab.document?.save()
+				if let audio = tab.contentView as? AudioFileView {
+					try audio.save()
+				} else {
+					try tab.document?.save()
+				}
 				return true
 			} catch {
 				Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
@@ -299,6 +303,8 @@ extension EditorViewController {
 		do {
 			if let hex = tab.hex {
 				try hex.save()
+			} else if let audio = tab.contentView as? AudioFileView {
+				try audio.save()
 			} else {
 				try tab.document?.save()
 			}

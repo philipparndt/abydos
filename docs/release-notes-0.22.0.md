@@ -21,3 +21,18 @@ of a setting's options and of the song's instrument, pattern and track names;
 hover on any of them; go to an instrument, pattern or track from where it is
 used; and the blocks in the structure pane. The same `mat` the pane renders
 with.
+
+## A save renders only what it changed
+
+The song pane keeps each layer between renders, so a save that changes one
+pattern renders that layer and reads the rest back: about a second for a
+four-minute song of ten stems, where it was ten. Muting a stem no longer
+moves the playhead when the click drags a pixel. Clocks show milliseconds,
+`0:31.123`.
+
+## Cut a sound file
+
+In a sound tab, `i` and `o` mark a selection at the playhead; `k` keeps only
+the selection and `⌫` deletes it, exact to the sample. Nothing is written until
+⌘S, which saves in the file's own format; ⌘Z undoes a cut, and closing asks.
+MP3 files can be cut and played but not saved, since macOS cannot write MP3.

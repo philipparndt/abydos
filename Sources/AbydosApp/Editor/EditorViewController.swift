@@ -271,6 +271,7 @@ final class EditorViewController: NSViewController {
 
 		var isDirty: Bool {
 			if let hex { return hex.isDirty }
+			if let audio = contentView as? AudioFileView { return audio.isDirty }
 			return document?.isDirty ?? false
 		}
 	}

@@ -10,6 +10,8 @@ struct AudioDriving {
 	var play = false
 	var wait: Double = 0
 	var report = false
+	/// `--audio-steps`: marks, cuts, undo, save — see `performStepsForTesting`.
+	var steps: String?
 }
 
 /// Driving the sound tab from a script.
@@ -38,6 +40,12 @@ extension MainWindowController {
 			if let seek = asked.seek { pane.seekForTesting(seconds: seek) }
 			if asked.loop { pane.loopForTesting() }
 			if asked.play { pane.playForTesting() }
+			if let steps = asked.steps {
+				pane.performStepsForTesting(steps.split(separator: ",").map(String.init)) {
+					print("AUDIO-STEP done")
+					fflush(stdout)
+				}
+			}
 			guard asked.report else { return }
 			// After the seek, and the detail read a zoom starts, have landed.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6 + asked.wait) {
@@ -115,7 +123,8 @@ extension MainWindowController {
 	///
 	///  * `report` — the pane's line; `wait:<s>` — that long before the next step.
 	///  * `mix`, `stems` — which view; `wave`, `spectrum`, `both` — what is drawn.
-	///  * `off:<layer>`, `on:<layer>` — a stem's switch.
+	///  * `off:<layer>`, `on:<layer>` — a stem's switch; `wobble:<layer>` — a
+	///    press on it that drags a pixel, as real mouse events.
 	///  * `caret:<line>` — the caret in the source, which lights the stem it is in.
 	///  * `play`, `loop`, `seek:<s>`.
 	///  * `edit:<line>:<text>` — that line of the file on disk replaced, the way
@@ -173,6 +182,7 @@ extension MainWindowController {
 			case "wait": delay = Double(parts.dropFirst().first ?? "") ?? 0
 			case "off": pane.setLane(parts.dropFirst().first ?? "", enabled: false)
 			case "on": pane.setLane(parts.dropFirst().first ?? "", enabled: true)
+			case "wobble": pane.wobbleSwitchForTesting(layer: parts.dropFirst().first ?? "")
 			case "seek": pane.seekForTesting(seconds: Double(parts.dropFirst().first ?? "") ?? 0)
 			case "caret":
 				if let line = Int(parts.dropFirst().first ?? ""),
