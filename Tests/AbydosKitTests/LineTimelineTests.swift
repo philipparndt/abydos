@@ -126,4 +126,27 @@ struct LineTimelineTests {
 		#expect(timeline.tracks[1].instrument == nil && timeline.tracks[1].plays.first?.pattern == nil, "an audio track")
 		#expect(try #require(LineTimeline(params: noted)).tracks.isEmpty, "a server before 774797f sends none")
 	}
+
+	/// As mat e72d7e5 sends it for a file the song includes: the song, the
+	/// files, and each reference's file.
+	@Test func anIncludedFilesTimelineNamesItsSongAndItsFiles() throws {
+		var included = noted
+		included["uri"] = "file:///songs/kit.song"
+		included["song"] = "file:///songs/song.song"
+		included["files"] = ["file:///songs/song.song", "file:///songs/kit.song"]
+		included["tracks"] = [[
+			"name": "drums", "file": 0, "line": 19, "layer": "drums", "instrument": "kit",
+			"instrumentFile": 1, "instrumentLine": 2,
+			"plays": [["file": 0, "line": 22, "pattern": "kicks", "patternFile": 1, "patternLine": 7, "start": 0.0, "end": 3.87, "pass": 1.935, "transpose": 0.0]],
+		]]
+		let timeline = try #require(LineTimeline(params: included))
+		#expect(timeline.song == "file:///songs/song.song")
+		#expect(timeline.files.count == 2)
+		let drums = try #require(timeline.tracks.first)
+		#expect(drums.file == 0 && drums.instrumentFile == 1)
+		#expect(drums.plays.first?.file == 0 && drums.plays.first?.patternFile == 1)
+		// Before includes: one file, and every line in it.
+		let single = try #require(LineTimeline(params: noted))
+		#expect(single.song == nil && single.files.isEmpty)
+	}
 }

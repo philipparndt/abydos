@@ -51,11 +51,14 @@ extension MainWindowController {
 			guard link.lastSaid != "playing" else { return }
 			link.lastSaid = "playing"
 			link.adapter.continued()
-		case let .stopped(line):
-			let said = "stopped \(line.map(String.init) ?? "pause")"
+		case let .stopped(file, line):
+			let said = "stopped \(file?.path ?? "") \(line.map(String.init) ?? "pause")"
 			guard link.lastSaid != said else { return }
 			link.lastSaid = said
-			link.adapter.stopped(line: line)
+			let index = file.flatMap { url in
+				link.target.files().firstIndex { FilePath.canonical(URL(fileURLWithPath: $0)) == FilePath.canonical(url) }
+			} ?? 0
+			link.adapter.stopped(line: line, file: index)
 		case .ended:
 			guard link.lastSaid != "ended" else { return }
 			link.lastSaid = "ended"
@@ -67,6 +70,7 @@ extension MainWindowController {
 		let program = FilePath.canonical(target.url)
 		let adapter = SongDebugAdapter(
 			program: program,
+			files: target.files,
 			timeline: target.timeline,
 			lineText: target.lineText,
 			now: { [weak target] in target?.pane?.currentSecondsForDebugger ?? 0 }
@@ -93,7 +97,7 @@ extension MainWindowController {
 	func songDebugReportForTesting() -> String {
 		guard let session = bottomPanel.activeDebugSession else { return "SONG-DEBUG: no session" }
 		let threads = session.threads.map { "\($0.id):\($0.name)" }.joined(separator: " | ")
-		let frames = session.stackFrames.map { "\($0.name)@\($0.line)" }.joined(separator: " > ")
+		let frames = session.stackFrames.map { "\($0.name)@\((($0.file ?? "") as NSString).lastPathComponent):\($0.line)" }.joined(separator: " > ")
 		let scopes = session.scopes.map { scope in
 			"\(scope.name){" + scope.variables.map { "\($0.name)=\($0.value)" }.joined(separator: ", ") + "}"
 		}.joined(separator: " ")

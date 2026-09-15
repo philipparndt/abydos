@@ -247,12 +247,55 @@ also serves every other editor mat is written in.
 `SongLanguageTests.aSongIsColoured` asks the engine; the capture of the shanty
 playing shows it coloured, with the notes under the playhead lit.
 
+### 12. Includes: a song of several files
+
+*Added 2026-09-15.* Asked: "and we should support includes". mat e72d7e5
+reads `include "kit.song"` as though the file were written at that line, a
+file included twice once, relative to the file the line is in; ce7deec gives
+the grammar the statement. `mat lsp` sends a `mat/timeline` for every file of
+the song, each with its own lines and with `song` and `files`, and every line a
+track names carries its file. An included file opened alone is analysed
+through the song that includes it — an open one first, the workspace's
+`*.song` otherwise. The render's manifest names its `sources`.
+
+In Abydos:
+
+- **A save of any source renders again.** The pane fingerprints every file the
+  last render read and watches each one's directory, none inside another; a
+  new pane on a song kept in the cache knows its sources before its first
+  render.
+- **The playhead reaches the included files' tabs.** The song's pane marks its
+  own tab and posts the news; every editor group lights the tabs whose
+  timeline names this song. The pane's own drawing still stops while it is out
+  of sight, but the marks and the breakpoints go on — an included file's tab
+  in front is exactly when they are wanted.
+- **Breakpoints in any file stop the song**, each placed by its own file's
+  timeline, whether the file is open or not; the earliest reached wins.
+- **The debugger's frames are in their files**: a pattern in the kit is two
+  frames in `kit.song` under `play beat x14` and `track drums` in `song.song`.
+- **An included file's own pane does not drive the song.** Found driving it:
+  `kit.song` opened beside the song has a pane of its own, silent, and it told
+  every file of the song the playhead was at 0 over the song's 4.35. A tab
+  whose timeline names another song is marked by that song's pane only.
+
+Driven on a copy of mat's `examples/include` (`song.song` including `kit.song`
+and `parts/bass.song`), with `open:kit.song` in front, 2026-09-15:
+
+| Step | Report |
+| --- | --- |
+| `timeline:13` on the kit | `song=song.song files=3`, the clap row "14 times: bars 3, 4, 5, …", first at 0:04.354 |
+| breakpoint on the kit's line 13, play | stopped at 0:04.354; the kit tab `playhead=4.35 stopped=13`, lines 3, 11–15 heard, a cell lit on rows 12–14 |
+| the debugger | `beat: x@kit.song:13 > beat: x@kit.song:14 > pattern beat · pass 1 of 14@kit.song:11 > play beat x14@song.song:24 > track drums@song.song:20` |
+| line 1 of the kit edited on disk | `runs=2` — the song rendered again |
+
 ## Risks / Trade-offs
 
 - [The keyword tables drift from the parser] → the parser's own
   `unknown_keyword` lists are the truth and the tables are typed by hand;
   a setting the parser gains is a line to add here. Worth a test that reads
   the parser's lists, when they are exposed.
+- [An included file's own pane] → it renders the file alone, which has no
+  tracks and is silent. It should show the song that includes it; not done.
 - [Full-text sync on every keystroke] → a song is a few hundred lines and
   the analysis is a lexer, a parser and an arranger over it, well under a
   millisecond; incremental sync buys nothing here.

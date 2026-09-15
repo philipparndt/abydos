@@ -45,6 +45,11 @@
       where their line starts; `timecode-click`, `song-columns`, `break` steps; driven.
 - [x] 2.7 `tree-sitter-song` in mat (d333880); vendored as
       `TreeSitterSongVendored`, registered as `song`; `aSongIsColoured`; captured.
+- [x] 2.8 Includes: mat e72d7e5 and ce7deec; the grammar re-vendored; the
+      manifest's `sources` fingerprinted and watched; the playhead and stops
+      posted to the included files' tabs; breakpoints across files; frames in
+      their files; an included file's pane kept from driving the song; driven
+      and captured.
 
 ## 3. Before finishing
 

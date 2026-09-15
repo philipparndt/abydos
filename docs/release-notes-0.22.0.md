@@ -38,6 +38,13 @@ pattern it plays, its stack is the note, pattern, `play` step and track, and
 continue, pause, step (a bar) and stop move the song. A program already being
 debugged keeps the debugger.
 
+## Songs with includes
+
+A song can `include "kit.song"` (musik-as-text e72d7e5). Saving an included file
+renders the song again; its tab shows the song's playhead, heard lines and
+playing notes; a breakpoint in it stops the song; and the debugger's stack goes
+through the files. An included file's own pane renders it alone, for now.
+
 ## A save renders only what it changed
 
 The song pane keeps each layer between renders, so a save that changes one

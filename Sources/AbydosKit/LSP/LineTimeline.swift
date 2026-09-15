@@ -27,6 +27,12 @@ public struct LineTimeline: Equatable, Sendable {
 	/// The tracks that are heard and what each plays when — the threads of a
 	/// song being debugged. mat 774797f on.
 	public var tracks: [Track] = []
+	/// The song this file is heard in, as a URI: itself, or the song that
+	/// includes it. Nil from a server before includes.
+	public var song: String?
+	/// Every file of the song, as URIs, the song first; what the file indexes
+	/// in `tracks` count. Empty from a server before includes.
+	public var files: [String] = []
 
 	/// A heard track: lines 0-based.
 	public struct Track: Equatable, Sendable {
@@ -36,14 +42,22 @@ public struct LineTimeline: Equatable, Sendable {
 		public var instrument: String?
 		public var instrumentLine: Int?
 		public var plays: [Play]
+		/// Which of `files` the header is in, and the instrument's.
+		public var file: Int
+		public var instrumentFile: Int?
 
-		public init(name: String, line: Int, layer: String, instrument: String?, instrumentLine: Int?, plays: [Play]) {
+		public init(
+			name: String, line: Int, layer: String, instrument: String?, instrumentLine: Int?, plays: [Play],
+			file: Int = 0, instrumentFile: Int? = nil
+		) {
 			self.name = name
 			self.line = line
 			self.layer = layer
 			self.instrument = instrument
 			self.instrumentLine = instrumentLine
 			self.plays = plays
+			self.file = file
+			self.instrumentFile = instrumentFile ?? (instrumentLine == nil ? nil : 0)
 		}
 	}
 
@@ -56,8 +70,14 @@ public struct LineTimeline: Equatable, Sendable {
 		public var end: Double
 		public var pass: Double
 		public var transpose: Double
+		/// Which of `files` the step is in, and the pattern's header.
+		public var file: Int
+		public var patternFile: Int?
 
-		public init(line: Int, pattern: String?, patternLine: Int?, start: Double, end: Double, pass: Double, transpose: Double = 0) {
+		public init(
+			line: Int, pattern: String?, patternLine: Int?, start: Double, end: Double, pass: Double,
+			transpose: Double = 0, file: Int = 0, patternFile: Int? = nil
+		) {
 			self.line = line
 			self.pattern = pattern
 			self.patternLine = patternLine
@@ -65,6 +85,8 @@ public struct LineTimeline: Equatable, Sendable {
 			self.end = end
 			self.pass = pass
 			self.transpose = transpose
+			self.file = file
+			self.patternFile = patternFile ?? (patternLine == nil ? nil : 0)
 		}
 	}
 
@@ -130,6 +152,9 @@ public struct LineTimeline: Equatable, Sendable {
 			if !ranges.isEmpty { spans[line] = ranges }
 		}
 		self.init(seconds: seconds, barSeconds: Self.number(params["barSeconds"]) ?? 0, spans: spans, notes: notes)
+		song = params["song"] as? String
+		files = params["files"] as? [String] ?? []
+		func index(_ value: Any?) -> Int? { (value as? NSNumber)?.intValue }
 		tracks = (params["tracks"] as? [[String: Any]] ?? []).compactMap { entry -> Track? in
 			guard let name = entry["name"] as? String, let line = (entry["line"] as? NSNumber)?.intValue else { return nil }
 			let plays = (entry["plays"] as? [[String: Any]] ?? []).compactMap { play -> Play? in
@@ -140,13 +165,15 @@ public struct LineTimeline: Equatable, Sendable {
 					line: line, pattern: play["pattern"] as? String,
 					patternLine: (play["patternLine"] as? NSNumber)?.intValue,
 					start: start, end: end, pass: Self.number(play["pass"]) ?? (end - start),
-					transpose: Self.number(play["transpose"]) ?? 0
+					transpose: Self.number(play["transpose"]) ?? 0,
+					file: index(play["file"]) ?? 0, patternFile: index(play["patternFile"])
 				)
 			}
 			return Track(
 				name: name, line: line, layer: entry["layer"] as? String ?? name,
 				instrument: entry["instrument"] as? String,
-				instrumentLine: (entry["instrumentLine"] as? NSNumber)?.intValue, plays: plays
+				instrumentLine: (entry["instrumentLine"] as? NSNumber)?.intValue, plays: plays,
+				file: index(entry["file"]) ?? 0, instrumentFile: index(entry["instrumentFile"])
 			)
 		}
 	}

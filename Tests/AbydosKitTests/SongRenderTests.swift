@@ -232,4 +232,15 @@ struct SongRenderTests {
 		#expect(SongRender.renderedLine(in: said) == "rendered 1:10.6 in 0.83s (85x realtime), peak -1.0 dBFS, rms -16.0 dBFS")
 		#expect(SongRender.renderedLine(in: "wrote /tmp/x/mix.wav") == nil)
 	}
+
+	/// mat e72d7e5 on: every file the song was read from, the song first.
+	@Test func theManifestSaysWhichFilesTheSongWasReadFrom() throws {
+		let json = """
+		{ "bar_seconds": 1.935, "seconds": 30.97, "tempo": 124, "layers": [],
+		  "sources": ["/songs/include/song.song", "/songs/include/kit.song", "/songs/include/parts/bass.song"] }
+		"""
+		let read = try SongRender.manifest(from: Data(json.utf8))
+		#expect(read.sources == ["/songs/include/song.song", "/songs/include/kit.song", "/songs/include/parts/bass.song"])
+		#expect(try SongRender.manifest(from: Data(manifest.utf8)).sources.isEmpty, "an older mat says none")
+	}
 }

@@ -125,6 +125,18 @@ extension EditorViewController {
 		}
 	}
 
+	/// Whether a tab's file is the song its lines are heard in, rather than a
+	/// file some song includes.
+	///
+	/// **Found driving includes**: `kit.song` opened beside the song has a pane
+	/// of its own, playing nothing, and it told the kit's tab — and, through
+	/// the news, every file of the song — that the playhead was at 0, over the
+	/// song's pane saying 4.35. An included file is marked by its song's pane.
+	static func isItsOwnSong(_ tab: Tab) -> Bool {
+		guard let song = tab.codeView?.timeline?.song else { return true }
+		return same(song, LanguageService.shared.uri(for: tab.url))
+	}
+
 	/// A song's sound beside its text — see `SongPreviewView`.
 	///
 	/// Wired both ways: the caret tells the pane which block it is in, and a
@@ -146,23 +158,62 @@ extension EditorViewController {
 		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
 		// The playhead through the source's timeline bars, and a click on a bar
 		// seeks the song.
-		view.onPlayhead = { [weak tab] seconds, marking in tab?.codeView?.setSongPlayhead(seconds, marking: marking) }
+		view.onPlayhead = { [weak tab] seconds, marking in
+			guard let tab, let codeView = tab.codeView, Self.isItsOwnSong(tab) else { return }
+			codeView.setSongPlayhead(seconds, marking: marking)
+			// The files it includes, in whatever tab or group they are open.
+			guard let song = codeView.timeline, song.files.count > 1 else { return }
+			SongNews.playhead(song: song.files[0], seconds: seconds, marking: marking)
+		}
 		// Breakpoints on a song's lines stop it where the line starts to be
 		// heard: the ones the gutter holds, enabled, placed by the timeline.
-		view.breakpointAhead = { [weak tab] from, to in
-			guard let codeView = tab?.codeView, let timeline = codeView.timeline else { return nil }
-			let lines = Set(codeView.breakpointLines.filter { $0.value.isEnabled }.keys)
-			return lines.isEmpty ? nil : timeline.breakpoint(in: lines, from: from, to: to)
+		view.breakpointAhead = { [weak self, weak tab] from, to in
+			guard let self, let tab, Self.isItsOwnSong(tab), let codeView = tab.codeView, let timeline = codeView.timeline else { return nil }
+			let own = Set(codeView.breakpointLines.filter { $0.value.isEnabled }.keys)
+			var best = own.isEmpty ? nil : timeline.breakpoint(in: own, from: from, to: to).map { ($0.line, $0.seconds, URL?.none) }
+			// And the breakpoints in the files it includes, placed by their own
+			// timelines, whether or not they are open.
+			for uri in timeline.files.dropFirst() {
+				guard let url = URL(string: uri), let placed = LanguageService.shared.timeline(for: url) else { continue }
+				let lines = Set((self.breakpointsByFile[FilePath.canonical(url)] ?? [:]).filter { $0.value.isEnabled }.map { $0.key - 1 })
+				guard !lines.isEmpty, let hit = placed.breakpoint(in: lines, from: from, to: to) else { continue }
+				func reach(_ seconds: Double) -> Double { seconds > from ? seconds - from : seconds + timeline.seconds - from }
+				if best.map({ reach(hit.seconds) < reach($0.1) }) ?? true { best = (hit.line, hit.seconds, url) }
+			}
+			return best.map { (line: $0.0, seconds: $0.1, file: $0.2) }
 		}
-		view.onBreakpointStop = { [weak tab] line in tab?.codeView?.setSongStoppedLine(line) }
+		view.onBreakpointStop = { [weak tab] file, line in
+			guard let tab, Self.isItsOwnSong(tab) else { return }
+			guard let song = tab.codeView?.timeline, song.files.count > 1 else {
+				tab.codeView?.setSongStoppedLine(line)
+				return
+			}
+			SongNews.stopped(song: song.files[0], file: file.map { LanguageService.shared.uri(for: $0) } ?? song.files[0], line: line)
+		}
 		// The debugger over the song: what it plays, and what it needs to say
 		// where it is.
+		let lines = SongLineCache()
 		let target = SongDebugTarget(
 			pane: view, url: tab.url,
-			timeline: { [weak tab] in tab?.codeView?.timeline },
-			lineText: { [weak tab] line in
-				guard let rope = tab?.document?.rope, line >= 0, line < rope.lineCount else { return nil }
-				return rope.string(in: rope.lineByteRange(line))
+			files: { [weak tab] in
+				guard let tab else { return [] }
+				let files = (tab.codeView?.timeline?.files ?? []).compactMap { URL(string: $0)?.path }
+				return files.isEmpty ? [FilePath.canonical(tab.url)] : files
+			},
+			timeline: { [weak tab] index in
+				guard let song = tab?.codeView?.timeline else { return nil }
+				guard index > 0 else { return song }
+				guard song.files.indices.contains(index), let url = URL(string: song.files[index]) else { return nil }
+				return LanguageService.shared.timeline(for: url)
+			},
+			lineText: { [weak tab, lines] file, line in
+				if file == 0 {
+					guard let rope = tab?.document?.rope, line >= 0, line < rope.lineCount else { return nil }
+					return rope.string(in: rope.lineByteRange(line))
+				}
+				guard let song = tab?.codeView?.timeline, song.files.indices.contains(file),
+				      let url = URL(string: song.files[file]) else { return nil }
+				return lines.line(line, of: url.path)
 			}
 		)
 		view.onPlaybackChange = { [weak self, target] change in self?.onSongPlayback?(target, change) }

@@ -46,9 +46,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var onPlayhead: ((_ seconds: Double?, _ marking: Bool) -> Void)?
 	/// The first enabled breakpoint playing reaches between two moments, from
 	/// the source's timeline; nil for none.
-	var breakpointAhead: ((_ from: Double, _ to: Double) -> (line: Int, seconds: Double)?)?
+	var breakpointAhead: ((_ from: Double, _ to: Double) -> (line: Int, seconds: Double, file: URL?)?)?
 	/// The line a breakpoint stopped the song on, and nil when it plays on.
-	var onBreakpointStop: ((Int?) -> Void)?
+	var onBreakpointStop: ((_ file: URL?, _ line: Int?) -> Void)?
 	/// Playing, pausing, stopping on a breakpoint, running out, and the
 	/// playhead moving: what a debugger over the song is told.
 	var onPlaybackChange: ((SongPlaybackChange) -> Void)?
@@ -57,8 +57,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private var lastFollowed: Double?
 	/// The line a breakpoint stopped playing on, until play or a seek.
 	private var stoppedLine: Int? {
-		didSet { if stoppedLine != oldValue { onBreakpointStop?(stoppedLine) } }
+		didSet { if stoppedLine != oldValue { onBreakpointStop?(stoppedFile, stoppedLine) } }
 	}
+	/// The included file the stop's line is in; nil for the song's own.
+	private var stoppedFile: URL?
 	/// Told whenever playing starts or stops, so the tab can show a speaker.
 	var onPlayingChanged: ((Bool) -> Void)?
 
@@ -98,7 +100,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private var rendered: Rendered?
 	private var running: Process?
 	private var pending: DispatchWorkItem?
-	private var watcher: FileSystemWatcher?
+	/// One per directory a source is in, none inside another.
+	private var watchers: [String: FileSystemWatcher] = [:]
+	/// The files the last render read, the song first; the song alone before.
+	private var sources: [URL] = []
+	private var watchedSources: [URL] { sources.isEmpty ? [url] : sources }
 	private var fingerprint: String?
 	private var runs = 0
 	private var analysis: (flag: CancelFlag, task: Task<Void, Never>)?
@@ -147,6 +153,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			show(notice: "Waiting to render \(url.lastPathComponent)…")
 			whenShown = { [weak self] in
 				guard let self else { return }
+				// The files it was read from last time, so the fingerprint asks
+				// about all of them.
+				if let known = SongRenderCache.shared.manifest(for: self.url) {
+					self.sources = known.sources.map { URL(fileURLWithPath: $0) }
+				}
 				self.watch()
 				// The last render of this file, when the file has not changed
 				// since: the pane before this one was torn down with its tab, and
@@ -319,12 +330,34 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// change to one of them is a change to the sound, but the file somebody
 	/// edits is the song — and a render on every write to the directory would
 	/// render when the project's own tools write beside it.
+	///
+	/// Every source's directory since includes (mat e72d7e5): a song made of
+	/// three files is changed by a save of any, and an included kit can sit
+	/// beside the song, below it or above it.
 	private func watch() {
-		let watcher = FileSystemWatcher(root: url.deletingLastPathComponent()) { [weak self] _ in
-			DispatchQueue.main.async { self?.fileChanged() }
+		let directories = Set(watchedSources.map { $0.deletingLastPathComponent().standardizedFileURL.path })
+		// FSEvents watches a tree, so a directory inside another is watched already.
+		let roots = directories.filter { directory in
+			!directories.contains { $0 != directory && directory.hasPrefix($0 + "/") }
 		}
-		watcher.start()
-		self.watcher = watcher
+		for gone in Set(watchers.keys).subtracting(roots) {
+			watchers.removeValue(forKey: gone)
+		}
+		for root in roots where watchers[root] == nil {
+			let watcher = FileSystemWatcher(root: URL(fileURLWithPath: root, isDirectory: true)) { [weak self] _ in
+				DispatchQueue.main.async { self?.fileChanged() }
+			}
+			watcher.start()
+			watchers[root] = watcher
+		}
+	}
+
+	/// The files a manifest says the song was read from.
+	private func adoptSources(of manifest: SongRender.Manifest) {
+		let read = manifest.sources.map { URL(fileURLWithPath: $0) }
+		guard read != sources else { return }
+		sources = read
+		watch()
 	}
 
 	private func fileChanged() {
@@ -337,8 +370,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// Size and date rather than the event: an event says something in the
 	/// directory happened, and most of what happens is not the song.
 	private func currentFingerprint() -> String {
-		let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-		return "\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values?.fileSize ?? 0)"
+		watchedSources.map { source in
+			let values = try? source.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+			return "\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values?.fileSize ?? 0)"
+		}.joined(separator: ";")
 	}
 
 	private func renderIfChanged() {
@@ -449,6 +484,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		lastDiagnostics = []
 		errorStrip.isHidden = true
 		infoLabel.stringValue = Self.info(of: manifest, rendered: SongRender.renderedLine(in: output))
+		let before = sources
+		adoptSources(of: manifest)
+		// A render that found more files than were being fingerprinted: this
+		// render is of them, and it is not a change to render again for.
+		if sources != before { fingerprint = currentFingerprint() }
 		load(directory: directory, manifest: manifest, mix: mixURL, kept: nil)
 	}
 
@@ -741,7 +781,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		} else if let playback, playback.duration > 0, !playback.isLooping, playback.currentSeconds >= playback.duration - 0.05 {
 			onPlaybackChange?(.ended)
 		} else if playback != nil {
-			onPlaybackChange?(.stopped(line: stoppedLine))
+			onPlaybackChange?(.stopped(file: stoppedLine == nil ? nil : stoppedFile, line: stoppedLine))
 		}
 	}
 
@@ -749,19 +789,22 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let now = playback?.currentSeconds ?? 0
 		let from = lastFollowed
 		lastFollowed = now
-		guard window != nil || !isPlaying else { return }
 		// Stopped exactly on the breakpoint's moment, whatever of the frame
 		// since the last tick was already heard past it.
 		if isPlaying, let playback, let from, let stop = breakpointAhead?(from, now) {
 			playback.pause()
 			playback.seek(toSeconds: stop.seconds)
 			lastFollowed = stop.seconds
+			stoppedFile = stop.file
 			stoppedLine = stop.line
 			playingChanged()
 			return
 		}
 		onPlayhead?(playback == nil ? nil : now, isPlaying || stoppedLine != nil)
 		if isPlaying { onPlaybackChange?(.tick) }
+		// The pane's own drawing only while it is shown; the source's marks and
+		// breakpoints above go on, since an included file's tab can be in front.
+		guard window != nil || !isPlaying else { return }
 		canvas.playhead = now
 		if isPlaying { canvas.follow(now) }
 		var clock = "\(AudioFileView.clock(now, milliseconds: true)) / \(AudioFileView.clock(duration))"

@@ -95,6 +95,12 @@ extension EditorViewController {
 			name: .abydosTimelineChanged,
 			object: nil
 		)
+		NotificationCenter.default.addObserver(
+			self, selector: #selector(songPlayheadMoved(_:)), name: .abydosSongPlayhead, object: nil
+		)
+		NotificationCenter.default.addObserver(
+			self, selector: #selector(songStopped(_:)), name: .abydosSongStopped, object: nil
+		)
 		// The project's servers changed which machine they are on, so every file
 		// open here has to be opened again at the one that answers for it now —
 		// the same thing a subproject scope change does, for the same reason.

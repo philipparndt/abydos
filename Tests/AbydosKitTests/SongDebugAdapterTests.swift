@@ -106,4 +106,31 @@ struct SongDebugAdapterTests {
 		#expect(paused == 1, "disconnect is its own verb")
 		#expect(said.contains { $0["event"] as? String == "terminated" })
 	}
+
+	/// A song whose pattern is in an included kit: the pattern's frames are in
+	/// the kit, the play step and the track in the song.
+	@Test func aFrameIsInTheFileItsLineIsIn() {
+		let kit = ["# kit", "pattern beat grid=1/8", "  kick X...X..."]
+		let song = LineTimeline(seconds: 2, barSeconds: 2, spans: [:])
+		var withTracks = song
+		withTracks.files = ["file:///songs/song.song", "file:///songs/kit.song"]
+		withTracks.tracks = [.init(
+			name: "drums", line: 4, layer: "drums", instrument: nil, instrumentLine: nil,
+			plays: [.init(line: 5, pattern: "beat", patternLine: 1, start: 0, end: 2, pass: 2, patternFile: 1)]
+		)]
+		let placedKit = LineTimeline(
+			seconds: 2, barSeconds: 2, spans: [2: [0...2]],
+			notes: [2: .init(passes: [0], notes: [.init(start: 0, end: 0.25, columns: 7..<8), .init(start: 1, end: 1.25, columns: 11..<12)])]
+		)
+		let adapter = SongDebugAdapter(
+			program: "/songs/song.song", files: { ["/songs/song.song", "/songs/kit.song"] },
+			timeline: { $0 == 0 ? withTracks : placedKit },
+			lineText: { file, line in file == 1 && kit.indices.contains(line) ? kit[line] : nil },
+			now: { 1.1 }
+		)
+		let frames = adapter.frames(thread: 1, at: 1.1)
+		#expect(frames.map(\.name) == ["beat: X", "pattern beat · pass 1 of 1", "play beat", "track drums"])
+		#expect(frames.map(\.file) == [1, 1, 0, 0])
+		#expect(frames.map(\.line) == [3, 2, 6, 5])
+	}
 }

@@ -153,3 +153,22 @@ Asked for 2026-09-15.
 - **WHEN** the file is opened
 - **THEN** `pattern` is a keyword, `verse` a function, `A4` a constant and a
   comment above it a comment
+
+
+### Requirement: A song's includes are part of it in the editor
+
+For a song that includes other files, a save of any of them SHALL render the
+song again, the tabs of the included files SHALL show the song's playhead, the
+lines heard and the notes playing as the song's own tab does, a breakpoint in
+an included file SHALL stop the song, and the debugger's frames SHALL be in the
+files their lines are in. A pane opened on an included file SHALL NOT mark the
+song's files.
+
+Asked for 2026-09-15.
+
+#### Scenario: a breakpoint in the kit
+
+- **GIVEN** `song.song` including `kit.song`, and a breakpoint on the kit's clap row
+- **WHEN** the song plays to 0:04.354
+- **THEN** it stops there, the kit's tab marks line 13 as stopped, and the
+  stack runs from `kit.song:13` to `track drums` in `song.song`

@@ -213,6 +213,10 @@ public enum SongRender {
 		/// The master limiter's ceiling in dBFS, when the manifest carries the
 		/// master; nil when the limiter is off or the manifest is older.
 		public var limiterCeilingDb: Double?
+		/// Every file the song was read from, absolute, the song first: a save
+		/// of any of them is a change to the sound. mat e72d7e5 on; empty
+		/// before, and then the song is its only source.
+		public var sources: [String] = []
 
 		public init(
 			title: String? = nil, tempo: Double, meter: [Int], barSeconds: Double,
@@ -289,7 +293,7 @@ public enum SongRender {
 		let mixing = top["mixing"] as? [String: Any]
 		let limiter = (top["master"] as? [String: Any])?["limiter"] as? [String: Any]
 		let limiterOn = (limiter?["enabled"] as? Bool) ?? false
-		return Manifest(
+		var made = Manifest(
 			title: top["title"] as? String,
 			tempo: number(top["tempo"]) ?? 0,
 			meter: (top["meter"] as? [Any])?.compactMap { number($0).map(Int.init) } ?? [4, 4],
@@ -300,6 +304,8 @@ public enum SongRender {
 			stemsPeakDb: number(mixing?["sum_peak_db"]),
 			limiterCeilingDb: limiterOn ? number(limiter?["ceiling_db"]) : nil
 		)
+		made.sources = top["sources"] as? [String] ?? []
+		return made
 	}
 
 	private static func number(_ value: Any?) -> Double? {

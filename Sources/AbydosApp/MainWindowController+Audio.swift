@@ -166,6 +166,13 @@ extension MainWindowController {
 		case "wave", "spectrum", "both": pane.showForTesting(mode: step)
 		case "play": pane.playForTesting()
 		case "loop": pane.loopForTesting()
+		case _ where step.hasPrefix("open:"):
+			// `open:<path>` — another file, relative to the song, in the same
+			// group: an included file's tab in front while the song plays.
+			if let song = editor.activeGroup?.activeTab?.url {
+				let path = String(step.dropFirst("open:".count))
+				editor.open(fileURL: song.deletingLastPathComponent().appendingPathComponent(path), focusEditor: false)
+			}
 		case "reopen":
 			// The tab closed and the file opened again — a new pane, which is
 			// what going to another file and back makes. The rest of the steps
@@ -211,6 +218,9 @@ extension MainWindowController {
 					+ " columns=\(codeView.map { "codes:\($0.showsTimeCodes ? "on" : "off"),bars:\($0.showsTimelineBars ? "on" : "off")" } ?? "none")"
 					+ " sounding=[\((codeView?.soundingLines ?? []).sorted().map { String($0 + 1) }.joined(separator: ","))]"
 					+ " stopped=\(codeView?.songStoppedLine.map { String($0 + 1) } ?? "none")"
+					+ " file=\(editor.activeGroup?.activeTab?.url.lastPathComponent ?? "none")"
+					+ " song=\(timeline?.song.flatMap { URL(string: $0)?.lastPathComponent } ?? "none")"
+					+ " files=\(timeline?.files.count ?? 0)"
 					+ " notes=\(timeline?.notes[line - 1].map { "\($0.notes.count)x\($0.passes.count)" } ?? "none")"
 					+ " playing=[\((codeView?.playingNotes ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key + 1):" + $0.value.map { "\($0.lowerBound)-\($0.upperBound)" }.joined(separator: "+") }.joined(separator: " "))]"
 					+ " pane-stopped=\(pane.stoppedLineForTesting.map { String($0 + 1) } ?? "none")"

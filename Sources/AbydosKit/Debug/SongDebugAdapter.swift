@@ -18,9 +18,14 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 
 	/// The song's file, which every frame is in.
 	public let program: String
-	private let placedTimeline: () -> LineTimeline?
-	/// A line of the song as it is now, 0-based.
-	private let lineText: (Int) -> String?
+	/// The song's files as paths, the song first. Since includes a frame can
+	/// be in any of them.
+	private let files: () -> [String]
+	/// Where the lines of one of `files` are heard; the song's, at 0, holds
+	/// the tracks.
+	private let placedTimeline: (Int) -> LineTimeline?
+	/// A line of one of `files`, both 0-based.
+	private let lineText: (Int, Int) -> String?
 	/// Where the song is, in seconds.
 	private let now: () -> Double
 
@@ -35,26 +40,41 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 	private var sequence = 1
 	private var configured = false
 	/// Where the song was when it last stopped, for the stack of a stop.
-	private var stoppedAt: (seconds: Double, line: Int?)?
+	private var stoppedAt: (seconds: Double, line: Int?, file: Int)?
 	private var lastThreadNames: [String] = []
 	private var lastTops: [String] = []
 	private var lastMoveSaid = Date.distantPast
 
-	public init(program: String, timeline: @escaping () -> LineTimeline?, lineText: @escaping (Int) -> String?, now: @escaping () -> Double) {
+	public init(
+		program: String, files: @escaping () -> [String], timeline: @escaping (Int) -> LineTimeline?,
+		lineText: @escaping (Int, Int) -> String?, now: @escaping () -> Double
+	) {
 		self.program = program
+		self.files = files
 		self.placedTimeline = timeline
 		self.lineText = lineText
 		self.now = now
 	}
 
+	/// A song of one file.
+	public convenience init(
+		program: String, timeline: @escaping () -> LineTimeline?, lineText: @escaping (Int) -> String?, now: @escaping () -> Double
+	) {
+		self.init(
+			program: program, files: { [program] }, timeline: { $0 == 0 ? timeline() : nil },
+			lineText: { $0 == 0 ? lineText($1) : nil }, now: now
+		)
+	}
+
 	// MARK: - What the song says
 
-	/// The song paused: on a breakpoint's line (0-based), or where it was.
-	public func stopped(line: Int?) {
+	/// The song paused: on a breakpoint's line (0-based) in one of its files,
+	/// or where it was.
+	public func stopped(line: Int?, file: Int = 0) {
 		guard configured else { return }
 		let seconds = now()
-		stoppedAt = (seconds, line)
-		let thread = line.flatMap { threadHearing(line: $0, at: seconds) } ?? threads(at: seconds).first?.id ?? 1
+		stoppedAt = (seconds, line, file)
+		let thread = line.flatMap { threadHearing(line: $0, file: file, at: seconds) } ?? threads(at: seconds).first?.id ?? 1
 		event("stopped", [
 			"reason": line == nil ? "pause" : "breakpoint",
 			"threadId": thread,
@@ -106,11 +126,13 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 		/// 1-based, as the protocol is asked for.
 		public var line: Int
 		public var column: Int
+		/// Which of the song's files, 0 the song.
+		public var file: Int = 0
 	}
 
 	/// One thread per heard track, named for what it is playing now.
 	public func threads(at seconds: Double) -> [(id: Int, name: String)] {
-		guard let timeline = placedTimeline() else { return [] }
+		guard let timeline = placedTimeline(0) else { return [] }
 		return timeline.tracks.enumerated().map { index, track in
 			let what: String
 			if let play = play(of: track, at: seconds) {
@@ -126,30 +148,31 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 
 	/// A track's stack at a moment, innermost first.
 	public func frames(thread: Int, at seconds: Double) -> [Frame] {
-		guard let timeline = placedTimeline(), timeline.tracks.indices.contains(thread - 1) else { return [] }
+		guard let timeline = placedTimeline(0), timeline.tracks.indices.contains(thread - 1) else { return [] }
 		let track = timeline.tracks[thread - 1]
-		var frames: [(name: String, line: Int, column: Int)] = []
+		var frames: [(name: String, line: Int, column: Int, file: Int)] = []
 		if let play = play(of: track, at: seconds) {
 			let passes = max(1, Int(((play.end - play.start) / max(play.pass, 0.001)).rounded()))
 			if let patternLine = play.patternLine, let pattern = play.pattern, play.pass > 0 {
 				let pass = min(passes - 1, max(0, Int(((seconds + LineTimeline.slack - play.start) / play.pass).rounded(.down))))
 				let passStart = play.start + Double(pass) * play.pass
-				for note in sounding(in: patternLine, pattern: pattern, passStart: passStart, at: seconds, timeline: timeline) {
+				let patternFile = play.patternFile ?? 0
+				for note in sounding(in: patternLine, file: patternFile, pattern: pattern, passStart: passStart, at: seconds, song: timeline) {
 					frames.append(note)
 				}
-				frames.append(("pattern \(pattern) · pass \(pass + 1) of \(passes)", patternLine, 0))
+				frames.append(("pattern \(pattern) · pass \(pass + 1) of \(passes)", patternLine, 0, patternFile))
 			}
-			frames.append(("play \(play.pattern ?? "audio")\(passes > 1 ? " x\(passes)" : "")", play.line, 0))
+			frames.append(("play \(play.pattern ?? "audio")\(passes > 1 ? " x\(passes)" : "")", play.line, 0, play.file))
 		}
-		frames.append(("track \(track.name)", track.line, 0))
+		frames.append(("track \(track.name)", track.line, 0, track.file))
 		// A stop on a breakpoint is where the program is: the frames inside the
 		// line it stopped on are not reached yet.
 		if let stop = stoppedAt, abs(stop.seconds - seconds) < 0.001, let line = stop.line,
-		   let index = frames.firstIndex(where: { $0.line == line }) {
+		   let index = frames.firstIndex(where: { $0.line == line && $0.file == stop.file }) {
 			frames.removeFirst(index)
 		}
 		return frames.enumerated().map { depth, frame in
-			Frame(id: thread * 100 + depth, name: frame.name, line: frame.line + 1, column: frame.column + 1)
+			Frame(id: thread * 100 + depth, name: frame.name, line: frame.line + 1, column: frame.column + 1, file: frame.file)
 		}
 	}
 
@@ -161,39 +184,52 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 	/// The notes a pass of a pattern is on: its lines, from its header to the
 	/// next header anything names, that have a note sounding.
 	private func sounding(
-		in patternLine: Int, pattern: String, passStart: Double, at seconds: Double, timeline: LineTimeline
-	) -> [(name: String, line: Int, column: Int)] {
-		let headers = Set(timeline.tracks.flatMap { track in
-			[track.line] + [track.instrumentLine].compactMap { $0 } + track.plays.compactMap(\.patternLine)
-		})
+		in patternLine: Int, file: Int, pattern: String, passStart: Double, at seconds: Double, song: LineTimeline
+	) -> [(name: String, line: Int, column: Int, file: Int)] {
+		// The headers of the pattern's own file: where its lines end.
+		var headers = Set<Int>()
+		for track in song.tracks {
+			if track.file == file { headers.insert(track.line) }
+			if track.instrumentFile == file, let line = track.instrumentLine { headers.insert(line) }
+			for play in track.plays where play.patternFile == file {
+				if let line = play.patternLine { headers.insert(line) }
+			}
+		}
+		guard let placed = placedTimeline(file) else { return [] }
 		let end = headers.filter { $0 > patternLine }.min() ?? Int.max
 		let into = seconds + LineTimeline.slack - passStart
-		var found: [(name: String, line: Int, column: Int)] = []
-		for (line, placed) in timeline.notes.sorted(by: { $0.key < $1.key }) where line > patternLine && line < end {
-			guard placed.passes.contains(where: { abs($0 - passStart) < 0.002 }) else { continue }
-			for note in placed.notes where note.start <= into && into < note.end {
-				found.append(("\(pattern): \(token(line: line, columns: note.columns))", line, note.columns.lowerBound))
+		var found: [(name: String, line: Int, column: Int, file: Int)] = []
+		for (line, notes) in placed.notes.sorted(by: { $0.key < $1.key }) where line > patternLine && line < end {
+			guard notes.passes.contains(where: { abs($0 - passStart) < 0.002 }) else { continue }
+			for note in notes.notes where note.start <= into && into < note.end {
+				found.append(("\(pattern): \(token(file: file, line: line, columns: note.columns))", line, note.columns.lowerBound, file))
 				break
 			}
 		}
 		return found
 	}
 
-	private func token(line: Int, columns: Range<Int>) -> String {
-		guard let text = lineText(line) as NSString?, columns.upperBound <= text.length else { return "note" }
+	private func token(file: Int, line: Int, columns: Range<Int>) -> String {
+		guard let text = lineText(file, line) as NSString?, columns.upperBound <= text.length else { return "note" }
 		return text.substring(with: NSRange(location: columns.lowerBound, length: columns.count))
 	}
 
-	private func threadHearing(line: Int, at seconds: Double) -> Int? {
+	private func threadHearing(line: Int, file: Int, at seconds: Double) -> Int? {
 		threads(at: seconds).first { thread in
-			frames(thread: thread.id, at: seconds).contains { $0.line == line + 1 }
+			frames(thread: thread.id, at: seconds).contains { $0.line == line + 1 && $0.file == file }
 		}?.id
+	}
+
+	/// A file of the song as a path, the song's own when it is not known.
+	private func path(of file: Int) -> String {
+		let known = files()
+		return known.indices.contains(file) ? known[file] : program
 	}
 
 	/// What a frame's scopes hold: the moment, the track, and every note it
 	/// has sounding.
 	public func variables(frame: Int, scope: Int, at seconds: Double) -> [(name: String, value: String)] {
-		guard let timeline = placedTimeline() else { return [] }
+		guard let timeline = placedTimeline(0) else { return [] }
 		let thread = frame / 100
 		guard timeline.tracks.indices.contains(thread - 1) else { return [] }
 		let track = timeline.tracks[thread - 1]
@@ -221,7 +257,10 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 		default:
 			return frames(thread: thread, at: seconds)
 				.filter { $0.name.contains(": ") }
-				.map { ("Line \($0.line)", String($0.name.split(separator: ":", maxSplits: 1).last ?? "").trimmingCharacters(in: .whitespaces)) }
+				.map { frame in
+					let place = frame.file == 0 ? "Line \(frame.line)" : "\((path(of: frame.file) as NSString).lastPathComponent):\(frame.line)"
+					return (place, String(frame.name.split(separator: ":", maxSplits: 1).last ?? "").trimmingCharacters(in: .whitespaces))
+				}
 		}
 	}
 
@@ -264,7 +303,7 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 				"stackFrames": frames.map { frame in
 					[
 						"id": frame.id, "name": frame.name, "line": frame.line, "column": frame.column,
-						"source": ["path": program, "name": (program as NSString).lastPathComponent],
+						"source": ["path": path(of: frame.file), "name": (path(of: frame.file) as NSString).lastPathComponent],
 					] as [String: Any]
 				},
 				"totalFrames": frames.count,
@@ -288,10 +327,10 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 			// A step is a bar: the song goes to the start of the next one and
 			// stops there, which is the one unit every track shares.
 			reply()
-			guard let bar = placedTimeline()?.barSeconds, bar > 0 else { return }
+			guard let bar = placedTimeline(0)?.barSeconds, bar > 0 else { return }
 			let next = ((seconds + LineTimeline.slack) / bar).rounded(.down) * bar + bar
 			onStep(next)
-			stoppedAt = (now(), nil)
+			stoppedAt = (now(), nil, 0)
 			event("stopped", ["reason": "step", "threadId": arguments["threadId"] as? Int ?? 1, "allThreadsStopped": true])
 		case "disconnect", "terminate":
 			reply()

@@ -45,6 +45,12 @@ final class SongRenderCache {
 
 	/// The last render of `song`, when the file is still what it was rendered
 	/// from.
+	/// The last manifest kept for a song, whatever its fingerprint: which
+	/// files it was read from, for fingerprinting them all.
+	func manifest(for song: URL) -> SongRender.Manifest? {
+		entries[key(song)]?.manifest
+	}
+
 	func entry(for song: URL, fingerprint: String) -> Entry? {
 		guard let entry = entries[key(song)], entry.fingerprint == fingerprint else { return nil }
 		return entry

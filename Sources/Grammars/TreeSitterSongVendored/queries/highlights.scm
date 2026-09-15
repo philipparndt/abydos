@@ -13,6 +13,7 @@
   "meter"
   "swing"
   "seed"
+  "include"
   "section"
   "instrument"
   "preset"
