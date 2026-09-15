@@ -204,6 +204,14 @@ extension EditorViewController {
 		project?.place(of: url)
 	}
 
+	/// Which of a song's gutter columns show, as the settings say.
+	func applySongColumns() {
+		for tab in tabs {
+			tab.codeView?.showsTimeCodes = Settings.shared.songTimeCodes
+			tab.codeView?.showsTimelineBars = Settings.shared.songTimelineBars
+		}
+	}
+
 	/// Flips soft wrap for every open editor and remembers the choice.
 	func toggleWordWrap() {
 		let enabled = !Settings.shared.wordWrap

@@ -38,6 +38,11 @@
       `timeline:<line>` step; driven on the shanty, recorded in the design.
 - [x] 2.5 The playhead as a tick through the bars; a click on a bar seeks and a
       drag scrubs; `timeline-click:<line>:<fraction>[:<to>]` step; driven.
+- [x] 2.6 Time codes, a click walking a line's repeats; both song columns as
+      settings, toggled from the gutter's menu and the Editor menu; the lines
+      heard marked while playing, and the notes under the playhead lit (mat
+      ecdd911: passes and notes in `mat/timeline`); breakpoints stop the song
+      where their line starts; `timecode-click`, `song-columns`, `break` steps; driven.
 
 ## 3. Before finishing
 

@@ -54,8 +54,13 @@ extension CodeView {
 			let rowRect = NSRect(x: 0, y: y, width: bounds.width, height: lineHeight)
 
 			// The line execution is stopped on wins over the caret's own band.
-			if docLine == executionLine {
+			if docLine == executionLine || docLine == songStoppedLine {
 				NSColor.hex(0x3A4A2A).setFill()
+				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
+			} else if soundingLines.contains(docLine) {
+				// The lines of a song heard now: the stopped line's colour, lighter,
+				// since there are several and they move.
+				NSColor.hex(0x3A4A2A).withAlphaComponent(0.6).setFill()
 				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
 			} else if docLine == caretLine, selection.isEmpty {
 				Theme.current.currentLineBackground.setFill()
@@ -76,6 +81,14 @@ extension CodeView {
 			if !matches.others.isEmpty {
 				Theme.current.searchMatchBackground.setFill()
 				for band in matches.others { band.fill() }
+			}
+			// The notes of a song heard now, lit like a karaoke line.
+			if !playingNotes.isEmpty {
+				let bands = playingNoteBands(docLine: docLine, segment: segment, rect: rowRect)
+				if !bands.isEmpty {
+					Theme.current.gitModified.withAlphaComponent(0.55).setFill()
+					for band in bands { NSBezierPath(roundedRect: band, xRadius: 3, yRadius: 3).fill() }
+				}
 			}
 
 			drawLine(

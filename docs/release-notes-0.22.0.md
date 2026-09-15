@@ -24,6 +24,14 @@ with. Beside each line number, a small bar the length of the song lights up
 where that line is heard; hover it for the bars and times. The playhead runs
 through the bars, and a click or drag on one seeks the song.
 
+## Play a song like a program
+
+Beside each line, the time it is first heard; click it to go there, and again
+for the next time. While a song plays, every line heard is marked as the
+debugger marks where it stopped, and the note playing on each is lit, and a breakpoint on a line pauses the song
+where that line starts. Right-click the line numbers to hide the time codes or
+the bars.
+
 ## A save renders only what it changed
 
 The song pane keeps each layer between renders, so a save that changes one

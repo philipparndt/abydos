@@ -486,6 +486,8 @@ extension EditorViewController {
 		}
 		codeView.load(document: document)
 		codeView.setWordWrap(Settings.shared.wordWrap)
+		codeView.showsTimeCodes = Settings.shared.songTimeCodes
+		codeView.showsTimelineBars = Settings.shared.songTimelineBars
 		applyDebugState(to: tab)
 		applyConditionalBreakpoints(to: tab)
 		tab.sourceView = scrollView

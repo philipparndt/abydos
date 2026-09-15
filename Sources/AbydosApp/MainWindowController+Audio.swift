@@ -207,6 +207,13 @@ extension MainWindowController {
 					+ " gutter=\(Int(codeView?.gutterWidth ?? 0)) lit=[\(fractions.joined(separator: " "))]"
 					+ " playhead=\(codeView?.timelinePlayhead.map { String(format: "%.2f", $0) } ?? "none")"
 					+ " tick-pixel=\(codeView?.drawnPlayheadPixel.map(String.init) ?? "none")"
+					+ " code=\(timeline?.timeCode(line: line - 1) ?? "none")"
+					+ " columns=\(codeView.map { "codes:\($0.showsTimeCodes ? "on" : "off"),bars:\($0.showsTimelineBars ? "on" : "off")" } ?? "none")"
+					+ " sounding=[\((codeView?.soundingLines ?? []).sorted().map { String($0 + 1) }.joined(separator: ","))]"
+					+ " stopped=\(codeView?.songStoppedLine.map { String($0 + 1) } ?? "none")"
+					+ " notes=\(timeline?.notes[line - 1].map { "\($0.notes.count)x\($0.passes.count)" } ?? "none")"
+					+ " playing=[\((codeView?.playingNotes ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key + 1):" + $0.value.map { "\($0.lowerBound)-\($0.upperBound)" }.joined(separator: "+") }.joined(separator: " "))]"
+					+ " pane-stopped=\(pane.stoppedLineForTesting.map { String($0 + 1) } ?? "none")"
 					+ " summary=\"\(timeline?.summary(line: line - 1) ?? "none")\"")
 				fflush(stdout)
 			case "timeline-click":
@@ -217,6 +224,19 @@ extension MainWindowController {
 				let numbers = step.split(separator: ":").dropFirst().compactMap { Double($0) }
 				if numbers.count >= 2, let codeView = editor.activeGroup?.activeTab?.codeView {
 					codeView.clickTimelineForTesting(line: Int(numbers[0]), at: numbers[1], dragTo: numbers.count > 2 ? numbers[2] : nil)
+				}
+			case "timecode-click":
+				// `timecode-click:<line>` — a press on that line's time code.
+				if let line = Int(parts.dropFirst().first ?? ""), let codeView = editor.activeGroup?.activeTab?.codeView {
+					codeView.clickTimeCodeForTesting(line: line)
+				}
+			case "song-columns":
+				// `song-columns:codes` or `song-columns:bars` — the gutter menu's toggle.
+				if parts.dropFirst().first == "bars" { toggleSongTimelineBars(nil) } else { toggleSongTimeCodes(nil) }
+			case "break":
+				// `break:<line>` — a breakpoint made or taken away, as a click on the number does.
+				if let line = Int(parts.dropFirst().first ?? ""), let url = editor.activeGroup?.activeTab?.url {
+					debug.toggleBreakpoint(file: url, line: line)
 				}
 			case "export-menu":
 				let items = pane.exportMenu().items.filter { !$0.isSeparatorItem }

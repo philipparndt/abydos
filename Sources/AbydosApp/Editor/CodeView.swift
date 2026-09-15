@@ -335,8 +335,22 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	/// on nothing.
 	var timelinePlayhead: Double? {
 		didSet {
+			// The lines heard now, marked the way the debugger marks the line it
+			// stopped on — several at once, since a song is several lines at once.
+			let heard = timelineMarking ? (timelinePlayhead.flatMap { timeline?.sounding(at: $0) } ?? []) : []
+			if heard != soundingLines {
+				redrawRows(of: heard.symmetricDifference(soundingLines))
+				soundingLines = heard
+			}
+			// And the notes under the playhead, lit on their lines.
+			let notes = timelineMarking ? (timelinePlayhead.flatMap { timeline?.playing(at: $0) } ?? [:]) : [:]
+			if notes != playingNotes {
+				let changed = Set(notes.keys).union(playingNotes.keys).filter { notes[$0] != playingNotes[$0] }
+				playingNotes = notes
+				redrawRows(of: changed)
+			}
 			let pixel = timelinePlayheadPixel()
-			guard pixel != drawnPlayheadPixel else { return }
+			guard pixel != drawnPlayheadPixel, showsTimelineBars else { return }
 			drawnPlayheadPixel = pixel
 			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
 			let visible = visibleRect
@@ -344,6 +358,33 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 				x: timelineColumnX(scrollX: scrollX), y: visible.minY,
 				width: Self.timelineColumnWidth, height: visible.height
 			))
+		}
+	}
+	/// Whether the lines heard at the playhead are marked: while the song
+	/// plays, and while it is stopped on a breakpoint.
+	var timelineMarking = false
+	/// The lines heard at the playhead, 0-based, while `timelineMarking`.
+	var soundingLines: Set<Int> = []
+	/// The notes heard at the playhead: 0-based line to UTF-16 columns on it.
+	var playingNotes: [Int: [Range<Int>]] = [:]
+	/// The line whose breakpoint stopped the song, marked as the debugger's
+	/// stopped line is.
+	var songStoppedLine: Int?
+	/// The bar column, when the file has a timeline; hidden from the gutter's
+	/// menu and remembered in `Settings.songTimelineBars`.
+	var showsTimelineBars = true {
+		didSet {
+			guard showsTimelineBars != oldValue else { return }
+			updateFrameSize()
+			needsDisplay = true
+		}
+	}
+	/// The time-code column, when the file has a timeline.
+	var showsTimeCodes = true {
+		didSet {
+			guard showsTimeCodes != oldValue else { return }
+			updateFrameSize()
+			needsDisplay = true
 		}
 	}
 	/// The device pixel the tick was last drawn at, or nil for no tick.

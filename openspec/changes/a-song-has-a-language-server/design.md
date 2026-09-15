@@ -162,6 +162,62 @@ paused at 10 s the tick at pixel 8; a click at 0.5 on `track drums` put the
 playhead at 33.64 s, half of 67.27; a drag from 0.1 to 0.25 at 16.82 s; a click
 on a blank line left it there; playing moved the tick on.
 
+### 10. Time codes, hidden as blame is, and a song as a program being debugged
+
+*Added 2026-09-15.* Asked: "maybe we should show the time code, and make the
+sections able to show and hide like git blame", and "while playing would be
+nice to also have the debugger markers (multiple in that case) and support for
+breakpoints".
+
+A time-code column sits left of the bars: where the line is first heard. A click
+goes to the next time the line is heard after the playhead, or back to the
+first, so a pattern's repeats are walked by clicking again. Both columns are
+settings (`songTimeCodes`, `songTimelineBars`, on by default), toggled from the
+gutter's right-click menu beside *Show Blame* and from the Editor menu, and
+applied to every group as word wrap is.
+
+While the pane plays, the lines heard at the playhead get the debugger's
+stopped-line band, lighter since several move at once; a stretch holds its
+start and not its end, so a bar's line and the next bar's are never both marked
+on the boundary. The breakpoints are the gutter's own — made by clicking a
+number, kept by the debug coordinator as for any file — and the pane asks, on
+each tick, for the earliest enabled breakpoint whose line starts between the
+last tick and this one. It pauses, seeks back to that moment exactly, and marks
+the line as stopped. A start exactly at the last tick is not reached, which is
+what lets play go on from a breakpoint; a seek resets the last tick, so jumping
+past a breakpoint does not stop on it. A tick is a thirtieth of a second, so up
+to that much past the breakpoint has been heard before it stops. A breakpoint on
+a line first heard at 0:00 stops only when a loop comes back round to it.
+
+The breakpoint tag starts right of the song's columns, not under them.
+
+Then: "it would be very cool to highlight the current pattern part while
+playing". mat ecdd911 keeps on each pattern event the character it is written
+at, and `mat/timeline` gives a pattern's line `passes` — where each pass of the
+pattern starts — and `notes`, each `[start, end, from, to]` in seconds from a
+pass and 0-based UTF-16 columns. One list of notes serves every pass because a
+song has one tempo, which keeps the message the size of the text rather than of
+the song. The editor finds the last pass started by the playhead, and the one
+before for a note ringing into the next, and lights the notes it is inside with
+a rounded band behind the text; a chord is one note, a grid row one per cell.
+Only the rows whose marks changed are redrawn.
+
+Driven on the shanty, 2026-09-15:
+
+| Step | Report |
+| --- | --- |
+| breakpoint on `A4:q A4:e …` (line 56), seek 0:05, play | paused at 0:07.272, `stopped=56`; heard there: `pattern verse`, line 56, the first `play verse`, `track melody` and the bars ending at 7.27 no longer; lit notes `56:2-6` (`A4:q`), `51:2-14` (the chord), `41:5-6` (a gallop cell) |
+| play on | not stopped again; 0.6 s later `56:20-24`, then `56:38-40`, `56:41-43` |
+| a grid row (line 41) | 12 notes over 24 passes, one cell lit at a time |
+| time code of the first `play verse` | playhead 0:07.272 (reported 0:08.158 while playing on) |
+| time code of line 56, twice | 0:36.36 — the second pass — then 0:07.272 again |
+| hide time codes, hide bars, show both | gutter 192 → 122 → 88 → 192 points |
+
+Found driving it: a seek lands on a whole sample just before the moment asked
+for, so the song stopped at 7.2727 s read 7.27270 minus a sample. The marks
+at the stop were the bar before's, and play would have stopped on the same
+breakpoint at once; `LineTimeline.slack`, two milliseconds, is the fix.
+
 ## Risks / Trade-offs
 
 - [The keyword tables drift from the parser] → the parser's own

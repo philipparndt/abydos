@@ -37,7 +37,10 @@ extension CodeView {
 				drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX + blameWidth)
 			}
 
-			if let timeline { drawTimeline(timeline, docLine: docLine, y: y, scrollX: scrollX) }
+			if let timeline {
+				if showsTimeCodes { drawTimeCode(timeline, docLine: docLine, y: y, scrollX: scrollX) }
+				if showsTimelineBars { drawTimeline(timeline, docLine: docLine, y: y, scrollX: scrollX) }
+			}
 
 			// On the marker when there is one, and the number goes white on it:
 			// the tag is the breakpoint, so it has to be legible on top of it.
@@ -85,9 +88,40 @@ extension CodeView {
 		}
 	}
 
+	/// The left edge of a song's columns: the time codes, then the bars.
+	func songColumnsX(scrollX: CGFloat) -> CGFloat {
+		scrollX + blameWidth + Self.breakpointColumnWidth
+	}
+
+	/// How wide the time-code column is: `0:00.000`, or `10:00.000` for a song
+	/// of ten minutes or more, and a gap.
+	var timeCodeWidth: CGFloat {
+		guard let timeline, showsTimeCodes else { return 0 }
+		return ceil(CGFloat(timeline.seconds >= 600 ? 9 : 8) * charWidth) + Self.gutterPadding
+	}
+
+	/// Both song columns together; nothing for a file with no timeline.
+	var songColumnsWidth: CGFloat {
+		guard timeline != nil else { return 0 }
+		return timeCodeWidth + (showsTimelineBars ? Self.timelineColumnWidth : 0)
+	}
+
 	/// The left edge of the timeline column.
 	func timelineColumnX(scrollX: CGFloat) -> CGFloat {
-		scrollX + blameWidth + Self.breakpointColumnWidth
+		songColumnsX(scrollX: scrollX) + timeCodeWidth
+	}
+
+	/// A line's time code: where it is first heard, quiet, and brighter on a
+	/// line heard now.
+	private func drawTimeCode(_ timeline: LineTimeline, docLine: Int, y: CGFloat, scrollX: CGFloat) {
+		guard let code = timeline.timeCode(line: docLine) else { return }
+		let colour = soundingLines.contains(docLine)
+			? Theme.current.gutterCurrentLineText
+			: Theme.current.gutterText.withAlphaComponent(0.75)
+		let text = NSAttributedString(string: code, attributes: [.font: font, .foregroundColor: colour])
+		let size = text.size()
+		let right = songColumnsX(scrollX: scrollX) + timeCodeWidth - Self.gutterPadding / 2
+		text.draw(at: NSPoint(x: right - size.width, y: y + (lineHeight - size.height) / 2))
 	}
 
 	/// A line's bar: the whole song, faint, and lit where the line is heard.
@@ -164,6 +198,57 @@ extension CodeView {
 		if let up = event(.leftMouseUp, dragTo ?? fraction) { mouseUp(with: up) }
 	}
 
+	/// Presses a line's time code — a real event, through `mouseDown`.
+	func clickTimeCodeForTesting(line: Int) {
+		guard let window, timeCodeWidth > 0 else { return }
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		let local = NSPoint(
+			x: songColumnsX(scrollX: scrollX) + timeCodeWidth / 2,
+			y: yPosition(forVisualLine: firstVisualRow(forDocumentLine: line - 1)) + lineHeight / 2
+		)
+		for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+			guard let event = NSEvent.mouseEvent(
+				with: type, location: convert(local, to: nil), modifierFlags: [], timestamp: 0,
+				windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+			) else { continue }
+			if type == .leftMouseDown { mouseDown(with: event) } else { mouseUp(with: event) }
+		}
+	}
+
+	/// Where the song pane has got to: the tick through the bars, and whether
+	/// the lines heard there are marked.
+	func setSongPlayhead(_ seconds: Double?, marking: Bool) {
+		timelineMarking = marking && seconds != nil
+		timelinePlayhead = seconds
+	}
+
+	/// Only the rows of these lines, gutter and text: the marks move with the
+	/// music, several times a second, and a whole file redrawn for each is
+	/// most of a code view's frames spent on rows that did not change.
+	func redrawRows(of lines: some Collection<Int>) {
+		guard !lines.isEmpty, let document else { return }
+		for line in lines where line < document.lineCount {
+			let top = yPosition(forVisualLine: firstVisualRow(forDocumentLine: line))
+			let next = line + 1 < document.lineCount
+				? yPosition(forVisualLine: firstVisualRow(forDocumentLine: line + 1))
+				: top + lineHeight
+			setNeedsDisplay(NSRect(x: 0, y: top, width: bounds.width, height: max(lineHeight, next - top)))
+		}
+	}
+
+	/// The line a breakpoint stopped the song on, or nil when it plays on.
+	/// Scrolled to, as the debugger scrolls to where it stopped.
+	func setSongStoppedLine(_ line: Int?) {
+		guard line != songStoppedLine else { return }
+		songStoppedLine = line
+		if let line {
+			folding.reveal(line: line)
+			updateFrameSize()
+			reveal(line: line + 1)
+		}
+		needsDisplay = true
+	}
+
 	/// A small wedge pointing at the boundary lines were deleted from.
 	private func drawDeletionMark(atY y: CGFloat, x: CGFloat) {
 		let size = Theme.current.scaled(7)
@@ -207,7 +292,7 @@ extension CodeView {
 	func gutterZone(at point: NSPoint, scrollX: CGFloat) -> GutterZone {
 		if point.x >= scrollX + gutterWidth - Self.foldColumnWidth { return .fold }
 		if point.x < scrollX + blameWidth + Self.breakpointColumnWidth { return .run }
-		if timeline != nil, point.x < timelineColumnX(scrollX: scrollX) + Self.timelineColumnWidth { return .timeline }
+		if timeline != nil, point.x < songColumnsX(scrollX: scrollX) + songColumnsWidth { return .timeline }
 		return .number
 	}
 
@@ -217,7 +302,10 @@ extension CodeView {
 	/// number, which is why clicking the number is how one is made and why
 	/// there is no separate little dot to aim at.
 	private func breakpointTag(y: CGFloat, scrollX: CGFloat) -> NSBezierPath {
-		let left = scrollX + blameWidth + Self.gutterPadding / 2
+		// Beside a song's columns rather than under them: a tag behind the bars
+		// and the time codes would be a breakpoint nobody could read.
+		let song = songColumnsWidth > 0 ? Self.breakpointColumnWidth + songColumnsWidth : 0
+		let left = scrollX + blameWidth + song + Self.gutterPadding / 2
 		let right = scrollX + gutterWidth - Self.foldColumnWidth
 		let rect = NSRect(
 			x: left,

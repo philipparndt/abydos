@@ -94,3 +94,46 @@ Asked for 2026-09-15.
 - **WHEN** its bar is clicked halfway along
 - **THEN** the playhead is at half the song's length, and every bar's tick is
   drawn there
+
+### Requirement: A song's gutter shows time codes, and hides its columns as blame hides
+
+The editor SHALL draw, beside each line of a song heard somewhere, the time it
+is first heard, as `0:07.272`, and a click on it SHALL move the song's playhead
+to the next time the line is heard after the playhead, or to its first. The
+gutter's menu and the Editor menu SHALL show and hide the time codes and the
+timeline bars, each on its own, and the choice SHALL be remembered.
+
+Asked for 2026-09-15.
+
+#### Scenario: a pattern's line clicked twice
+
+- **GIVEN** the first line of `pattern verse`, heard at 0:07.272 and again later
+- **WHEN** its time code is clicked, and clicked again
+- **THEN** the playhead is at 0:07.272, and then at the second time
+
+#### Scenario: hiding the time codes
+
+- **GIVEN** a song with both columns showing
+- **WHEN** *Hide Time Codes* is chosen from the gutter's menu
+- **THEN** the gutter is narrower by the time-code column, the bars stay, and a
+  song opened afterwards shows no time codes
+
+### Requirement: A playing song marks the lines heard, and stops on breakpoints
+
+While a song plays, the editor SHALL mark every line heard at the playhead the
+way the debugger marks the line it stopped on, and SHALL light the note, chord
+or grid cell under the playhead on each line of a pattern. A song playing past the moment a
+line with an enabled breakpoint starts to be heard SHALL pause there, with the
+playhead on that moment and the line marked as stopped and scrolled to; play
+SHALL go on from it without stopping on the same breakpoint again, and a seek
+SHALL NOT stop on a breakpoint it jumps past.
+
+Asked for 2026-09-15.
+
+#### Scenario: a breakpoint in a pattern
+
+- **GIVEN** a breakpoint on the first line of `pattern verse`, first heard at
+  0:07.272, and the song playing from 0:05
+- **WHEN** the playhead reaches 0:07.272
+- **THEN** the song pauses at 0:07.272, that line is marked as stopped, the
+  other lines heard there are marked too, and the line's first note is lit

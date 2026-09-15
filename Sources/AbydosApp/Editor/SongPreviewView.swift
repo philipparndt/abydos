@@ -43,7 +43,19 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var onRevealLine: ((Int, Int) -> Void)?
 	/// Where the playhead is, as it moves, for the source's timeline bars; nil
 	/// when there is nothing to play.
-	var onPlayhead: ((Double?) -> Void)?
+	var onPlayhead: ((_ seconds: Double?, _ marking: Bool) -> Void)?
+	/// The first enabled breakpoint playing reaches between two moments, from
+	/// the source's timeline; nil for none.
+	var breakpointAhead: ((_ from: Double, _ to: Double) -> (line: Int, seconds: Double)?)?
+	/// The line a breakpoint stopped the song on, and nil when it plays on.
+	var onBreakpointStop: ((Int?) -> Void)?
+	/// Where the playhead was when last followed: a breakpoint is reached
+	/// when playing carries the playhead past its start.
+	private var lastFollowed: Double?
+	/// The line a breakpoint stopped playing on, until play or a seek.
+	private var stoppedLine: Int? {
+		didSet { if stoppedLine != oldValue { onBreakpointStop?(stoppedLine) } }
+	}
 	/// Told whenever playing starts or stops, so the tab can show a speaker.
 	var onPlayingChanged: ((Bool) -> Void)?
 
@@ -174,7 +186,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let wasPlaying = rendered?.playback.isPlaying == true
 		rendered?.playback.tearDown()
 		if wasPlaying { onPlayingChanged?(false) }
-		onPlayhead?(nil)
+		stoppedLine = nil
+		onPlayhead?(nil, false)
 	}
 
 	// MARK: - Building
@@ -668,6 +681,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		if playback.isPlaying {
 			playback.pause()
 		} else {
+			// Playing on from a breakpoint: from where it stopped, which is not
+			// reached again, so the same breakpoint does not stop it twice.
+			stoppedLine = nil
+			lastFollowed = playback.currentSeconds
 			playback.play()
 			if playback.isPlaying { OnePlayer.started(self) }
 		}
@@ -697,6 +714,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	private func seek(to seconds: Double) {
+		// A seek is not playing past anything between here and there.
+		lastFollowed = seconds
+		stoppedLine = nil
 		playback?.seek(toSeconds: seconds)
 		followPlayback()
 	}
@@ -717,8 +737,20 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	private func followPlayback() {
 		let now = playback?.currentSeconds ?? 0
+		let from = lastFollowed
+		lastFollowed = now
 		guard window != nil || !isPlaying else { return }
-		onPlayhead?(playback == nil ? nil : now)
+		// Stopped exactly on the breakpoint's moment, whatever of the frame
+		// since the last tick was already heard past it.
+		if isPlaying, let playback, let from, let stop = breakpointAhead?(from, now) {
+			playback.pause()
+			playback.seek(toSeconds: stop.seconds)
+			lastFollowed = stop.seconds
+			stoppedLine = stop.line
+			playingChanged()
+			return
+		}
+		onPlayhead?(playback == nil ? nil : now, isPlaying || stoppedLine != nil)
 		canvas.playhead = now
 		if isPlaying { canvas.follow(now) }
 		var clock = "\(AudioFileView.clock(now, milliseconds: true)) / \(AudioFileView.clock(duration))"
@@ -819,6 +851,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	func whenRendered(_ then: @escaping () -> Void) {
 		if isSettled { then() } else { whenSettled.append(then) }
 	}
+
+	/// The line a breakpoint stopped the song on, for a driven run.
+	var stoppedLineForTesting: Int? { stoppedLine }
 
 	func seekForTesting(seconds: Double) {
 		canvas.playhead = seconds

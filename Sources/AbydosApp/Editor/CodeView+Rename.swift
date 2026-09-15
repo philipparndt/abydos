@@ -174,9 +174,16 @@ extension CodeView {
 			// A click on a bar moves the song there, and a drag along it scrubs;
 			// never a breakpoint on a line of a song. A row with no bar is
 			// nothing to aim at, so a click there does nothing.
-			guard let timeline, !timeline.fractions(line: docLine).isEmpty,
-			      let seconds = timelineSeconds(atX: point.x, scrollX: scrollX)
-			else { return }
+			guard let timeline, !timeline.fractions(line: docLine).isEmpty else { return }
+			// A time code goes to where the line is next heard, so pressing it
+			// again walks a pattern's repeats.
+			if point.x < timelineColumnX(scrollX: scrollX) {
+				if let start = timeline.nextStart(line: docLine, after: timelinePlayhead ?? -1) {
+					onTimelineSeek?(start)
+				}
+				return
+			}
+			guard let seconds = timelineSeconds(atX: point.x, scrollX: scrollX) else { return }
 			draggingTimeline = true
 			onTimelineSeek?(seconds)
 

@@ -25,7 +25,8 @@ extension EditorViewController {
 		tab.previewMode = mode
 		// A song shown as source alone has no pane to say where its playhead is
 		// or to seek; the new pane, if there is one, says again.
-		tab.codeView?.timelinePlayhead = nil
+		tab.codeView?.setSongPlayhead(nil, marking: false)
+		tab.codeView?.setSongStoppedLine(nil)
 		tab.codeView?.onTimelineSeek = nil
 		tab.contentView = makeContentView(for: tab, mode: mode)
 
@@ -145,7 +146,15 @@ extension EditorViewController {
 		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
 		// The playhead through the source's timeline bars, and a click on a bar
 		// seeks the song.
-		view.onPlayhead = { [weak tab] seconds in tab?.codeView?.timelinePlayhead = seconds }
+		view.onPlayhead = { [weak tab] seconds, marking in tab?.codeView?.setSongPlayhead(seconds, marking: marking) }
+		// Breakpoints on a song's lines stop it where the line starts to be
+		// heard: the ones the gutter holds, enabled, placed by the timeline.
+		view.breakpointAhead = { [weak tab] from, to in
+			guard let codeView = tab?.codeView, let timeline = codeView.timeline else { return nil }
+			let lines = Set(codeView.breakpointLines.filter { $0.value.isEnabled }.keys)
+			return lines.isEmpty ? nil : timeline.breakpoint(in: lines, from: from, to: to)
+		}
+		view.onBreakpointStop = { [weak tab] line in tab?.codeView?.setSongStoppedLine(line) }
 		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
 		// Where the caret already is: a pane made for a tab whose caret sits in
 		// a track should light that track from the start.

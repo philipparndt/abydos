@@ -581,6 +581,11 @@ extension EditorAreaController {
 	func expandAllFolds() { activeGroup.expandAllFolds() }
 	func toggleWordWrap() { for group in groups { group.toggleWordWrap() } }
 	func toggleBlame() { activeGroup.toggleBlame() }
+	/// A song's time codes or bars, in every group, remembered.
+	func toggleSongColumn(bars: Bool) {
+		if bars { Settings.shared.songTimelineBars.toggle() } else { Settings.shared.songTimeCodes.toggle() }
+		for group in groups { group.applySongColumns() }
+	}
 	func showBlame() { activeGroup.showBlame() }
 	func toggleRevealSecrets() {
 		activeGroup.toggleRevealSecrets()

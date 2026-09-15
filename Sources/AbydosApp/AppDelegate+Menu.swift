@@ -603,6 +603,16 @@ extension AppDelegate {
 		)
 		blameItem.keyEquivalentModifierMask = [.command, .option]
 		editor.addItem(blameItem)
+		editor.addItem(NSMenuItem(
+			title: "Toggle Song Time Codes",
+			action: #selector(MainWindowController.toggleSongTimeCodes(_:)),
+			keyEquivalent: ""
+		))
+		editor.addItem(NSMenuItem(
+			title: "Toggle Song Timeline",
+			action: #selector(MainWindowController.toggleSongTimelineBars(_:)),
+			keyEquivalent: ""
+		))
 		let preview = NSMenuItem(
 			title: "Toggle Markdown Preview",
 			action: #selector(MainWindowController.toggleMarkdownPreview(_:)),

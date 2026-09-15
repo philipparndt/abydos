@@ -904,6 +904,14 @@ extension MainWindowController {
 		editor.toggleBlame()
 	}
 
+	@objc func toggleSongTimeCodes(_ sender: Any?) {
+		editor.toggleSongColumn(bars: false)
+	}
+
+	@objc func toggleSongTimelineBars(_ sender: Any?) {
+		editor.toggleSongColumn(bars: true)
+	}
+
 	/// The explicit action the covers wait for, file-wide: enabled only for a
 	/// tab that conceals, ticked while it is revealed.
 	@objc func toggleRevealSecrets(_ sender: Any?) {

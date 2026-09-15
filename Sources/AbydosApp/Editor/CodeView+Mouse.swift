@@ -227,6 +227,19 @@ extension CodeView {
 				keyEquivalent: ""
 			)
 			gutter.addItem(blame)
+			// A song's own columns, hidden and shown the same way.
+			if timeline != nil {
+				gutter.addItem(NSMenuItem(
+					title: showsTimeCodes ? "Hide Time Codes" : "Show Time Codes",
+					action: #selector(MainWindowController.toggleSongTimeCodes(_:)),
+					keyEquivalent: ""
+				))
+				gutter.addItem(NSMenuItem(
+					title: showsTimelineBars ? "Hide Timeline" : "Show Timeline",
+					action: #selector(MainWindowController.toggleSongTimelineBars(_:)),
+					keyEquivalent: ""
+				))
+			}
 			return gutter
 		}
 
