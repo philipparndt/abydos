@@ -200,6 +200,7 @@ extension AppDelegate {
 					+ (controller?.runForTesting.runControl?.statusReportForTesting ?? "none"))
 				print("TRUST: trusted=\(trusted) banner=["
 					+ (controller?.trustBannerReportForTesting() ?? "no window") + "]")
+				print("GIT: strip=[" + (controller?.gitBannerReportForTesting() ?? "no window") + "]")
 				fflush(stdout)
 			}
 		}

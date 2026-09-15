@@ -21,18 +21,79 @@ extension MainWindowController {
 	/// of milliseconds later, for a project that is really untrusted.
 	func refreshTrustBanner() {
 		let root = project?.root
-		let untrusted = root.map {
+		// **Git first.** While git cannot run, no project's remote has been
+		// asked, so none is untrusted — and the strip that would say so over
+		// a project git would have vouched for is the misdirection that cost
+		// a morning. The git strip takes the slot and says the real thing.
+		let cause = GitAvailability.shared.cause
+		gitBanner.show(cause: cause)
+		let untrusted = cause == nil && (root.map {
 			ProjectTrust.shared.isDecided($0) && !ProjectTrust.shared.isTrusted($0)
-		} ?? false
+		} ?? false)
 		let hidden = root.map { hiddenTrustBanners.contains(ProjectTrust.resolvedForTesting($0)) } ?? false
 		let shows = untrusted && !hidden
 		trustBanner.show(project: shows ? root : nil)
-		trustBannerHeight.constant = shows ? Theme.current.scaled(30) : 0
+		trustBannerHeight.constant = (shows || cause != nil) ? Theme.current.scaled(30) : 0
 		// The panes under it take their inset from whether the strip is there:
 		// with it up, the strip clears the titlebar and they must not clear it
 		// again. See `updateTopInsets`.
 		updateTopInsets()
 	}
+
+	// MARK: - Git that cannot run
+
+	/// Whether one observer for the app coming to the front has been set —
+	/// once for the process, not once per window, since the re-check is one
+	/// `git --version` and its answer is everybody's.
+	private static var rechecksOnActivation = false
+
+	/// Hears the answer change, and asks again when the app comes back.
+	func observeGitAvailability() {
+		GitAvailability.shared.observe { [weak self] _ in self?.gitAvailabilityChanged() }
+		guard !Self.rechecksOnActivation else { return }
+		Self.rechecksOnActivation = true
+		// The person fixing this is in a terminal, and switching back is the
+		// moment they want the answer. One subprocess, only while the strip is
+		// up; the result notes itself and the observers hear.
+		NotificationCenter.default.addObserver(
+			forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+		) { _ in
+			guard !GitAvailability.shared.isRunning else { return }
+			Task { await GitAvailability.shared.recheck() }
+		}
+	}
+
+	/// The strip follows the answer; a project whose remote was never asked
+	/// is asked now that it can be.
+	private func gitAvailabilityChanged() {
+		refreshTrustBanner()
+		guard GitAvailability.shared.isRunning, let root = project?.root,
+		      !ProjectTrust.shared.isDecided(root)
+		else { return }
+		askRemote(for: root)
+	}
+
+	/// Where this project's `origin` says it came from, asked of git once and
+	/// told to the trust store — **only if git answered.** A remote that could
+	/// not be asked is not "no remote": the project is left undecided, no trust
+	/// strip goes up for it, and it is asked again when git runs.
+	func askRemote(for root: URL) {
+		Task { @MainActor [weak self] in
+			let remote = await GitForge.remoteURL(in: root)
+			guard GitAvailability.shared.isRunning else {
+				self?.refreshTrustBanner()
+				return
+			}
+			let repository = remote.flatMap { GitForge.repository(fromRemote: $0) }
+			ProjectTrust.shared.noteRemote(
+				host: repository?.host, owner: repository?.owner, for: root
+			)
+			guard self?.project?.root == root else { return }
+			self?.refreshTrustBanner()
+		}
+	}
+
+	func gitBannerReportForTesting() -> String { gitBanner.reportForTesting }
 
 	/// The strip put away without anything being trusted.
 	///

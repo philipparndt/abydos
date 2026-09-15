@@ -317,6 +317,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		let options = LaunchOptions.parse()
 
+		// Before any window asks git anything, so the first answer is the one
+		// the run asked for.
+		if let raw = options.gitUnavailable {
+			GitAvailability.shared.forcedCause = GitAvailability.Cause(rawValue: raw)
+		}
+
 		// "Is the thing I just installed the thing that is running?" — a
 		// question that has come up once too often to keep answering by
 		// guesswork.

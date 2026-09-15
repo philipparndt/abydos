@@ -175,6 +175,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The strip that says this project is not trusted, above everything the
 	/// project can reach.
 	let trustBanner = TrustBanner()
+	/// The strip that says git cannot run on this machine, in the trust
+	/// strip's place and instead of it: a project whose remote git could not
+	/// be asked about is undecided, not untrusted.
+	let gitBanner = GitAvailabilityBanner()
+	/// Whether either strip is up, which is what the inset rule asks.
+	var stripIsUp: Bool { !trustBanner.isHidden || !gitBanner.isHidden }
 	/// How far below the window's top the strip sits — the titlebar's own
 	/// inset, which every pane here takes.
 	var trustBannerTop: NSLayoutConstraint!
@@ -510,7 +516,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// clears it and the panes below start under the strip — so taking the
 		// inset again is the titlebar's height counted twice, which is the gap
 		// that was reported between the strip and everything under it.
-		let below = trustBanner.isHidden ? inset : 0
+		let below = stripIsUp ? 0 : inset
 		// The rail is beside the strip rather than under it, and runs the whole
 		// height of the window, so it keeps the titlebar's own inset either way.
 		toolStrip.setTopInset(inset)
@@ -520,7 +526,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// clearing the titlebar themselves — the second gap, the one that
 		// survived dismissing the strip, and the one a maximised panel showed
 		// most plainly.
-		trustBannerTop?.constant = trustBanner.isHidden ? 0 : inset
+		trustBannerTop?.constant = stripIsUp ? inset : 0
 
 		navigator.setTopInset(below)
 		sidebar.sidebarTopInset = below

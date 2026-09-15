@@ -525,6 +525,7 @@ extension LaunchOptions {
 			case "--trust-report":  options.trust.report = true
 			case "--trust-held-back": options.trust.heldBack = true
 			case "--trust-dismiss": options.trust.dismiss = true
+			case "--git-unavailable": options.gitUnavailable = next()
 			case "--terminal-service": options.terminalServicePath = next()
 			case "--switch-to":
 				let said = next() ?? ""

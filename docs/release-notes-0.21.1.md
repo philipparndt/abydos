@@ -10,3 +10,13 @@ it as its own, a closed file is written on disk, and one ⌘Z in the list takes
 the whole replacement back. With `.*` on, `$1` is a capture, and a template the
 pattern cannot use is refused. Review Branch… gave up ⇧⌘R and keeps its menu
 item.
+
+## The window says when git cannot run
+
+After an Xcode update, `/usr/bin/git` refuses every command until the licence
+is accepted — and exits 0, so nothing looked wrong except that every project
+asked to be trusted again and the git pane was empty. A strip across the top
+of the window now says git cannot run, why, and the command that fixes it,
+with a button that copies it. It goes by itself when git runs again, which the
+app checks the moment it comes back to the front; a project whose remote could
+not be asked is left undecided rather than shown as untrusted.

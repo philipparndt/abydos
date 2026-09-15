@@ -343,9 +343,13 @@ extension MainWindowController {
 		// which would draw it twice in a split and not at all in a window
 		// showing only a terminal.
 		root.addSubview(trustBanner)
+		// In the same slot: the git strip takes the trust strip's frame, so
+		// the split view below hangs off one edge whichever of them is up.
+		root.addSubview(gitBanner)
 		root.addSubview(verticalSplitView)
 		toolStrip.translatesAutoresizingMaskIntoConstraints = false
 		trustBanner.translatesAutoresizingMaskIntoConstraints = false
+		gitBanner.translatesAutoresizingMaskIntoConstraints = false
 		verticalSplitView.translatesAutoresizingMaskIntoConstraints = false
 
 		toolStripWidthConstraint = toolStrip.widthAnchor.constraint(equalToConstant: ToolWindowBar.width)
@@ -354,6 +358,14 @@ extension MainWindowController {
 		trustBanner.isHidden = true
 		trustBanner.trustScopes = { [weak self] in self?.trustMenu() ?? NSMenu() }
 		trustBanner.onDismiss = { [weak self] in self?.hideTrustBanner() }
+		gitBanner.isHidden = true
+		NSLayoutConstraint.activate([
+			gitBanner.leadingAnchor.constraint(equalTo: trustBanner.leadingAnchor),
+			gitBanner.trailingAnchor.constraint(equalTo: trustBanner.trailingAnchor),
+			gitBanner.topAnchor.constraint(equalTo: trustBanner.topAnchor),
+			gitBanner.heightAnchor.constraint(equalTo: trustBanner.heightAnchor),
+		])
+		observeGitAvailability()
 
 		NSLayoutConstraint.activate([
 			toolStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),

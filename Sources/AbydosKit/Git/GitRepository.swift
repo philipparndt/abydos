@@ -863,11 +863,15 @@ public actor GitRepository {
 			process, out: out, err: err, input: input, stdin: stdin
 		)
 
-		return ProcessResult(
+		let result = ProcessResult(
 			stdout: captured.stdout,
 			stderr: captured.stderr,
 			exitCode: process.terminationStatus
 		)
+		// Every result is a probe of whether git ran at all: the shim that
+		// stands in for git refuses at exit 0, and only what it said tells.
+		GitAvailability.shared.note(result)
+		return result
 	}
 }
 

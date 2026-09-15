@@ -297,6 +297,10 @@ struct LaunchOptions {
 	var switcherKeys: String?
 	/// The seven trust flags, which are one subject and are asked as one.
 	var trust = Trust()
+	/// `--git-unavailable licence|tools`: behave as though the git shim had
+	/// refused with that cause, so the strip can be shown and read on a
+	/// machine whose git is fine.
+	var gitUnavailable: String?
 	/// `--terminal-service <path>`: the Finder's *New Terminal Here*, driven
 	/// on a path — the handler is reachable without the Finder, and what it
 	/// does with a path is the half that is this app's.

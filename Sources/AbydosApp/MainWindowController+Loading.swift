@@ -176,16 +176,7 @@ extension MainWindowController {
 		// every gate: a subprocess between a keypress and a refusal is a
 		// refusal that arrives late. The strip is refreshed again when the
 		// answer lands, since a trusted host makes it go away.
-		let root = project.root
-		Task { @MainActor [weak self] in
-			let remote = await GitForge.remoteURL(in: root)
-			let repository = remote.flatMap { GitForge.repository(fromRemote: $0) }
-			ProjectTrust.shared.noteRemote(
-				host: repository?.host, owner: repository?.owner, for: root
-			)
-			guard self?.project?.root == root else { return }
-			self?.refreshTrustBanner()
-		}
+		askRemote(for: project.root)
 		// And its breakpoints, in place of the ones the window was holding.
 		// They are the project's — kept in its session file, per project — but
 		// they lived in the window and nothing took them away, so the first
