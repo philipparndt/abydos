@@ -137,3 +137,19 @@ Asked for 2026-09-15.
 - **WHEN** the playhead reaches 0:07.272
 - **THEN** the song pauses at 0:07.272, that line is marked as stopped, the
   other lines heard there are marked too, and the line's first note is lit
+
+### Requirement: A song is coloured
+
+The editor SHALL colour a `.song` from a tree-sitter grammar musik-as-text
+keeps: block keywords, defined names, instrument kinds, settings and option
+keys, notes and drums, numbers, and comments each in their own colour, and an
+unknown word on a line SHALL NOT colour the rest of the file as an error.
+
+Asked for 2026-09-15.
+
+#### Scenario: a pattern
+
+- **GIVEN** `pattern verse` and under it `A4:q A4:e [D3 F4]:w@80 r |`
+- **WHEN** the file is opened
+- **THEN** `pattern` is a keyword, `verse` a function, `A4` a constant and a
+  comment above it a comment

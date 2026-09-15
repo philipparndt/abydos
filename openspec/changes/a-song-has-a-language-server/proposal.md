@@ -25,8 +25,8 @@ request, and the backlog is retired.
   with `#`, named *Song* where languages are named, answered for by `mat lsp`
   — found the way every tool is, with the `cargo install` line as the hint
   when it is not.
-- **No grammar.** The file stays uncoloured, as PlantUML does; a grammar is a
-  vendoring decision of its own.
+- **A grammar**, asked for on 2026-09-15: `tree-sitter-song` in musik-as-text,
+  vendored here, so a `.song` is coloured.
 
 ## Capabilities
 

@@ -28,6 +28,7 @@ import TreeSitterCSSVendored
 import TreeSitterJavaScriptVendored
 import TreeSitterPythonVendored
 import TreeSitterMakeVendored
+import TreeSitterSongVendored
 import TreeSitterYAMLVendored
 
 /// A language ideai can parse, plus the queries used to highlight and fold it.
@@ -91,6 +92,7 @@ public final class LanguageRegistry {
 		register(id: "css", name: "CSS", bundle: "Abydos_TreeSitterCSSVendored") { tree_sitter_css() }
 		register(id: "yaml", name: "YAML", bundle: "Abydos_TreeSitterYAMLVendored") { tree_sitter_yaml() }
 		register(id: "make", name: "Makefile", bundle: "Abydos_TreeSitterMakeVendored") { tree_sitter_make() }
+		register(id: "song", name: "Song", bundle: "Abydos_TreeSitterSongVendored") { tree_sitter_song() }
 		register(id: "toml", name: "TOML", bundle: "TreeSitterTOML_TreeSitterTOML") { tree_sitter_toml() }
 		register(id: "markdown", name: "Markdown", bundle: "TreeSitterMarkdown_TreeSitterMarkdown") { tree_sitter_markdown() }
 		register(id: "markdown_inline", name: "Markdown (inline)", bundle: "TreeSitterMarkdown_TreeSitterMarkdownInline") { tree_sitter_markdown_inline() }
@@ -251,8 +253,8 @@ public final class LanguageRegistry {
 		// the file is shown uncoloured until a grammar is worth vendoring.
 		"puml": "plantuml", "plantuml": "plantuml", "pu": "plantuml",
 		"iuml": "plantuml", "wsd": "plantuml",
-		// A musik-as-text song: the same case as PlantUML — no grammar, a
-		// name for the language server's benefit, uncoloured for now.
+		// A musik-as-text song, coloured by the grammar musik-as-text keeps in
+		// `tree-sitter-song/`, and answered for by `mat lsp`.
 		"song": "song",
 	]
 

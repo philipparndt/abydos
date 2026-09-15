@@ -15,7 +15,8 @@ crates/mat-cli`).
 
 ## A song has a language server
 
-`mat lsp` answers for `.song` files: problems as you type, with `mat`'s own
+`.song` files are coloured, by a grammar musik-as-text keeps, and `mat lsp`
+answers for them: problems as you type, with `mat`'s own
 hints; completion of keywords, of the settings an instrument's kind takes,
 of a setting's options and of the song's instrument, pattern and track names;
 hover on any of them; go to an instrument, pattern or track from where it is

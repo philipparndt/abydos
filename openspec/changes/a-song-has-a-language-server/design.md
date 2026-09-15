@@ -23,8 +23,8 @@ preset library — everything a server answers with, in a library crate.
 
 **Non-Goals:**
 
-- Syntax colouring. There is no tree-sitter grammar for `.song`; vendoring
-  one is a decision of its own.
+- Syntax colouring, at first. There was no tree-sitter grammar for `.song`;
+  Decision 11 wrote one when it was asked for.
 - Rename, references, formatting. Names are plain words and a rename is a
   find-and-replace somebody can do; the rest has no shape yet.
 - Semantic tokens, folding: the editor folds by indentation already.
@@ -218,6 +218,28 @@ for, so the song stopped at 7.2727 s read 7.27270 minus a sample. The marks
 at the stop were the bar before's, and play would have stopped on the same
 breakpoint at once; `LineTimeline.slack`, two milliseconds, is the fix.
 
+### 11. A grammar, kept by musik-as-text and vendored here
+
+*Added 2026-09-15.* Asked: "and we definitly need syntax highlighting". The
+grammar lives in musik-as-text as `tree-sitter-song/` (mat d333880): written
+from the parser's keyword lists, no external scanner, ABI 15, lenient — an
+unknown word on a body line is a word and not an error, so a half-typed line
+does not turn the rest of the file red. All 29 `.song` files in that repository
+parse with no error node, and its corpus has 36 cases. Here it is the sixth
+vendored grammar, `TreeSitterSongVendored`, copied as generated, because its
+only upstream is mat itself; `vendor-grammars.sh` leaves it alone.
+
+Headers and `play` are keywords, defined names functions, instrument kinds
+types, setting names and option keys properties, notes and drums constants, a
+rest a builtin, durations attributes, velocity a label, grid hits strings,
+names where they are used variables. *Ruled out: semantic tokens from
+`mat lsp`.* Abydos colours from tree-sitter, not from servers, so a server's
+tokens would have been a second colouring path for one language, and a grammar
+also serves every other editor mat is written in.
+
+`SongLanguageTests.aSongIsColoured` asks the engine; the capture of the shanty
+playing shows it coloured, with the notes under the playhead lit.
+
 ## Risks / Trade-offs
 
 - [The keyword tables drift from the parser] → the parser's own
@@ -230,5 +252,4 @@ breakpoint at once; `LineTimeline.slack`, two milliseconds, is the fix.
 
 ## Open Questions
 
-- Whether `mat` should also serve the `.song` grammar as semantic tokens,
-  since it has no tree-sitter grammar and is unlikely to get one.
+- None open: semantic tokens were answered by Decision 11.

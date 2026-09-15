@@ -43,6 +43,8 @@
       heard marked while playing, and the notes under the playhead lit (mat
       ecdd911: passes and notes in `mat/timeline`); breakpoints stop the song
       where their line starts; `timecode-click`, `song-columns`, `break` steps; driven.
+- [x] 2.7 `tree-sitter-song` in mat (d333880); vendored as
+      `TreeSitterSongVendored`, registered as `song`; `aSongIsColoured`; captured.
 
 ## 3. Before finishing
 
