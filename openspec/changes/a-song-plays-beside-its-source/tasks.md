@@ -72,6 +72,9 @@
 - [x] 5.3 `SongDebugAdapter` and its tests; `LineTimeline.tracks`.
 - [x] 5.4 The window starts a session when a song plays and tells it the
       pane's stops; `debug` steps; driven and captured.
+- [x] 5.5 The Stack as a tree: `CallTree` and its tests, `CallStackOutline`,
+      the session's stacks per open thread; the song adapter's parents, subtle
+      lines and stems; driven and captured.
 
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 retired and its account is `openspec/specs`.

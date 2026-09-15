@@ -109,3 +109,21 @@ Asked for 2026-09-15.
 - **THEN** the debugger is stopped on that line with thread `melody · verse`
   selected and the stack `verse: A4:q`, `pattern verse · pass 1 of 1`,
   `play verse`, `track melody`
+
+### Requirement: The debugger's Stack is a tree of every thread
+
+The debug pane SHALL show every thread at the root of its Stack, under a group
+when several threads share one, with each thread's frames under it — nested
+when the adapter names each frame's parent, as a list otherwise — and SHALL
+open the thread being shown and the threads its adapter says are busy. For a
+song, a pattern's lines SHALL be side by side inside the pattern, a line with no
+note sounding shown dimmed with its last note.
+
+Asked for 2026-09-15.
+
+#### Scenario: a breakpoint while four tracks play
+
+- **GIVEN** the shanty stopped on the first line of `pattern verse`
+- **WHEN** the Stack is shown
+- **THEN** every playing track is open to its pattern's lines, the resting one
+  is shut and dimmed, and `verse: A4:q` is selected and scrolled into sight

@@ -91,7 +91,7 @@ struct SongDebugAdapterTests {
 		#expect(stop["reason"] as? String == "breakpoint")
 		#expect(stop["threadId"] as? Int == 1)
 		let frames = ask("stackTrace", ["threadId": 1])["stackFrames"] as? [[String: Any]] ?? []
-		#expect(frames.first?["line"] as? Int == 6, "the note inside the header is not reached yet")
+		#expect(frames.first?["line"] as? Int == 6, "the line it stopped on is the top of the stack")
 		#expect((frames.first?["source"] as? [String: Any])?["path"] as? String == "/songs/verse.song")
 
 		let scopes = ask("scopes", ["frameId": frames.first?["id"] as? Int ?? 0])["scopes"] as? [[String: Any]] ?? []
@@ -129,8 +129,43 @@ struct SongDebugAdapterTests {
 			now: { 1.1 }
 		)
 		let frames = adapter.frames(thread: 1, at: 1.1)
-		#expect(frames.map(\.name) == ["beat: X", "pattern beat · pass 1 of 1", "play beat", "track drums"])
+		#expect(frames.map(\.name) == ["kick: X", "pattern beat · pass 1 of 1", "play beat", "track drums"], "a grid row by its drum")
 		#expect(frames.map(\.file) == [1, 1, 0, 0])
 		#expect(frames.map(\.line) == [3, 2, 6, 5])
+	}
+
+	/// Two rows of a grid side by side inside their pattern, the one between
+	/// hits subtle with its last hit; parents say what is inside what.
+	@Test func aPatternsRowsAreSiblingsAndARowBetweenNotesIsSubtle() {
+		let kit = ["pattern beat grid=1/8", "  kick X...X...", "  hat  ..x...x."]
+		var song = LineTimeline(seconds: 2, barSeconds: 2, spans: [:])
+		song.tracks = [
+			.init(name: "drums", line: 4, layer: "kit", instrument: nil, instrumentLine: nil,
+			      plays: [.init(line: 5, pattern: "beat", patternLine: 0, start: 0, end: 2, pass: 2)]),
+			.init(name: "toms", line: 7, layer: "kit", instrument: nil, instrumentLine: nil, plays: []),
+		]
+		song.notes = [
+			1: .init(passes: [0], notes: [.init(start: 0, end: 0.25, columns: 7..<8), .init(start: 1, end: 1.25, columns: 11..<12)]),
+			2: .init(passes: [0], notes: [.init(start: 0.5, end: 0.75, columns: 9..<10), .init(start: 1.5, end: 1.75, columns: 13..<14)]),
+		]
+		let placed = song
+		let lines = kit
+		let adapter = SongDebugAdapter(
+			program: "/songs/beat.song", timeline: { placed },
+			lineText: { lines.indices.contains($0) ? lines[$0] : nil }, now: { 1.1 }
+		)
+		let frames = adapter.frames(thread: 1, at: 1.1)
+		#expect(frames.map(\.name) == ["kick: X", "hat: x", "pattern beat · pass 1 of 1", "play beat", "track drums"])
+		#expect(frames.map(\.isSubtle) == [false, true, false, false, false], "the hat between its hits")
+		#expect(frames[1].column == 10, "its last hit, not its next")
+		let byID = Dictionary(uniqueKeysWithValues: frames.map { ($0.id, $0) })
+		#expect(frames[0].parent == frames[2].id && frames[1].parent == frames[2].id)
+		#expect(byID[frames[2].parent ?? 0]?.name == "play beat")
+		#expect(frames[4].parent == nil)
+		// Both tracks render into `kit`: grouped; the toms play nothing: quiet.
+		let threads = adapter.details(at: 1.1)
+		#expect(threads.map(\.group) == ["kit", "kit"])
+		#expect(threads.map(\.quiet) == [false, true])
+		#expect(adapter.variables(frame: frames[0].id, scope: 3, at: 1.1).map(\.value) == ["X"], "only the notes sounding")
 	}
 }

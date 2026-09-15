@@ -128,52 +128,83 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 		public var column: Int
 		/// Which of the song's files, 0 the song.
 		public var file: Int = 0
+		/// The frame this one is inside; nil for the track.
+		public var parent: Int? = nil
+		/// A line of the pattern with no note sounding now.
+		public var isSubtle = false
 	}
 
 	/// One thread per heard track, named for what it is playing now.
 	public func threads(at seconds: Double) -> [(id: Int, name: String)] {
+		details(at: seconds).map { ($0.id, $0.name) }
+	}
+
+	/// The threads with what the tree needs: the stem, when several tracks
+	/// share it, and whether the track is playing.
+	public func details(at seconds: Double) -> [(id: Int, name: String, group: String?, quiet: Bool)] {
 		guard let timeline = placedTimeline(0) else { return [] }
+		let layers = Dictionary(timeline.tracks.map { ($0.layer, 1) }, uniquingKeysWith: +)
 		return timeline.tracks.enumerated().map { index, track in
-			let what: String
-			if let play = play(of: track, at: seconds) {
-				what = play.pattern ?? "audio"
-			} else if let last = track.plays.last, seconds >= last.end {
-				what = "done"
-			} else {
-				what = "resting"
-			}
-			return (index + 1, "\(track.name) · \(what)")
+			let playing = play(of: track, at: seconds) != nil
+			let named = name(of: track, at: seconds)
+			return (index + 1, named, layers[track.layer, default: 0] > 1 ? track.layer : nil, !playing)
 		}
 	}
 
-	/// A track's stack at a moment, innermost first.
+	private func name(of track: LineTimeline.Track, at seconds: Double) -> String {
+		let what: String
+		if let play = play(of: track, at: seconds) {
+			what = play.pattern ?? "audio"
+		} else if let last = track.plays.last, seconds >= last.end {
+			what = "done"
+		} else {
+			what = "resting"
+		}
+		return "\(track.name) · \(what)"
+	}
+
+	/// A track's stack at a moment, as a tree: the track, the `play` step
+	/// inside it, the pattern and pass inside that, and every line of the
+	/// pattern side by side inside the pattern — a line with a note sounding
+	/// says the note, and a line between notes says its last one, subtle.
+	///
+	/// Listed innermost first, as a stack is, so a client that knows nothing
+	/// of `parent` still reads a stack: the lines sounding, then the quiet
+	/// ones, the pattern, the play step, the track — and on a breakpoint's
+	/// stop, the frame of the line it stopped on first. Ids are by position in
+	/// the tree, not in the list, so a row keeps its id while notes come and go.
 	public func frames(thread: Int, at seconds: Double) -> [Frame] {
 		guard let timeline = placedTimeline(0), timeline.tracks.indices.contains(thread - 1) else { return [] }
 		let track = timeline.tracks[thread - 1]
-		var frames: [(name: String, line: Int, column: Int, file: Int)] = []
+		let base = thread * 100
+		var frames: [Frame] = []
+		func frame(_ id: Int, _ name: String, line: Int, column: Int = 0, file: Int, parent: Int?, subtle: Bool = false) -> Frame {
+			Frame(id: base + id, name: name, line: line + 1, column: column + 1, file: file, parent: parent.map { base + $0 }, isSubtle: subtle)
+		}
+		let trackFrame = frame(0, "track \(track.name)", line: track.line, file: track.file, parent: nil)
 		if let play = play(of: track, at: seconds) {
 			let passes = max(1, Int(((play.end - play.start) / max(play.pass, 0.001)).rounded()))
+			let playFrame = frame(1, "play \(play.pattern ?? "audio")\(passes > 1 ? " x\(passes)" : "")", line: play.line, file: play.file, parent: 0)
 			if let patternLine = play.patternLine, let pattern = play.pattern, play.pass > 0 {
 				let pass = min(passes - 1, max(0, Int(((seconds + LineTimeline.slack - play.start) / play.pass).rounded(.down))))
 				let passStart = play.start + Double(pass) * play.pass
 				let patternFile = play.patternFile ?? 0
-				for note in sounding(in: patternLine, file: patternFile, pattern: pattern, passStart: passStart, at: seconds, song: timeline) {
-					frames.append(note)
+				let lines = rows(in: patternLine, file: patternFile, pattern: pattern, passStart: passStart, at: seconds, song: timeline)
+				let made = lines.enumerated().map { index, row in
+					frame(10 + index, row.name, line: row.line, column: row.column, file: patternFile, parent: 2, subtle: !row.sounding)
 				}
-				frames.append(("pattern \(pattern) · pass \(pass + 1) of \(passes)", patternLine, 0, patternFile))
+				frames += made.filter { !$0.isSubtle } + made.filter(\.isSubtle)
+				frames.append(frame(2, "pattern \(pattern) · pass \(pass + 1) of \(passes)", line: patternLine, file: patternFile, parent: 1))
 			}
-			frames.append(("play \(play.pattern ?? "audio")\(passes > 1 ? " x\(passes)" : "")", play.line, 0, play.file))
+			frames.append(playFrame)
 		}
-		frames.append(("track \(track.name)", track.line, 0, track.file))
-		// A stop on a breakpoint is where the program is: the frames inside the
-		// line it stopped on are not reached yet.
+		frames.append(trackFrame)
+		// A stop on a breakpoint is where the program is: that line's frame first.
 		if let stop = stoppedAt, abs(stop.seconds - seconds) < 0.001, let line = stop.line,
-		   let index = frames.firstIndex(where: { $0.line == line && $0.file == stop.file }) {
-			frames.removeFirst(index)
+		   let index = frames.firstIndex(where: { $0.line == line + 1 && $0.file == stop.file }), index > 0 {
+			frames.insert(frames.remove(at: index), at: 0)
 		}
-		return frames.enumerated().map { depth, frame in
-			Frame(id: thread * 100 + depth, name: frame.name, line: frame.line + 1, column: frame.column + 1, file: frame.file)
-		}
+		return frames
 	}
 
 	private func play(of track: LineTimeline.Track, at seconds: Double) -> LineTimeline.Play? {
@@ -181,11 +212,12 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 		return track.plays.first { $0.start <= at && at < $0.end }
 	}
 
-	/// The notes a pass of a pattern is on: its lines, from its header to the
-	/// next header anything names, that have a note sounding.
-	private func sounding(
+	/// Every line of a pass of a pattern — from its header to the next header
+	/// anything names, heard in this pass — with the note sounding on it, or
+	/// the last one before now, or the first when none has sounded yet.
+	private func rows(
 		in patternLine: Int, file: Int, pattern: String, passStart: Double, at seconds: Double, song: LineTimeline
-	) -> [(name: String, line: Int, column: Int, file: Int)] {
+	) -> [(name: String, line: Int, column: Int, sounding: Bool)] {
 		// The headers of the pattern's own file: where its lines end.
 		var headers = Set<Int>()
 		for track in song.tracks {
@@ -198,15 +230,25 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 		guard let placed = placedTimeline(file) else { return [] }
 		let end = headers.filter { $0 > patternLine }.min() ?? Int.max
 		let into = seconds + LineTimeline.slack - passStart
-		var found: [(name: String, line: Int, column: Int, file: Int)] = []
+		var found: [(name: String, line: Int, column: Int, sounding: Bool)] = []
 		for (line, notes) in placed.notes.sorted(by: { $0.key < $1.key }) where line > patternLine && line < end {
-			guard notes.passes.contains(where: { abs($0 - passStart) < 0.002 }) else { continue }
-			for note in notes.notes where note.start <= into && into < note.end {
-				found.append(("\(pattern): \(token(file: file, line: line, columns: note.columns))", line, note.columns.lowerBound, file))
-				break
-			}
+			guard notes.passes.contains(where: { abs($0 - passStart) < 0.002 }), let first = notes.notes.first else { continue }
+			let now = notes.notes.first { $0.start <= into && into < $0.end }
+			let shown = now ?? notes.notes.last { $0.start <= into } ?? first
+			let label = rowLabel(file: file, line: line, notes: notes.notes) ?? pattern
+			found.append(("\(label): \(token(file: file, line: line, columns: shown.columns))", line, shown.columns.lowerBound, now != nil))
 		}
 		return found
+	}
+
+	/// A grid row's name — `kick` of `  kick X...x...` — or nil for a line of
+	/// notes, whose first word is a note.
+	private func rowLabel(file: Int, line: Int, notes: [LineTimeline.Note]) -> String? {
+		guard let text = lineText(file, line) else { return nil }
+		let leading = text.prefix { $0 == " " || $0 == "\t" }.utf16.count
+		let word = text.dropFirst(text.prefix { $0 == " " || $0 == "\t" }.count).prefix { $0 != " " && $0 != "\t" }
+		guard !word.isEmpty, !notes.contains(where: { $0.columns.lowerBound == leading }) else { return nil }
+		return String(word)
 	}
 
 	private func token(file: Int, line: Int, columns: Range<Int>) -> String {
@@ -256,7 +298,7 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 			return values
 		default:
 			return frames(thread: thread, at: seconds)
-				.filter { $0.name.contains(": ") }
+				.filter { $0.name.contains(": ") && !$0.isSubtle }
 				.map { frame in
 					let place = frame.file == 0 ? "Line \(frame.line)" : "\((path(of: frame.file) as NSString).lastPathComponent):\(frame.line)"
 					return (place, String(frame.name.split(separator: ":", maxSplits: 1).last ?? "").trimmingCharacters(in: .whitespaces))
@@ -295,16 +337,23 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 			lastThreadNames = threads(at: seconds).map(\.name)
 			event("thread", ["reason": "started", "threadId": 1])
 		case "threads":
-			reply(["threads": threads(at: seconds).map { ["id": $0.id, "name": $0.name] }])
+			reply(["threads": details(at: seconds).map { thread -> [String: Any] in
+				var entry: [String: Any] = ["id": thread.id, "name": thread.name, "abydos/quiet": thread.quiet]
+				if let group = thread.group { entry["abydos/group"] = group }
+				return entry
+			}])
 		case "stackTrace":
 			let thread = arguments["threadId"] as? Int ?? 1
 			let frames = frames(thread: thread, at: seconds)
 			reply([
 				"stackFrames": frames.map { frame in
-					[
+					var entry: [String: Any] = [
 						"id": frame.id, "name": frame.name, "line": frame.line, "column": frame.column,
 						"source": ["path": path(of: frame.file), "name": (path(of: frame.file) as NSString).lastPathComponent],
-					] as [String: Any]
+					]
+					if let parent = frame.parent { entry["abydos/parentId"] = parent }
+					if frame.isSubtle { entry["presentationHint"] = "subtle" }
+					return entry
 				},
 				"totalFrames": frames.count,
 			])

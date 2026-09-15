@@ -693,8 +693,14 @@ public final class DebugSession {
 			// An adapter whose program can be looked at while it runs — a song —
 			// says when the stack under the thread being shown has moved.
 			case Self.stackMovedEvent:
-				guard self.state == .running, let thread = self.selectedThreadID ?? self.threads.first?.id else { return }
-				Task { await self.refreshStack(thread: thread, reportStop: false) }
+				guard self.state == .running else { return }
+				let selected = self.selectedThreadID ?? self.threads.first?.id
+				Task {
+					for other in self.expandedThreads where other != selected {
+						await self.loadStack(thread: other)
+					}
+					if let selected { await self.refreshStack(thread: selected, reportStop: false) }
+				}
 
 			case "terminated", "exited":
 				self.adapterSaidItEnded(body: body)
@@ -845,6 +851,12 @@ public final class DebugSession {
 	public private(set) var threads: [DebugThread] = []
 	/// Which one the stack is being shown for.
 	public internal(set) var selectedThreadID: Int?
+	/// Every thread's stack that has been read, by thread: the selected one's,
+	/// and those of the threads opened in the Stack's tree.
+	public internal(set) var threadStacks: [Int: [StackFrame]] = [:]
+	/// The threads open in the Stack's tree, whose stacks are read again after
+	/// a stop and, for an adapter that says so, while running.
+	public var expandedThreads: Set<Int> = []
 
 	public var onThreadsChanged: (() -> Void)?
 
@@ -882,8 +894,13 @@ public final class DebugSession {
 		let response = try? await client.request("threads", arguments: [:])
 		let entries = (response?["threads"] as? [[String: Any]]) ?? []
 		threads = entries.map {
-			DebugThread(id: $0["id"] as? Int ?? 0, name: $0["name"] as? String ?? "?")
+			DebugThread(
+				id: $0["id"] as? Int ?? 0, name: $0["name"] as? String ?? "?",
+				group: $0["abydos/group"] as? String, isQuiet: $0["abydos/quiet"] as? Bool
+			)
 		}
+		let present = Set(threads.map(\.id))
+		threadStacks = threadStacks.filter { present.contains($0.key) }
 		// Something to pause, before anything has stopped: the pause request
 		// names a thread, and a session that has never stopped knew of none.
 		if currentThreadID == nil { currentThreadID = threads.first?.id }

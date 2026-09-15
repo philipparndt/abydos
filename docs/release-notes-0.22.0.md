@@ -34,8 +34,10 @@ where that line starts. Right-click the line numbers to hide the time codes or
 the bars.
 
 Playing a song opens the debugger on it: each track is a thread named for the
-pattern it plays, its stack is the note, pattern, `play` step and track, and
-continue, pause, step (a bar) and stop move the song. A program already being
+pattern it plays, its stack is the track, `play` step and pattern with the
+pattern's lines side by side, and continue, pause, step (a bar) and stop move
+the song. The Stack is now a tree of every thread for any debugger, grouped
+where an adapter says and replacing the thread picker. A program already being
 debugged keeps the debugger.
 
 ## Songs with includes

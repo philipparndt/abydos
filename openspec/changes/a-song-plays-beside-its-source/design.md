@@ -355,6 +355,45 @@ The first drive answered no threads: the `mat` on the run's PATH predated
 774797f. The capture shows the pane on *melody · verse* with the four frames,
 *Now*, *Track* and *Notes*, and the editor stopped on line 56.
 
+### 12. The Stack is a tree of every thread
+
+*Added 2026-09-15.* Asked, looking at `pattern roll_e · pass 2 of 2` with nothing
+under it: "the debugger should be a tree", then "a tree for the root threads".
+A list of one thread's frames behind a picker showed a song's tracks one at a
+time, and two rows of a pattern sounding together as one inside the other —
+`beat: x@kit.song:13 > beat: x@kit.song:14` — and a pattern between notes as a
+frame with nothing in it.
+
+The Stack is now an outline (`CallStackOutline`, over `CallTree`) for every
+session, not only a song's:
+
+- **Threads are the roots**, under a group when an adapter gives several the
+  same one (`abydos/group` — a song's stem shared by more than one track). The
+  picker is gone.
+- **Frames nest when the adapter says** (`abydos/parentId`), outermost at the
+  top and siblings in line order so a row does not move with the music; a
+  debugger that says nothing keeps its list under its thread.
+- **A song's stack** is the track, its `play` step, the pattern and pass, and
+  every line of the pass side by side — the note sounding, or the last one,
+  `subtle` (DAP's own hint) and dimmed. Ids are by place in the tree, so a row
+  keeps its identity while notes come and go.
+- **What opens**: the thread being shown, a thread its adapter says is busy
+  (`abydos/quiet: false`, a song's playing tracks), and whatever somebody
+  opened; a resting track is dimmed and shut. A Go program's goroutines say
+  nothing and stay shut, so opening one is what reads its stack. The session
+  keeps a stack per open thread and reads them again after a stop and, for a
+  song, while it plays.
+- **A new selection is scrolled to**, and followed for a moment and not once:
+  the other threads' stacks, read just after a stop, opened above it and pushed
+  it out of sight — measured, row 17 of 29 with rows 0–12 showing; after, rows
+  5–17.
+
+Driven on the shanty (`debug` prints the tree): playing, `low_strings` and
+`drums` open to `D2: x@41`, `A2: x@42`, `D3: x@43` and `tom: x@80` beside
+`kick: X@79 (subtle)`, the three resting tracks shut; stopped on line 56, every
+playing track open, `verse: A4:q@56` selected and in sight, `G4:q@57`,
+`A4:q@58`, `C5:q@59` subtle beside it.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

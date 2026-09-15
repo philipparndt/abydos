@@ -106,5 +106,7 @@ extension MainWindowController {
 			+ " marker=\(debug.executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" } ?? "none")"
 			+ " panel=\(isPanelVisible ? "shown" : "hidden")"
 			+ "\n  threads=[\(threads)]\n  frames=[\(frames)]\n  scopes=\(scopes)"
+			+ "\n  tree:\n" + (bottomPanel.activeDebugPane?.callStackReportForTesting ?? "none")
+				.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
 	}
 }

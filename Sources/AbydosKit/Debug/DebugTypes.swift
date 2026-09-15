@@ -72,10 +72,20 @@ public struct Breakpoint: Equatable, Hashable, Sendable {
 public struct DebugThread: Equatable, Sendable, Identifiable {
 	public let id: Int
 	public let name: String
+	/// What the thread belongs with, when an adapter says — a song's stem
+	/// for its tracks (`abydos/group`, not DAP). Threads sharing one are
+	/// shown under it.
+	public var group: String?
+	/// Whether the thread is doing nothing worth opening, when an adapter says
+	/// (`abydos/quiet`): a track resting. Nil when it does not say, which is
+	/// every debugger but a song's.
+	public var isQuiet: Bool?
 
-	public init(id: Int, name: String) {
+	public init(id: Int, name: String, group: String? = nil, isQuiet: Bool? = nil) {
 		self.id = id
 		self.name = name
+		self.group = group
+		self.isQuiet = isQuiet
 	}
 }
 
@@ -130,12 +140,20 @@ public struct StackFrame: Identifiable, Equatable, Sendable {
 	public let name: String
 	public let file: String?
 	public let line: Int
+	/// The frame this one is inside, when an adapter's stack is a tree
+	/// (`abydos/parentId`, not DAP): a song's notes sound side by side inside
+	/// one pattern, which a list can only show as one inside the other.
+	public var parentID: Int?
+	/// DAP's `presentationHint: subtle` — there, but not where anything is now.
+	public var isSubtle: Bool
 
-	public init(id: Int, name: String, file: String?, line: Int) {
+	public init(id: Int, name: String, file: String?, line: Int, parentID: Int? = nil, isSubtle: Bool = false) {
 		self.id = id
 		self.name = name
 		self.file = file
 		self.line = line
+		self.parentID = parentID
+		self.isSubtle = isSubtle
 	}
 }
 
