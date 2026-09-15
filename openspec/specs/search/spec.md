@@ -59,6 +59,12 @@ anywhere in this program: the tree's key is ⌘⌫ and only ⌘⌫. Which is the
 half of this — **⌘⌫ is not bound in the results list and does nothing at all
 there**: nothing is marked, nothing is unmarked, and no file is touched.
 
+Since the pane learnt to replace, one verb in it does change files, and the two
+SHALL stay apart: ␣ and ⌫ SHALL never replace, whatever mode the pane is in,
+and Replace and Replace All SHALL never mark a row done or not done. A
+replacement is asked for by its own buttons or by ⏎ in the replacement field,
+and by nothing the checklist's keys do.
+
 #### Scenario: the key that trashes a file one pane over
 
 - **Given** the keyboard in the search results, with a match selected
@@ -77,6 +83,19 @@ there**: nothing is marked, nothing is unmarked, and no file is touched.
 - **When** ⌫ is pressed
 - **Then** they are marked done, and pressing it again marks them back, exactly
   as ␣ does
+
+#### Scenario: the checklist's keys in replace mode
+
+- **Given** the pane in replace mode with a replacement typed and rows selected
+- **When** ␣ and then ⌫ are pressed in the list
+- **Then** the rows are marked and unmarked, and no file is changed
+
+#### Scenario: a replacement leaves the marks alone
+
+- **Given** three rows, one of them marked done
+- **When** all three are selected and Replace is pressed
+- **Then** the three are replaced in their files, and the one mark is where it
+  was
 
 ### Requirement: A mark survives the search being run again
 
