@@ -303,6 +303,58 @@ Driven on a copy of the shanty: the menu offered all six items; `flac`,
 `shanty.m4a` (AAC) with five `.m4a` stems and `manifest.json` in
 `shanty stems/`, and `shanty.wav` (24-bit PCM), each 70.676 s by `afinfo`.
 
+### 11. A playing song is a program in the debugger
+
+*Added 2026-09-15.* Asked: "while playing the debugger shall also be open,
+showing the threads", then "the stack + threads are not yet shown".
+
+Pressing play on a song opens the debug pane on a session like any other, whose
+adapter lives in the app: `SongDebugAdapter`, reached through a third transport
+of `DAPClient`, in-process, beside stdio and the socket. It answers the Debug
+Adapter Protocol from the timeline `mat lsp` sends, which since mat 774797f
+also carries every heard track and each of its `play` steps — line, pattern,
+the pattern's line, start, end, pass length. So the pane, its toolbar, its
+breakpoint list and the execution marker are the ones Delve drives; nothing
+new was drawn for songs.
+
+- **Threads** are the heard tracks, named for what each plays now:
+  `melody · verse`, `pad · resting`, `drums · done`.
+- **A stack** is the note inside the pattern inside the `play` step inside the
+  track — `verse: A4:q` › `pattern verse · pass 1 of 1` › `play verse` ›
+  `track melody` — each frame on its line. A grid row's cell is a note.
+- **Variables**: *Now* (time, bar, pass), *Track* (track, stem, instrument,
+  pattern, transpose) and *Notes*. Capitalised: the editor draws a variable's
+  value beside every token of its name, and `pattern = verse` appeared after
+  every `pattern` keyword in the first capture.
+- **While playing**, the adapter says when a thread's name changed, and a few
+  times a second at most when a note did, and the session re-reads the threads
+  and the shown stack without stopping — two events a session had ignored,
+  `thread` and `abydos/stackMoved`.
+- **A breakpoint's stop** is the pane's own (Decision 10 of the language server
+  change), told to the adapter, which stops the thread hearing the line and
+  cuts the stack at it: a breakpoint on `pattern verse` stops *in* the pattern,
+  before its notes.
+- **The verbs** move the song: continue plays, pause pauses, a step goes to the
+  next bar and stays paused, stop pauses and ends the session. The song ending
+  is the program exiting. A pause with the space bar is a stop like any other.
+
+A program already being debugged is left alone. Driven on the shanty (`debug`,
+`debug:continue|pause|step|stop|thread:<n>`), 2026-09-15:
+
+| Step | Session |
+| --- | --- |
+| play, 2 s in | running; five threads, `low_strings · gallop_d` … `drums · toms`; stack `gallop_d: x@41` … `track low_strings@97` |
+| breakpoint on line 56, seek 0:05 | stopped (breakpoint), thread `melody` selected, marker `debug.song:56`, `verse: A4:q@56 > pattern verse · pass 1 of 1@55 > play verse@143 > track melody@136` |
+| continue | running; the stack moved on to `verse: D4@56` |
+| pause | stopped (pause) at 0:10.046 |
+| step | stopped (step) at 0:10.909, the next bar; `low_strings · gallop_c` |
+| thread 4 | `track melody_octave@148` — resting |
+| stop | terminated, the song paused |
+
+The first drive answered no threads: the `mat` on the run's PATH predated
+774797f. The capture shows the pane on *melody · verse* with the four frames,
+*Now*, *Track* and *Notes*, and the editor stopped on line 56.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

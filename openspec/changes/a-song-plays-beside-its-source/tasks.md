@@ -64,5 +64,14 @@
 - [x] 4.2 `make test` and `make warnings`, both clean, by their exit codes;
       `openspec validate` on the change.
 
+## 5. The song as a program in the debugger
+
+- [x] 5.1 mat 774797f: the timeline's `tracks`, with each play step.
+- [x] 5.2 `DAPClient` in-process transport; `DebugAdapters.song`;
+      `DebugSession.startInProcess`, `thread` and `abydos/stackMoved` events.
+- [x] 5.3 `SongDebugAdapter` and its tests; `LineTimeline.tracks`.
+- [x] 5.4 The window starts a session when a song plays and tells it the
+      pane's stops; `debug` steps; driven and captured.
+
 Nothing here makes a `.abydos/backlog/spec/*.md` file untrue: that backlog is
 retired and its account is `openspec/specs`.

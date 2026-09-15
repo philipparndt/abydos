@@ -89,3 +89,23 @@ Asked for 2026-09-13; export 2026-09-14.
 - **GIVEN** a `mat` whose `render --help` names no `--bitrate`
 - **WHEN** the Export menu is opened
 - **THEN** only the WAV items can be chosen
+
+### Requirement: A playing song is debugged as a program
+
+Playing a song SHALL open the debugger on it unless another program is being
+debugged: its heard tracks SHALL be the threads, named for what each plays; a
+thread's stack SHALL be the note it is on, the pattern and pass, the `play` step
+and the track, each at its line; and the debugger's continue, pause, step and
+stop SHALL play, pause, move to the next bar and end. While the song plays the
+threads and the shown stack SHALL follow it, and a breakpoint the song stops on
+SHALL be a stop of the thread that hears the line.
+
+Asked for 2026-09-15.
+
+#### Scenario: stopped on a pattern's line
+
+- **GIVEN** a breakpoint on the first line of `pattern verse`, played by `track melody`
+- **WHEN** the song plays to it
+- **THEN** the debugger is stopped on that line with thread `melody · verse`
+  selected and the stack `verse: A4:q`, `pattern verse · pass 1 of 1`,
+  `play verse`, `track melody`

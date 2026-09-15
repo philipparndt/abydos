@@ -335,6 +335,7 @@ extension BottomPanel {
 			if case .remote = start { return workingDirectory }
 			if case .nativeRemote = start { return workingDirectory }
 			if case .java = start { return workingDirectory }
+			if case let .inProcess(_, program) = start { return URL(fileURLWithPath: program).deletingLastPathComponent() }
 			return FileManager.default.homeDirectoryForCurrentUser
 		}()
 		guard let session = makeDebugSession(breakpoints: breakpoints, fallbackRoot: fallback)
@@ -365,6 +366,8 @@ extension BottomPanel {
 					)
 				case let .java(host, port, request):
 					try await session.startJava(host: host, port: port, request: request)
+				case let .inProcess(inProcess, program):
+					try await session.startInProcess(adapter: adapter, inProcess: inProcess, program: program)
 				}
 			} catch {
 				await MainActor.run {
@@ -401,6 +404,8 @@ extension BottomPanel {
 		/// request says whether a class is being started here or a JVM
 		/// somewhere else is being attached to.
 		case java(host: String, port: Int, request: JavaDebug.Request)
+		/// An adapter inside the app — a song the song pane plays.
+		case inProcess(adapter: InProcessDebugAdapter, program: String)
 	}
 
 	@discardableResult

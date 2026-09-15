@@ -505,6 +505,9 @@ extension MainWindowController {
 		editor.onToggleBreakpoint = { [weak self] url, line in
 			self?.debug.toggleBreakpoint(file: url, line: line)
 		}
+		editor.onSongPlayback = { [weak self] target, change in
+			self?.songPlayback(target, change)
+		}
 		editor.onSetBreakpointEnabled = { [weak self] url, line, enabled in
 			self?.debug.setBreakpoint(file: url, line: line, enabled: enabled)
 		}

@@ -24,6 +24,49 @@ public struct LineTimeline: Equatable, Sendable {
 	/// For the lines of patterns: where each pass starts and where each note
 	/// is written, to light the note under the playhead. mat ecdd911 on.
 	public var notes: [Int: LineNotes]
+	/// The tracks that are heard and what each plays when — the threads of a
+	/// song being debugged. mat 774797f on.
+	public var tracks: [Track] = []
+
+	/// A heard track: lines 0-based.
+	public struct Track: Equatable, Sendable {
+		public var name: String
+		public var line: Int
+		public var layer: String
+		public var instrument: String?
+		public var instrumentLine: Int?
+		public var plays: [Play]
+
+		public init(name: String, line: Int, layer: String, instrument: String?, instrumentLine: Int?, plays: [Play]) {
+			self.name = name
+			self.line = line
+			self.layer = layer
+			self.instrument = instrument
+			self.instrumentLine = instrumentLine
+			self.plays = plays
+		}
+	}
+
+	/// A `play` step: its line, what it plays, when, and how long a pass is.
+	public struct Play: Equatable, Sendable {
+		public var line: Int
+		public var pattern: String?
+		public var patternLine: Int?
+		public var start: Double
+		public var end: Double
+		public var pass: Double
+		public var transpose: Double
+
+		public init(line: Int, pattern: String?, patternLine: Int?, start: Double, end: Double, pass: Double, transpose: Double = 0) {
+			self.line = line
+			self.pattern = pattern
+			self.patternLine = patternLine
+			self.start = start
+			self.end = end
+			self.pass = pass
+			self.transpose = transpose
+		}
+	}
 
 	/// A pattern line's passes and notes, as `mat/timeline` sends them.
 	public struct LineNotes: Equatable, Sendable {
@@ -87,6 +130,25 @@ public struct LineTimeline: Equatable, Sendable {
 			if !ranges.isEmpty { spans[line] = ranges }
 		}
 		self.init(seconds: seconds, barSeconds: Self.number(params["barSeconds"]) ?? 0, spans: spans, notes: notes)
+		tracks = (params["tracks"] as? [[String: Any]] ?? []).compactMap { entry -> Track? in
+			guard let name = entry["name"] as? String, let line = (entry["line"] as? NSNumber)?.intValue else { return nil }
+			let plays = (entry["plays"] as? [[String: Any]] ?? []).compactMap { play -> Play? in
+				guard let line = (play["line"] as? NSNumber)?.intValue,
+				      let start = Self.number(play["start"]), let end = Self.number(play["end"]), end > start
+				else { return nil }
+				return Play(
+					line: line, pattern: play["pattern"] as? String,
+					patternLine: (play["patternLine"] as? NSNumber)?.intValue,
+					start: start, end: end, pass: Self.number(play["pass"]) ?? (end - start),
+					transpose: Self.number(play["transpose"]) ?? 0
+				)
+			}
+			return Track(
+				name: name, line: line, layer: entry["layer"] as? String ?? name,
+				instrument: entry["instrument"] as? String,
+				instrumentLine: (entry["instrumentLine"] as? NSNumber)?.intValue, plays: plays
+			)
+		}
 	}
 
 	private static func number(_ value: Any?) -> Double? {

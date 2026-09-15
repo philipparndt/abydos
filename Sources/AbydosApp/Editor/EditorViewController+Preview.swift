@@ -155,6 +155,17 @@ extension EditorViewController {
 			return lines.isEmpty ? nil : timeline.breakpoint(in: lines, from: from, to: to)
 		}
 		view.onBreakpointStop = { [weak tab] line in tab?.codeView?.setSongStoppedLine(line) }
+		// The debugger over the song: what it plays, and what it needs to say
+		// where it is.
+		let target = SongDebugTarget(
+			pane: view, url: tab.url,
+			timeline: { [weak tab] in tab?.codeView?.timeline },
+			lineText: { [weak tab] line in
+				guard let rope = tab?.document?.rope, line >= 0, line < rope.lineCount else { return nil }
+				return rope.string(in: rope.lineByteRange(line))
+			}
+		)
+		view.onPlaybackChange = { [weak self, target] change in self?.onSongPlayback?(target, change) }
 		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
 		// Where the caret already is: a pane made for a tab whose caret sits in
 		// a track should light that track from the start.

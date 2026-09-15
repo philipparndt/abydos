@@ -33,6 +33,11 @@ debugger marks where it stopped, and the note playing on each is lit, and a brea
 where that line starts. Right-click the line numbers to hide the time codes or
 the bars.
 
+Playing a song opens the debugger on it: each track is a thread named for the
+pattern it plays, its stack is the note, pattern, `play` step and track, and
+continue, pause, step (a bar) and stop move the song. A program already being
+debugged keeps the debugger.
+
 ## A save renders only what it changed
 
 The song pane keeps each layer between renders, so a save that changes one

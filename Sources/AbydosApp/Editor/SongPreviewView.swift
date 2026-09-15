@@ -49,6 +49,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var breakpointAhead: ((_ from: Double, _ to: Double) -> (line: Int, seconds: Double)?)?
 	/// The line a breakpoint stopped the song on, and nil when it plays on.
 	var onBreakpointStop: ((Int?) -> Void)?
+	/// Playing, pausing, stopping on a breakpoint, running out, and the
+	/// playhead moving: what a debugger over the song is told.
+	var onPlaybackChange: ((SongPlaybackChange) -> Void)?
 	/// Where the playhead was when last followed: a breakpoint is reached
 	/// when playing carries the playhead past its start.
 	private var lastFollowed: Double?
@@ -733,6 +736,13 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 		followPlayback()
 		onPlayingChanged?(isPlaying)
+		if isPlaying {
+			onPlaybackChange?(.playing)
+		} else if let playback, playback.duration > 0, !playback.isLooping, playback.currentSeconds >= playback.duration - 0.05 {
+			onPlaybackChange?(.ended)
+		} else if playback != nil {
+			onPlaybackChange?(.stopped(line: stoppedLine))
+		}
 	}
 
 	private func followPlayback() {
@@ -751,6 +761,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			return
 		}
 		onPlayhead?(playback == nil ? nil : now, isPlaying || stoppedLine != nil)
+		if isPlaying { onPlaybackChange?(.tick) }
 		canvas.playhead = now
 		if isPlaying { canvas.follow(now) }
 		var clock = "\(AudioFileView.clock(now, milliseconds: true)) / \(AudioFileView.clock(duration))"
@@ -850,6 +861,14 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// Runs `then` once a render has landed and been read, or failed.
 	func whenRendered(_ then: @escaping () -> Void) {
 		if isSettled { then() } else { whenSettled.append(then) }
+	}
+
+	/// Where the song is, for the debugger.
+	var currentSecondsForDebugger: Double { playback?.currentSeconds ?? canvas.playhead }
+
+	/// The debugger's continue.
+	func playForDebugger() {
+		if !isPlaying { togglePlayback() }
 	}
 
 	/// The line a breakpoint stopped the song on, for a driven run.

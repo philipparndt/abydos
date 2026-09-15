@@ -225,6 +225,22 @@ extension MainWindowController {
 				if numbers.count >= 2, let codeView = editor.activeGroup?.activeTab?.codeView {
 					codeView.clickTimelineForTesting(line: Int(numbers[0]), at: numbers[1], dragTo: numbers.count > 2 ? numbers[2] : nil)
 				}
+			case "debug":
+				// `debug` — the song's debug session: threads, the stack shown,
+				// its scopes; `debug:continue|pause|step|stop|thread:<n>` — the
+				// toolbar's verbs, through the session as the buttons send them.
+				let session = bottomPanel.activeDebugSession
+				switch parts.dropFirst().first {
+				case "continue": session?.resume()
+				case "pause": session?.pause()
+				case "step": session?.stepOver()
+				case "stop": session?.stop()
+				case "thread":
+					if let id = Int(parts.count > 2 ? parts[2] : "") { Task { await session?.selectThread(id: id) } }
+				default:
+					print(songDebugReportForTesting())
+					fflush(stdout)
+				}
 			case "timecode-click":
 				// `timecode-click:<line>` — a press on that line's time code.
 				if let line = Int(parts.dropFirst().first ?? ""), let codeView = editor.activeGroup?.activeTab?.codeView {

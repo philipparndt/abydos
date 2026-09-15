@@ -338,6 +338,8 @@ final class EditorViewController: NSViewController {
 
 	/// Called when the breakpoint gutter is clicked, with a 1-based line.
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
+	/// A song pane played, paused, stopped on a breakpoint or moved on.
+	var onSongPlayback: ((SongDebugTarget, SongPlaybackChange) -> Void)?
 	/// Right-clicked a breakpoint: edit what it does. 1-based line.
 	var onEditBreakpoint: ((URL, Int) -> Void)?
 	/// Clicked a marker, or chose enable/disable from its menu. 1-based line.

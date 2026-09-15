@@ -220,6 +220,9 @@ public final class DebugSession {
 			throw DAPClient.ClientError.adapterError(
 				"\(adapter.name) is started by its language server, not from here."
 			)
+		case .inProcess:
+			state = .idle
+			throw DAPClient.ClientError.adapterError("\(adapter.name) runs inside the app; start it with startInProcess.")
 		}
 
 		try await handshake(with: adapter)
@@ -235,6 +238,21 @@ public final class DebugSession {
 		))
 
 		startLaunchWatchdog()
+	}
+
+	/// Starts a session on an adapter that lives in this app.
+	///
+	/// The same handshake and launch as any other, so the pane, the toolbar and
+	/// the breakpoints behave as they do for a program; only nothing is spawned.
+	public func startInProcess(adapter: DebugAdapter, inProcess: InProcessDebugAdapter, program: String) async throws {
+		state = .starting
+		launchGeneration += 1
+		exitCode = nil
+		saidTheSessionEnded = false
+		self.adapter = adapter
+		client.start(inProcess: inProcess)
+		try await handshake(with: adapter)
+		send("launch", watching: ["program": program, "noDebug": false])
 	}
 
 	/// Debugs a native program that is stopped in a pod.
@@ -368,6 +386,9 @@ public final class DebugSession {
 			throw DAPClient.ClientError.adapterError(
 				"\(adapter.name) is started by its language server, not from here."
 			)
+		case .inProcess:
+			state = .idle
+			throw DAPClient.ClientError.adapterError("\(adapter.name) runs inside the app; start it with startInProcess.")
 		}
 
 		try await handshake(with: adapter)
@@ -664,6 +685,17 @@ public final class DebugSession {
 			case "continued":
 				self.state = .running
 
+			// The threads came or went, or changed their names — a song's tracks
+			// name what they are playing. Re-read, whether or not stopped.
+			case "thread":
+				Task { await self.refreshThreads() }
+
+			// An adapter whose program can be looked at while it runs — a song —
+			// says when the stack under the thread being shown has moved.
+			case Self.stackMovedEvent:
+				guard self.state == .running, let thread = self.selectedThreadID ?? self.threads.first?.id else { return }
+				Task { await self.refreshStack(thread: thread, reportStop: false) }
+
 			case "terminated", "exited":
 				self.adapterSaidItEnded(body: body)
 
@@ -805,6 +837,10 @@ public final class DebugSession {
 
 	// MARK: - Threads
 
+	/// Not a DAP event: sent by an adapter whose stack can be read while it
+	/// runs, when the stack of the thread being shown has moved.
+	public static let stackMovedEvent = "abydos/stackMoved"
+
 	/// The goroutines, or threads in anything that is not Go.
 	public private(set) var threads: [DebugThread] = []
 	/// Which one the stack is being shown for.
@@ -848,6 +884,9 @@ public final class DebugSession {
 		threads = entries.map {
 			DebugThread(id: $0["id"] as? Int ?? 0, name: $0["name"] as? String ?? "?")
 		}
+		// Something to pause, before anything has stopped: the pause request
+		// names a thread, and a session that has never stopped knew of none.
+		if currentThreadID == nil { currentThreadID = threads.first?.id }
 		onMain { [weak self] in self?.onThreadsChanged?() }
 	}
 

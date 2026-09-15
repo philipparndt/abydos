@@ -107,4 +107,23 @@ struct LineTimelineTests {
 		#expect(timeline.playing(at: 7.9999) == [6: [2..<6]], "a seek to 8 reads a sample short of it")
 		#expect(timeline.playing(at: 4).isEmpty, "between passes")
 	}
+
+	/// As mat 774797f sends them: lines 0-based, a play's pass in seconds.
+	@Test func theTracksAndWhatTheyPlayAreRead() throws {
+		var withTracks = noted
+		withTracks["tracks"] = [[
+			"name": "melody", "line": 12, "layer": "lead", "instrument": "brass", "instrumentLine": 2,
+			"plays": [["line": 14, "pattern": "verse", "patternLine": 5, "start": 0.0, "end": 4.0, "pass": 2.0, "transpose": -12.0]],
+		], [
+			"name": "loop", "line": 20, "layer": "loop", "instrument": NSNull(), "instrumentLine": NSNull(),
+			"plays": [["line": 22, "pattern": NSNull(), "patternLine": NSNull(), "start": 4.0, "end": 8.0, "pass": 4.0, "transpose": 0.0]],
+		]]
+		let timeline = try #require(LineTimeline(params: withTracks))
+		#expect(timeline.tracks.map(\.name) == ["melody", "loop"])
+		let melody = try #require(timeline.tracks.first)
+		#expect(melody.layer == "lead" && melody.instrument == "brass" && melody.instrumentLine == 2)
+		#expect(melody.plays == [.init(line: 14, pattern: "verse", patternLine: 5, start: 0, end: 4, pass: 2, transpose: -12)])
+		#expect(timeline.tracks[1].instrument == nil && timeline.tracks[1].plays.first?.pattern == nil, "an audio track")
+		#expect(try #require(LineTimeline(params: noted)).tracks.isEmpty, "a server before 774797f sends none")
+	}
 }

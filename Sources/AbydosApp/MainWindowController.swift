@@ -243,6 +243,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	var settingsSectionForTesting: String?
 	/// And which one it asked to be folded away, since a triangle needs a click.
 	var settingsFoldForTesting: String?
+	/// The song being debugged, when a song pane's playing opened the debugger.
+	var songDebug: SongDebugLink?
 
 	/// What each project had open, so going back to one looks as it was left.
 	var sessions = ProjectSessions()
