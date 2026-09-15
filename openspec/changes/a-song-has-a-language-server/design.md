@@ -198,8 +198,15 @@ pattern starts — and `notes`, each `[start, end, from, to]` in seconds from a
 pass and 0-based UTF-16 columns. One list of notes serves every pass because a
 song has one tempo, which keeps the message the size of the text rather than of
 the song. The editor finds the last pass started by the playhead, and the one
-before for a note ringing into the next, and lights the notes it is inside with
-a rounded band behind the text; a chord is one note, a grid row one per cell.
+before for a note ringing into the next, and lights the notes it is inside; a
+chord is one note, a grid row one per cell. Then: "the highlighting should be a
+different color so that it differs from the selection and should also be
+visible when the range is selected". The first cut was a band in the git marks'
+blue, drawn before the line, so it read as a selection and a selection covered
+it. It is now amber, a translucent fill with a solid outline, painted in
+`drawLine` after the selection as the current search match is; captured with
+lines 50–58 selected over a song stopped at 0:07.272, the chord and `A4:q`
+inside the selection and the grid cells outside it are all plainly lit.
 Only the rows whose marks changed are redrawn.
 
 Driven on the shanty, 2026-09-15:
