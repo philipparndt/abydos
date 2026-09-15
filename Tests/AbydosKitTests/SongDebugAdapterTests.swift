@@ -168,4 +168,42 @@ struct SongDebugAdapterTests {
 		#expect(threads.map(\.quiet) == [false, true])
 		#expect(adapter.variables(frame: frames[0].id, scope: 3, at: 1.1).map(\.value) == ["X"], "only the notes sounding")
 	}
+
+	/// mat a192e0d's loops: a step inside `repeat` blocks sits inside them, and a
+	/// line that opens with a repeat group is a line of notes, not a grid row.
+	@Test func aStepInsideRepeatBlocksIsInsideThem() {
+		let source = [
+			"pattern riff", "  ((A1:s A1)x2 |)x2", "",
+			"track bass", "  repeat 2 {", "    repeat 3 {", "      play riff", "    }", "  }",
+		]
+		var song = LineTimeline(
+			seconds: 12, barSeconds: 2, spans: [4: [0...12], 5: [0...6, 6...12], 6: [0...12]],
+			notes: [1: .init(passes: [0, 2, 4, 6, 8, 10], notes: [.init(start: 0, end: 0.5, columns: 4..<8), .init(start: 0.5, end: 1, columns: 9..<11)])]
+		)
+		song.tracks = [.init(
+			name: "bass", line: 3, layer: "bass", instrument: nil, instrumentLine: nil,
+			plays: (0..<6).map { .init(line: 6, pattern: "riff", patternLine: 0, start: Double($0) * 2, end: Double($0) * 2 + 2, pass: 2) }
+		)]
+		let placed = song
+		let lines = source
+		let adapter = SongDebugAdapter(
+			program: "/songs/riff.song", timeline: { placed },
+			lineText: { lines.indices.contains($0) ? lines[$0] : nil }, now: { 6.2 }
+		)
+		let frames = adapter.frames(thread: 1, at: 6.2)
+		#expect(frames.map(\.name) == ["riff: A1:s", "pattern riff · pass 1 of 1", "play riff", "repeat 3", "repeat 2", "track bass"])
+		let tree = CallTree.describe(CallTree.nodes(
+			threads: [DebugThread(id: 1, name: "bass · riff")],
+			stacks: [1: frames.map { StackFrame(id: $0.id, name: $0.name, file: nil, line: $0.line, parentID: $0.parent, isSubtle: $0.isSubtle) }]
+		))
+		#expect(tree == [
+			"bass · riff",
+			"  track bass@4",
+			"    repeat 2@5",
+			"      repeat 3@6",
+			"        play riff@7",
+			"          pattern riff · pass 1 of 1@1",
+			"            riff: A1:s@2",
+		])
+	}
 }

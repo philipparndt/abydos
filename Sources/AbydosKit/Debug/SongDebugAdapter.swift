@@ -184,7 +184,17 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 		let trackFrame = frame(0, "track \(track.name)", line: track.line, file: track.file, parent: nil)
 		if let play = play(of: track, at: seconds) {
 			let passes = max(1, Int(((play.end - play.start) / max(play.pass, 0.001)).rounded()))
-			let playFrame = frame(1, "play \(play.pattern ?? "audio")\(passes > 1 ? " x\(passes)" : "")", line: play.line, file: play.file, parent: 0)
+			// The `repeat` blocks the step is inside, outermost first: the lines
+			// between the track and the step that say `repeat` and are heard now —
+			// a block that ended before is not, and nesting is line order.
+			let repeats = enclosingRepeats(of: play, in: track, at: seconds)
+			for (depth, block) in repeats.enumerated() {
+				frames.append(frame(5 + depth, block.text, line: block.line, file: play.file, parent: depth == 0 ? 0 : 5 + depth - 1))
+			}
+			let playFrame = frame(
+				1, "play \(play.pattern ?? "audio")\(passes > 1 ? " x\(passes)" : "")", line: play.line, file: play.file,
+				parent: repeats.isEmpty ? 0 : 5 + repeats.count - 1
+			)
 			if let patternLine = play.patternLine, let pattern = play.pattern, play.pass > 0 {
 				let pass = min(passes - 1, max(0, Int(((seconds + LineTimeline.slack - play.start) / play.pass).rounded(.down))))
 				let passStart = play.start + Double(pass) * play.pass
@@ -197,6 +207,11 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 				frames.append(frame(2, "pattern \(pattern) · pass \(pass + 1) of \(passes)", line: patternLine, file: patternFile, parent: 1))
 			}
 			frames.append(playFrame)
+			// Innermost first, as the rest of the list is: the repeats sit between
+			// the step and the track.
+			let blocks = frames.filter { ($0.id - base) >= 5 && ($0.id - base) < 10 }
+			frames.removeAll { ($0.id - base) >= 5 && ($0.id - base) < 10 }
+			frames.append(contentsOf: blocks.reversed())
 		}
 		frames.append(trackFrame)
 		// A stop on a breakpoint is where the program is: that line's frame first.
@@ -205,6 +220,24 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 			frames.insert(frames.remove(at: index), at: 0)
 		}
 		return frames
+	}
+
+	private func enclosingRepeats(of play: LineTimeline.Play, in track: LineTimeline.Track, at seconds: Double) -> [(line: Int, text: String)] {
+		guard play.file == track.file, let placed = placedTimeline(play.file) else { return [] }
+		let at = seconds + LineTimeline.slack
+		return placed.spans
+			.filter { line, spans in
+				line > track.line && line < play.line && spans.contains { $0.lowerBound <= at && at < $0.upperBound }
+			}
+			.compactMap { line, _ -> (line: Int, text: String)? in
+				guard let text = lineText(play.file, line)?.trimmingCharacters(in: .whitespaces),
+				      text.hasPrefix("repeat ") else { return nil }
+				let said = text.hasSuffix("{") ? String(text.dropLast()).trimmingCharacters(in: .whitespaces) : text
+				return (line, said)
+			}
+			.sorted { $0.line < $1.line }
+			.prefix(5)
+			.map { $0 }
 	}
 
 	private func play(of track: LineTimeline.Track, at seconds: Double) -> LineTimeline.Play? {
@@ -247,7 +280,11 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 		guard let text = lineText(file, line) else { return nil }
 		let leading = text.prefix { $0 == " " || $0 == "\t" }.utf16.count
 		let word = text.dropFirst(text.prefix { $0 == " " || $0 == "\t" }.count).prefix { $0 != " " && $0 != "\t" }
-		guard !word.isEmpty, !notes.contains(where: { $0.columns.lowerBound == leading }) else { return nil }
+		// A line that opens with a repeat group, `((A1:s …`, begins with a note too.
+		let opening = word.prefix { $0 == "(" }.count
+		guard !word.isEmpty, opening == 0,
+		      !notes.contains(where: { $0.columns.lowerBound == leading })
+		else { return nil }
 		return String(word)
 	}
 

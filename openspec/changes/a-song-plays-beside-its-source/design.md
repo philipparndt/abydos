@@ -394,6 +394,26 @@ Driven on the shanty (`debug` prints the tree): playing, `low_strings` and
 playing track open, `verse: A4:q@56` selected and in sight, `G4:q@57`,
 `A4:q@58`, `C5:q@59` subtle beside it.
 
+### 13. Loops
+
+*Added 2026-09-15.* Asked: "some simple loops would also help the language to
+stay compact". mat a192e0d writes `(tokens)xN` in a pattern line and
+`repeat N { … }` in a track, expanded by the parser so a looped song renders
+sample-identical to the same song written out; 889b65c gives the grammar both.
+The timeline needed nothing new: a group's note keeps its token's columns at
+every repetition, so the editor lights the written token each time, and a
+`repeat` line is heard across all its passes. Here the grammar is re-vendored,
+and the debugger's stack puts a step inside the `repeat` blocks that hold it —
+the lines between the track and the step that say `repeat` and are heard now,
+nested by line order. A melodic line opening with a group, `((A1:s …`, is named
+for its pattern and not for its first word.
+
+Driven on mat's `examples/drive/` (160d1c2, eight files, the mix and seven stems
+byte-identical to `examples/drive.song`), 73 s in: `[bass]` holding `bass` and
+`sub`, `[lead]`, `[fx]`; `track drums@138 > repeat 4@148 > play beat_crash@149 >
+pattern beat_crash@41` with its rows; the drums file's tab `song=drive.song
+files=8`, playhead 77.82, cells lit inside `(X.o.x.o.)x2`.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

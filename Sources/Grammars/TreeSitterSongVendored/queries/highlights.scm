@@ -21,6 +21,7 @@
   "track"
   "master"
   "play"
+  "repeat"
 ] @keyword
 
 ; instrument lead synth | pattern verse | track drums | section chorus
@@ -86,6 +87,10 @@
 [
   "["
   "]"
+  "("
+  ")"
+  "{"
+  "}"
 ] @punctuation.bracket
 
 ; ---------------------------------------------------------------- grids

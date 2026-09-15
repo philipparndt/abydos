@@ -47,6 +47,13 @@ renders the song again; its tab shows the song's playhead, heard lines and
 playing notes; a breakpoint in it stops the song; and the debugger's stack goes
 through the files. An included file's own pane renders it alone, for now.
 
+## Loops
+
+`(A1:s A1 A2! C2~)x3` repeats notes or grid cells in a pattern line and
+`repeat 4 { … }` repeats a track's steps (musik-as-text a192e0d); a looped
+song sounds exactly as written out. Playing lights the written note on every
+repetition, and the debugger's stack shows the `repeat` a step is in.
+
 ## A save renders only what it changed
 
 The song pane keeps each layer between renders, so a save that changes one
