@@ -325,6 +325,34 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 		}
 	}
 
+	/// Where the song's playhead is, in seconds, drawn through the bars; nil
+	/// when no song pane is showing this file.
+	///
+	/// **Redrawn when a tick would move, not when the time does.** The pane
+	/// says where it is thirty times a second, and a bar of 26 points over a
+	/// four-minute song moves its tick about once every four seconds; redrawing
+	/// the gutter at the pane's rate would be most of a code view's frames spent
+	/// on nothing.
+	var timelinePlayhead: Double? {
+		didSet {
+			let pixel = timelinePlayheadPixel()
+			guard pixel != drawnPlayheadPixel else { return }
+			drawnPlayheadPixel = pixel
+			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+			let visible = visibleRect
+			setNeedsDisplay(NSRect(
+				x: timelineColumnX(scrollX: scrollX), y: visible.minY,
+				width: Self.timelineColumnWidth, height: visible.height
+			))
+		}
+	}
+	/// The device pixel the tick was last drawn at, or nil for no tick.
+	var drawnPlayheadPixel: Int?
+	/// A bar was clicked, or dragged along: that many seconds into the song.
+	var onTimelineSeek: ((Double) -> Void)?
+	/// The press that is down began on a bar, so dragging it scrubs.
+	var draggingTimeline = false
+
 	/// Which lines differ from HEAD, for the gutter's change marks. 1-based
 	/// document lines, as `GitChangedLines` reads them off the diff.
 	var changedLines = GitChangedLines()

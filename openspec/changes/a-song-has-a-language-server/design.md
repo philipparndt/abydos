@@ -153,6 +153,15 @@ line "bars 5–6, 21–22"; the first `play verse` "bars 5–12 · 0:07.272–0:
 `track drums` the whole song; an `osc` line nothing. The capture shows the
 gallop patterns lit nearly across, and each verse line as two short dashes.
 
+The playhead is a tick through every bar, a caret-coloured line a little taller
+than the bar, redrawn only when it moves a whole pixel. A click on a bar seeks
+the pane to the time under the pointer and a drag scrubs; the bar is the song's
+timeline length, which ends at the last bar, so the render's tail is not on it.
+Driven on the shanty (`timeline-click:<line>:<fraction>[:<to>]`), 2026-09-15:
+paused at 10 s the tick at pixel 8; a click at 0.5 on `track drums` put the
+playhead at 33.64 s, half of 67.27; a drag from 0.1 to 0.25 at 16.82 s; a click
+on a blank line left it there; playing moved the tick on.
+
 ## Risks / Trade-offs
 
 - [The keyword tables drift from the parser] → the parser's own

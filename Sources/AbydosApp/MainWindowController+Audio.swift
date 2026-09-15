@@ -205,8 +205,19 @@ extension MainWindowController {
 					.map { String(format: "%.3f-%.3f", $0.lowerBound, $0.upperBound) } ?? []
 				print("LINE-TIMELINE line=\(line) column=\(timeline == nil ? "none" : "shown")"
 					+ " gutter=\(Int(codeView?.gutterWidth ?? 0)) lit=[\(fractions.joined(separator: " "))]"
+					+ " playhead=\(codeView?.timelinePlayhead.map { String(format: "%.2f", $0) } ?? "none")"
+					+ " tick-pixel=\(codeView?.drawnPlayheadPixel.map(String.init) ?? "none")"
 					+ " summary=\"\(timeline?.summary(line: line - 1) ?? "none")\"")
 				fflush(stdout)
+			case "timeline-click":
+				// `timeline-click:<line>:<fraction>` — a press and release on that
+				// line's bar at that fraction of it, as real mouse events; with a
+				// third number, `timeline-click:<line>:<from>:<to>` drags from one
+				// to the other before letting go.
+				let numbers = step.split(separator: ":").dropFirst().compactMap { Double($0) }
+				if numbers.count >= 2, let codeView = editor.activeGroup?.activeTab?.codeView {
+					codeView.clickTimelineForTesting(line: Int(numbers[0]), at: numbers[1], dragTo: numbers.count > 2 ? numbers[2] : nil)
+				}
 			case "export-menu":
 				let items = pane.exportMenu().items.filter { !$0.isSeparatorItem }
 				print("SONG-EXPORT menu: " + items.map { "\($0.title)\($0.isEnabled ? "" : " (disabled)")" }.joined(separator: " | "))

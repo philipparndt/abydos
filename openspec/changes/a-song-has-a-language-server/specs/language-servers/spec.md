@@ -78,3 +78,19 @@ Asked for 2026-09-14.
 - **GIVEN** an `osc` line inside an instrument
 - **WHEN** the song is opened
 - **THEN** the line has no bar
+
+### Requirement: The bars carry the playhead and seek the song
+
+While the song pane has a playhead, each line's bar SHALL draw it as a tick at
+the playhead's place in the song, moving as the song plays, and a click on a
+bar SHALL move the playhead to the time under the pointer, and dragging SHALL
+scrub it. A click on a line with no bar SHALL move nothing.
+
+Asked for 2026-09-15.
+
+#### Scenario: a click halfway along
+
+- **GIVEN** a track heard across the whole song, and the song paused at 0:10
+- **WHEN** its bar is clicked halfway along
+- **THEN** the playhead is at half the song's length, and every bar's tick is
+  drawn there

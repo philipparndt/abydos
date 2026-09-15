@@ -36,6 +36,8 @@
       notifications on; the language service keeps a timeline per file; the
       gutter's bar column, its hover, and no breakpoint on a click;
       `timeline:<line>` step; driven on the shanty, recorded in the design.
+- [x] 2.5 The playhead as a tick through the bars; a click on a bar seeks and a
+      drag scrubs; `timeline-click:<line>:<fraction>[:<to>]` step; driven.
 
 ## 3. Before finishing
 

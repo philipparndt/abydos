@@ -21,7 +21,8 @@ of a setting's options and of the song's instrument, pattern and track names;
 hover on any of them; go to an instrument, pattern or track from where it is
 used; and the blocks in the structure pane. The same `mat` the pane renders
 with. Beside each line number, a small bar the length of the song lights up
-where that line is heard; hover it for the bars and times.
+where that line is heard; hover it for the bars and times. The playhead runs
+through the bars, and a click or drag on one seeks the song.
 
 ## A save renders only what it changed
 

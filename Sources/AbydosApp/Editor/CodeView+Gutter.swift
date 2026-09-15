@@ -96,10 +96,8 @@ extension CodeView {
 	private func drawTimeline(_ timeline: LineTimeline, docLine: Int, y: CGFloat, scrollX: CGFloat) {
 		let fractions = timeline.fractions(line: docLine)
 		guard !fractions.isEmpty else { return }
-		let inset = Theme.current.scaled(4)
-		let width = Self.timelineColumnWidth - inset * 2
+		let (left, width) = timelineBarSpan(scrollX: scrollX)
 		let height = max(2, Theme.current.scaled(4)).rounded()
-		let left = timelineColumnX(scrollX: scrollX) + inset
 		let top = (y + (lineHeight - height) / 2).rounded()
 		Theme.current.gutterText.withAlphaComponent(0.22).setFill()
 		NSRect(x: left, y: top, width: width, height: height).fill()
@@ -110,6 +108,60 @@ extension CodeView {
 			let to = max(from + 1, (left + CGFloat(range.upperBound) * width).rounded(.up))
 			NSRect(x: from, y: top, width: to - from, height: height).fill()
 		}
+		// The playhead through the bar, taller than it so it reads as one line
+		// down the column, and pinned at the end during the song's tail.
+		if let playhead = timelinePlayhead, timeline.seconds > 0 {
+			let fraction = CGFloat(min(1, max(0, playhead / timeline.seconds)))
+			let tick = max(1, Theme.current.scaled(1.5))
+			let reach = Theme.current.scaled(3)
+			Theme.current.caret.setFill()
+			NSRect(
+				x: (left + fraction * width - tick / 2).rounded(), y: top - reach,
+				width: tick, height: height + reach * 2
+			).fill()
+		}
+	}
+
+	/// The bar's inner edges, which a click and the tick both measure from.
+	func timelineBarSpan(scrollX: CGFloat) -> (left: CGFloat, width: CGFloat) {
+		let inset = Theme.current.scaled(4)
+		return (timelineColumnX(scrollX: scrollX) + inset, Self.timelineColumnWidth - inset * 2)
+	}
+
+	/// The moment of the song under a point in the bar column.
+	func timelineSeconds(atX x: CGFloat, scrollX: CGFloat) -> Double? {
+		guard let timeline, timeline.seconds > 0 else { return nil }
+		let (left, width) = timelineBarSpan(scrollX: scrollX)
+		guard width > 0 else { return nil }
+		return Double(min(1, max(0, (x - left) / width))) * timeline.seconds
+	}
+
+	/// Which device pixel of the bar the tick falls on, for deciding whether it
+	/// moved.
+	func timelinePlayheadPixel() -> Int? {
+		guard let playhead = timelinePlayhead, let timeline, timeline.seconds > 0 else { return nil }
+		let (_, width) = timelineBarSpan(scrollX: 0)
+		let scale = window?.backingScaleFactor ?? 2
+		return Int((min(1, max(0, playhead / timeline.seconds)) * Double(width * scale)).rounded())
+	}
+
+	/// Presses a line's bar at a fraction of its width, and drags to another
+	/// before letting go when asked — real events, through `mouseDown`.
+	func clickTimelineForTesting(line: Int, at fraction: Double, dragTo: Double?) {
+		guard let window else { return }
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		let (left, width) = timelineBarSpan(scrollX: scrollX)
+		let y = yPosition(forVisualLine: firstVisualRow(forDocumentLine: line - 1)) + lineHeight / 2
+		func event(_ type: NSEvent.EventType, _ f: Double) -> NSEvent? {
+			let local = NSPoint(x: left + CGFloat(f) * width, y: y)
+			return NSEvent.mouseEvent(
+				with: type, location: convert(local, to: nil), modifierFlags: [], timestamp: 0,
+				windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+			)
+		}
+		if let down = event(.leftMouseDown, fraction) { mouseDown(with: down) }
+		if let to = dragTo, let drag = event(.leftMouseDragged, to) { mouseDragged(with: drag) }
+		if let up = event(.leftMouseUp, dragTo ?? fraction) { mouseUp(with: up) }
 	}
 
 	/// A small wedge pointing at the boundary lines were deleted from.

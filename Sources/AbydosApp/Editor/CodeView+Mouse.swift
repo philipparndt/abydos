@@ -74,6 +74,7 @@ extension CodeView {
 
 		window?.makeFirstResponder(self)
 		draggingBreakpointLine = nil
+		draggingTimeline = false
 
 		// Gutter clicks toggle folds rather than moving the caret. The gutter is
 		// pinned to the clip view, so its hit area moves with horizontal scroll.

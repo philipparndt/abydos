@@ -23,6 +23,10 @@ extension EditorViewController {
 		guard mode != tab.previewMode else { return }
 
 		tab.previewMode = mode
+		// A song shown as source alone has no pane to say where its playhead is
+		// or to seek; the new pane, if there is one, says again.
+		tab.codeView?.timelinePlayhead = nil
+		tab.codeView?.onTimelineSeek = nil
 		tab.contentView = makeContentView(for: tab, mode: mode)
 
 		activeIndex = nil
@@ -139,6 +143,10 @@ extension EditorViewController {
 			self?.refreshTabBar()
 		}
 		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
+		// The playhead through the source's timeline bars, and a click on a bar
+		// seeks the song.
+		view.onPlayhead = { [weak tab] seconds in tab?.codeView?.timelinePlayhead = seconds }
+		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
 		// Where the caret already is: a pane made for a tab whose caret sits in
 		// a track should light that track from the start.
 		tab.codeView?.reportCaretPosition()

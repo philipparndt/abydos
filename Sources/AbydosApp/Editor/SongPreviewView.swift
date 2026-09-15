@@ -41,6 +41,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// The source should show a line: a lane's name was clicked, or the
 	/// error strip.
 	var onRevealLine: ((Int, Int) -> Void)?
+	/// Where the playhead is, as it moves, for the source's timeline bars; nil
+	/// when there is nothing to play.
+	var onPlayhead: ((Double?) -> Void)?
 	/// Told whenever playing starts or stops, so the tab can show a speaker.
 	var onPlayingChanged: ((Bool) -> Void)?
 
@@ -171,6 +174,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let wasPlaying = rendered?.playback.isPlaying == true
 		rendered?.playback.tearDown()
 		if wasPlaying { onPlayingChanged?(false) }
+		onPlayhead?(nil)
 	}
 
 	// MARK: - Building
@@ -683,6 +687,15 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		followPlayback()
 	}
 
+	/// A click on a timeline bar in the source: the playhead goes there, and a
+	/// zoomed canvas follows it.
+	func seekFromSource(_ seconds: Double) {
+		let target = min(duration, max(0, seconds))
+		canvas.playhead = target
+		canvas.follow(target)
+		seek(to: target)
+	}
+
 	private func seek(to seconds: Double) {
 		playback?.seek(toSeconds: seconds)
 		followPlayback()
@@ -705,6 +718,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private func followPlayback() {
 		let now = playback?.currentSeconds ?? 0
 		guard window != nil || !isPlaying else { return }
+		onPlayhead?(playback == nil ? nil : now)
 		canvas.playhead = now
 		if isPlaying { canvas.follow(now) }
 		var clock = "\(AudioFileView.clock(now, milliseconds: true)) / \(AudioFileView.clock(duration))"
