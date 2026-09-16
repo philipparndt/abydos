@@ -75,8 +75,10 @@
 - [x] 5.5 The Stack as a tree: `CallTree` and its tests, `CallStackOutline`,
       the session's stacks per open thread; the song adapter's parents, subtle
       lines and stems; driven and captured.
-- [x] 5.11 A song with nothing to play renders its first bars first (mat
-      f684cab `--bars`), plays them, and renders the whole song behind it.
+- [x] 5.11 A song is rendered once and played as it is written (mat a5f7d05
+      `--stream`): each stretch is scheduled behind the last, a render is only
+      taken over from once it has passed the playhead, and the finished file
+      being shorter than the last reading is handled.
 - [x] 5.10 The mix plays while the stems are still being written, and a file of
       a song holds its first render until the server says which song it is in;
       `SongRenderRun`, `SongOverviews`, `SongSettled`, `SongBreakpointStops`.

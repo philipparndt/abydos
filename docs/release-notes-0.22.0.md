@@ -75,11 +75,13 @@ like the mix.
 
 ## A song is heard sooner
 
-A song nothing has rendered yet plays its first eight bars within half a
-second, while the whole song renders behind it: 0.42 s against 6.61 s for a
-song of 3:41. The pane also plays the mix as soon as it is written, while the
-stems are still being rendered, and the whole render takes over from the same
-bar. Opening a file a song includes no longer renders that file first.
+A song is rendered once and starts playing while it renders: the first stretch
+of the mix arrives in a fraction of a second and the rest is played straight on
+from it, with the stems landing at the end. It needs `mat` a5f7d05 or newer; an
+older one renders the whole song before anything can be heard. A render that is
+still writing takes over from a playing song only once it has passed the
+playhead, so a save under a playing song is heard from the same bar. Opening a
+file a song includes no longer renders that file first.
 
 ## Loop a few bars while you change them
 

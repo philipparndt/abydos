@@ -46,10 +46,24 @@ final class AudioPlayback {
 
 	/// The first file's rate, which is the timeline every frame here is in.
 	let sampleRate: Double
-	/// The longest file's length, in `sampleRate` frames.
-	let frameCount: AVAudioFramePosition
+	/// The longest file's length, in `sampleRate` frames. A `var` because a
+	/// streamed render grows: see `grew(toFrames:)`.
+	private(set) var frameCount: AVAudioFramePosition
 
 	private(set) var isPlaying = false
+
+	/// The file is still being written — `mat render --stream` — so its end is
+	/// not the song's end, and what has arrived since the last schedule is put
+	/// behind what is already queued rather than restarting anything.
+	///
+	/// Asked for 2026-09-16: "it takes way too long till a song can be started
+	/// … can we create a render streaming support?"
+	private(set) var isGrowing = false
+	/// The frame every voice is scheduled up to, while growing.
+	private var scheduledThrough: AVAudioFramePosition = 0
+	/// Playing ran out of rendered song and waits for more. Only the first
+	/// seconds of a song can do this: `mat` renders far faster than real time.
+	private var isStarved = false
 	/// The frame the current schedule began at.
 	private var scheduledFrom: AVAudioFramePosition = 0
 	/// Where the playhead rests while nothing plays.
@@ -255,6 +269,8 @@ final class AudioPlayback {
 		}
 		scheduledFrom = frame
 		restingFrame = frame
+		scheduledThrough = frameCount
+		isStarved = false
 
 		for index in voices.indices {
 			schedulePass(ofVoice: index, from: frame, generation: scheduled)
@@ -362,7 +378,96 @@ final class AudioPlayback {
 		}
 	}
 
+	// MARK: - A file that is still being written
+
+	/// Plays this file as one that grows: nothing stops at what is in it now.
+	func beGrowing() {
+		isGrowing = true
+	}
+
+	/// More of the render has been written: `frames` of it can be read.
+	///
+	/// What has arrived goes behind what is queued, on the node's own
+	/// timeline, so it plays straight on from the last sample scheduled — the
+	/// same seamlessness the loop is built on. Nothing is rescheduled and the
+	/// playhead does not move.
+	///
+	/// - Parameter finished: the render is over. The file can end up a little
+	///   *shorter* than the last reading said, since the tail is trimmed and
+	///   faded, so anything queued past its end is dropped by scheduling again
+	///   from where the playhead is.
+	func grew(toFrames frames: AVAudioFramePosition, finished: Bool = false) {
+		guard isGrowing else { return }
+		if finished { isGrowing = false }
+		let shrank = frames < frameCount
+		frameCount = max(0, frames)
+		guard isPlaying || isStarved else { return }
+		if shrank {
+			isStarved = false
+			let here = min(currentFrame, frameCount)
+			stopNodes()
+			isPlaying = false
+			guard here < frameCount else {
+				restingFrame = frameCount
+				onStopped?()
+				return
+			}
+			start(from: here)
+			return
+		}
+		if isStarved {
+			// Ran dry waiting for the render: on again from where it stopped.
+			guard restingFrame < frameCount else { return }
+			isStarved = false
+			start(from: restingFrame)
+			return
+		}
+		guard frameCount > scheduledThrough else { return }
+		for index in voices.indices { append(toVoice: index, upTo: frameCount) }
+		scheduledThrough = frameCount
+	}
+
+	/// Nothing more is coming: what is in the file is the whole song. Said when
+	/// a render ends without saying so itself — it failed, or it was replaced.
+	func stoppedGrowing() {
+		guard isGrowing else { return }
+		isGrowing = false
+		guard isStarved else { return }
+		isStarved = false
+		restingFrame = frameCount
+		onStopped?()
+	}
+
+	/// The stretch between what is queued and what has been written, out of the
+	/// file as it is now — the file opened before the write cannot see it.
+	private func append(toVoice index: Int, upTo frames: AVAudioFramePosition) {
+		let voice = voices[index]
+		guard let file = try? AVAudioFile(forReading: voice.file.url) else { return }
+		let from = AVAudioFramePosition((Double(scheduledThrough) * voice.rate / sampleRate).rounded())
+		let to = min(AVAudioFramePosition((Double(frames) * voice.rate / sampleRate).rounded()), file.length)
+		guard to > from else { return }
+		let scheduled = generation
+		var ended: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)?
+		if index == 0 {
+			ended = { [weak self] _ in DispatchQueue.main.async { self?.passPlayed(scheduled) } }
+		}
+		voice.node.scheduleSegment(
+			file, startingFrame: from, frameCount: AVAudioFrameCount(to - from), at: nil,
+			completionCallbackType: .dataPlayedBack, completionHandler: ended
+		)
+	}
+
 	private func passPlayed(_ scheduled: Int) {
+		// Everything written has been played and there is more coming: the
+		// render fell behind. It waits where it is, playing to whoever is
+		// watching, until the next stretch lands.
+		if generation == scheduled, isPlaying, isGrowing {
+			restingFrame = min(currentFrame, frameCount)
+			stopNodes()
+			isPlaying = false
+			isStarved = true
+			return
+		}
 		// A pass that ends while looping is followed by the one queued behind it.
 		guard generation == scheduled, isPlaying, !isLooping else { return }
 		restingFrame = frameCount

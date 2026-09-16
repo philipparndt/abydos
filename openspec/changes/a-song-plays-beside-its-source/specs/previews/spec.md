@@ -128,6 +128,28 @@ Asked for 2026-09-15.
 - **THEN** every playing track is open to its pattern's lines, the resting one
   is shut and dimmed, and `verse: A4:q` is selected and scrolled into sight
 
+### Requirement: A song is played while it renders
+
+The pane SHALL render a song once and play it as it is written: with a `mat`
+that streams, the mix SHALL be played from its first stretch and each stretch
+written after it SHALL be played straight on from the last, without a seam and
+without moving the playhead, and the stems SHALL land at the end. A render that
+is still being written SHALL take over from a song that is playing only once it
+has reached the playhead. A render that falls behind what is being played SHALL
+leave the playhead where it is and go on when more is written, rather than
+reporting the end of the song. A `mat` that does not stream SHALL still render
+the whole song, which is then heard when it lands.
+
+Asked for 2026-09-16.
+
+#### Scenario: a cold song is heard before it has rendered
+
+- **GIVEN** a song of 3:35 nothing has rendered, and a `mat` that streams
+- **WHEN** the pane opens it and it is played
+- **THEN** it is playing while `mat` is still running, with as much of the song
+  as has been written, the playhead runs on unbroken as the rest arrives, and
+  one render — not two — produces the whole song and its stems
+
 ### Requirement: A few bars of a song loop while it is changed
 
 Option-clicking a line's bar in a song's gutter SHALL loop the stretch of the

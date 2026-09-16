@@ -4,10 +4,12 @@ import AbydosKit
 /// Running `mat` over a song, and picking up what it writes.
 ///
 /// One run at a time: a newer one stops the one going, since a render is a
-/// computation with no state to corrupt and the newest text wins. What it
-/// writes arrives in two goes — the mix, as soon as `mat` has finished writing
-/// it and gone on to the stems, and then everything with the manifest — so the
-/// song can be heard while the stems are still being written.
+/// computation with no state to corrupt and the newest text wins.
+///
+/// What it writes arrives while it is being written. `mat render --stream`
+/// writes the mix a stretch at a time and says how much of it can be read in
+/// `mix.stream.json`, which this polls: the first stretch is a fraction of a
+/// second in, and the rest of the song and its stems land behind it.
 ///
 /// Its own object because it is the pane's other half: a process, a debounce,
 /// a watchdog and a fingerprint, none of which is about drawing a song.
@@ -17,6 +19,9 @@ final class SongRenderRun {
 	nonisolated static let deadline: TimeInterval = 300
 	/// How long a change waits, so a save mid-keystroke renders once.
 	nonisolated static let debounce: TimeInterval = 0.4
+	/// How often the mix is asked how much of it has been written. Short
+	/// because the first stretch is what the wait for a sound now is.
+	nonisolated static let streamPoll: TimeInterval = 0.1
 
 	/// How many renders have been started, for a driven run.
 	private(set) var runs = 0
@@ -32,8 +37,9 @@ final class SongRenderRun {
 	/// render.
 	var outputRoot: URL
 
-	/// The mix, written and no longer growing, while the stems still are.
-	var onMix: (_ mix: URL, _ directory: URL) -> Void = { _, _ in }
+	/// More of the mix has been written, and how much: the pane plays it while
+	/// the rest of the song renders.
+	var onStream: (_ mix: URL, _ directory: URL, _ stream: SongRender.Stream) -> Void = { _, _, _ in }
 	/// The run ended: what it said, how it ended, and where it wrote.
 	var onFinished: (_ output: String, _ status: Int32, _ directory: URL) -> Void = { _, _, _ in }
 	/// Nothing could be run: nowhere to write, or too many tools already.
@@ -90,15 +96,8 @@ final class SongRenderRun {
 		pending?.cancel()
 	}
 
-	/// Whether the run going is a preview of the song's first bars.
-	private(set) var isPreviewing = false
-
 	/// Runs `mat` on `song`, with `fingerprint` as what this render is of.
-	///
-	/// - Parameter bars: a stretch of the song rather than the whole of it: a
-	///   preview, which lands in well under a second and is replaced by the
-	///   whole render behind it.
-	func render(song: URL, executable: String, fingerprint: String, bars: ClosedRange<Int>? = nil) {
+	func render(song: URL, executable: String, fingerprint: String) {
 		stop()
 		self.fingerprint = fingerprint
 		runs += 1
@@ -114,10 +113,9 @@ final class SongRenderRun {
 			return
 		}
 
-		isPreviewing = bars != nil
 		let line = SongRender.command(
 			executable: executable, song: song, output: directory,
-			cache: SongRender.cacheDirectory(for: song), bars: bars
+			cache: SongRender.cacheDirectory(for: song), streaming: true
 		)
 		let invocation = UserShell.invocation(for: line)
 		let process = Process()
@@ -151,7 +149,7 @@ final class SongRenderRun {
 		}
 		watchdog = watching
 		DispatchQueue.main.asyncAfter(deadline: .now() + Self.deadline, execute: watching)
-		watchForTheMix(in: directory, of: process)
+		watchTheStream(in: directory, of: process)
 
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 			var said = ""
@@ -180,28 +178,34 @@ final class SongRenderRun {
 		}
 	}
 
-	/// The mix, while the stems are still being written.
+	/// The mix while it is being written.
 	///
 	/// Asked for 2026-09-16: "it seems that we always need the complete
-	/// rendering till something is shown", and "ideally we can start early
-	/// before the render is even complete". `mat` writes the mix, then a stem
-	/// per layer, then the manifest — which is what the pane waited for, so a
-	/// song of ten stems was silent for the whole of it. The mix alone is the
-	/// song, so it is handed over as soon as it has stopped growing.
-	private func watchForTheMix(in directory: URL, of process: Process) {
+	/// rendering till something is shown", "ideally we can start early before
+	/// the render is even complete", and "it takes way too long till a song can
+	/// be started and also seems to render twice". `mat` a5f7d05 renders in
+	/// order of time and keeps `mix.stream.json` beside the mix saying how many
+	/// frames of it are there; this reads it while the run goes, and every
+	/// reading that says more than the last one is handed over.
+	///
+	/// The reading is always behind the file, never ahead: `mat` writes the
+	/// samples, then the JSON, under a temporary name and renamed.
+	private func watchTheStream(in directory: URL, of process: Process) {
 		let mix = directory.appendingPathComponent(SongRender.mixName)
-		var lastSize: Int64 = -1
+		let status = SongRender.streamStatus(beside: mix)
+		var last: SongRender.Stream?
 		func look() {
-			guard running === process, showing() != directory else { return }
-			let size = (try? mix.resourceValues(forKeys: [.fileSizeKey]))?.fileSize.map(Int64.init) ?? -1
-			// Written, and no longer growing: `mat` has gone on to the stems.
-			if size > 0, size == lastSize {
-				onMix(mix, directory)
-				return
+			guard running === process else { return }
+			if let data = try? Data(contentsOf: status), let stream = SongRender.stream(from: data),
+			   stream != last, stream.frames > 0 {
+				last = stream
+				onStream(mix, directory, stream)
+				// The whole song: what follows is the stems and the manifest,
+				// and `onFinished` puts those on.
+				if stream.finished { return }
 			}
-			lastSize = size
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { look() }
+			DispatchQueue.main.asyncAfter(deadline: .now() + Self.streamPoll) { look() }
 		}
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { look() }
+		DispatchQueue.main.asyncAfter(deadline: .now() + Self.streamPoll) { look() }
 	}
 }

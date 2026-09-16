@@ -513,31 +513,44 @@ rendering till something is shown".
   the timeline releases it: `showSong(at:)` for another song, `songIsKnown()`
   for its own. Driven: opening `drums.song` of the drive example renders
   nothing (`runs=0`) and plays the song.
-- **The mix is played while the stems are still being written.** `mat` writes
-  the mix, then a stem per layer, then the manifest — and the manifest was what
-  the pane waited for. It now watches the mix while the render runs and takes
-  it as soon as it has stopped growing: one lane, no bar grid, and the song
-  plays. The whole render replaces it a moment later, from the same place,
-  through the same path a save takes. Driven on a fresh copy of the drive
-  example: the pane has the song's 3:41 with `tempo=0 stems=0` while `mat` is
-  still running, and `tempo=133 stems=7` when it lands.
+- **The mix is played while it is being written.** `mat` wrote the mix, then a
+  stem per layer, then the manifest — and the manifest was what the pane waited
+  for, so a song of ten stems was silent for the whole of the render.
 
-**And the first bars before the song.** "Ideally we can start early before the
-render is even complete": `mat` f684cab renders a stretch of bars, so a pane
-with nothing to play renders bars 1–8 first — half a second — plays that, and
-renders the whole song behind it. The preview goes through the same path a
-render lands by, marked partial: nothing is kept in the cache for it, and the
-whole song replaces it when it arrives.
+**One render, played as it is written.** Asked next: "it takes way too long till
+a song can be started and also seems to render twice, can we create a render
+streaming support?" — the two renders being a preview of the first bars and then
+the song. `mat` a5f7d05 renders in order of time and writes as it goes:
+`mix.wav` grows a stretch at a time and `mix.stream.json` beside it says how
+many frames of it can be read, ending `"finished": true`. What it finishes with
+is the file an ordinary render writes, to the byte.
 
-Measured on the drive example (3:41, seven layers), nothing cached, load 15:
+So there is one render again. `SongRenderRun` asks the JSON every 0.1 s and
+hands every new reading to the pane; the pane opens on the first stretch — the
+stream knows the tempo and the bar length, which is enough for a lane and a
+grid — and `AudioPlayback` schedules each new stretch **behind what is already
+queued**, on the node's own timeline, so it plays straight on from the last
+sample without a reschedule, a seam or a moved playhead. That is the same
+mechanism the loop is built on.
 
-| Render | Wall clock |
-| --- | --- |
-| bars 1–8 | 0.42 s |
-| the whole song | 6.61 s |
+Three things it has to get right:
 
-Driven on a copy nothing had rendered: the pane showed 19.1 s of song with
-seven stems while `mat` was still going, and 3:39 when it landed.
+- **A sound that is playing is not cut short.** A new render is taken over from
+  only once it has passed the playhead (half a second of margin), so a save
+  under a playing song is heard from the same bar rather than from wherever the
+  first stretch happens to end.
+- **Running dry.** If the render falls behind — only possible in the first
+  seconds — the playback waits where it stands and goes on when the next
+  stretch lands, rather than reporting the end of the song.
+- **A file that shrinks.** The finished mix can be a little shorter than the
+  last reading said, since `mat` trims and fades the tail, so what was queued
+  past the end is dropped by scheduling once from where the playhead is.
+
+Driven on a copy nothing had rendered, load 79: the song was playing 4.6 s after
+launch — the app's own start included — with 5.1 s of it written, and the
+playhead ran unbroken through the stretches (0.31, 1.87, 4.51, 8.04, 13.62,
+20.18 s) while the duration grew 5.1 → 37.9 → 81.6 → 147.1 → 215.0 s and the
+seven stems landed at the end. `runs=1`.
 
 **The pane's own size.** These went in beside three other splits: the files a
 song is made of and their watch (`SongSources`), where a breakpoint stopped it

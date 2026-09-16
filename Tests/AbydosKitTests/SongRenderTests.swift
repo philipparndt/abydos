@@ -15,6 +15,65 @@ struct SongRenderTests {
 			+ "-o /tmp/abydos-song/1234/run-3/mix.wav --stems /tmp/abydos-song/1234/run-3/stems")
 	}
 
+	/// The render is streamed, so the song can be played while the rest of it
+	/// renders: one render, not a preview and then the whole of it.
+	@Test func theCommandStreamsTheMixAsItIsWritten() {
+		let command = SongRender.command(
+			executable: "mat", song: URL(fileURLWithPath: "/songs/drive.song"),
+			output: URL(fileURLWithPath: "/tmp/run-3"), cache: URL(fileURLWithPath: "/tmp/c"),
+			streaming: true
+		)
+		#expect(command == "mat render /songs/drive.song -o /tmp/run-3/mix.wav "
+			+ "--stems /tmp/run-3/stems --stream --cache /tmp/c")
+		#expect(SongRender.streamStatus(beside: URL(fileURLWithPath: "/tmp/run-3/mix.wav")).path
+			== "/tmp/run-3/mix.stream.json")
+	}
+
+	/// `mat render --stream` beside the mix, caught while the drive example was
+	/// rendering on 2026-09-16 and again when it was done.
+	@Test func theStreamSaysHowMuchOfTheMixCanBePlayed() throws {
+		let going = Data("""
+		{
+		  "bar_seconds": 1.8045112781954886,
+		  "bars_written": 0,
+		  "bits": 24,
+		  "bytes_per_frame": 6,
+		  "channels": 2,
+		  "data_offset": 68,
+		  "file": "mix.wav",
+		  "finished": false,
+		  "frames_written": 48913,
+		  "sample_rate": 48000,
+		  "seconds_written": 1.0190208333333333,
+		  "tempo": 133.0
+		}
+		""".utf8)
+		let first = try #require(SongRender.stream(from: going))
+		#expect(first.frames == 48913)
+		#expect(first.sampleRate == 48000)
+		#expect(abs(first.seconds - 1.019) < 0.001)
+		#expect(!first.finished)
+		// Enough of the song to open a pane on: its tempo and its bars.
+		let manifest = SongRender.manifest(ofStream: first)
+		#expect(manifest.tempo == 133)
+		#expect(abs(manifest.barSeconds - 1.8045) < 0.001)
+		#expect(manifest.layers.isEmpty)
+
+		let done = Data(String(data: going, encoding: .utf8)!
+			.replacingOccurrences(of: "\"finished\": false", with: "\"finished\": true")
+			.replacingOccurrences(of: "\"frames_written\": 48913", with: "\"frames_written\": 10634746").utf8)
+		let whole = try #require(SongRender.stream(from: done))
+		#expect(whole.finished)
+		#expect(whole.frames == 10634746)
+		#expect(whole != first)
+	}
+
+	/// Half a file, or none: the reader says nothing rather than a length.
+	@Test func anUnreadableStreamIsNoStream() {
+		#expect(SongRender.stream(from: Data("{ \"frames_wri".utf8)) == nil)
+		#expect(SongRender.stream(from: Data("{}".utf8)) == nil)
+	}
+
 	/// The pane keeps the layers in a directory named for the song and not
 	/// for the process, so a relaunch finds them — and the sweep of what dead
 	/// processes left does not take it.

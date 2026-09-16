@@ -101,28 +101,74 @@ public enum SongRender {
 	/// - Parameter bars: only these bars of the song, 1-based and inclusive
 	///   (`mat` f684cab), which is ten times faster than the whole of it and is
 	///   how a pane has something to play while the song renders behind it.
+	/// - Parameter streaming: write the mix as it renders (`mat` a5f7d05), a
+	///   stretch at a time, with `mix.stream.json` beside it saying how much of
+	///   it can be read. One render, not two: what it ends with is the file an
+	///   ordinary render writes, to the byte.
 	public static func command(
-		executable: String, song: URL, output: URL, cache: URL? = nil, bars: ClosedRange<Int>? = nil
+		executable: String, song: URL, output: URL, cache: URL? = nil, bars: ClosedRange<Int>? = nil,
+		streaming: Bool = false
 	) -> String {
 		var arguments = [
 			executable, "render", song.path,
 			"-o", output.appendingPathComponent(mixName).path,
 			"--stems", output.appendingPathComponent(stemsDirectory).path,
 		]
+		if streaming { arguments.append("--stream") }
 		if let bars { arguments += ["--bars", "\(bars.lowerBound)-\(bars.upperBound)"] }
 		if let cache { arguments += ["--cache", cache.path] }
 		return arguments.map(quoted).joined(separator: " ")
 	}
 
-	/// Whether a manifest is of part of a song rather than the whole of it
-	/// (`mat` f684cab). An older `mat` says nothing and rendered the whole.
-	public static func isPartial(_ data: Data) -> Bool {
-		guard let top = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
-		return top["partial"] as? Bool ?? false
+	// MARK: - The mix while it is being written
+
+	/// The file `mat --stream` keeps beside a mix, saying how much of it is
+	/// there: `mix.wav` has `mix.stream.json`.
+	public static func streamStatus(beside mix: URL) -> URL {
+		mix.deletingPathExtension().appendingPathExtension("stream.json")
 	}
 
-	/// The first bars of a song, for the preview render.
-	public static let previewBars = 1...8
+	/// How much of a streamed render can be played.
+	///
+	/// Written after the samples it counts and renamed into place, so what it
+	/// says is always already in the file — never the other way round.
+	public struct Stream: Equatable, Sendable {
+		/// Frames readable now, at `sampleRate`.
+		public let frames: Int64
+		public let sampleRate: Double
+		public let seconds: Double
+		public let barSeconds: Double
+		public let tempo: Double
+		/// The render is over: this is the whole song, and the file will not
+		/// change again. It can be *shorter* than the last reading — the tail
+		/// is trimmed and faded at the end — so what was scheduled past it is
+		/// no longer there to play.
+		public let finished: Bool
+	}
+
+	public static func stream(from data: Data) -> Stream? {
+		guard let top = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+		      let frames = (top["frames_written"] as? NSNumber)?.int64Value,
+		      let rate = (top["sample_rate"] as? NSNumber)?.doubleValue, rate > 0
+		else { return nil }
+		return Stream(
+			frames: frames,
+			sampleRate: rate,
+			seconds: (top["seconds_written"] as? NSNumber)?.doubleValue ?? Double(frames) / rate,
+			barSeconds: (top["bar_seconds"] as? NSNumber)?.doubleValue ?? 0,
+			tempo: (top["tempo"] as? NSNumber)?.doubleValue ?? 0,
+			finished: top["finished"] as? Bool ?? false
+		)
+	}
+
+	/// What to read back out of a streamed mix: the manifest a pane shows while
+	/// only the mix exists, with the tempo and bar length the stream knows.
+	public static func manifest(ofStream stream: Stream) -> Manifest {
+		Manifest(
+			tempo: stream.tempo, meter: [4, 4], barSeconds: stream.barSeconds,
+			seconds: stream.seconds, layers: []
+		)
+	}
 
 	// MARK: - Exporting
 

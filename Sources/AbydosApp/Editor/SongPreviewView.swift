@@ -1,5 +1,6 @@
 import AbydosKit
 import AppKit
+import AVFoundation
 
 /// A song's sound, beside the text that makes it.
 ///
@@ -103,6 +104,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	private var rendered: Rendered?
+	/// The render whose mix is still being written, while it is: see
+	/// `streamed(mix:in:_:)`.
+	private var streaming: URL?
 	/// Running `mat`, and what it writes: see `SongRenderRun`.
 	private lazy var run = makeRun()
 	/// The files the song is made of, and the watch on them.
@@ -197,7 +201,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// The run, told where to write and what to hand back.
 	private func makeRun() -> SongRenderRun {
 		let made = SongRenderRun(outputRoot: SongRender.outputRoot(for: url))
-		made.onMix = { [weak self] mix, directory in self?.loadTheMix(at: mix, in: directory) }
+		made.onStream = { [weak self] mix, directory, stream in
+			self?.streamed(mix: mix, in: directory, stream)
+		}
 		made.onFinished = { [weak self] output, status, directory in
 			self?.finish(output: output, status: status, directory: directory)
 		}
@@ -225,9 +231,6 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			run.note(fingerprint: now)
 			infoLabel.stringValue = info(kept.info)
 			load(directory: kept.directory, manifest: kept.manifest, mix: kept.files[0], kept: kept)
-		} else if rendered == nil {
-			// Nothing to hear yet: the first bars first.
-			render(bars: SongRender.previewBars)
 		} else {
 			render()
 		}
@@ -428,46 +431,70 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	/// Runs `mat` on what the pane is showing: see `SongRenderRun`.
-	///
-	/// - Parameter bars: the first bars only, as a preview: a song of four
-	///   minutes renders in eight seconds and its first eight bars in half of
-	///   one (`mat` f684cab), so there is something to hear at once and the
-	///   whole song takes over when it lands.
-	private func render(bars: ClosedRange<Int>? = nil) {
+	private func render() {
 		guard let executable else { return }
-		run.render(song: url, executable: executable, fingerprint: sources.fingerprint(of: url), bars: bars)
+		// Whatever the last render wrote is all of it there will ever be: this
+		// one replaces it, and until it does the old mix plays to its end
+		// rather than waiting for a stretch nobody is writing.
+		stopGrowing()
+		run.render(song: url, executable: executable, fingerprint: sources.fingerprint(of: url))
+	}
+
+	/// Nothing more is coming for the mix that is playing — the run ended, or a
+	/// new one took its place.
+	private func stopGrowing() {
+		guard streaming != nil else { return }
+		streaming = nil
+		rendered?.playback.stoppedGrowing()
 	}
 
 	// MARK: - Rendering
 
-	/// The mix on its own, as one lane, until the stems land.
-	private func loadTheMix(at mix: URL, in directory: URL) {
+	/// The mix as it is being written, as one lane that grows.
+	///
+	/// Asked for 2026-09-16: "it takes way too long till a song can be started
+	/// and also seems to render twice, can we create a render streaming
+	/// support?" There is one render now, and its first stretch — a fraction of
+	/// a second in — is what the pane opens on; the rest of the song is put
+	/// behind what is playing as it arrives, and the stems land at the end.
+	///
+	/// **A sound that is playing is not cut short for one.** What was rendered
+	/// before goes on until the new render has passed the playhead, so a save
+	/// under a playing song is heard from the same bar rather than from
+	/// wherever the first stretch happens to end.
+	private func streamed(mix: URL, in directory: URL, _ stream: SongRender.Stream) {
+		let frames = AVAudioFramePosition(stream.frames)
+		if streaming == directory, let playback = rendered?.playback, rendered?.directory == directory {
+			playback.grew(toFrames: frames, finished: stream.finished)
+			canvas.duration = playback.duration
+			if stream.finished { streaming = nil }
+			return
+		}
+		if let showing = rendered?.playback, !stream.finished,
+		   stream.seconds < showing.currentSeconds + Self.streamLead {
+			return
+		}
 		drawings.keep([nil])
 		load(
-			directory: directory,
-			manifest: SongRender.Manifest(tempo: 0, meter: [4, 4], barSeconds: 0, seconds: 0, layers: []),
-			mix: mix, kept: nil, partial: true
+			directory: directory, manifest: SongRender.manifest(ofStream: stream),
+			mix: mix, kept: nil, partial: true, reading: false
 		)
+		guard rendered?.directory == directory, let playback = rendered?.playback else { return }
+		if !stream.finished {
+			streaming = directory
+			playback.beGrowing()
+		}
 	}
+
+	/// How far past the playhead a streamed render has to reach before it takes
+	/// over from the sound that is playing.
+	private static let streamLead: Double = 0.5
 
 	private func finish(output: String, status: Int32, directory: URL) {
 		let manifestURL = directory.appendingPathComponent(SongRender.stemsDirectory).appendingPathComponent(SongRender.manifestName)
 		let mixURL = directory.appendingPathComponent(SongRender.mixName)
 		let data = try? Data(contentsOf: manifestURL)
-		// A preview of the first bars: shown if it worked, and the whole song
-		// rendered either way. A song shorter than the preview's bars refuses
-		// it, which costs half a second and nothing else.
-		if run.isPreviewing {
-			if status == 0, let data, let manifest = try? SongRender.manifest(from: data),
-			   FileManager.default.fileExists(atPath: mixURL.path) {
-				drawings.keep([nil] + manifest.layers.map { _ in nil })
-				load(directory: directory, manifest: manifest, mix: mixURL, kept: nil, partial: true)
-			} else {
-				try? FileManager.default.removeItem(at: directory)
-			}
-			render()
-			return
-		}
+		stopGrowing()
 		guard status == 0,
 		      let data,
 		      let manifest = try? SongRender.manifest(from: data),
@@ -519,7 +546,13 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	///
 	/// - Parameter kept: the cache's entry when this render is the last one
 	///   rather than a new one, with whatever of it has been read already.
-	private func load(directory: URL, manifest: SongRender.Manifest, mix: URL, kept: SongRenderCache.Entry?, partial: Bool = false) {
+	/// - Parameter reading: whether to read the files for the drawing. A mix
+	///   that is still being written is read when it is whole, not over and
+	///   over as it grows.
+	private func load(
+		directory: URL, manifest: SongRender.Manifest, mix: URL, kept: SongRenderCache.Entry?,
+		partial: Bool = false, reading: Bool = true
+	) {
 		let stems = manifest.layers.map {
 			directory.appendingPathComponent(SongRender.stemsDirectory).appendingPathComponent($0.file)
 		}
@@ -575,7 +608,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			SongRenderCache.shared.overview(ofStem: $0.key, of: url)
 		}))
 		rebuildLanes()
-		analyse(files: files, manifest: manifest, directory: directory)
+		if reading { analyse(files: files, manifest: manifest, directory: directory) }
 		// A driver waiting for a sound has one, even with the stems to come.
 		if partial { settled.settle() }
 		// Settled at the render, not at the drawing: the sound is what the pane
