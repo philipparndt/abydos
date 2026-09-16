@@ -51,21 +51,21 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var onPlayhead: ((_ seconds: Double?, _ marking: Bool) -> Void)?
 	/// The first enabled breakpoint playing reaches between two moments, from
 	/// the source's timeline; nil for none.
-	var breakpointAhead: ((_ from: Double, _ to: Double) -> (line: Int, seconds: Double, file: URL?)?)?
+	var breakpointAhead: ((_ from: Double, _ to: Double) -> (line: Int, seconds: Double, file: URL?)?)? {
+		get { stops.ahead }
+		set { stops.ahead = newValue }
+	}
 	/// The line a breakpoint stopped the song on, and nil when it plays on.
-	var onBreakpointStop: ((_ file: URL?, _ line: Int?) -> Void)?
+	var onBreakpointStop: ((_ file: URL?, _ line: Int?) -> Void)? {
+		get { stops.onStop }
+		set { stops.onStop = newValue }
+	}
 	/// Playing, pausing, stopping on a breakpoint, running out, and the
 	/// playhead moving: what a debugger over the song is told.
 	var onPlaybackChange: ((SongPlaybackChange) -> Void)?
-	/// Where the playhead was when last followed: a breakpoint is reached
-	/// when playing carries the playhead past its start.
-	private var lastFollowed: Double?
-	/// The line a breakpoint stopped playing on, until play or a seek.
-	private var stoppedLine: Int? {
-		didSet { if stoppedLine != oldValue { onBreakpointStop?(stoppedFile, stoppedLine) } }
-	}
-	/// The included file the stop's line is in; nil for the song's own.
-	private var stoppedFile: URL?
+	/// Where a breakpoint stopped the song, and what it takes to know: see
+	/// `SongBreakpointStops`.
+	private let stops = SongBreakpointStops()
 	/// Told whenever playing starts or stops, so the tab can show a speaker.
 	var onPlayingChanged: ((Bool) -> Void)?
 
@@ -131,8 +131,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private var lastError: String?
 	/// The errors behind `lastError`, for the strip's click.
 	private var lastDiagnostics: [SongRender.Diagnostic] = []
-	private var isSettled = false
-	private var whenSettled: [() -> Void] = []
+	/// Whether the first render has landed: see `SongSettled`.
+	private let settled = SongSettled()
 
 	private static let deadline: TimeInterval = 300
 	private static let debounce: TimeInterval = 0.4
@@ -160,7 +160,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			show(failure: SongRender.missingMessage)
 			lastError = SongRender.missingMessage
 			// Nothing is coming, and a driver waiting for it should be told so.
-			settle()
+			settled.settle()
 		} else {
 			show(notice: "Waiting to render \(url.lastPathComponent)…")
 			whenShown = { [weak self] in self?.start() }
@@ -209,7 +209,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		outputRoot = SongRender.outputRoot(for: song)
 		sources.begin(song: song, files: [])
 		fingerprint = nil
-		isSettled = false
+		settled.begin()
 		show(notice: "Waiting to render \(song.lastPathComponent)…")
 		if window != nil { start() } else { whenShown = { [weak self] in self?.start() } }
 	}
@@ -245,7 +245,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// it; it goes with the last of them.
 		SongPlaybackHub.shared.release(url, pane: self)
 		if wasPlaying { onPlayingChanged?(false) }
-		stoppedLine = nil
+		stops.goOn(from: nil)
 		onPlayhead?(nil, false)
 	}
 
@@ -510,12 +510,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		lastDiagnostics = diagnostics
 		if rendered == nil {
 			show(failure: complaint)
-			settle()
+			settled.settle()
 			return
 		}
 		errorStrip.show(complaint.split(whereSeparator: \.isNewline).first.map(String.init) ?? complaint)
 		errorStrip.isHidden = false
-		settle()
+		settled.settle()
 	}
 
 	private static func info(of manifest: SongRender.Manifest, rendered: String?) -> String {
@@ -593,7 +593,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// Settled at the render, not at the drawing: the sound is what the pane
 		// is for, and a driver reading the lanes before they are read sees
 		// them marked unread rather than waiting on a dozen stems of neon.song.
-		settle()
+		settled.settle()
 	}
 
 	/// Reads the mix and every stem not yet read off the main thread, and
@@ -735,8 +735,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		} else {
 			// Playing on from a breakpoint: from where it stopped, which is not
 			// reached again, so the same breakpoint does not stop it twice.
-			stoppedLine = nil
-			lastFollowed = playback.currentSeconds
+			stops.goOn(from: playback.currentSeconds)
 			playback.play()
 			if playback.isPlaying { OnePlayer.started(self) }
 		}
@@ -818,8 +817,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	private func seek(to seconds: Double) {
 		// A seek is not playing past anything between here and there.
-		lastFollowed = seconds
-		stoppedLine = nil
+		stops.goOn(from: seconds)
 		playback?.seek(toSeconds: seconds)
 		followPlayback()
 	}
@@ -858,26 +856,21 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		} else if let playback, playback.duration > 0, !playback.isLooping, playback.currentSeconds >= playback.duration - 0.05 {
 			onPlaybackChange?(.ended)
 		} else if playback != nil {
-			onPlaybackChange?(.stopped(file: stoppedLine == nil ? nil : stoppedFile, line: stoppedLine))
+			onPlaybackChange?(.stopped(file: stops.stopped.file, line: stops.stopped.line))
 		}
 	}
 
 	private func followPlayback() {
 		let now = playback?.currentSeconds ?? 0
-		let from = lastFollowed
-		lastFollowed = now
 		// Stopped exactly on the breakpoint's moment, whatever of the frame
 		// since the last tick was already heard past it.
-		if isPlaying, let playback, let from, let stop = breakpointAhead?(from, now) {
+		if let stop = stops.reached(now, playing: isPlaying), let playback {
 			playback.pause()
 			playback.seek(toSeconds: stop.seconds)
-			lastFollowed = stop.seconds
-			stoppedFile = stop.file
-			stoppedLine = stop.line
 			playingChanged()
 			return
 		}
-		onPlayhead?(playback == nil ? nil : now, isPlaying || stoppedLine != nil)
+		onPlayhead?(playback == nil ? nil : now, isPlaying || stops.isStopped)
 		if isPlaying { onPlaybackChange?(.tick) }
 		// The pane's own drawing only while it is shown; the source's marks and
 		// breakpoints above go on, since an included file's tab can be in front.
@@ -976,16 +969,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	// MARK: - Driving
 
-	private func settle() {
-		isSettled = true
-		let waiting = whenSettled
-		whenSettled = []
-		waiting.forEach { $0() }
-	}
-
 	/// Runs `then` once a render has landed and been read, or failed.
 	func whenRendered(_ then: @escaping () -> Void) {
-		if isSettled { then() } else { whenSettled.append(then) }
+		settled.whenSettled(then)
 	}
 
 	/// Whether this pane is the one whose sound is being heard, which is the one
@@ -1012,7 +998,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	/// The line a breakpoint stopped the song on, for a driven run.
-	var stoppedLineForTesting: Int? { stoppedLine }
+	var stoppedLineForTesting: Int? { stops.line }
 
 	func seekForTesting(seconds: Double) {
 		canvas.playhead = seconds
