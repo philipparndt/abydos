@@ -83,6 +83,17 @@ still writing takes over from a playing song only once it has passed the
 playhead, so a save under a playing song is heard from the same bar. Opening a
 file a song includes no longer renders that file first.
 
+## The stems sound like the mix
+
+Playing the stems together now sounds like playing the mix. They used to be cut
+before the master chain, so the mix had a compressor, saturation and a limiter
+the stems never saw — neon's mix was 4.8 dB louder than its stems, drive's 3.7
+dB, harbour's 6.5 dB quieter — and no fixed gain could stand in for something
+that moves with the music. `mat` f2063b3 writes each stem through the master's
+own gain curve, so the stems sum to the mix sample for sample, and the pane
+plays them as they were written. It needs that `mat`; with an older one the
+pane goes on turning the stems down to the limiter's ceiling as before.
+
 ## Loop a few bars while you change them
 
 Option-click a line's bar beside the line numbers: the song loops the stretch

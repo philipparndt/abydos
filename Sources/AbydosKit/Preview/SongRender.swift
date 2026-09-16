@@ -282,6 +282,16 @@ public enum SongRender {
 		/// The master limiter's ceiling in dBFS, when the manifest carries the
 		/// master; nil when the limiter is off or the manifest is older.
 		public var limiterCeilingDb: Double?
+		/// Whether every stem was written through the master's own gain curve,
+		/// so the stems sum to the mix sample for sample (`mat` f2063b3).
+		///
+		/// Reported 2026-09-16: "the mix and the combined stems still have a
+		/// different volume/dynamic" — the stems were cut before the master, so
+		/// the compressor, the saturation and the limiter were the mix's alone
+		/// and no fixed gain could stand in for them. Measured before the fix:
+		/// the mix was 4.8 dB louder than the stems of neon, 3.7 dB of drive,
+		/// and 6.5 dB *quieter* than harbour's. After it, 0.00 dB on all three.
+		public var stemsThroughMaster = false
 		/// Every file the song was read from, absolute, the song first: a save
 		/// of any of them is a change to the sound. mat e72d7e5 on; empty
 		/// before, and then the song is its only source.
@@ -290,7 +300,8 @@ public enum SongRender {
 		public init(
 			title: String? = nil, tempo: Double, meter: [Int], barSeconds: Double,
 			seconds: Double, layers: [Layer], sections: [Section] = [],
-			stemsPeakDb: Double? = nil, limiterCeilingDb: Double? = nil
+			stemsPeakDb: Double? = nil, limiterCeilingDb: Double? = nil,
+			stemsThroughMaster: Bool = false
 		) {
 			self.title = title
 			self.tempo = tempo
@@ -301,12 +312,20 @@ public enum SongRender {
 			self.sections = sections
 			self.stemsPeakDb = stemsPeakDb
 			self.limiterCeilingDb = limiterCeilingDb
+			self.stemsThroughMaster = stemsThroughMaster
 		}
 
 		/// How much to turn every stem down so that their sum peaks where the
 		/// mix's limiter would have held it: 1 when nothing is known, and
 		/// never above 1 — a quiet song is not made louder.
+		///
+		/// Stems written through the master need none of it: they already are
+		/// the mix, so they are played as they were written. The old sum is
+		/// `pre_master_peak_db` in such a manifest, and the arithmetic below
+		/// would come to 1 anyway — but not quite, for a looped render, whose
+		/// sum can sit a hundredth of a decibel over the ceiling.
 		public var stemGain: Double {
+			if stemsThroughMaster { return 1 }
 			guard let stemsPeakDb else { return 1 }
 			let ceiling = limiterCeilingDb ?? -1
 			return min(1, pow(10, (ceiling - stemsPeakDb) / 20))
@@ -371,7 +390,8 @@ public enum SongRender {
 			layers: layers,
 			sections: sections,
 			stemsPeakDb: number(mixing?["sum_peak_db"]),
-			limiterCeilingDb: limiterOn ? number(limiter?["ceiling_db"]) : nil
+			limiterCeilingDb: limiterOn ? number(limiter?["ceiling_db"]) : nil,
+			stemsThroughMaster: mixing?["stems_through_master"] as? Bool ?? false
 		)
 		made.sources = top["sources"] as? [String] ?? []
 		return made

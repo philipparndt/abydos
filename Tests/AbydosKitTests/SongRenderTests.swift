@@ -236,6 +236,42 @@ struct SongRenderTests {
 		#expect(try SongRender.manifest(from: Data(manifest.utf8)).stemGain == 1)
 	}
 
+	/// Stems that are the mix are played as they were written.
+	///
+	/// Reported 2026-09-16: "the mix and the combined stems still have a
+	/// different volume/dynamic". `mat` f2063b3 writes each stem through the
+	/// master's own gain curve, so they sum to the mix sample for sample and
+	/// there is nothing left for the pane to take off. The `mixing` block is
+	/// the drunken sailor's, rendered with that `mat`.
+	@Test func stemsWrittenThroughTheMasterArePlayedAsTheyAre() throws {
+		let through = """
+		{ "tempo": 120, "meter": [4, 4], "bar_seconds": 2, "seconds": 8, "layers": [],
+		  "mixing": { "stems_sum_to": "the mix, sample for sample",
+		              "applied": ["gain", "eq", "width", "saturation", "comp", "clip", "limiter"],
+		              "skipped": [], "stems_through_master": true,
+		              "master_curve_key": "f6fb47d3b0cb0cbd",
+		              "pre_master_peak_db": 0.6670909523963928,
+		              "sum_peak_db": -1.0000003576278687 },
+		  "master": { "gain_db": 4.0, "limiter": { "enabled": true, "ceiling_db": -1.0, "release_ms": 80.0 } } }
+		"""
+		let read = try SongRender.manifest(from: Data(through.utf8))
+		#expect(read.stemsThroughMaster)
+		#expect(read.stemGain == 1)
+
+		// A looped render's sum can sit a hundredth of a decibel over the
+		// ceiling, which the old arithmetic would have taken off.
+		let looped = through.replacingOccurrences(
+			of: "\"sum_peak_db\": -1.0000003576278687", with: "\"sum_peak_db\": -0.991"
+		)
+		#expect(try SongRender.manifest(from: Data(looped.utf8)).stemGain == 1)
+
+		// And a mat that cuts them before the master still has them turned down.
+		let before = through
+			.replacingOccurrences(of: "\"stems_through_master\": true", with: "\"stems_through_master\": false")
+			.replacingOccurrences(of: "\"sum_peak_db\": -1.0000003576278687", with: "\"sum_peak_db\": 0.667")
+		#expect(abs(try SongRender.manifest(from: Data(before.utf8)).stemGain - 0.8254) < 0.001)
+	}
+
 	@Test func aManifestThatIsNotOneIsRefusedInWords() {
 		#expect(throws: SongRender.Failure.self) { try SongRender.manifest(from: Data("[]".utf8)) }
 		#expect(throws: SongRender.Failure.self) { try SongRender.manifest(from: Data("not json".utf8)) }

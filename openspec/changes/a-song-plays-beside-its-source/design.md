@@ -557,6 +557,37 @@ playhead ran unbroken through the stretches (0.31, 1.87, 4.51, 8.04, 13.62,
 20.18 s) while the duration grew 5.1 → 37.9 → 81.6 → 147.1 → 215.0 s and the
 seven stems landed at the end. `runs=1`.
 
+**The stems are the mix.** Reported 2026-09-16: "the mix and the combined stems
+still have a different volume/dynamic". The pane had been turning the stems down
+to the limiter's ceiling — `sum_peak_db` against `ceiling_db` — which is a fixed
+gain standing in for a compressor, a saturator and a limiter, none of which is
+fixed. Measured on whole songs, the mix against the sum of the stems: neon +4.8
+dB, drive +3.7 dB, harbour −6.5 dB.
+
+The fix belongs in `mat` and is exact: every stage of the master ends up as a
+per-sample multiplier on the sum, so dividing the mastered mix by the mix before
+it gives that multiplier, and a stem written through it sums with the others to
+the mix again — saturation included, since the curve is taken per sample.
+`mat` f2063b3 does this by default for `--stems` (`--stems-pre-master` opts out)
+and says so in the manifest as `stems_through_master`.
+
+Which leaves the pane nothing to take off: `stemGain` is 1 when the manifest
+says the stems went through the master. The old arithmetic would come to 1
+anyway, but not quite — a looped render's sum can sit a hundredth of a decibel
+over the ceiling. Measured the way the pane plays them, every stem at that gain
+summed against the mix:
+
+| Song | Stems | Before | Now |
+| --- | --- | --- | --- |
+| neon | 10 | mix +4.83 dB RMS | 0.00 dB, worst sample −117.6 dBFS |
+| drunken sailor | 5 | peak −1.67 dB | 0.00 dB, −122.9 dBFS |
+
+Both at the pane's own gain, on the 24-bit files a render writes — where the
+remaining difference is the quantisation of five and ten stems, not the
+arithmetic. `mat`'s own check, at 32-bit float and over four songs, puts it at
+−122 to −135 dBFS: neon +4.83 → 0.00 dB, drive +3.68 → 0.00, harbour −6.46 →
+0.00, drunken sailor −0.02 → 0.00.
+
 **The pane's own size.** These went in beside three other splits: the files a
 song is made of and their watch (`SongSources`), where a breakpoint stopped it
 (`SongBreakpointStops`), whether the first render has landed (`SongSettled`),

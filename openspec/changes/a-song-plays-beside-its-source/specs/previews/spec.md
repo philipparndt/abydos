@@ -22,7 +22,9 @@ that never had a sound SHALL show the failure in place of the drawing. The
 lanes SHALL carry the bar grid and the song's sections, and the clock SHALL
 say the bar. The pane SHALL play and pause, loop, seek, zoom and scroll as the
 sound tab does, and SHALL say in words when `mat` is not installed. Stems SHALL
-start on the same sample. The pane SHALL export the mix, or the mix and its
+start on the same sample, and playing every stem together SHALL sound like
+playing the mix — with a `mat` that writes them through the master, as they
+were written, and with an older one turned down to the limiter's ceiling. The pane SHALL export the mix, or the mix and its
 stems, as WAV, FLAC or M4A beside the song, SHALL ask before replacing a file
 that is there, and SHALL NOT offer a format the installed `mat` cannot write.
 
