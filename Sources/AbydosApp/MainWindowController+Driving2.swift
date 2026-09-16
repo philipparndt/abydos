@@ -973,7 +973,12 @@ extension MainWindowController {
 		switch parts[0] {
 		case "rail":   return "rail " + toolStrip.hoverToolForTesting(parts[1])
 		case "header": return "header " + navigator.hoverHeaderActionForTesting(parts[1])
-		case "run":    return "run " + (run.runControl?.hoverPartForTesting(parts[1]) ?? "no run control")
+		case "run":
+			// The status left the run control for the title bar, and kept its name.
+			if parts[1] == "status" || parts[1] == "clear" {
+				return "run " + (titlebar.statusForTesting?.hoverPartForTesting(parts[1]) ?? "no status")
+			}
+			return "run " + (run.runControl?.hoverPartForTesting(parts[1]) ?? "no run control")
 		case "strip":  return bottomPanel.hoverStripControlForTesting(parts[1])
 		// Any of the panes' own buttons, found by what it says rather than by
 		// wiring a door per pane: they are all `DrawnButton`s in this window's

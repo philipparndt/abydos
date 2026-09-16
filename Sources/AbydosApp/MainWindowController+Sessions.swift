@@ -136,6 +136,9 @@ extension MainWindowController {
 		control.onRunStateChanged = { [weak self] state in
 			self?.titlebar.setRunState(state)
 		}
+		control.onStatusChanged = { [weak self] text, failed in
+			self?.titlebar.setStatus(text, failed: failed)
+		}
 		run.runControl = control
 		item.view = control
 		run.refreshRunControl()

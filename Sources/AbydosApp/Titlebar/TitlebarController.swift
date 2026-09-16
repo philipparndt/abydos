@@ -48,6 +48,10 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 	// The one item that is not this object's to build.
 	var makeRunItem: (NSToolbarItem.Identifier) -> NSToolbarItem? = { _ in nil }
 	var relayoutRunControl: () -> Void = {}
+	/// The run control itself, for placing the status beside it.
+	var runControlView: () -> NSView? = { nil }
+	/// The cross on the status was pressed; the run control keeps the words.
+	var onClearStatus: () -> Void = {}
 
 	// What pressing something here means, which is the window's business.
 	var onProjectPressed: () -> Void = {}
@@ -100,9 +104,15 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 		set { capsule?.isReadingBranch = newValue }
 	}
 
-	func setProjectName(_ name: String) { capsule?.setProject(name: name) }
+	func setProjectName(_ name: String) {
+		capsule?.setProject(name: name)
+		fitStrip()
+	}
 
-	func setSubprojectPath(_ relative: String?) { subprojectPill?.setSubproject(relative) }
+	func setSubprojectPath(_ relative: String?) {
+		subprojectPill?.setSubproject(relative)
+		fitStrip()
+	}
 
 	/// Re-measures the pills; the window calls this when the theme or zoom moves.
 	func relayout() { layoutTitlebarPills() }
@@ -113,7 +123,69 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 		if let backdrop = titlebarBackdrop {
 			backdrop.superview?.addSubview(backdrop, positioned: .above, relativeTo: nil)
 		}
+		fitStrip()
+		layoutStatusSoon()
 	}
+
+	/// Makes the strip fit the window, so the toolbar never has to.
+	///
+	/// **The toolbar's own overflow is what killed the gesture in a narrow
+	/// window.** Items it puts away go into a menu, and while any are away it
+	/// collapses its flexible space to nothing — and the flexible space is the
+	/// one thing in a toolbar the window's double-click works through; the
+	/// backdrop under an empty stretch of toolbar does not. So the room is made
+	/// here, from the window's width: the capsule shortens its names to what is
+	/// left, folds away below its minimum, and the pills fold after it in order
+	/// of what they qualify — and the flexible space stays, and fills whatever
+	/// is free, however narrow the window gets.
+	///
+	/// A pure function of the window's width and what the strip has to say, so
+	/// there is nothing to flicker: no reading of what the toolbar did last.
+	private func fitStrip() {
+		guard let window, let control = runControlView() else { return }
+		let scale = Theme.current
+		let gap = scale.scaled(12)
+		// The traffic lights, the run control, the toolbar's own paddings, and
+		// a stretch of flexible space wide enough to double-click on and to
+		// hold a status beside the buttons.
+		let fixed = scale.scaled(78) + control.intrinsicContentSize.width + scale.scaled(48)
+		var available = window.frame.width - fixed - scale.scaled(120)
+
+		if let capsule {
+			let room = available - gap
+			let folded = room < capsule.minimumOuterWidth
+			capsule.roomWidth = folded ? nil : room
+			capsule.isCollapsedForRoom = folded
+			if folded {
+				// A worktree, a subproject, a container: each qualifies the
+				// project the capsule names, and says nothing without it.
+				for case let pill? in [worktreePill, subprojectPill, devContainerPill] as [PillButton?] {
+					pill.isCollapsedForRoom = true
+				}
+				return
+			}
+			available -= capsule.intrinsicContentSize.width + gap
+		}
+		for case let pill? in [worktreePill, subprojectPill, devContainerPill] as [PillButton?] {
+			let natural = pill.naturalWidth
+			guard natural > 0 else { continue }
+			if natural + gap <= available {
+				pill.isCollapsedForRoom = false
+				available -= natural + gap
+			} else {
+				pill.isCollapsedForRoom = true
+			}
+		}
+	}
+
+	/// What the last run said, and whether that was bad news.
+	func setStatus(_ text: String, failed: Bool) {
+		titlebarStatus?.set(text, failed: failed)
+		layoutStatus()
+	}
+
+	/// The status view, for a driven run that hovers or aims at it.
+	var statusForTesting: TitlebarStatus? { titlebarStatus }
 
 	func buildBackdrop() { buildTitlebarBackdrop() }
 
@@ -134,6 +206,8 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 	private var titlebarBackdropHeight: NSLayoutConstraint?
 
 	private var titlebarSeam: TitlebarSeam?
+
+	private var titlebarStatus: TitlebarStatus?
 
 	var capsule: TitlebarCapsule!
 
@@ -188,6 +262,51 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 			seam.heightAnchor.constraint(equalToConstant: TitlebarSeam.height),
 		])
 		titlebarSeam = seam
+
+		// What the last run said, left of the buttons. Placed by frame, since
+		// the run control it sits beside is the toolbar's to move.
+		let status = TitlebarStatus()
+		status.onClear = { [weak self] in self?.onClearStatus() }
+		status.isHidden = true
+		backdrop.addSubview(status)
+		titlebarStatus = status
+	}
+
+	/// Puts the message just left of the run control, in the room between it
+	/// and the pills — the room a double-click already zooms the window from.
+	///
+	/// The toolbar lays its items out on its own turn of the run loop, so a
+	/// resize asks again a moment later; `layoutStatusSoon` is that.
+	private func layoutStatus() {
+		guard let status = titlebarStatus, let backdrop = titlebarBackdrop else { return }
+		guard status.hasMessage,
+			let control = runControlView(), control.window === window, control.superview != nil
+		else {
+			status.isHidden = true
+			return
+		}
+		let controlFrame = backdrop.convert(control.bounds, from: control)
+		let gap = Theme.current.scaled(10)
+		// Clear of the traffic lights, and of whichever pills are showing.
+		var left = Theme.current.scaled(80)
+		let pills: [NSView?] = [capsule, worktreePill, subprojectPill, devContainerPill]
+		for case let pill? in pills where pill.window === window && pill.superview != nil && !pill.isHidden {
+			left = max(left, backdrop.convert(pill.bounds, from: pill).maxX + gap)
+		}
+		let right = controlFrame.minX - gap
+		let width = min(TitlebarStatus.preferredWidth, right - left)
+		guard width >= Theme.current.scaled(60) else {
+			status.isHidden = true
+			return
+		}
+		status.isHidden = false
+		status.frame = NSRect(x: right - width, y: controlFrame.minY, width: width, height: controlFrame.height)
+		status.needsDisplay = true
+	}
+
+	private func layoutStatusSoon() {
+		layoutStatus()
+		DispatchQueue.main.async { [weak self] in self?.layoutStatus() }
 	}
 
 	/// Says what the run is doing, on the line under the titlebar.
@@ -214,7 +333,8 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 		// asked again — otherwise zooming the window leaves the one control
 		// that is always on screen at the old size.
 		relayoutRunControl()
-
+		fitStrip()
+		layoutStatusSoon()
 	}
 
 	/// Names the window after the repository, and fills the pill that says which
@@ -281,6 +401,7 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 				} : nil,
 				count: listed.count
 			)
+			self.fitStrip()
 			self.layoutTitlebarPills()
 		}
 	}
@@ -357,6 +478,7 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 			self.pilledContainer = inUse ?? wanted ?? choices.first
 			let name = containerName(self.pilledContainer, root)
 			pill.setContainer(containerMark, inUse: inUse != nil)
+			fitStrip()
 			// **The tool tip carries the name in both states now**, because the pill
 			// no longer does — 0444's part 3. It said nothing at all while a
 			// container was in use, which was right when the name was written across
@@ -594,6 +716,23 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
 		toolbarDefaultItemIdentifiers(toolbar)
+	}
+
+	/// The flexible space stays as long as the run control does.
+	///
+	/// A narrow window puts items away in priority order, and AppKit gives its
+	/// own flexible space the lowest, so it left with the capsule and the pills
+	/// and the run control stood alone at the leading edge. The strip beside it
+	/// was then nobody's: not an item, and — measured 2026-09-16, two builds
+	/// side by side — the title-bar double-click works through the flexible
+	/// space and through nothing else in a toolbar. Kept at the run control's
+	/// priority, it is the last thing standing with it, fills whatever is left,
+	/// and the window can be zoomed from its strip however narrow it is.
+	func toolbarWillAddItem(_ notification: Notification) {
+		guard let item = notification.userInfo?["item"] as? NSToolbarItem,
+			item.itemIdentifier == .flexibleSpace
+		else { return }
+		item.visibilityPriority = .high
 	}
 
 	func toolbar(

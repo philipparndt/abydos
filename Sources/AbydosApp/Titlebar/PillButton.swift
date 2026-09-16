@@ -14,6 +14,40 @@ protocol TitlebarMenuAnchor: AnyObject {
 class PillButton: NSView, TitlebarMenuAnchor {
 	var onClick: (() -> Void)?
 
+	/// Whether the pill has anything to say. A subclass sets this where it
+	/// used to set `isHidden`, because hidden is now two questions.
+	var hasContent = false {
+		didSet { isHidden = !hasContent || isCollapsedForRoom }
+	}
+
+	/// Folded away by the title bar for want of room, content or not.
+	///
+	/// The title bar makes its own room rather than letting the toolbar put
+	/// items away: a toolbar in overflow collapses its flexible space, and the
+	/// flexible space is the one thing in a toolbar the window's double-click
+	/// works through — measured 2026-09-16.
+	var isCollapsedForRoom = false {
+		didSet {
+			guard isCollapsedForRoom != oldValue else { return }
+			isHidden = !hasContent || isCollapsedForRoom
+			invalidateIntrinsicContentSize()
+		}
+	}
+
+	/// The size the pill takes when it is shown; a subclass measures it.
+	var shownSize: NSSize { .zero }
+
+	/// What the pill would take if there were room, and nothing if it has
+	/// nothing to say.
+	var naturalWidth: CGFloat { hasContent ? shownSize.width : 0 }
+
+	override var intrinsicContentSize: NSSize {
+		// A toolbar measures a hidden view too, and warns about a zero
+		// dimension: a sliver rather than nothing.
+		guard hasContent, !isCollapsedForRoom else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+		return shownSize
+	}
+
 	/// Kept lit while the popover is open so the pill reads as the menu's anchor.
 	var isMenuOpen = false {
 		didSet { needsDisplay = true }
@@ -140,15 +174,13 @@ final class SubprojectPillButton: PillButton {
 
 	func setSubproject(_ path: String?) {
 		self.path = path
-		isHidden = (path == nil)
+		hasContent = (path != nil)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
 	}
 
-	override var intrinsicContentSize: NSSize {
-		// A toolbar measures a hidden view too, and warns about a zero
-		// dimension: a sliver rather than nothing.
-		guard let path else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+	override var shownSize: NSSize {
+		guard let path else { return .zero }
 		let textWidth = (path as NSString).size(withAttributes: [.font: PillButton.labelFont]).width
 		return NSSize(
 			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.iconSize
@@ -275,7 +307,7 @@ final class WorktreePillButton: PillButton {
 	///     should say roughly how long it is before it is opened.
 	func setWorktree(_ state: State?, count: Int = 0) {
 		self.state = state
-		isHidden = (state == nil)
+		hasContent = (state != nil)
 		toolTip = state.map { current in
 			let where_ = current.isPrimary
 				? "Primary checkout — \(current.full)"
@@ -289,10 +321,8 @@ final class WorktreePillButton: PillButton {
 	/// What is drawn beside the icon, which is often nothing.
 	private var label: String? { state?.name }
 
-	override var intrinsicContentSize: NSSize {
-		// A toolbar measures a hidden view too, and warns about a zero dimension:
-		// a sliver rather than nothing.
-		guard state != nil else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+	override var shownSize: NSSize {
+		guard state != nil else { return .zero }
 		let textWidth = label.map {
 			ceil(($0 as NSString).size(withAttributes: [.font: PillButton.labelFont]).width)
 				+ Self.gap
@@ -407,7 +437,7 @@ final class DevContainerPillButton: PillButton {
 	func setContainer(_ mark: String?, inUse: Bool = true) {
 		self.mark = mark
 		self.inUse = inUse
-		isHidden = (mark == nil)
+		hasContent = (mark != nil)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
 	}
@@ -430,10 +460,8 @@ final class DevContainerPillButton: PillButton {
 	/// What is drawn beside the icon, which is the mark or nothing.
 	private var label: String? { inUse ? mark : nil }
 
-	override var intrinsicContentSize: NSSize {
-		// A toolbar measures a hidden view too, and warns about a zero dimension:
-		// a sliver rather than nothing.
-		guard mark != nil else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+	override var shownSize: NSSize {
+		guard mark != nil else { return .zero }
 		let textWidth = label.map {
 			ceil(($0 as NSString).size(withAttributes: [.font: PillButton.labelFont]).width)
 				+ Self.gap

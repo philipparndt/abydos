@@ -4,9 +4,16 @@ import AbydosKit
 /// What runs when you press play, and how it went.
 ///
 /// Xcode's arrangement rather than IDEA's: one strip in the titlebar carrying
-/// the scheme, the two buttons, and a line of status. It costs no vertical
-/// space at all, which for something looked at constantly and pressed
-/// occasionally is the right trade.
+/// the scheme and the two buttons. It costs no vertical space at all, which
+/// for something looked at constantly and pressed occasionally is the right
+/// trade.
+///
+/// **No wider than what it does.** The line of status used to be drawn here
+/// too, in room reserved beside the well so that a message arriving would not
+/// move the buttons — and that room was dead to the title bar, because a
+/// toolbar refuses the double-click that zooms the window wherever one of its
+/// items sits. The message is `TitlebarStatus` now, on the backdrop left of
+/// the buttons; this control keeps the words and tells the title bar.
 final class RunControl: NSView, TitlebarMenuAnchor {
 	var onRun: (() -> Void)?
 	var onDebug: (() -> Void)?
@@ -75,7 +82,9 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 
 	/// The things that can be pressed, named so the hover and the tips can talk
 	/// about them.
-	enum Part { case run, debug, debugMenu, scheme, status }
+	enum Part { case run, debug, debugMenu, scheme }
+	/// Told what the last run said, so the title bar can draw it.
+	var onStatusChanged: ((String, Bool) -> Void)?
 	/// Told when a run starts or ends, so the titlebar can take the colour.
 	/// Told when the run state changes, so the line under the titlebar can show
 	/// it. A failure is part of it: it is not a kind of busyness, but it is
@@ -108,57 +117,13 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		NSSize(width: contentWidth, height: Theme.current.scaled(30))
 	}
 
-	/// Room kept for the message, whether or not there is one.
-	///
-	/// Reserved rather than added: the alternative is a strip that grows when
-	/// a run finishes, which moves the button somebody was about to press. It
-	/// also keeps this to one thing in the titlebar rather than two — the
-	/// toolbar draws a background behind every item it is given, and two of
-	/// them for one control looked like two controls.
-	private static var statusWidth: CGFloat { Theme.current.scaled(230) }
-
 	/// Everything drawn, plus a margin at each end.
 	private var contentWidth: CGFloat {
 		let button = Theme.current.scaled(26)
 		return Self.margin
 			+ button + Theme.current.scaled(4) + button + Self.chevronWidth
 			+ Theme.current.scaled(10) + Theme.current.scaled(190)
-			+ Theme.current.scaled(10) + Self.statusWidth
 			+ Self.margin
-	}
-
-	private var statusText: NSAttributedString {
-		// One line, ending in an ellipsis when there is more of it. A message
-		// long enough to wrap would otherwise grow down the window, and this is
-		// a strip in a titlebar; the whole message is in the tooltip, the toast
-		// and the launch log.
-		let paragraph = NSMutableParagraphStyle()
-		paragraph.lineBreakMode = .byTruncatingTail
-		return NSAttributedString(string: status, attributes: [
-			.font: Theme.current.uiFont(11.5),
-			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.gitIgnored,
-			.paragraphStyle: paragraph,
-		])
-	}
-
-	/// Where the message is, and the cross that forgets it.
-	private var statusRect: NSRect {
-		NSRect(
-			x: schemeRect.maxX + Theme.current.scaled(10),
-			y: 0,
-			width: Self.statusWidth,
-			height: bounds.height
-		)
-	}
-
-	private var clearRect: NSRect {
-		let size = Theme.current.scaled(14)
-		return NSRect(
-			x: statusRect.maxX - size,
-			y: bounds.midY - size / 2,
-			width: size,
-			height: size
-		)
 	}
 
 	/// What the strip is showing, for tests.
@@ -201,6 +166,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		isPreparing = busy && preparing
 		self.failed = failed
 		needsDisplay = true
+		onStatusChanged?(status, failed)
 		// The run button is a stop button while busy, and says so.
 		if wasBusy != busy {
 			layoutParts()
@@ -248,7 +214,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		layoutParts()
 		return [
 			(.run, runRect), (.debugMenu, debugMenuRect), (.debug, debugRect),
-			(.scheme, schemeRect), (.status, status.isEmpty ? .zero : statusRect),
+			(.scheme, schemeRect),
 		]
 	}
 
@@ -285,8 +251,6 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 				detail: "What this project offers, ranked, with a filter.",
 				shortcut: MenuCommands.shortcut(sending: #selector(MainWindowController.showRunConfigurations(_:)))
 			)
-		case .status:
-			return StyledTip.Tip(title: status)
 		}
 	}
 
@@ -319,8 +283,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 	/// would tell somebody, for a driven run.
 	func hoverPartForTesting(_ name: String) -> String {
 		tips.hoverForTesting(name, [
-			"run": .run, "debug": .debug, "debug-menu": .debugMenu,
-			"scheme": .scheme, "status": .status,
+			"run": .run, "debug": .debug, "debug-menu": .debugMenu, "scheme": .scheme,
 		], in: self)
 	}
 
@@ -331,9 +294,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		// started using.
 		StyledTip.shared.hide()
 
-		if !status.isEmpty, clearRect.insetBy(dx: -4, dy: -4).contains(point) {
-			setStatus("")
-		} else if runRect.contains(point) {
+		if runRect.contains(point) {
 			// Said before anything is done. Starting a program means building
 			// it, and stopping one in a cluster means asking a pod on the other
 			// side of a network — both take long enough that a button which
@@ -442,7 +403,7 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 		// Under whichever part the pointer is on, in the shape the terminal
 		// strip's controls draw: a button that acts when it is clicked says so
 		// before it is clicked.
-		if let hovered = tips.hovered, hovered != .status {
+		if let hovered = tips.hovered {
 			HoverGround.draw(around: tips.rect(of: hovered), ink: Theme.current.sidebarText)
 		}
 
@@ -485,8 +446,6 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 			height: label.size().height
 		))
 
-		drawStatus()
-
 		if let chevron = Theme.symbol("chevron.down", size: 8 * Theme.current.scale, color: Theme.current.gitIgnored) {
 			let size = Theme.current.scaled(9)
 			chevron.drawFitted(in: NSRect(
@@ -497,25 +456,6 @@ final class RunControl: NSView, TitlebarMenuAnchor {
 			))
 		}
 
-	}
-
-	/// The message, and a way to be rid of it.
-	private func drawStatus() {
-		guard !status.isEmpty else { return }
-		let text = statusText
-		let size = text.size()
-		let area = statusRect
-
-		text.draw(in: NSRect(
-			x: area.minX,
-			y: area.midY - size.height / 2,
-			width: max(0, area.width - Theme.current.scaled(18)),
-			height: size.height
-		))
-
-		Theme.symbol(
-			"xmark", size: 8 * Theme.current.scale, color: Theme.current.gitIgnored.withAlphaComponent(0.8)
-		)?.drawFitted(in: clearRect.insetBy(dx: Theme.current.scaled(3), dy: Theme.current.scaled(3)))
 	}
 
 	private func drawButton(in rect: NSRect, symbol: String, tint: NSColor) {
