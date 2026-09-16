@@ -80,7 +80,8 @@ of the mix arrives in a fraction of a second and the rest is played straight on
 from it, with the stems landing at the end. It needs `mat` a5f7d05 or newer; an
 older one renders the whole song before anything can be heard. A render that is
 still writing takes over from a playing song only once it has passed the
-playhead, so a save under a playing song is heard from the same bar. Opening a
+playhead, so a save under a playing song is heard from the same bar. The wave
+is drawn as it is written rather than at the end. Opening a
 file a song includes no longer renders that file first.
 
 ## The stems sound like the mix

@@ -546,6 +546,17 @@ Three things it has to get right:
   last reading said, since `mat` trims and fades the tail, so what was queued
   past the end is dropped by scheduling once from where the playhead is.
 
+**And drawn as it is written.** Asked of the empty lane a streamed render left:
+"Drawing it progressively -> Yes do this". The mix is read again as it grows —
+the whole file each time, since a reading's peaks and its spectrogram are laid
+out for the file's length rather than bolted end to end, and reading a few
+megabytes costs a fraction of rendering them. Held back so the reading never
+becomes the work: one at a time, a second apart at the least, and only when the
+song has grown by a third or by twenty seconds. Nothing partial is kept in the
+cache. Driven on a cold copy at load 10: the lane was drawn at 3.0 s and 4.7 s,
+with 54 s and 136 s of the song written and `mat` still running, where it had
+been empty until the render landed.
+
 Driven with a save under a playing song, load 90: the pane was playing the old
 render at 14.8 s when the edit landed, took the new one over at 16.3 s — by
 which point 48.8 s of it was written, well past the playhead — and the playhead

@@ -470,7 +470,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		if streaming == directory, let playback = rendered?.playback, rendered?.directory == directory {
 			playback.grew(toFrames: frames, finished: stream.finished)
 			canvas.duration = playback.duration
-			if stream.finished { streaming = nil }
+			// The wave of what has been written, drawn again as more arrives.
+			if stream.finished { streaming = nil } else { drawings.readGrowing(mix: mix, seconds: stream.seconds) }
 			return
 		}
 		if let showing = rendered?.playback, !stream.finished,
@@ -486,6 +487,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		if !stream.finished {
 			streaming = directory
 			playback.beGrowing()
+			drawings.readGrowing(mix: mix, seconds: stream.seconds)
 		}
 	}
 
