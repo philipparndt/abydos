@@ -104,9 +104,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	private var rendered: Rendered?
-	/// The render whose mix is still being written, while it is: see
-	/// `streamed(mix:in:_:)`.
-	private var streaming: URL?
+	/// The render whose mix is still being written: see `SongStream`.
+	private let stream = SongStream()
 	/// Running `mat`, and what it writes: see `SongRenderRun`.
 	private lazy var run = makeRun()
 	/// The files the song is made of, and the watch on them.
@@ -446,8 +445,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// Nothing more is coming for the mix that is playing — the run ended, or a
 	/// new one took its place.
 	private func stopGrowing() {
-		guard streaming != nil else { return }
-		streaming = nil
+		guard stream.ended() else { return }
 		rendered?.playback.stoppedGrowing()
 	}
 
@@ -460,41 +458,30 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// support?" There is one render now, and its first stretch — a fraction of
 	/// a second in — is what the pane opens on; the rest of the song is put
 	/// behind what is playing as it arrives, and the stems land at the end.
-	///
-	/// **A sound that is playing is not cut short for one.** What was rendered
-	/// before goes on until the new render has passed the playhead, so a save
-	/// under a playing song is heard from the same bar rather than from
-	/// wherever the first stretch happens to end.
-	private func streamed(mix: URL, in directory: URL, _ stream: SongRender.Stream) {
-		let frames = AVAudioFramePosition(stream.frames)
-		if streaming == directory, let playback = rendered?.playback, rendered?.directory == directory {
-			playback.grew(toFrames: frames, finished: stream.finished)
-			canvas.duration = max(stream.totalSeconds ?? 0, playback.duration)
-			canvas.writtenThrough = stream.finished ? nil : playback.duration
+	private func streamed(mix: URL, in directory: URL, _ written: SongRender.Stream) {
+		if stream.isGrowing(directory), let playback = rendered?.playback, rendered?.directory == directory {
+			playback.grew(toFrames: AVAudioFramePosition(written.frames), finished: written.finished)
+			canvas.duration = max(written.totalSeconds ?? 0, playback.duration)
+			canvas.writtenThrough = written.finished ? nil : playback.duration
 			// The wave of what has been written, drawn again as more arrives.
-			if stream.finished { streaming = nil } else { drawings.readGrowing(mix: mix, seconds: stream.seconds) }
+			if written.finished { _ = stream.ended() } else { drawings.readGrowing(mix: mix, seconds: written.seconds) }
 			return
 		}
-		if let showing = rendered?.playback, !stream.finished,
-		   stream.seconds < showing.currentSeconds + Self.streamLead {
-			return
-		}
+		guard stream.mayTakeOver(
+			from: rendered?.playback.currentSeconds, written: written.seconds, finished: written.finished
+		) else { return }
 		drawings.keep([nil])
 		load(
-			directory: directory, manifest: SongRender.manifest(ofStream: stream),
+			directory: directory, manifest: SongRender.manifest(ofStream: written),
 			mix: mix, kept: nil, partial: true, reading: false
 		)
 		guard rendered?.directory == directory, let playback = rendered?.playback else { return }
-		if !stream.finished {
-			streaming = directory
+		if !written.finished {
+			stream.began(directory)
 			playback.beGrowing()
-			drawings.readGrowing(mix: mix, seconds: stream.seconds)
+			drawings.readGrowing(mix: mix, seconds: written.seconds)
 		}
 	}
-
-	/// How far past the playhead a streamed render has to reach before it takes
-	/// over from the sound that is playing.
-	private static let streamLead: Double = 0.5
 
 	private func finish(output: String, status: Int32, directory: URL) {
 		let manifestURL = directory.appendingPathComponent(SongRender.stemsDirectory).appendingPathComponent(SongRender.manifestName)
