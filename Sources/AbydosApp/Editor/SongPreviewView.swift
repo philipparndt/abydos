@@ -119,7 +119,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	private(set) var view: View = .mix
 	/// Stems switched off from the pane, by layer, kept across renders.
-	private var silenced: Set<String> = []
+	/// The stems switched off, kept with the song so every pane of it shows
+	/// the same switches.
+	private var silenced: Set<String> {
+		get { SongPlaybackHub.shared.silenced(of: url) }
+		set { SongPlaybackHub.shared.setSilenced(newValue, of: url) }
+	}
 	/// The layers the caret lights, kept so a new render lights the same.
 	private var lit: Set<String> = []
 	private var ticker: Timer?
@@ -144,6 +149,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 		super.init(color: Theme.current.editorBackground)
 		colourSource = { Theme.current.editorBackground }
+		NotificationCenter.default.addObserver(
+			self, selector: #selector(songPlaybackChanged(_:)),
+			name: .abydosSongPlaybackChanged, object: nil
+		)
 		build()
 		ScaledControls.register(self)
 
@@ -188,11 +197,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// what it plays is the song it belongs to.
 	func showSong(at song: URL) {
 		guard executable != nil, FilePath.canonical(song) != FilePath.canonical(url) else { return }
+		SongPlaybackHub.shared.release(url, pane: self)
 		pending?.cancel()
 		analysis?.flag.set()
 		stopRendering()
 		let wasPlaying = rendered?.playback.isPlaying == true
-		rendered?.playback.tearDown()
 		rendered = nil
 		if wasPlaying { onPlayingChanged?(false) }
 		onPlayhead?(nil, false)
@@ -216,10 +225,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		analysis?.flag.set()
 		ticker?.invalidate()
 		if let running, running.isRunning { running.terminate() }
-		// The playback and its engine: a pane that went with its split, or
-		// with the tab switching to source, must not keep sounding. The render
-		// itself stays, in `SongRenderCache`, for the next pane on this file.
-		MainActor.assumeIsolated { rendered?.playback.tearDown() }
+		// The playback and its engine: a pane that went with its split, or with
+		// the tab switching to source, must not keep sounding — unless another
+		// pane of the same song still is, which the hub knows. The render itself
+		// stays, in `SongRenderCache`, for the next pane on this file.
+		MainActor.assumeIsolated { SongPlaybackHub.shared.release(url, pane: self) }
 	}
 
 	/// Stops for good: the tab is closing, or its window is.
@@ -231,7 +241,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		ticker = nil
 		stopRendering()
 		let wasPlaying = rendered?.playback.isPlaying == true
-		rendered?.playback.tearDown()
+		// The sound belongs to the song, and another pane may still be showing
+		// it; it goes with the last of them.
+		SongPlaybackHub.shared.release(url, pane: self)
 		if wasPlaying { onPlayingChanged?(false) }
 		stoppedLine = nil
 		onPlayhead?(nil, false)
@@ -530,7 +542,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let files = [mix] + stems
 		let playback: AudioPlayback
 		do {
-			playback = try AudioPlayback(urls: files)
+			// One playback per song, borrowed: see `SongPlaybackHub`.
+			playback = try SongPlaybackHub.shared.playback(of: url, files: files, for: self)
 		} catch {
 			try? FileManager.default.removeItem(at: directory)
 			failed(with: "The render could not be opened: \(error.localizedDescription)")
@@ -544,23 +557,16 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 
 		let previous = rendered
-		let wasPlaying = previous?.playback.isPlaying == true
-		let position = previous?.playback.currentSeconds ?? 0
-		playback.isLooping = previous?.playback.isLooping ?? false
-		playback.onStopped = { [weak self] in self?.playingChanged() }
-		previous?.playback.tearDown()
+		// The hub carried what the old playback was doing into the new one —
+		// where it was, and its loop — so nothing here moves the playhead.
+		playback.onStopped = { [weak self] in
+			guard let self else { return }
+			self.playingChanged()
+			SongPlaybackHub.shared.said(self.url)
+		}
 
 		rendered = Rendered(directory: directory, manifest: manifest, files: files, playback: playback)
 		applyVolumes()
-		playback.seek(toSeconds: min(position, playback.duration))
-		// A render landing under a loop keeps it: the loop is seconds of the
-		// song, and the song is what has just been rendered again.
-		playback.loopRange = loopRange
-		if loopRange != nil { playback.isLooping = true }
-		if wasPlaying {
-			playback.play()
-			if playback.isPlaying { OnePlayer.started(self) }
-		}
 		// The previous render's directory is the cache's to delete, which it
 		// did when the new one was stored.
 
@@ -737,6 +743,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		playingChanged()
 	}
 
+	/// Another pane of the same song, sharing its playback.
+	func makesTheSameSound(as other: PlaysMedia) -> Bool {
+		guard let playback, let song = other as? SongPreviewView else { return false }
+		return song.playbackForTesting === playback
+	}
+
 	func pauseForAnother() {
 		guard let playback, playback.isPlaying else { return }
 		playback.pause()
@@ -753,8 +765,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		followPlayback()
 	}
 
-	/// The stretch the loop plays, in seconds, or nil for the whole song.
-	private(set) var loopRange: ClosedRange<Double>?
+	/// The stretch the loop plays, in seconds, or nil for the whole song. The
+	/// playback's, so every pane of the song draws the same band.
+	var loopRange: ClosedRange<Double>? { playback?.loopRange }
 
 	/// Loops a stretch of the song and plays it: a section, or the bars where
 	/// one line is heard.
@@ -764,10 +777,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// render landing under it keeps the loop, since the loop is seconds of the
 	/// song rather than anything the render owns.
 	func setLoop(_ range: ClosedRange<Double>?) {
-		loopRange = range
 		canvas.loopRange = range
 		guard let playback else { return }
 		playback.loopRange = range
+		SongPlaybackHub.shared.said(url)
 		if let range {
 			playback.isLooping = true
 			if playback.currentSeconds < range.lowerBound || playback.currentSeconds >= range.upperBound {
@@ -811,16 +824,33 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		followPlayback()
 	}
 
-	private func playingChanged() {
+	/// A tick while the song plays, whoever started it.
+	private func refreshTicker() {
 		ticker?.invalidate()
 		ticker = nil
-		if isPlaying {
-			let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-				MainActor.assumeIsolated { self?.followPlayback() }
-			}
-			RunLoop.main.add(timer, forMode: .common)
-			ticker = timer
+		guard isPlaying else { return }
+		let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+			MainActor.assumeIsolated { self?.followPlayback() }
 		}
+		RunLoop.main.add(timer, forMode: .common)
+		ticker = timer
+	}
+
+	/// Another pane of this song did something to it: the same sound, so the
+	/// same playhead, the same switches, the same loop, the same button.
+	@objc private func songPlaybackChanged(_ notification: Notification) {
+		guard (notification.object as? NSString) as String? == FilePath.canonical(url) else { return }
+		canvas.loopRange = playback?.loopRange
+		loopButton.isLit = playback?.isLooping ?? false
+		rebuildLanes()
+		refreshTicker()
+		followPlayback()
+		onPlayingChanged?(isPlaying)
+	}
+
+	private func playingChanged() {
+		SongPlaybackHub.shared.said(url)
+		refreshTicker()
 		followPlayback()
 		onPlayingChanged?(isPlaying)
 		if isPlaying {
@@ -963,6 +993,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var isTheOneSounding: Bool {
 		OnePlayer.isCurrent(self) || (playback?.isPlaying == true)
 	}
+
+	/// The sound this pane is playing, to tell two panes of one song apart from
+	/// two songs.
+	var playbackForTesting: AudioPlayback? { playback }
 
 	/// What the loop is playing, for a driven run.
 	var loopRangeForTesting: String {

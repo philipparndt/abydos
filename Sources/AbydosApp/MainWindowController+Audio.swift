@@ -236,6 +236,18 @@ extension MainWindowController {
 				if numbers.count >= 2, let codeView = editor.activeGroup?.activeTab?.codeView {
 					codeView.clickTimelineForTesting(line: Int(numbers[0]), at: numbers[1], dragTo: numbers.count > 2 ? numbers[2] : nil)
 				}
+			case "front":
+				// The pane of the tab in front, which since includes need not be
+				// the pane these steps were started on: `front`, `front:play`,
+				// `front:pause`.
+				let front = editor.songPreview
+				switch parts.dropFirst().first {
+				case "play": front?.playForTesting()
+				case "pause": front?.pauseForAnother()
+				default:
+					print("SONG-FRONT " + (front?.reportForTesting ?? "no pane"))
+					fflush(stdout)
+				}
 			case "panel":
 				// `panel:<points>` — the panel's height, for a capture: opening
 				// the debugger restores whatever height this machine remembers.

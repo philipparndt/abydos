@@ -5,6 +5,14 @@ import AppKit
 protocol PlaysMedia: AnyObject {
 	/// Another player has started; this one pauses where it is.
 	func pauseForAnother()
+	/// Whether the two are making the same sound, which since a song can be
+	/// shown in several tabs at once they may be: pausing for *that* would be
+	/// pausing the sound the other has just started. See `SongPlaybackHub`.
+	func makesTheSameSound(as other: PlaysMedia) -> Bool
+}
+
+extension PlaysMedia {
+	func makesTheSameSound(as other: PlaysMedia) -> Bool { false }
 }
 
 /// One sound at a time, across every tab and every window.
@@ -19,7 +27,9 @@ enum OnePlayer {
 
 	/// `player` has just started playing.
 	static func started(_ player: PlaysMedia) {
-		if let current, current !== player { current.pauseForAnother() }
+		if let current, current !== player, !current.makesTheSameSound(as: player) {
+			current.pauseForAnother()
+		}
 		current = player
 	}
 

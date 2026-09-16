@@ -273,6 +273,16 @@ In Abydos:
   timeline, whether the file is open or not; the earliest reached wins.
 - **The debugger's frames are in their files**: a pattern in the kit is two
   frames in `kit.song` under `play beat x14` and `track drums` in `song.song`.
+- **One sound for one song.** Asked for 2026-09-16: "all part should also have
+  the same play status and the same playhead". Two tabs of one song had two
+  playbacks of the same render, so each had its own playhead and its own play
+  button. The playback now belongs to the song (`SongPlaybackHub`), the panes
+  borrow it, and it goes with the last of them; which stems are switched off
+  belongs to the song too, so both tabs show the same switches. A pane that
+  attaches does not claim "one sound at a time" — that rule now asks whether
+  the two are making the same sound, since pausing "the other" would be pausing
+  what was just started — and a second pane of a song already being debugged
+  keeps that session rather than stopping it, which stopped the music.
 - **An included file's pane plays the song it belongs to.** Asked for
   2026-09-16: "the main song is no longer shown when navigating to an include
   file". A kit has no tracks and renders to silence, so a pane whose timeline
@@ -292,6 +302,7 @@ and `parts/bass.song`), with `open:kit.song` in front, 2026-09-15:
 | the debugger | `beat: x@kit.song:13 > beat: x@kit.song:14 > pattern beat · pass 1 of 14@kit.song:11 > play beat x14@song.song:24 > track drums@song.song:20` |
 | line 1 of the kit edited on disk | `runs=2` — the song rendered again |
 | the kit's tab in front (2026-09-16) | its pane plays `song.song`, header `song.song · 124 bpm · 4/4 · 3 stems`, the kit's heard lines marked and its cells lit |
+| playing, then the kit's tab, then back (2026-09-16) | one sound throughout: playing at 3.0, still playing at 8.0 with both panes at the same playhead, paused from the kit's tab at 11.57 in both, played again from it, and playing at 17.5 back on the song's tab |
 
 ## Risks / Trade-offs
 

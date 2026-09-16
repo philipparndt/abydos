@@ -33,6 +33,17 @@ extension MainWindowController {
 			tell(link, change)
 			return
 		}
+		// **Another pane of the same song is not another program.** Since a file
+		// a song includes plays that song, two panes share one playback; the
+		// second one saying "playing" used to stop the session and start
+		// another, and stopping a session pauses the song — so navigating to an
+		// included file stopped the music.
+		if let link = songDebug, let session = link.session, session.isActive,
+		   let pane = target.pane, let owner = link.target.pane,
+		   FilePath.canonical(pane.url) == FilePath.canonical(owner.url) {
+			tell(link, change)
+			return
+		}
 		guard case .playing = change, target.pane != nil else { return }
 		if let active = bottomPanel.activeDebugSession, active.isActive {
 			// Somebody's program: not ours to replace.
