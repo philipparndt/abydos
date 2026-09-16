@@ -235,6 +235,10 @@ extension MainWindowController {
 				if numbers.count >= 2, let codeView = editor.activeGroup?.activeTab?.codeView {
 					codeView.clickTimelineForTesting(line: Int(numbers[0]), at: numbers[1], dragTo: numbers.count > 2 ? numbers[2] : nil)
 				}
+			case "panel":
+				// `panel:<points>` — the panel's height, for a capture: opening
+				// the debugger restores whatever height this machine remembers.
+				if let height = Double(parts.dropFirst().first ?? "") { setPanelHeightForTesting(height) }
 			case "debug":
 				// `debug` — the song's debug session: threads, the stack shown,
 				// its scopes; `debug:continue|pause|step|stop|thread:<n>` — the

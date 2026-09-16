@@ -125,18 +125,6 @@ extension EditorViewController {
 		}
 	}
 
-	/// Whether a tab's file is the song its lines are heard in, rather than a
-	/// file some song includes.
-	///
-	/// **Found driving includes**: `kit.song` opened beside the song has a pane
-	/// of its own, playing nothing, and it told the kit's tab — and, through
-	/// the news, every file of the song — that the playhead was at 0, over the
-	/// song's pane saying 4.35. An included file is marked by its song's pane.
-	static func isItsOwnSong(_ tab: Tab) -> Bool {
-		guard let song = tab.codeView?.timeline?.song else { return true }
-		return same(song, LanguageService.shared.uri(for: tab.url))
-	}
-
 	/// A song's sound beside its text — see `SongPreviewView`.
 	///
 	/// Wired both ways: the caret tells the pane which block it is in, and a
@@ -158,17 +146,21 @@ extension EditorViewController {
 		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
 		// The playhead through the source's timeline bars, and a click on a bar
 		// seeks the song.
-		view.onPlayhead = { [weak tab] seconds, marking in
-			guard let tab, let codeView = tab.codeView, Self.isItsOwnSong(tab) else { return }
-			codeView.setSongPlayhead(seconds, marking: marking)
-			// The files it includes, in whatever tab or group they are open.
-			guard let song = codeView.timeline, song.files.count > 1 else { return }
-			SongNews.playhead(song: song.files[0], seconds: seconds, marking: marking)
+		view.onPlayhead = { [weak tab, weak view] seconds, marking in
+			guard let tab, let view else { return }
+			// This tab's own marks when the pane is playing this tab's file.
+			if Self.same(LanguageService.shared.uri(for: view.url), LanguageService.shared.uri(for: tab.url)) {
+				tab.codeView?.setSongPlayhead(seconds, marking: marking)
+			}
+			// And every tab of the song, from whichever pane is the one playing
+			// it: the song's own tab, or a tab of a file it includes.
+			guard view.isTheOneSounding, let files = tab.codeView?.timeline?.files, files.count > 1 else { return }
+			SongNews.playhead(song: LanguageService.shared.uri(for: view.url), seconds: seconds, marking: marking)
 		}
 		// Breakpoints on a song's lines stop it where the line starts to be
 		// heard: the ones the gutter holds, enabled, placed by the timeline.
 		view.breakpointAhead = { [weak self, weak tab] from, to in
-			guard let self, let tab, Self.isItsOwnSong(tab), let codeView = tab.codeView, let timeline = codeView.timeline else { return nil }
+			guard let self, let tab, let codeView = tab.codeView, let timeline = codeView.timeline else { return nil }
 			let own = Set(codeView.breakpointLines.filter { $0.value.isEnabled }.keys)
 			var best = own.isEmpty ? nil : timeline.breakpoint(in: own, from: from, to: to).map { ($0.line, $0.seconds, URL?.none) }
 			// And the breakpoints in the files it includes, placed by their own
@@ -182,13 +174,14 @@ extension EditorViewController {
 			}
 			return best.map { (line: $0.0, seconds: $0.1, file: $0.2) }
 		}
-		view.onBreakpointStop = { [weak tab] file, line in
-			guard let tab, Self.isItsOwnSong(tab) else { return }
-			guard let song = tab.codeView?.timeline, song.files.count > 1 else {
+		view.onBreakpointStop = { [weak tab, weak view] file, line in
+			guard let tab, let view else { return }
+			let song = LanguageService.shared.uri(for: view.url)
+			guard let files = tab.codeView?.timeline?.files, files.count > 1 else {
 				tab.codeView?.setSongStoppedLine(line)
 				return
 			}
-			SongNews.stopped(song: song.files[0], file: file.map { LanguageService.shared.uri(for: $0) } ?? song.files[0], line: line)
+			SongNews.stopped(song: song, file: file.map { LanguageService.shared.uri(for: $0) } ?? song, line: line)
 		}
 		// The debugger over the song: what it plays, and what it needs to say
 		// where it is.
@@ -217,6 +210,11 @@ extension EditorViewController {
 			}
 		)
 		view.onPlaybackChange = { [weak self, target] change in self?.onSongPlayback?(target, change) }
+		// A file some song includes has no sound of its own: the pane plays the
+		// song, once a timeline says which one that is.
+		if let song = tab.codeView?.timeline?.song, let url = URL(string: song) {
+			view.showSong(at: url)
+		}
 		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
 		// Where the caret already is: a pane made for a tab whose caret sits in
 		// a track should light that track from the start.

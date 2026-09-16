@@ -50,6 +50,8 @@
       posted to the included files' tabs; breakpoints across files; frames in
       their files; an included file's pane kept from driving the song; driven
       and captured.
+- [x] 2.9 An included file's pane plays the song that includes it; the pane
+      that is heard says where the playhead is; `panel:<points>` step.
 
 ## 3. Before finishing
 

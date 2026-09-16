@@ -47,7 +47,7 @@ debugged keeps the debugger.
 A song can `include "kit.song"` (musik-as-text e72d7e5). Saving an included file
 renders the song again; its tab shows the song's playhead, heard lines and
 playing notes; a breakpoint in it stops the song; and the debugger's stack goes
-through the files. An included file's own pane renders it alone, for now.
+through the files. Opening an included file plays the song it belongs to, beside it.
 
 ## Loops
 

@@ -34,7 +34,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		var name: String { self == .mix ? "mix" : "stems" }
 	}
 
-	let url: URL
+	/// The song this pane plays. The tab's own file, until a timeline says the
+	/// file is included in another song — then that one, since a file of a song
+	/// has no sound of its own. See `showSong(at:)`.
+	private(set) var url: URL
+	/// The tab's file, whatever is being played for it.
+	let file: URL
 	let executable: String?
 	/// The text as it is in the buffer, for the block under the caret.
 	private let sourceText: () -> String?
@@ -111,7 +116,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private let cancelled = CancelFlag()
 	/// The pane's own directory under the temporary one, holding one
 	/// subdirectory per render.
-	private let outputRoot: URL
+	private var outputRoot: URL
 
 	// MARK: What is shown
 
@@ -132,6 +137,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	init(url: URL, sourceText: @escaping () -> String?) {
 		self.url = url
+		self.file = url
 		self.sourceText = sourceText
 		executable = SongRender.executable()
 		outputRoot = SongRender.outputRoot(for: url)
@@ -151,30 +157,64 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			settle()
 		} else {
 			show(notice: "Waiting to render \(url.lastPathComponent)…")
-			whenShown = { [weak self] in
-				guard let self else { return }
-				// The files it was read from last time, so the fingerprint asks
-				// about all of them.
-				if let known = SongRenderCache.shared.manifest(for: self.url) {
-					self.sources = known.sources.map { URL(fileURLWithPath: $0) }
-				}
-				self.watch()
-				// The last render of this file, when the file has not changed
-				// since: the pane before this one was torn down with its tab, and
-				// rendering again would be twenty seconds for nothing.
-				let now = self.currentFingerprint()
-				if let kept = SongRenderCache.shared.entry(for: self.url, fingerprint: now) {
-					self.fingerprint = now
-					self.infoLabel.stringValue = kept.info
-					self.load(directory: kept.directory, manifest: kept.manifest, mix: kept.files[0], kept: kept)
-				} else {
-					self.render()
-				}
-			}
+			whenShown = { [weak self] in self?.start() }
 		}
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
+
+	/// Renders what the pane is showing, or reads back the render it kept.
+	private func start() {
+		// The files it was read from last time, so the fingerprint asks about
+		// all of them.
+		if let known = SongRenderCache.shared.manifest(for: url) {
+			sources = known.sources.map { URL(fileURLWithPath: $0) }
+		}
+		watch()
+		// The last render of this song, when nothing it is made of has changed
+		// since: the pane before this one was torn down with its tab, and
+		// rendering again would be twenty seconds for nothing.
+		let now = currentFingerprint()
+		if let kept = SongRenderCache.shared.entry(for: url, fingerprint: now) {
+			fingerprint = now
+			infoLabel.stringValue = info(kept.info)
+			load(directory: kept.directory, manifest: kept.manifest, mix: kept.files[0], kept: kept)
+		} else {
+			render()
+		}
+	}
+
+	/// Plays another song in this pane: the song that includes the tab's file.
+	///
+	/// Asked for 2026-09-16 — "the main song is no longer shown when navigating
+	/// to an include file" — since a kit or a set of patterns has no tracks and
+	/// renders to silence on its own. The tab keeps its text and its gutter;
+	/// what it plays is the song it belongs to.
+	func showSong(at song: URL) {
+		guard executable != nil, FilePath.canonical(song) != FilePath.canonical(url) else { return }
+		pending?.cancel()
+		analysis?.flag.set()
+		running?.terminate()
+		running = nil
+		let wasPlaying = rendered?.playback.isPlaying == true
+		rendered?.playback.tearDown()
+		rendered = nil
+		if wasPlaying { onPlayingChanged?(false) }
+		onPlayhead?(nil, false)
+		url = song
+		outputRoot = SongRender.outputRoot(for: song)
+		sources = []
+		fingerprint = nil
+		watchers = [:]
+		isSettled = false
+		show(notice: "Waiting to render \(song.lastPathComponent)…")
+		if window != nil { start() } else { whenShown = { [weak self] in self?.start() } }
+	}
+
+	/// What the header says, with the song's name when it is not the tab's.
+	private func info(_ said: String) -> String {
+		FilePath.canonical(url) == FilePath.canonical(file) ? said : "\(url.lastPathComponent) · \(said)"
+	}
 
 	deinit {
 		pending?.cancel()
@@ -483,7 +523,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		lastError = nil
 		lastDiagnostics = []
 		errorStrip.isHidden = true
-		infoLabel.stringValue = Self.info(of: manifest, rendered: SongRender.renderedLine(in: output))
+		infoLabel.stringValue = info(Self.info(of: manifest, rendered: SongRender.renderedLine(in: output)))
 		let before = sources
 		adoptSources(of: manifest)
 		// A render that found more files than were being fingerprinted: this
@@ -904,6 +944,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// Runs `then` once a render has landed and been read, or failed.
 	func whenRendered(_ then: @escaping () -> Void) {
 		if isSettled { then() } else { whenSettled.append(then) }
+	}
+
+	/// Whether this pane is the one whose sound is being heard, which is the one
+	/// that says where the playhead is for every tab of its song.
+	var isTheOneSounding: Bool {
+		OnePlayer.isCurrent(self) || (playback?.isPlaying == true)
 	}
 
 	/// Where the song is, for the debugger.

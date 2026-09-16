@@ -366,7 +366,14 @@ extension EditorViewController {
 	@objc func timelineChanged(_ notification: Notification) {
 		guard let url = notification.object as? URL else { return }
 		for tab in tabs where tab.url.absoluteString == url.absoluteString {
-			tab.codeView?.timeline = LanguageService.shared.timeline(for: tab.url)
+			let timeline = LanguageService.shared.timeline(for: tab.url)
+			tab.codeView?.timeline = timeline
+			// A file of a song: the pane plays the song, not the file, which on
+			// its own has no tracks and no sound.
+			if let song = timeline?.song, let songURL = URL(string: song),
+			   let pane: SongPreviewView = Self.pane(in: tab.contentView) {
+				pane.showSong(at: songURL)
+			}
 		}
 	}
 

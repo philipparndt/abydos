@@ -273,10 +273,14 @@ In Abydos:
   timeline, whether the file is open or not; the earliest reached wins.
 - **The debugger's frames are in their files**: a pattern in the kit is two
   frames in `kit.song` under `play beat x14` and `track drums` in `song.song`.
-- **An included file's own pane does not drive the song.** Found driving it:
-  `kit.song` opened beside the song has a pane of its own, silent, and it told
-  every file of the song the playhead was at 0 over the song's 4.35. A tab
-  whose timeline names another song is marked by that song's pane only.
+- **An included file's pane plays the song it belongs to.** Asked for
+  2026-09-16: "the main song is no longer shown when navigating to an include
+  file". A kit has no tracks and renders to silence, so a pane whose timeline
+  says the file is included in another song switches to that song —
+  `showSong(at:)`, which is the pane starting again on another file — and its
+  header says which song it is playing. Two panes can then show one song, so
+  the one that says where the playhead is for every tab of it is the one being
+  heard (`OnePlayer.isCurrent`); each pane still marks its own tab.
 
 Driven on a copy of mat's `examples/include` (`song.song` including `kit.song`
 and `parts/bass.song`), with `open:kit.song` in front, 2026-09-15:
@@ -287,6 +291,7 @@ and `parts/bass.song`), with `open:kit.song` in front, 2026-09-15:
 | breakpoint on the kit's line 13, play | stopped at 0:04.354; the kit tab `playhead=4.35 stopped=13`, lines 3, 11–15 heard, a cell lit on rows 12–14 |
 | the debugger | `beat: x@kit.song:13 > beat: x@kit.song:14 > pattern beat · pass 1 of 14@kit.song:11 > play beat x14@song.song:24 > track drums@song.song:20` |
 | line 1 of the kit edited on disk | `runs=2` — the song rendered again |
+| the kit's tab in front (2026-09-16) | its pane plays `song.song`, header `song.song · 124 bpm · 4/4 · 3 stems`, the kit's heard lines marked and its cells lit |
 
 ## Risks / Trade-offs
 
@@ -294,8 +299,6 @@ and `parts/bass.song`), with `open:kit.song` in front, 2026-09-15:
   `unknown_keyword` lists are the truth and the tables are typed by hand;
   a setting the parser gains is a line to add here. Worth a test that reads
   the parser's lists, when they are exposed.
-- [An included file's own pane] → it renders the file alone, which has no
-  tracks and is silent. It should show the song that includes it; not done.
 - [Full-text sync on every keystroke] → a song is a few hundred lines and
   the analysis is a lexer, a parser and an arranger over it, well under a
   millisecond; incremental sync buys nothing here.

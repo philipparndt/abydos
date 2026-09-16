@@ -22,4 +22,13 @@ enum OnePlayer {
 		if let current, current !== player { current.pauseForAnother() }
 		current = player
 	}
+
+	/// Whether this is the one that last played.
+	///
+	/// Two panes can show one song since includes — the song's own tab and a
+	/// tab of a file it includes — and both would otherwise say where the
+	/// playhead is, the paused one over the playing one.
+	static func isCurrent(_ player: PlaysMedia) -> Bool {
+		current === player
+	}
 }
