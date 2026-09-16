@@ -546,6 +546,11 @@ Three things it has to get right:
   last reading said, since `mat` trims and fades the tail, so what was queued
   past the end is dropped by scheduling once from where the playhead is.
 
+Driven with a save under a playing song, load 90: the pane was playing the old
+render at 14.8 s when the edit landed, took the new one over at 16.3 s — by
+which point 48.8 s of it was written, well past the playhead — and the playhead
+ran on through, never back.
+
 Driven on a copy nothing had rendered, load 79: the song was playing 4.6 s after
 launch — the app's own start included — with 5.1 s of it written, and the
 playhead ran unbroken through the stretches (0.31, 1.87, 4.51, 8.04, 13.62,
