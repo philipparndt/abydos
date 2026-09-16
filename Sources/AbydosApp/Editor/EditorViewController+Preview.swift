@@ -80,7 +80,26 @@ extension EditorViewController {
 		// which no fraction of a 970 pt pane fits — so the divider is not the
 		// lever, and half is the answer for the same reason it is everywhere else.
 		split.wantedFraction = dividerFraction.map { CGFloat($0) } ?? 0.5
-		return split
+		return withFilesBar(split, for: tab)
+	}
+
+	/// A song's files named above it: which of them is being edited, and a menu
+	/// of the rest. Nothing for any other kind of file.
+	private func withFilesBar(_ body: NSView, for tab: Tab) -> NSView {
+		guard FilePreview.kind(for: tab.url, facts: tab.previewFacts) == .song else { return body }
+		let bar = SongFilesBar()
+		bar.onChoose = { [weak self, weak tab] file in
+			guard let self, let tab else { return }
+			self.showInTab(file: file, in: tab)
+		}
+		let stack = NSStackView(views: [bar, body])
+		stack.orientation = .vertical
+		stack.spacing = 0
+		stack.distribution = .fill
+		stack.alignment = .width
+		stack.translatesAutoresizingMaskIntoConstraints = false
+		bar.setContentHuggingPriority(.required, for: .vertical)
+		return stack
 	}
 
 	/// The rendered form of a file, whichever kind it has.
@@ -134,6 +153,9 @@ extension EditorViewController {
 	/// and the disk for the render, which is the same split the Cadova pane
 	/// makes: `mat` reads the disk.
 	private func makeSongView(for tab: Tab) -> NSView {
+		// The tab is the song's: its other files are shown in it rather than in
+		// tabs of their own. See `EditorViewController+SongFiles`.
+		tab.song = tab.url
 		let view = SongPreviewView(url: tab.url, sourceText: { [weak tab] in tab?.document?.rope.string })
 		view.onRevealLine = { [weak tab] line, column in
 			tab?.codeView?.reveal(line: line, column: column)
@@ -144,7 +166,6 @@ extension EditorViewController {
 			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil
 			self?.refreshTabBar()
 		}
-		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
 		// The playhead through the source's timeline bars, and a click on a bar
 		// seeks the song.
 		view.onPlayhead = { [weak tab, weak view] seconds, marking in
@@ -219,12 +240,22 @@ extension EditorViewController {
 		} else if tab.codeView?.timeline == nil {
 			view.holdForItsSong()
 		}
+		bindSong(view, to: tab)
+		return view
+	}
+
+	/// What ties a song's pane to the code view showing one of its files: the
+	/// caret's lane, a click on a timeline bar, an option-click's loop.
+	///
+	/// Said again whenever the tab shows another of the song's files, since
+	/// each of them has a code view of its own and the pane has not changed.
+	func bindSong(_ view: SongPreviewView, to tab: Tab) {
+		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
 		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
 		tab.codeView?.onTimelineLoop = { [weak view] range in view?.loopFromSource(range) }
 		// Where the caret already is: a pane made for a tab whose caret sits in
 		// a track should light that track from the start.
 		tab.codeView?.reportCaretPosition()
-		return view
 	}
 
 	/// The song pane the file in front is showing, when it is showing one.

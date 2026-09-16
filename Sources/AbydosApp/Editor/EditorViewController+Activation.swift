@@ -234,6 +234,17 @@ extension EditorViewController {
 	/// once per tab that goes, and only when no other tab here is still showing
 	/// the same file.
 	func announceClosed(_ closing: Tab) {
+		// A song's tab has shown more than one of the song's files, and the
+		// server was told about each as it was shown.
+		for (path, half) in closing.halves {
+			guard let languageId = half.document?.languageId, let root = half.serverRoot,
+			      !tabs.contains(where: { $0 !== closing && FilePath.canonical($0.url) == path })
+			else { continue }
+			LanguageService.shared.closed(
+				url: URL(fileURLWithPath: path), languageId: languageId, project: root
+			)
+		}
+		closing.halves.removeAll()
 		guard let languageId = closing.document?.languageId,
 		      let root = serverRoot(for: closing),
 		      !tabs.contains(where: { $0 !== closing && $0.url == closing.url })

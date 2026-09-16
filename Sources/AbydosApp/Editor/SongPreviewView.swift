@@ -39,8 +39,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// file is included in another song — then that one, since a file of a song
 	/// has no sound of its own. See `showSong(at:)`.
 	private(set) var url: URL
-	/// The tab's file, whatever is being played for it.
-	let file: URL
+	/// The file being edited beside the song — the song itself, or one of the
+	/// files it is made of, shown in the song's own tab.
+	private(set) var file: URL
 	let executable: String?
 	/// The text as it is in the buffer, for the block under the caret.
 	private let sourceText: () -> String?
@@ -127,9 +128,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// The layers the caret lights, kept so a new render lights the same.
 	private var lit: Set<String> = []
 	private var ticker: Timer?
-	private var lastError: String?
-	/// The errors behind `lastError`, for the strip's click.
-	private var lastDiagnostics: [SongRender.Diagnostic] = []
+	/// What a render last complained about, and what the header says: see
+	/// `SongPaneErrors`.
+	private let errors = SongPaneErrors()
 	/// Whether the first render has landed: see `SongSettled`.
 	private let settled = SongSettled()
 	/// Waiting to hear which song this file belongs to, before rendering it.
@@ -160,7 +161,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 		if executable == nil {
 			show(failure: SongRender.missingMessage)
-			lastError = SongRender.missingMessage
+			errors.failed(with: SongRender.missingMessage, diagnostics: [])
 			// Nothing is coming, and a driver waiting for it should be told so.
 			settled.settle()
 		} else {
@@ -228,11 +229,21 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let now = sources.fingerprint(of: url)
 		if let kept = SongRenderCache.shared.entry(for: url, fingerprint: now) {
 			run.note(fingerprint: now)
-			infoLabel.stringValue = info(kept.info)
+			say(info: kept.info)
 			load(directory: kept.directory, manifest: kept.manifest, mix: kept.files[0], kept: kept)
 		} else {
 			render()
 		}
+	}
+
+	/// Another of the song's files is being edited beside it.
+	///
+	/// Nothing here restarts: the song is what this pane plays, and the song
+	/// has not changed. Only what the header says it is beside moves.
+	func shows(file: URL) {
+		guard FilePath.canonical(file) != FilePath.canonical(self.file) else { return }
+		self.file = file
+		say(info: errors.said)
 	}
 
 	/// Plays another song in this pane: the song that includes the tab's file.
@@ -266,6 +277,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	/// What the header says, with the song's name when it is not the tab's.
+	private func say(info said: String) {
+		errors.said = said
+		infoLabel.stringValue = info(said)
+	}
+
 	private func info(_ said: String) -> String {
 		FilePath.canonical(url) == FilePath.canonical(file) ? said : "\(url.lastPathComponent) · \(said)"
 	}
@@ -354,7 +370,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 		errorStrip.isHidden = true
 		errorStrip.onClick = { [weak self] in
-			guard let self, let place = self.lastDiagnostics.first(where: { $0.line != nil }),
+			guard let self, let place = self.errors.diagnostics.first(where: { $0.line != nil }),
 			      let line = place.line else { return }
 			self.onRevealLine?(line, place.column ?? 1)
 		}
@@ -497,10 +513,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			failed(with: SongRender.complaint(in: output), diagnostics: SongRender.diagnostics(in: output))
 			return
 		}
-		lastError = nil
-		lastDiagnostics = []
+		errors.worked()
 		errorStrip.isHidden = true
-		infoLabel.stringValue = info(Self.info(of: manifest, rendered: SongRender.renderedLine(in: output)))
+		say(info: SongPaneErrors.info(of: manifest, rendered: SongRender.renderedLine(in: output)))
 		// A render that found more files than were being fingerprinted: this
 		// render is of them, and it is not a change to render again for.
 		if sources.adopt(manifest.sources, of: url) { run.note(fingerprint: sources.fingerprint(of: url)) }
@@ -510,28 +525,15 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// The sound stays; the error goes over it. Unless there was never a
 	/// sound, in which case the error is all there is to show.
 	private func failed(with complaint: String, diagnostics: [SongRender.Diagnostic] = []) {
-		lastError = complaint
-		lastDiagnostics = diagnostics
+		errors.failed(with: complaint, diagnostics: diagnostics)
 		if rendered == nil {
 			show(failure: complaint)
 			settled.settle()
 			return
 		}
-		errorStrip.show(complaint.split(whereSeparator: \.isNewline).first.map(String.init) ?? complaint)
+		errorStrip.show(errors.firstLine ?? complaint)
 		errorStrip.isHidden = false
 		settled.settle()
-	}
-
-	private static func info(of manifest: SongRender.Manifest, rendered: String?) -> String {
-		var parts = ["\(Int(manifest.tempo.rounded())) bpm"]
-		if manifest.meter.count == 2 { parts.append("\(manifest.meter[0])/\(manifest.meter[1])") }
-		parts.append("\(manifest.layers.count) stem\(manifest.layers.count == 1 ? "" : "s")")
-		// `peak -1.0 dBFS`, out of the render's own summary line.
-		if let rendered, let peak = rendered.range(of: "peak ") {
-			let rest = rendered[peak.upperBound...]
-			if let end = rest.range(of: ",") { parts.append("peak " + rest[..<end.lowerBound]) }
-		}
-		return parts.joined(separator: " · ")
 	}
 
 	/// Puts a render on: the new playback takes the old one's place and
@@ -1023,8 +1025,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			"\(lane.name):\(lane.isEnabled ? "on" : "off")\(lane.isLit ? "*" : "")"
 				+ (lane.overview == nil ? "(unread)" : "")
 		}
-		let error = lastError.map { "\"\($0.split(whereSeparator: \.isNewline).first ?? "")\"" } ?? "none"
-		return "SONG: \(url.lastPathComponent) state=\(state) runs=\(run.runs) view=\(view.name) "
+		let error = errors.firstLine.map { "\"\($0)\"" } ?? "none"
+		let editing = FilePath.canonical(file) == FilePath.canonical(url)
+			? "" : " file=\(file.lastPathComponent)"
+		return "SONG: \(url.lastPathComponent)\(editing) state=\(state) runs=\(run.runs) view=\(view.name) "
 			+ "mode=\(canvas.mode.name) \(isPlaying ? "playing" : "paused")"
 			+ String(format: " playhead=%.2f duration=%.2f", playback?.currentSeconds ?? 0, duration)
 			+ " tempo=\(Int(manifest?.tempo ?? 0)) stems=\(manifest?.layers.count ?? 0)"

@@ -193,6 +193,22 @@ extension EditorViewController {
 			}
 		}
 
+		// A file of a song open in this group is shown *in that song's tab*,
+		// wherever the ask came from — the tree, a jump to a definition, a
+		// driven step. The song goes on playing under it, which is the whole
+		// point: a file of a song is not a thing to open on its own.
+		if let songTab = tabShowing(fileOfSong: fileURL) {
+			if !preview { songTab.isPreview = false }
+			if let index = tabs.firstIndex(where: { $0 === songTab }), activeIndex != index {
+				activate(index: index, focusEditor: focusEditor)
+			}
+			showInTab(file: fileURL, in: songTab)
+			if focusEditor, let codeView = songTab.codeView {
+				view.window?.makeFirstResponder(codeView)
+			}
+			return
+		}
+
 		if let existing = indexOfTab(showing: fileURL) {
 			// Committing to a file that is currently provisional pins it.
 			if !preview { tabs[existing].isPreview = false }
@@ -292,6 +308,53 @@ extension EditorViewController {
 			return makeNoticeTab(for: fileURL, reason: error.localizedDescription, preview: preview)
 		}
 
+		let (codeView, scrollView) = makeCodeSource()
+
+		let tab = Tab(url: fileURL, document: document, codeView: codeView, contentView: scrollView, isPreview: preview)
+		tab.sourceView = scrollView
+		// The one place a file is looked at from *outside its name* to decide what
+		// previews it has. Costs nothing unless the name is a `.yaml`, and then the
+		// head of it; nothing unless the name is a `.swift`, and then a walk up to
+		// `Package.swift` and a read of it. Once per tab — see `Tab.looksLikeRecipe`
+		// and `Tab.cadova` for why neither is asked again.
+		tab.looksLikeRecipe = Go3mfRecipe.looksLikeRecipe(fileURL)
+		tab.isSopsFile = SopsFile.looksEncrypted(fileURL)
+		// The other side of the same look: a plaintext file a creation rule
+		// matches is one the chip can offer to encrypt. Read from
+		// `.sops.yaml`, so most files are asked about and nothing is said.
+		if !tab.isSopsFile, let root = project?.root, Sops.isAvailable {
+			tab.sopsOffer = SopsRules.matches(fileURL, in: root)
+		}
+		tab.cadova = CadovaModel.find(for: fileURL, stoppingAt: project?.root)
+		askWhatGitCanSee(of: tab)
+
+		wire(codeView, of: fileURL, document: document, in: tab)
+
+		// A file whose rendered form is the point of it does not open as text:
+		// an SVG in a documentation folder is a picture first and its path data
+		// second, and a PlantUML file is a diagram somebody is checking against
+		// the lines that describe it, so it opens with both.
+		//
+		// Unless a session says otherwise, in which case that is what it opens
+		// as. Decided here rather than by putting the tab right afterwards, so a
+		// `.scad` coming back as its source does not build a model view first and
+		// throw it away — a restore opens every tab the project had at once.
+		let opening = FilePreview.restoredMode(mode, for: fileURL, facts: tab.previewFacts)
+		if opening != .source, FilePreview.hasPreview(fileURL, facts: tab.previewFacts) {
+			tab.previewMode = opening
+			tab.contentView = makeContentView(for: tab, mode: opening, dividerFraction: dividerFraction)
+		}
+		return tab
+	}
+
+	// MARK: - One file, shown in a tab
+
+	/// A code view and the scroll view around it, for one file.
+	///
+	/// Its own function because a song tab builds one of these per file of the
+	/// song: the song keeps playing while any of its files is edited, so they
+	/// are shown in the song's tab rather than in tabs of their own.
+	func makeCodeSource() -> (CodeView, NSScrollView) {
 		let codeView = CodeView()
 		let scrollView = NSScrollView()
 		scrollView.documentView = codeView
@@ -328,24 +391,15 @@ extension EditorViewController {
 			codeView?.viewportChanged()
 			codeView?.needsDisplay = true
 		}
+		return (codeView, scrollView)
+	}
 
-		let tab = Tab(url: fileURL, document: document, codeView: codeView, contentView: scrollView, isPreview: preview)
-		// The one place a file is looked at from *outside its name* to decide what
-		// previews it has. Costs nothing unless the name is a `.yaml`, and then the
-		// head of it; nothing unless the name is a `.swift`, and then a walk up to
-		// `Package.swift` and a read of it. Once per tab — see `Tab.looksLikeRecipe`
-		// and `Tab.cadova` for why neither is asked again.
-		tab.looksLikeRecipe = Go3mfRecipe.looksLikeRecipe(fileURL)
-		tab.isSopsFile = SopsFile.looksEncrypted(fileURL)
-		// The other side of the same look: a plaintext file a creation rule
-		// matches is one the chip can offer to encrypt. Read from
-		// `.sops.yaml`, so most files are asked about and nothing is said.
-		if !tab.isSopsFile, let root = project?.root, Sops.isAvailable {
-			tab.sopsOffer = SopsRules.matches(fileURL, in: root)
-		}
-		tab.cadova = CadovaModel.find(for: fileURL, stoppingAt: project?.root)
-		askWhatGitCanSee(of: tab)
-
+	/// Everything a file's code view does, wired to the tab that shows it.
+	///
+	/// `fileURL` is the file — what the gutter's breakpoints, the server's
+	/// `didOpen` and a copied link are about — and `tab` is where it is shown,
+	/// which for a song's files is the song's tab.
+	func wire(_ codeView: CodeView, of fileURL: URL, document: TextDocument, in tab: Tab) {
 		// Clicking a name in the blame column goes to that commit — the log
 		// page, scoped to this file — which is the answer to "what was this
 		// change" that a toast only named.
@@ -422,7 +476,7 @@ extension EditorViewController {
 		refreshChangedLines(for: tab)
 		tab.codeView?.setConcealsSecrets(
 			Settings.shared.concealsSecrets
-				&& DotenvSecrets.conceals(fileNamed: tab.url.lastPathComponent)
+				&& DotenvSecrets.conceals(fileNamed: fileURL.lastPathComponent)
 		)
 		tab.codeView?.onSecretsAutoConcealed = { [weak self] in
 			guard let self else { return }
@@ -449,19 +503,19 @@ extension EditorViewController {
 			self?.goToDefinition(from: tab, line: line, character: character)
 		}
 		codeView.onFindUsages = { [weak self] line, character in
-			self?.onFindUsages?(tab.url, line, character)
+			self?.onFindUsages?(fileURL, line, character)
 		}
 		codeView.onRename = { [weak self] line, character in
-			self?.onRename?(tab.url, line, character)
+			self?.onRename?(fileURL, line, character)
 		}
 		codeView.onWatch = { [weak self] expression in
 			self?.onWatch?(expression)
 		}
 		codeView.onFixWithAI = { [weak self] line, diagnostic in
-			self?.onFixWithAI?(tab.url, line, diagnostic)
+			self?.onFixWithAI?(fileURL, line, diagnostic)
 		}
 		codeView.onCopyLink = { [weak self] form, line, endLine in
-			self?.onCopyLink?(tab.url, form, line, endLine)
+			self?.onCopyLink?(fileURL, form, line, endLine)
 		}
 		codeView.onRequestCompletions = { [weak self] prefix, wasTriggered, _ in
 			self?.scheduleCompletions(for: tab, prefix: prefix, wasTriggered: wasTriggered)
@@ -490,7 +544,6 @@ extension EditorViewController {
 		codeView.showsTimelineBars = Settings.shared.songTimelineBars
 		applyDebugState(to: tab)
 		applyConditionalBreakpoints(to: tab)
-		tab.sourceView = scrollView
 
 		// The server is told about the file as it is opened, and answers about
 		// it from then on.
@@ -510,21 +563,5 @@ extension EditorViewController {
 			)
 			refreshCompletionTriggers(for: tab)
 		}
-
-		// A file whose rendered form is the point of it does not open as text:
-		// an SVG in a documentation folder is a picture first and its path data
-		// second, and a PlantUML file is a diagram somebody is checking against
-		// the lines that describe it, so it opens with both.
-		//
-		// Unless a session says otherwise, in which case that is what it opens
-		// as. Decided here rather than by putting the tab right afterwards, so a
-		// `.scad` coming back as its source does not build a model view first and
-		// throw it away — a restore opens every tab the project had at once.
-		let opening = FilePreview.restoredMode(mode, for: fileURL, facts: tab.previewFacts)
-		if opening != .source, FilePreview.hasPreview(fileURL, facts: tab.previewFacts) {
-			tab.previewMode = opening
-			tab.contentView = makeContentView(for: tab, mode: opening, dividerFraction: dividerFraction)
-		}
-		return tab
 	}
 }

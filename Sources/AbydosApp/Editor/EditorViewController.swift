@@ -103,7 +103,62 @@ final class EditorViewController: NSViewController {
 	/// dialogs.
 	@MainActor
 	final class Tab {
-		let url: URL
+		/// The file this tab is showing.
+		///
+		/// **A song tab shows more than one of them.** A song is written across
+		/// files — a kit, a set of patterns — and the song is what has to keep
+		/// playing while any of them is edited, so those files are shown *in the
+		/// song's tab* rather than in tabs of their own: the pane below is the
+		/// same pane, still playing, still rendering what it was. `url` is
+		/// whichever of them is in front, which is what everything that asks a
+		/// tab about "the file" means; `song` is what the tab is.
+		///
+		/// Reported 2026-09-16, of files opened as tabs of their own: "jumping
+		/// to other files and keep the stream does not really work … It stops
+		/// very often and also it cannot know to which song it belongs."
+		private(set) var url: URL
+		/// The song this tab is, when it is one: the file that includes the
+		/// others. Nil for every ordinary tab, where the file is the tab.
+		var song: URL?
+		/// The files of this tab's song that have been looked at, by path: what
+		/// each was showing, so going back to one is the caret, the folds, the
+		/// scroll and the undo it was left with.
+		var halves: [String: Half] = [:]
+
+		/// One file of a song as this tab showed it.
+		struct Half {
+			var document: TextDocument?
+			var codeView: CodeView?
+			var sourceView: NSView?
+			var serverRoot: URL?
+			var find = FindState()
+			var changedLinesGeneration = 0
+		}
+
+		/// Takes the file in front out of the tab, to be put back when it is
+		/// shown again.
+		var half: Half {
+			get {
+				Half(
+					document: document, codeView: codeView, sourceView: sourceView,
+					serverRoot: serverRoot, find: find, changedLinesGeneration: changedLinesGeneration
+				)
+			}
+			set {
+				document = newValue.document
+				codeView = newValue.codeView
+				sourceView = newValue.sourceView
+				serverRoot = newValue.serverRoot
+				find = newValue.find
+				changedLinesGeneration = newValue.changedLinesGeneration
+			}
+		}
+
+		/// Shows another file of the same song: the caller has already put the
+		/// half in place.
+		func shows(_ file: URL) {
+			url = file
+		}
 		/// nil for anything not opened as text.
 		var document: TextDocument?
 		var codeView: CodeView?

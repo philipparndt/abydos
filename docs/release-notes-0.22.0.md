@@ -106,9 +106,32 @@ where that line is heard — a pattern, a `play` step, a track, a section — an
 plays it. Saving while it loops renders under it, so the new sound is heard on
 the next pass. Option-click the same line again to stop.
 
+## A song is edited in one tab
+
+A song written across files is edited in the song's own tab: opening one of its
+files — from the tree, by following a definition, or from the file menu in the
+row above the text — changes the text and leaves the song playing. The row says
+which file is in front: `♪ drive.song ⌄ › parts › bass.song`, with the chevron
+listing every file the song is made of. ⌘[ comes back through them.
+
+Before, each of those files opened a tab of its own whose pane had to work out
+which song the file belonged to — a question a file included by several songs,
+or by none, cannot answer — and every time it was asked, the sound stopped.
+Nothing asks it now.
+
+Following a definition in a song reaches the keyword as well as the name, so
+⌘-clicking `include`, `play` or `instrument` goes where the name beside it goes
+(with `mat` d5e0958). A jump that finds nothing now says so.
+
 ## Cut a sound file
 
 In a sound tab, `i` and `o` mark a selection at the playhead; `k` keeps only
 the selection and `⌫` deletes it, exact to the sample. Nothing is written until
 ⌘S, which saves in the file's own format; ⌘Z undoes a cut, and closing asks.
 MP3 files can be cut and played but not saved, since macOS cannot write MP3.
+
+A selection can also be written to a file of its own — *Save Selection As…*, or
+`s` — in the format the recording is in, named for where the selection starts;
+the recording itself is left alone. Press `i` twice to carry on from where the
+last selection ended, so a long take is cut into samples one after another, and
+`o` twice to carry back from where it began.

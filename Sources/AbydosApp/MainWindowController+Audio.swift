@@ -122,6 +122,7 @@ extension MainWindowController {
 	/// landed, then one step at a time. Steps, separated by commas:
 	///
 	///  * `report` — the pane's line; `wait:<s>` — that long before the next step.
+	///  * `tabs` — the group's tabs and which file the one in front shows.
 	///  * `mix`, `stems` — which view; `wave`, `spectrum`, `both` — what is drawn.
 	///  * `off:<layer>`, `on:<layer>` — a stem's switch; `wobble:<layer>` — a
 	///    press on it that drags a pixel, as real mouse events.
@@ -161,6 +162,13 @@ extension MainWindowController {
 		case "report":
 			print(pane.reportForTesting)
 			fflush(stdout)
+		case "tabs":
+			// What the group holds, and which file the tab in front is showing:
+			// a song's files are shown in the song's tab, so the count is the
+			// claim that no tab was opened for them.
+			print("SONG-TABS: [" + (editor.activeGroup?.tabTitlesForTesting.joined(separator: ", ") ?? "no group")
+				+ "] showing=" + (editor.activeGroup?.activeTab?.url.lastPathComponent ?? "-"))
+			fflush(stdout)
 		case "mix": pane.show(.mix)
 		case "stems": pane.show(.stems)
 		case "wave", "spectrum", "both": pane.showForTesting(mode: step)
@@ -169,9 +177,12 @@ extension MainWindowController {
 		case _ where step.hasPrefix("open:"):
 			// `open:<path>` — another file, relative to the song, in the same
 			// group: an included file's tab in front while the song plays.
-			if let song = editor.activeGroup?.activeTab?.url {
+			// Relative to the *song*, not to whichever of its files is in
+			// front: walking into `parts/bass.song` and then asking for the
+			// song itself otherwise looks for it beside the part.
+			if let base = (pane.url as URL?) ?? editor.activeGroup?.activeTab?.url {
 				let path = String(step.dropFirst("open:".count))
-				editor.open(fileURL: song.deletingLastPathComponent().appendingPathComponent(path), focusEditor: false)
+				editor.open(fileURL: base.deletingLastPathComponent().appendingPathComponent(path), focusEditor: false)
 			}
 		case "reopen":
 			// The tab closed and the file opened again — a new pane, which is
