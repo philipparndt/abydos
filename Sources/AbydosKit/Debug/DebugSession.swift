@@ -42,7 +42,22 @@ public final class DebugSession {
 	/// Breakpoints by file, kept across runs so they survive restarting.
 	public internal(set) var breakpoints: [String: [Breakpoint]] = [:]
 
-	public internal(set) var stackFrames: [StackFrame] = []
+	/// The stack of the thread being shown.
+	///
+	/// **Behind a lock, with the threads and their stacks.** They are written
+	/// by the task that read them — a cooperative thread — and read on the main
+	/// thread by the pane that draws them, which for a song is ten times a
+	/// second while it plays. A Swift collection read while it is being written
+	/// is not a wrong value but a crash, and one arrived on 2026-09-16 with
+	/// `-[NSTaggedPointerString count]` inside `Dictionary.setValue` during a
+	/// session's launch.
+	public var stackFrames: [StackFrame] {
+		get { stateLock.withLock { storedStackFrames } }
+		set { stateLock.withLock { storedStackFrames = newValue } }
+	}
+
+	private var storedStackFrames: [StackFrame] = []
+	let stateLock = NSLock()
 	public internal(set) var scopes: [Scope] = []
 	/// What the editor should draw beside the code, or nil while nothing is
 	/// stopped.
@@ -848,12 +863,22 @@ public final class DebugSession {
 	public static let stackMovedEvent = "abydos/stackMoved"
 
 	/// The goroutines, or threads in anything that is not Go.
-	public private(set) var threads: [DebugThread] = []
+	public var threads: [DebugThread] {
+		get { stateLock.withLock { storedThreads } }
+		set { stateLock.withLock { storedThreads = newValue } }
+	}
+
+	private var storedThreads: [DebugThread] = []
 	/// Which one the stack is being shown for.
 	public internal(set) var selectedThreadID: Int?
 	/// Every thread's stack that has been read, by thread: the selected one's,
 	/// and those of the threads opened in the Stack's tree.
-	public internal(set) var threadStacks: [Int: [StackFrame]] = [:]
+	public var threadStacks: [Int: [StackFrame]] {
+		get { stateLock.withLock { storedThreadStacks } }
+		set { stateLock.withLock { storedThreadStacks = newValue } }
+	}
+
+	private var storedThreadStacks: [Int: [StackFrame]] = [:]
 	/// The threads open in the Stack's tree, whose stacks are read again after
 	/// a stop and, for an adapter that says so, while running.
 	public var expandedThreads: Set<Int> = []
