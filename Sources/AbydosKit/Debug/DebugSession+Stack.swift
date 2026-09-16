@@ -77,7 +77,13 @@ extension DebugSession {
 			}
 		}
 
-		if let top { await selectFrame(id: top.id) }
+		// **The frame stays where somebody put it while the program runs.** A
+		// song's stack is re-read several times a second, and re-selecting the
+		// top frame each time took the selection out of their hands — asked for
+		// 2026-09-16: "the selection is not stable during the tree update".
+		// A stop is different: it is a new place, and its top frame is the news.
+		let keep = !reportStop ? stackFrames.first { $0.id == selectedFrameID } : nil
+		if let frame = keep ?? top { await selectFrame(id: frame.id) }
 	}
 
 	/// Loads the scopes and top-level variables for a frame.

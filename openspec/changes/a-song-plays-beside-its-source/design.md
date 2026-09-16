@@ -414,6 +414,40 @@ byte-identical to `examples/drive.song`), 73 s in: `[bass]` holding `bass` and
 pattern beat_crash@41` with its rows; the drums file's tab `song=drive.song
 files=8`, playhead 77.82, cells lit inside `(X.o.x.o.)x2`.
 
+### 14. The tree holds still, and takes the keyboard
+
+*Added 2026-09-16.* Asked, of the Stack tree under a playing song: "the
+selection is not stable during the tree update. This is very important here as
+it updates constantly", "the expansion state is also not stable", "the tree does
+not get the keyboard focus". Four things were wrong, each found driving it:
+
+- **Ids by place in the list.** A pattern's row was numbered by its position
+  among the rows heard, so a row changed id whenever another started or stopped
+  and the tree lost track of it. A row is now `1000 + its line`, a track `0`, a
+  play `1`, a pattern `2`, the repeats `5`…: a frame's id says where in the song
+  it is, not where in the list.
+- **`reloadData` on every message.** It drops the selection and every open row,
+  and a playing song's stack arrives ten times a second. The tree now compares
+  the rows it would draw with the rows it has: the same ones mean redrawing only
+  those whose text changed (`reloadItem`), and nothing else moves.
+- **The session re-choosing the top frame.** `refreshStack` selected the
+  innermost frame each time it read a stack, which is right for a stop and wrong
+  while running: it took the selection out of somebody's hands ten times a
+  second. It now keeps the frame that is selected, when the new stack still has
+  it. The pane, in turn, follows the session's frame only when it *moves* —
+  re-asserting it on every rebuild put the selection back where it had just come
+  from, a keystroke behind.
+- **The keyboard.** The tree never had it: `giveKeyboard` handed it to the
+  variables, and nothing took it on a click. Now a click takes it, the pane
+  hands it to whichever side is showing, and walking with the arrows keeps it —
+  opening a frame's line gives the keyboard to the editor, so the second ↓ was
+  typing into the code.
+
+Driven on the shanty while it plays (`debug:focus`, `debug:key:down`): the tree
+has the keyboard, three ↓ land on `pattern gallop_d · pass 3 of 4` and stay
+there across two updates — one of which grew the tree from 16 rows to 29 as
+three tracks came in — and a fourth ↓ moves to `D2: x@41` and stays.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

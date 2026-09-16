@@ -29,8 +29,18 @@ final class CallStackOutline: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
 	private var rebuilding = false
 	/// The selected frame's row the tree last scrolled to.
 	private var shownSelection: String?
+	/// The session's frame as of the last rebuild, to tell a frame it moved to
+	/// from the one it is still catching up with.
+	private var lastSessionKey: String?
 	/// Until when rebuilds keep the selected row in sight.
 	private var followSelectionUntil = Date.distantPast
+	/// The rows as they stand, in order, and what each one says: a rebuild that
+	/// changes neither is no rebuild at all — `reloadData` drops the selection
+	/// and every open row, and a song's stack arrives several times a second.
+	private var shape: [String] = []
+	private var drawn: [String: String] = [:]
+	/// A selection being set here rather than by somebody at the keyboard.
+	private var selecting = false
 
 	init(session: DebugSession?, projectRoot: URL) {
 		self.session = session
@@ -81,13 +91,35 @@ final class CallStackOutline: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
 		nodes = kept
 
 		rebuilding = true
-		outline.reloadData()
-		open(roots)
-		if let thread = session.selectedThreadID, let frame = session.selectedFrameID,
-		   let node = nodes["f:\(thread):\(frame)"] {
+		let fresh = order(of: roots)
+		if fresh == shape {
+			// The same rows: only the ones whose text changed are drawn again.
+			for node in nodes.values where drawn[node.key] != said(node) {
+				drawn[node.key] = said(node)
+				let row = outline.row(forItem: node)
+				if row >= 0 { outline.reloadItem(node) }
+			}
+		} else {
+			shape = fresh
+			drawn = Dictionary(uniqueKeysWithValues: nodes.values.map { ($0.key, said($0)) })
+			outline.reloadData()
+			open(roots)
+		}
+		// **The session's frame moves the selection only when it moves.** It
+		// follows the arrow keys a moment behind, and re-asserting it on every
+		// rebuild put the selection back where it had just come from.
+		let sessionKey = session.selectedThreadID.flatMap { thread in
+			session.selectedFrameID.map { "f:\(thread):\($0)" }
+		}
+		let moved = sessionKey != lastSessionKey
+		lastSessionKey = sessionKey
+		if let key = moved ? sessionKey : (outline.selectedRow < 0 ? shownSelection ?? sessionKey : nil),
+		   let node = nodes[key] {
 			let row = outline.row(forItem: node)
 			if row >= 0 {
+				selecting = true
 				outline.selectRowIndexes([row], byExtendingSelection: false)
+				selecting = false
 				// Scrolled to when the selection is new — a stop, a click — and not
 				// on every rebuild, which would take the tree out of somebody's
 				// hands while a song plays under it.
@@ -108,6 +140,15 @@ final class CallStackOutline: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
 			}
 		}
 		rebuilding = false
+	}
+
+	/// Every row the tree would show, in order, opened rows' children included.
+	private func order(of list: [CallTree.Node]) -> [String] {
+		list.flatMap { [$0.key] + order(of: $0.children) }
+	}
+
+	private func said(_ node: CallTree.Node) -> String {
+		CallTree.describe([CallTree.Node(key: node.key, kind: node.kind)]).first ?? node.key
 	}
 
 	private func open(_ list: [CallTree.Node]) {
@@ -133,16 +174,54 @@ final class CallStackOutline: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
 
 	// MARK: - Clicks
 
+	/// Somebody moved the selection — an arrow key, a click, a drag: the frame
+	/// under it is the one to show.
+	///
+	/// Every selection that this object did not make itself, rather than only
+	/// the ones arriving with a key event: `NSApp.currentEvent` is whatever the
+	/// app last dequeued, which is nothing at all for a key delivered straight
+	/// to the responder, and a selection the tree then forgot on its next
+	/// rebuild.
+	func outlineViewSelectionDidChange(_ notification: Notification) {
+		guard !selecting, !rebuilding else { return }
+		choose(row: outline.selectedRow)
+	}
+
 	@objc private func clicked() {
-		let row = outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow
+		// The keyboard comes with the click: an outline walks itself with the
+		// arrows, and never had it here.
+		outline.window?.makeFirstResponder(outline)
+		choose(row: outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow)
+	}
+
+	/// Hands the frame on a row to the session, and opens where it is.
+	///
+	/// **And keeps the keyboard.** Opening the frame's line gives it to the
+	/// editor, so walking the tree with ↓ moved one row and then typed into the
+	/// code: every step after the first went somewhere else.
+	private func choose(row: Int) {
 		guard let session, let node = outline.item(atRow: row) as? CallTree.Node else { return }
+		let hadKeyboard = outline.window?.firstResponder === outline
+		defer {
+			if hadKeyboard {
+				DispatchQueue.main.async { [weak outline] in
+					guard let outline, outline.window?.firstResponder !== outline else { return }
+					outline.window?.makeFirstResponder(outline)
+				}
+			}
+		}
 		switch node.kind {
 		case let .frame(frame, thread):
+			shownSelection = node.key
+			lastSessionKey = node.key
 			Task { await session.selectFrame(id: frame.id, thread: thread) }
 			if let file = frame.file { onNavigate?(URL(fileURLWithPath: file), frame.line) }
 		case let .thread(thread):
-			// A thread's row goes where it is: the top of its stack.
+			// A thread's row goes where it is: the top of its stack, without
+			// moving the selection off the row somebody is on.
 			guard let top = session.threadStacks[thread.id]?.first else { return }
+			shownSelection = "f:\(thread.id):\(top.id)"
+			lastSessionKey = shownSelection
 			Task { await session.selectFrame(id: top.id, thread: thread.id) }
 			if let file = top.file { onNavigate?(URL(fileURLWithPath: file), top.line) }
 		case .group:
@@ -208,6 +287,19 @@ final class CallStackOutline: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
 			return cell
 		}
 	}
+
+	/// Gives the tree the keyboard, with a row for the arrows to start from.
+	func focus() {
+		guard let window = outline.window else { return }
+		window.makeFirstResponder(outline)
+		if outline.selectedRow < 0, outline.numberOfRows > 0 {
+			selecting = true
+			outline.selectRowIndexes([0], byExtendingSelection: false)
+			selecting = false
+		}
+	}
+
+	var hasKeyboardForTesting: Bool { outline.window?.firstResponder === outline }
 
 	/// The tree as the pane shows it, open rows only, for a driven run.
 	var reportForTesting: String {

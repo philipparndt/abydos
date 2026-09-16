@@ -245,6 +245,25 @@ extension MainWindowController {
 				case "pause": session?.pause()
 				case "step": session?.stepOver()
 				case "stop": session?.stop()
+				case "focus":
+					bottomPanel.activeDebugPane?.focusStack()
+					print("SONG-DEBUG focus: stack has the keyboard = \(bottomPanel.activeDebugPane?.stackHasKeyboardForTesting ?? false)")
+					fflush(stdout)
+				case "key":
+					// `debug:key:down` and the other arrows, to the first responder.
+					let arrows: [String: (UInt16, Int)] = [
+						"up": (126, NSUpArrowFunctionKey), "down": (125, NSDownArrowFunctionKey),
+						"left": (123, NSLeftArrowFunctionKey), "right": (124, NSRightArrowFunctionKey),
+					]
+					if let arrow = arrows[parts.count > 2 ? parts[2] : ""], let scalar = UnicodeScalar(UInt32(arrow.1)),
+					   let event = NSEvent.keyEvent(
+						with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+						windowNumber: window?.windowNumber ?? 0, context: nil,
+						characters: String(Character(scalar)), charactersIgnoringModifiers: String(Character(scalar)),
+						isARepeat: false, keyCode: arrow.0
+					   ) {
+						window?.firstResponder?.keyDown(with: event)
+					}
 				case "thread":
 					if let id = Int(parts.count > 2 ? parts[2] : "") { Task { await session?.selectThread(id: id) } }
 				default:

@@ -22,10 +22,16 @@ import Network
 /// plays — where there is no program to start and nothing to dial, but the
 /// debug pane, its toolbar and its breakpoints should work exactly as they do
 /// for Delve.
+///
+/// **On the main queue, all of it.** The app's side of such an adapter — the
+/// song pane — is main-actor, and the session's launch runs on a cooperative
+/// thread: an adapter touched from both is an object mutated from two threads,
+/// which is how a dictionary comes to be read while it is being written.
+@MainActor
 public protocol InProcessDebugAdapter: AnyObject {
 	/// Where the adapter's responses and events go; set by the client.
 	var send: (([String: Any]) -> Void)? { get set }
-	/// A request, on the main queue.
+	/// A request.
 	func receive(_ message: [String: Any])
 }
 
@@ -241,7 +247,9 @@ public final class DAPClient: @unchecked Sendable {
 	/// running, reached through a forwarded port, and nothing here starts or
 	/// owns the process. Everything after the socket is identical, which is
 	/// the point — a session in a cluster is a session.
-	/// Speaks to an adapter in this process.
+	/// Speaks to an adapter in this process. On the main queue, where the
+	/// adapter lives.
+	@MainActor
 	public func start(inProcess adapter: InProcessDebugAdapter) {
 		adapter.send = { [weak self] message in self?.dispatch(message) }
 		inProcess = adapter
@@ -449,7 +457,10 @@ public final class DAPClient: @unchecked Sendable {
 		// that has ended.
 		outputPipe?.fileHandleForReading.readabilityHandler = nil
 		errorPipe?.fileHandleForReading.readabilityHandler = nil
-		inProcess?.send = nil
+		if let inProcess {
+			// The adapter is the main queue's; a stop can come from anywhere.
+			DispatchQueue.main.async { MainActor.assumeIsolated { inProcess.send = nil } }
+		}
 		inProcess = nil
 		connection?.cancel()
 		listener?.cancel()
@@ -538,8 +549,9 @@ public final class DAPClient: @unchecked Sendable {
 
 		if let inProcess {
 			// Always a hop, never a call: a reply delivered inside `send` would
-			// run its handler before the caller had finished registering it.
-			DispatchQueue.main.async { inProcess.receive(message) }
+			// run its handler before the caller had finished registering it —
+			// and the adapter is the main queue's, wherever `send` was called.
+			DispatchQueue.main.async { MainActor.assumeIsolated { inProcess.receive(message) } }
 			return
 		}
 

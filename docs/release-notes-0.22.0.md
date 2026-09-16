@@ -37,7 +37,9 @@ Playing a song opens the debugger on it: each track is a thread named for the
 pattern it plays, its stack is the track, `play` step and pattern with the
 pattern's lines side by side, and continue, pause, step (a bar) and stop move
 the song. The Stack is now a tree of every thread for any debugger, grouped
-where an adapter says and replacing the thread picker. A program already being
+where an adapter says and replacing the thread picker. It keeps the selection
+and the open rows while a song plays under it, and takes the keyboard: click a
+row, or bring the pane forward, and walk it with the arrows. A program already being
 debugged keeps the debugger.
 
 ## Songs with includes

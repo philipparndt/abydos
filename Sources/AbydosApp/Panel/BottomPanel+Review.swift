@@ -173,7 +173,7 @@ extension BottomPanel {
 		// A stopped session arrives to be read, and reading a tree means walking
 		// it: an outline view answers ↑↓←→ itself once it has the keyboard, and
 		// never had it here.
-		case let .debug(pane): DispatchQueue.main.async { pane.focusVariables() }
+		case let .debug(pane): DispatchQueue.main.async { pane.focusReading() }
 		default: break
 		}
 	}

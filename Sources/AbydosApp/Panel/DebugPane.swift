@@ -466,6 +466,20 @@ final class DebugPane: NSView {
 	/// reachable because nothing ever made it the first responder. So this is
 	/// the whole of the keyboard work on this side: hand it over, and select a
 	/// row so that the first arrow has somewhere to start from.
+	/// Whichever side of the pane is in front: the Stack's tree while it shows,
+	/// the variables otherwise. A stopped session arrives to be read, and the
+	/// stack is what it stopped in.
+	func focusReading() {
+		if stackScroll.isHidden { focusVariables() } else { focusStack() }
+	}
+
+	/// Gives the Stack's tree the keyboard.
+	func focusStack() {
+		callStack.focus()
+	}
+
+	var stackHasKeyboardForTesting: Bool { callStack.hasKeyboardForTesting }
+
 	func focusVariables() {
 		guard let window = variablesOutline.window else { return }
 		window.makeFirstResponder(variablesOutline)

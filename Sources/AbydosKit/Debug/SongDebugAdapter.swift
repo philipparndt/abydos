@@ -13,6 +13,7 @@ import Foundation
 ///
 /// Everything the answers need comes through closures, so it is tested with
 /// a timeline and a clock and no pane.
+@MainActor
 public final class SongDebugAdapter: InProcessDebugAdapter {
 	public var send: (([String: Any]) -> Void)?
 
@@ -176,7 +177,10 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 	public func frames(thread: Int, at seconds: Double) -> [Frame] {
 		guard let timeline = placedTimeline(0), timeline.tracks.indices.contains(thread - 1) else { return [] }
 		let track = timeline.tracks[thread - 1]
-		let base = thread * 100
+		// Ids by where a frame is in the song, not by its place in the list: a
+		// row keeps its id while notes come and go, which is what lets the tree
+		// keep it selected and open. Rows are 1000 + their line.
+		let base = thread * 10_000
 		var frames: [Frame] = []
 		func frame(_ id: Int, _ name: String, line: Int, column: Int = 0, file: Int, parent: Int?, subtle: Bool = false) -> Frame {
 			Frame(id: base + id, name: name, line: line + 1, column: column + 1, file: file, parent: parent.map { base + $0 }, isSubtle: subtle)
@@ -200,8 +204,8 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 				let passStart = play.start + Double(pass) * play.pass
 				let patternFile = play.patternFile ?? 0
 				let lines = rows(in: patternLine, file: patternFile, pattern: pattern, passStart: passStart, at: seconds, song: timeline)
-				let made = lines.enumerated().map { index, row in
-					frame(10 + index, row.name, line: row.line, column: row.column, file: patternFile, parent: 2, subtle: !row.sounding)
+				let made = lines.map { row in
+					frame(1000 + row.line, row.name, line: row.line, column: row.column, file: patternFile, parent: 2, subtle: !row.sounding)
 				}
 				frames += made.filter { !$0.isSubtle } + made.filter(\.isSubtle)
 				frames.append(frame(2, "pattern \(pattern) · pass \(pass + 1) of \(passes)", line: patternLine, file: patternFile, parent: 1))
@@ -209,8 +213,8 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 			frames.append(playFrame)
 			// Innermost first, as the rest of the list is: the repeats sit between
 			// the step and the track.
-			let blocks = frames.filter { ($0.id - base) >= 5 && ($0.id - base) < 10 }
-			frames.removeAll { ($0.id - base) >= 5 && ($0.id - base) < 10 }
+			let blocks = frames.filter { ($0.id - base) >= 5 && ($0.id - base) < 1000 }
+			frames.removeAll { ($0.id - base) >= 5 && ($0.id - base) < 1000 }
 			frames.append(contentsOf: blocks.reversed())
 		}
 		frames.append(trackFrame)
@@ -309,7 +313,7 @@ public final class SongDebugAdapter: InProcessDebugAdapter {
 	/// has sounding.
 	public func variables(frame: Int, scope: Int, at seconds: Double) -> [(name: String, value: String)] {
 		guard let timeline = placedTimeline(0) else { return [] }
-		let thread = frame / 100
+		let thread = frame / 10_000
 		guard timeline.tracks.indices.contains(thread - 1) else { return [] }
 		let track = timeline.tracks[thread - 1]
 		let play = play(of: track, at: seconds)

@@ -250,7 +250,7 @@ public final class DebugSession {
 		exitCode = nil
 		saidTheSessionEnded = false
 		self.adapter = adapter
-		client.start(inProcess: inProcess)
+		await MainActor.run { client.start(inProcess: inProcess) }
 		try await handshake(with: adapter)
 		send("launch", watching: ["program": program, "noDebug": false])
 	}
