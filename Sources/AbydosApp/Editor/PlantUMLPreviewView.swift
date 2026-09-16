@@ -65,7 +65,11 @@ final class PlantUMLPreviewView: DiagramPaneView {
 
 	deinit {
 		pending?.cancel()
-		running?.terminate()
+		// Asked whether it is running: `terminate()` on a process that has not
+		// been launched raises "task not launched", which nothing catches — and
+		// the process is stored a moment before it starts. See
+		// `SongPreviewView.stopRendering`.
+		if let running, running.isRunning { running.terminate() }
 	}
 
 	// MARK: - Exporting
@@ -146,7 +150,11 @@ final class PlantUMLPreviewView: DiagramPaneView {
 
 		// Only one at a time: a diagram that takes a second to draw would
 		// otherwise leave a JVM running for every keystroke that started one.
-		running?.terminate()
+		// Asked whether it is running: `terminate()` on a process that has not
+		// been launched raises "task not launched", which nothing catches — and
+		// the process is stored a moment before it starts. See
+		// `SongPreviewView.stopRendering`.
+		if let running, running.isRunning { running.terminate() }
 		spin(true)
 		notice = "Drawing with \(tool.description)…"
 		image = nil

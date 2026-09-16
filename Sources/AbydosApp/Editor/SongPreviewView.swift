@@ -190,8 +190,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		guard executable != nil, FilePath.canonical(song) != FilePath.canonical(url) else { return }
 		pending?.cancel()
 		analysis?.flag.set()
-		running?.terminate()
-		running = nil
+		stopRendering()
 		let wasPlaying = rendered?.playback.isPlaying == true
 		rendered?.playback.tearDown()
 		rendered = nil
@@ -216,7 +215,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		cancelled.set()
 		analysis?.flag.set()
 		ticker?.invalidate()
-		running?.terminate()
+		if let running, running.isRunning { running.terminate() }
 		// The playback and its engine: a pane that went with its split, or
 		// with the tab switching to source, must not keep sounding. The render
 		// itself stays, in `SongRenderCache`, for the next pane on this file.
@@ -230,8 +229,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		pending?.cancel()
 		ticker?.invalidate()
 		ticker = nil
-		running?.terminate()
-		running = nil
+		stopRendering()
 		let wasPlaying = rendered?.playback.isPlaying == true
 		rendered?.playback.tearDown()
 		if wasPlaying { onPlayingChanged?(false) }
@@ -373,15 +371,28 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	// MARK: - Rendering
 
+	/// Stops the render that is going, if one is.
+	///
+	/// **Asked whether it is running.** `Process.terminate()` on a process that
+	/// has not been launched raises an Objective-C exception — "task not
+	/// launched" — which nothing here catches, and the app goes with `SIGABRT`.
+	/// The render is started on another queue a moment after `running` is set,
+	/// so anything that stopped it inside that moment killed the app: reported
+	/// 2026-09-16, "it seems to crash (without any report) as soon as I play /
+	/// navigate through the song files", and the crash's last Foundation frame
+	/// is `_signalRunningTask`. Navigating to an included file made it likely,
+	/// since the pane then starts again on another song at once.
+	private func stopRendering() {
+		if let running, running.isRunning { running.terminate() }
+		running = nil
+	}
+
 	/// Runs `mat` on the file. A run still going is stopped first: a render is
 	/// a computation with no state to corrupt, unlike a package build, so the
 	/// newest text wins at once.
 	private func render() {
 		guard let executable else { return }
-		if let running {
-			running.terminate()
-			self.running = nil
-		}
+		stopRendering()
 		fingerprint = sources.fingerprint(of: url)
 		runs += 1
 		// Named at random rather than by count: two panes on one song in one

@@ -478,6 +478,28 @@ inside it; an edit to the kit rendered again (`runs=2`) with the loop still
 playing; the same click again turned it off. On line 56, two bars, the playhead
 went 8.94 → 7.44 → 9.58 → 8.14 → 10.35, round and round.
 
+### 16. A render stopped before it started took the app with it
+
+*Added 2026-09-16.* Reported: "I started with make run - but it seems to crash
+(without any report) as soon as I play / navigate through the song files". There
+were reports, three of them, and one was of the copy running here: an uncaught
+Objective-C exception on the main queue with `showSong(at:)`, `start()` and
+`render()` on the stack, and `_signalRunningTask` as the last Foundation frame.
+
+`Process.terminate()` on a process that has not been launched raises "task not
+launched". The pane stores the render in `running` and launches it a moment
+later on another queue, so anything that stopped it inside that moment — a
+save, a tab switch, the pane starting again on another song, which is exactly
+what navigating to an included file does now — threw where nothing catches.
+Stopping now asks `isRunning` first, in one place, `stopRendering`.
+
+Reproduced before the fix by driving four song files open in quick succession:
+three runs, three crashes, no report from the pane. After it: three runs, the
+song rendered and played in each, and no new crash report.
+
+The 3D and PlantUML panes store and launch their process the same way and had
+the same two lines; they ask now too.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

@@ -215,7 +215,11 @@ final class CadovaPreviewView: DelayedPaneView {
 		// nobody is waiting for, holding SwiftPM's lock and a dozen
 		// `swift-frontend` processes, started by a tab that has been closed. That
 		// is the fault PlantUML's watchdog records, one process size larger.
-		running?.terminate()
+		// Asked whether it is running: `terminate()` on a process that has not
+		// been launched raises "task not launched", which nothing catches — and
+		// the process is stored a moment before it starts. See
+		// `SongPreviewView.stopRendering`.
+		if let running, running.isRunning { running.terminate() }
 	}
 
 	// MARK: - Starting
