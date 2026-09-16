@@ -522,10 +522,22 @@ rendering till something is shown".
   example: the pane has the song's 3:41 with `tempo=0 stems=0` while `mat` is
   still running, and `tempo=133 stems=7` when it lands.
 
-This is half of what was asked — "ideally we can start early before the render
-is even complete". The other half is `mat` rendering a stretch of bars, so the
-bars being worked on can be heard within a second rather than the whole song
-having to be rendered first.
+**And the first bars before the song.** "Ideally we can start early before the
+render is even complete": `mat` f684cab renders a stretch of bars, so a pane
+with nothing to play renders bars 1–8 first — half a second — plays that, and
+renders the whole song behind it. The preview goes through the same path a
+render lands by, marked partial: nothing is kept in the cache for it, and the
+whole song replaces it when it arrives.
+
+Measured on the drive example (3:41, seven layers), nothing cached, load 15:
+
+| Render | Wall clock |
+| --- | --- |
+| bars 1–8 | 0.42 s |
+| the whole song | 6.61 s |
+
+Driven on a copy nothing had rendered: the pane showed 19.1 s of song with
+seven stems while `mat` was still going, and 3:39 when it landed.
 
 **The pane's own size.** These went in beside three other splits: the files a
 song is made of and their watch (`SongSources`), where a breakpoint stopped it

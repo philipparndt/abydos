@@ -225,6 +225,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			run.note(fingerprint: now)
 			infoLabel.stringValue = info(kept.info)
 			load(directory: kept.directory, manifest: kept.manifest, mix: kept.files[0], kept: kept)
+		} else if rendered == nil {
+			// Nothing to hear yet: the first bars first.
+			render(bars: SongRender.previewBars)
 		} else {
 			render()
 		}
@@ -425,9 +428,14 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	/// Runs `mat` on what the pane is showing: see `SongRenderRun`.
-	private func render() {
+	///
+	/// - Parameter bars: the first bars only, as a preview: a song of four
+	///   minutes renders in eight seconds and its first eight bars in half of
+	///   one (`mat` f684cab), so there is something to hear at once and the
+	///   whole song takes over when it lands.
+	private func render(bars: ClosedRange<Int>? = nil) {
 		guard let executable else { return }
-		run.render(song: url, executable: executable, fingerprint: sources.fingerprint(of: url))
+		run.render(song: url, executable: executable, fingerprint: sources.fingerprint(of: url), bars: bars)
 	}
 
 	// MARK: - Rendering
@@ -445,8 +453,23 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private func finish(output: String, status: Int32, directory: URL) {
 		let manifestURL = directory.appendingPathComponent(SongRender.stemsDirectory).appendingPathComponent(SongRender.manifestName)
 		let mixURL = directory.appendingPathComponent(SongRender.mixName)
+		let data = try? Data(contentsOf: manifestURL)
+		// A preview of the first bars: shown if it worked, and the whole song
+		// rendered either way. A song shorter than the preview's bars refuses
+		// it, which costs half a second and nothing else.
+		if run.isPreviewing {
+			if status == 0, let data, let manifest = try? SongRender.manifest(from: data),
+			   FileManager.default.fileExists(atPath: mixURL.path) {
+				drawings.keep([nil] + manifest.layers.map { _ in nil })
+				load(directory: directory, manifest: manifest, mix: mixURL, kept: nil, partial: true)
+			} else {
+				try? FileManager.default.removeItem(at: directory)
+			}
+			render()
+			return
+		}
 		guard status == 0,
-		      let data = try? Data(contentsOf: manifestURL),
+		      let data,
 		      let manifest = try? SongRender.manifest(from: data),
 		      FileManager.default.fileExists(atPath: mixURL.path)
 		else {

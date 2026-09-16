@@ -14,14 +14,18 @@ import AbydosKit
 @MainActor
 final class SongRenderRun {
 	/// How long `mat` gets before the run is given up on.
-	static let deadline: TimeInterval = 300
+	nonisolated static let deadline: TimeInterval = 300
 	/// How long a change waits, so a save mid-keystroke renders once.
-	static let debounce: TimeInterval = 0.4
+	nonisolated static let debounce: TimeInterval = 0.4
 
 	/// How many renders have been started, for a driven run.
 	private(set) var runs = 0
 	private var running: Process?
 	private var pending: DispatchWorkItem?
+	/// The watchdog of the run that is going, cancelled when it ends: kept here
+	/// rather than captured by the closure that waits for `mat`, which is a
+	/// `@Sendable` one and a work item is not.
+	private var watchdog: DispatchWorkItem?
 	/// The sources as they were when the last render started.
 	private var fingerprint: String?
 	/// This pane's own directory under the temporary one, one subdirectory per
@@ -86,8 +90,15 @@ final class SongRenderRun {
 		pending?.cancel()
 	}
 
+	/// Whether the run going is a preview of the song's first bars.
+	private(set) var isPreviewing = false
+
 	/// Runs `mat` on `song`, with `fingerprint` as what this render is of.
-	func render(song: URL, executable: String, fingerprint: String) {
+	///
+	/// - Parameter bars: a stretch of the song rather than the whole of it: a
+	///   preview, which lands in well under a second and is replaced by the
+	///   whole render behind it.
+	func render(song: URL, executable: String, fingerprint: String, bars: ClosedRange<Int>? = nil) {
 		stop()
 		self.fingerprint = fingerprint
 		runs += 1
@@ -103,8 +114,10 @@ final class SongRenderRun {
 			return
 		}
 
+		isPreviewing = bars != nil
 		let line = SongRender.command(
-			executable: executable, song: song, output: directory, cache: SongRender.cacheDirectory(for: song)
+			executable: executable, song: song, output: directory,
+			cache: SongRender.cacheDirectory(for: song), bars: bars
 		)
 		let invocation = UserShell.invocation(for: line)
 		let process = Process()
@@ -125,7 +138,7 @@ final class SongRenderRun {
 		onBusy(true)
 		if !isShowingSomething() { onNotice("Rendering \(song.lastPathComponent)…") }
 
-		let watchdog = DispatchWorkItem { [weak self] in
+		let watching = DispatchWorkItem { [weak self] in
 			guard process.isRunning else { return }
 			process.terminate()
 			DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
@@ -136,7 +149,8 @@ final class SongRenderRun {
 			self.onBusy(false)
 			self.onFinished("mat did not finish within \(Int(Self.deadline)) seconds.", -1, directory)
 		}
-		DispatchQueue.main.asyncAfter(deadline: .now() + Self.deadline, execute: watchdog)
+		watchdog = watching
+		DispatchQueue.main.asyncAfter(deadline: .now() + Self.deadline, execute: watching)
 		watchForTheMix(in: directory, of: process)
 
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -152,8 +166,8 @@ final class SongRenderRun {
 			let status = process.terminationStatus
 			let report = said
 			DispatchQueue.main.async {
-				watchdog.cancel()
 				guard let self else { return }
+				self.watchdog?.cancel()
 				guard self.running === process else {
 					// Replaced by a newer render: what this one wrote is not wanted.
 					try? FileManager.default.removeItem(at: directory)

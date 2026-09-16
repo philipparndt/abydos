@@ -98,15 +98,31 @@ public enum SongRender {
 	/// directory of stems, with the layers kept in `cache` so a render after an
 	/// edit renders only the layers it touched. Quoted for the shell, since a
 	/// song sits in a project and a project sits wherever somebody keeps them.
-	public static func command(executable: String, song: URL, output: URL, cache: URL? = nil) -> String {
+	/// - Parameter bars: only these bars of the song, 1-based and inclusive
+	///   (`mat` f684cab), which is ten times faster than the whole of it and is
+	///   how a pane has something to play while the song renders behind it.
+	public static func command(
+		executable: String, song: URL, output: URL, cache: URL? = nil, bars: ClosedRange<Int>? = nil
+	) -> String {
 		var arguments = [
 			executable, "render", song.path,
 			"-o", output.appendingPathComponent(mixName).path,
 			"--stems", output.appendingPathComponent(stemsDirectory).path,
 		]
+		if let bars { arguments += ["--bars", "\(bars.lowerBound)-\(bars.upperBound)"] }
 		if let cache { arguments += ["--cache", cache.path] }
 		return arguments.map(quoted).joined(separator: " ")
 	}
+
+	/// Whether a manifest is of part of a song rather than the whole of it
+	/// (`mat` f684cab). An older `mat` says nothing and rendered the whole.
+	public static func isPartial(_ data: Data) -> Bool {
+		guard let top = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+		return top["partial"] as? Bool ?? false
+	}
+
+	/// The first bars of a song, for the preview render.
+	public static let previewBars = 1...8
 
 	// MARK: - Exporting
 
