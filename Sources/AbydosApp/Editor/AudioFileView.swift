@@ -28,9 +28,16 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	let canvas = AudioCanvas()
 	/// The marks, the working copy and its undo — see `AudioFileView+Cut`.
 	var cutState = CutState()
+	/// The last mark key pressed and when, so `ii` and `oo` can mean more than
+	/// `i` and `o` twice.
+	var lastMark: (key: String, at: Date)?
+	/// The last file a selection was written to, for a driven run.
+	var lastWrittenForTesting: URL?
 	var keepButton: DrawnButton!
 	var deleteButton: DrawnButton!
 	var selectionLabel: ScaledLabel!
+	/// Writes the selection to a file of its own, leaving this one alone.
+	var saveAsButton: DrawnButton!
 	/// Told when a cut or a save changes whether the tab has unsaved edits.
 	var onDirtyChanged: (() -> Void)?
 	private let heights = ScaledHeights()
@@ -121,6 +128,13 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		deleteButton = DrawnButton(title: "Delete Selection") { [weak self] in self?.deleteSelection() }
 		deleteButton.tip = StyledTip.Tip(title: "Delete the selection", detail: "Nothing is written until you save.", shortcut: "⌫")
 		deleteButton.isHidden = true
+		saveAsButton = DrawnButton(title: "Save Selection As…") { [weak self] in self?.saveSelectionAs() }
+		saveAsButton.tip = StyledTip.Tip(
+			title: "Write the selection to a new file",
+			detail: "This file is left as it is. Press i and i again to carry on from where the selection ended.",
+			shortcut: "S"
+		)
+		saveAsButton.isHidden = true
 		modeChoice = DrawnChoice(
 			segments: [.words("Wave"), .words("Spectrum"), .words("Both")],
 			selectedIndex: AudioCanvas.Mode.both.rawValue
@@ -131,7 +145,8 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let spacer = NSView()
 		spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 		strip = NSStackView(views: [
-			playButton, loopButton, timeLabel, infoLabel, selectionLabel, keepButton, deleteButton, spacer, fitButton, modeChoice,
+			playButton, loopButton, timeLabel, infoLabel, selectionLabel,
+			keepButton, deleteButton, saveAsButton, spacer, fitButton, modeChoice,
 		])
 		strip.orientation = .horizontal
 		strip.alignment = .centerY
@@ -345,7 +360,7 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		followPlayback()
 	}
 
-	private func seek(to seconds: Double) {
+	func seek(to seconds: Double) {
 		playback?.seek(toSeconds: seconds)
 		followPlayback()
 	}
@@ -407,9 +422,10 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// of sound or picture; `k` keeps it, ⌫ deletes it, Escape clears it.
 		if modifiers.isEmpty, failure == nil {
 			switch event.charactersIgnoringModifiers?.lowercased() {
-			case "i": markIn(); return
-			case "o": markOut(); return
+			case "i": pressedMark("i"); return
+			case "o": pressedMark("o"); return
 			case "k": keepSelection(); return
+			case "s": saveSelectionAs(); return
 			default: break
 			}
 			if event.keyCode == 51 || event.keyCode == 117 { deleteSelection(); return }
@@ -425,6 +441,26 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 		super.keyDown(with: event)
 	}
+
+	/// `i` or `o`, and the same key again straight after.
+	///
+	/// A second press within `carryOn` carries the selection on from where it
+	/// ended, rather than marking the same point twice — which is what a second
+	/// press meant before, and meant nothing.
+	func pressedMark(_ key: String) {
+		let now = Date()
+		let again = lastMark.map { $0.key == key && now.timeIntervalSince($0.at) < Self.carryOn } ?? false
+		lastMark = (key, now)
+		switch (key, again) {
+		case ("i", false): markIn()
+		case ("i", true): carryOnFromSelection()
+		case ("o", false): markOut()
+		default: carryBackFromSelection()
+		}
+	}
+
+	/// How long a second press of the same mark key still counts as a double.
+	static let carryOn: TimeInterval = 0.6
 
 	static let step = 5.0
 	static let fineStep = 1.0

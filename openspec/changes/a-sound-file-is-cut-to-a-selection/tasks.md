@@ -19,6 +19,10 @@
 
 ## 3. Before finishing
 
+- [x] 2.5 A selection is written to a new file (`Save Selection As…`, `s`), in
+      the source's own format, named after where it starts; the recording is
+      left as it was. `ii` carries the selection on from its end and `oo` back
+      from its start. Driven steps `save-as:<path>`, `in-again`, `out-again`.
 - [x] 3.1 Release notes.
 - [x] 3.2 `make test` and `make warnings`, both clean, by their exit codes;
       `openspec validate`.

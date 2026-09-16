@@ -21,6 +21,14 @@ this comes from a direct request.
   shows the edited dot, ⌘Z and ⇧⌘Z step through cuts, and closing the tab asks
   whether to save. ⌘S writes the file in its own format, over itself, in one
   replace.
+- **A selection is written to a file of its own.** *Save Selection As…* (`s`)
+  writes the selected stretch to a new file in the source's own format, leaving
+  the recording untouched, and offers a name carrying where it starts —
+  `session two 1-23.250.wav`. Asked for 2026-09-16.
+- **`ii` and `oo` carry a selection on.** A second `i` moves the start to where
+  the selection ended and lets the end go, so the next selection begins where
+  the last one finished; `oo` is the mirror. Cutting a recording into samples
+  is then mark, write, `ii`, play on, mark. Asked for 2026-09-16.
 - **What cannot be written says so.** macOS has no MP3 encoder: an MP3 is cut
   and played as any file is, and ⌘S says it cannot be saved as MP3 and keeps
   the edit.

@@ -106,6 +106,56 @@ struct AudioCutTests {
 		}
 	}
 
+	/// Asked for 2026-09-16: "when selecting a part in a wav file, it should be
+	/// also possible to save as (save the selection to a new file)".
+	@Test func aSelectionIsWrittenToANewFileAndTheOldOneIsUntouched() throws {
+		let directory = try scratch()
+		defer { try? FileManager.default.removeItem(at: directory) }
+		let take = directory.appendingPathComponent("take.wav")
+		try ramp(seconds: 2, at: take, settings: [AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false])
+		let before = try samples(take)
+
+		let sample = directory.appendingPathComponent("sample.wav")
+		try AudioCut.keep(4_000..<12_000).write(from: take, toNew: sample)
+
+		let written = try AVAudioFile(forReading: sample)
+		#expect(written.length == 8_000)
+		#expect(written.fileFormat.sampleRate == rate)
+		// The samples are the ones that were selected, not a re-ramp.
+		let cut = try samples(sample)
+		#expect(abs(cut.left.first! - before.left[4_000]) < 0.0001)
+		#expect(abs(cut.left.last! - before.left[11_999]) < 0.0001)
+		// And the recording is exactly as it was.
+		let after = try samples(take)
+		#expect(after.length == before.length)
+		#expect(after.left == before.left)
+		let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.contains(".abydos-") }
+		#expect(leftovers.isEmpty, "no temporary file is left behind")
+	}
+
+	/// The name offered says where in the recording the selection starts, so
+	/// cutting one into samples numbers them as it goes.
+	@Test func aSelectionIsNamedAfterWhereItStarts() {
+		let take = URL(fileURLWithPath: "/takes/session two.wav")
+		#expect(AudioCut.name(of: take, at: 0) == "session two 0-00.000.wav")
+		#expect(AudioCut.name(of: take, at: 83.25) == "session two 1-23.250.wav")
+		#expect(AudioCut.name(of: take, at: 5, extension: "aiff") == "session two 0-05.000.aiff")
+	}
+
+	/// A container macOS cannot write is refused before anything is written,
+	/// and the destination is the one asked about — not the file being cut.
+	@Test func aSelectionIsNotWrittenIntoAContainerMacOSCannotWrite() throws {
+		let directory = try scratch()
+		defer { try? FileManager.default.removeItem(at: directory) }
+		let take = directory.appendingPathComponent("take.wav")
+		try ramp(seconds: 1, at: take)
+		let mp3 = directory.appendingPathComponent("sample.mp3")
+		#expect(throws: AudioCut.Failure.cannotWrite("MP3")) {
+			try AudioCut.keep(0..<4_000).write(from: take, toNew: mp3)
+		}
+		#expect(!FileManager.default.fileExists(atPath: mp3.path))
+	}
+
 	@Test func anMP3IsNotWrittenAndSaysWhy() throws {
 		let directory = try scratch()
 		defer { try? FileManager.default.removeItem(at: directory) }

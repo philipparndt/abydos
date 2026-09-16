@@ -32,6 +32,31 @@ extension AudioFileView {
 		selectionChanged()
 	}
 
+	/// `i` twice: the selection starts where it ended, so the next one carries
+	/// on from the last — which is how a recording is cut into samples one
+	/// after another. `o` twice is the same going backwards: the selection ends
+	/// where it began.
+	///
+	/// Asked for 2026-09-16: "ii should set the start to the end and oo the end
+	/// to the current start (ii can be used to continue with the next sample)".
+	/// The other mark is let go, so what is left is one mark at the boundary and
+	/// the next press of the other key makes the new selection.
+	func carryOnFromSelection() {
+		guard let out = cutState.outPoint else { return }
+		cutState.inPoint = out
+		cutState.outPoint = nil
+		seek(to: out)
+		selectionChanged()
+	}
+
+	func carryBackFromSelection() {
+		guard let start = cutState.inPoint else { return }
+		cutState.outPoint = start
+		cutState.inPoint = nil
+		seek(to: start)
+		selectionChanged()
+	}
+
 	func clearSelection() {
 		cutState.inPoint = nil
 		cutState.outPoint = nil
@@ -50,6 +75,7 @@ extension AudioFileView {
 		let frames = selectedFrames
 		keepButton.isHidden = frames == nil
 		deleteButton.isHidden = frames == nil
+		saveAsButton.isHidden = frames == nil
 		if let frames, let playback, playback.sampleRate > 0 {
 			let seconds = Double(frames.count) / playback.sampleRate
 			selectionLabel.stringValue = "selected " + Self.clock(seconds, milliseconds: true)
@@ -161,6 +187,48 @@ extension AudioFileView {
 		}
 	}
 
+	/// Writes the selection to a file of its own, leaving this one alone.
+	///
+	/// Asked for 2026-09-16: "when selecting a part in a wav file, it should be
+	/// also possible to save as (save the selection to a new file)". The name
+	/// offered carries where in the file the selection starts, so cutting a
+	/// recording into samples numbers them as it goes.
+	func saveSelectionAs() {
+		guard let frames = selectedFrames, let playback, playback.sampleRate > 0 else { return }
+		let start = Double(frames.lowerBound) / playback.sampleRate
+		let panel = NSSavePanel()
+		panel.title = "Save Selection"
+		panel.nameFieldStringValue = AudioCut.name(of: url, at: start)
+		panel.directoryURL = url.deletingLastPathComponent()
+		panel.canCreateDirectories = true
+		panel.isExtensionHidden = false
+		let source = self.source
+		panel.beginSheetModal(for: window ?? NSApp.keyWindow ?? NSWindow()) { [weak self] answer in
+			guard answer == .OK, let destination = panel.url else { return }
+			self?.write(frames: frames, of: source, to: destination)
+		}
+	}
+
+	/// The frames, written. Said aloud either way: a file written somewhere
+	/// else is a thing somebody has to be able to find.
+	func write(frames: Range<Int>, of source: URL, to destination: URL) {
+		do {
+			try AudioCut.keep(frames).write(from: source, toNew: destination)
+			Toast.post(Toast(
+				kind: .information, title: "Wrote \(destination.lastPathComponent)",
+				detail: "The selection, \(Self.clock(Double(frames.count) / (playback?.sampleRate ?? 48_000), milliseconds: true)) of it.",
+				actionTitle: "Reveal in Finder",
+				action: { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
+			))
+			lastWrittenForTesting = destination
+		} catch {
+			Toast.post(
+				"Could not write \(destination.lastPathComponent)",
+				detail: error.localizedDescription, kind: .warning
+			)
+		}
+	}
+
 	/// The working copies a tab is finished with.
 	func discard(_ copies: [URL?]) {
 		for copy in copies.compactMap({ $0 }) where copy != cutState.working {
@@ -178,8 +246,9 @@ extension AudioFileView {
 
 	// MARK: - Driving
 
-	/// Steps, comma-separated: `seek:<s>`, `in`, `out`, `clear`, `keep`,
-	/// `delete`, `undo`, `redo`, `save`, `report`. Cuts are waited for.
+	/// Steps, comma-separated: `seek:<s>`, `in`, `out`, `in-again`, `out-again`,
+	/// `clear`, `keep`, `delete`, `undo`, `redo`, `save`, `save-as:<path>`,
+	/// `report`. Cuts are waited for.
 	func performStepsForTesting(_ steps: [String], then: @escaping () -> Void) {
 		guard let step = steps.first else { return then() }
 		let rest = Array(steps.dropFirst())
@@ -187,6 +256,9 @@ extension AudioFileView {
 		switch step {
 		case "in": markIn()
 		case "out": markOut()
+		// `ii` and `oo` from the keyboard.
+		case "in-again": carryOnFromSelection()
+		case "out-again": carryBackFromSelection()
 		case "clear": clearSelection()
 		case "keep": return keepSelection { next() }
 		case "delete": return deleteSelection { next() }
@@ -204,6 +276,15 @@ extension AudioFileView {
 		default:
 			if step.hasPrefix("seek:"), let seconds = Double(step.dropFirst("seek:".count)) {
 				seekForTesting(seconds: seconds)
+			} else if step.hasPrefix("save-as:") {
+				// The panel is not driven; where it would have written is.
+				let path = String(step.dropFirst("save-as:".count))
+				if let frames = selectedFrames {
+					write(frames: frames, of: source, to: URL(fileURLWithPath: path))
+					print("AUDIO-STEP save-as: \(URL(fileURLWithPath: path).lastPathComponent)")
+				} else {
+					print("AUDIO-STEP save-as: nothing selected")
+				}
 			} else {
 				print("AUDIO-STEP unknown step \(step)")
 			}
@@ -222,7 +303,11 @@ extension AudioFileView {
 			+ " dirty=\(isDirty) undo=\(cutState.undo.count) redo=\(cutState.redo.count)"
 			+ " selection=\(selectedFrames.map { "\($0.lowerBound)..<\($0.upperBound)" } ?? "none")"
 			+ " label=\"\(selectionLabel.stringValue)\" buttons=\(keepButton.isHidden ? "hidden" : "shown")"
+			+ " save-as=\(saveAsButton.isHidden ? "hidden" : "shown")"
 			+ " bytes-on-disk=\(onDisk) source=\(source == url ? "file" : "working copy")"
+			+ " marks=\(cutState.inPoint.map { String(format: "%.3f", $0) } ?? "-")"
+			+ "/\(cutState.outPoint.map { String(format: "%.3f", $0) } ?? "-")"
+			+ " wrote=\(lastWrittenForTesting?.lastPathComponent ?? "-")"
 	}
 }
 

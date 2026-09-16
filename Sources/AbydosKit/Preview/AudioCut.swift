@@ -102,6 +102,69 @@ public enum AudioCut: Equatable, Sendable {
 		return total
 	}
 
+	/// Writes what this cut leaves of `source` into a **new** file, in the same
+	/// format the source is in — its rate, its channels, its depth — and the
+	/// container the destination's name asks for.
+	///
+	/// Asked for 2026-09-16: "when selecting a part in a wav file, it should be
+	/// also possible to save as (save the selection to a new file)". Cutting a
+	/// long recording into samples is the case, and it must not touch the
+	/// recording: nothing here writes to `source`.
+	public func write(from source: URL, toNew destination: URL) throws {
+		let ext = destination.pathExtension.lowercased()
+		guard Self.canWrite(destination) else { throw Failure.cannotWrite(ext.uppercased()) }
+		let input: AVAudioFile
+		do { input = try AVAudioFile(forReading: source) } catch {
+			throw Failure.failed(error.localizedDescription)
+		}
+		let segments = segments(frameCount: Int(input.length))
+		guard segments.reduce(0, { $0 + $1.count }) > 0 else { throw Failure.nothingLeft }
+		var settings = input.fileFormat.settings
+		if settings[AVFormatIDKey] as? UInt32 == kAudioFormatMPEG4AAC {
+			settings.removeValue(forKey: AVLinearPCMBitDepthKey)
+		}
+		// A selection written into a container the source's codec does not
+		// belong in — a CAF cut out of an M4A — is written as linear PCM.
+		if ext == "wav" || ext == "aif" || ext == "aiff" || ext == "caf",
+		   settings[AVFormatIDKey] as? UInt32 != kAudioFormatLinearPCM {
+			settings = [
+				AVFormatIDKey: kAudioFormatLinearPCM,
+				AVSampleRateKey: input.processingFormat.sampleRate,
+				AVNumberOfChannelsKey: input.processingFormat.channelCount,
+				AVLinearPCMBitDepthKey: 24,
+				AVLinearPCMIsFloatKey: false,
+				AVLinearPCMIsNonInterleaved: false,
+			]
+		}
+		let temporary = destination.deletingLastPathComponent()
+			.appendingPathComponent(".\(destination.deletingPathExtension().lastPathComponent).abydos-\(UUID().uuidString.prefix(8)).\(ext)")
+		do {
+			try Self.render(segments, from: input, to: temporary, settings: settings)
+		} catch {
+			try? FileManager.default.removeItem(at: temporary)
+			throw Failure.failed(error.localizedDescription)
+		}
+		do {
+			if FileManager.default.fileExists(atPath: destination.path) {
+				_ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+			} else {
+				try FileManager.default.moveItem(at: temporary, to: destination)
+			}
+		} catch {
+			try? FileManager.default.removeItem(at: temporary)
+			throw Failure.failed(error.localizedDescription)
+		}
+	}
+
+	/// A name for a selection cut out of a file: the file's own, and the
+	/// seconds it starts at, so slicing a recording numbers itself.
+	public static func name(of source: URL, at seconds: Double, extension ext: String? = nil) -> String {
+		let stem = source.deletingPathExtension().lastPathComponent
+		let whole = Int(seconds)
+		let clock = String(format: "%d-%02d.%03d", whole / 60, whole % 60, Int((seconds - Double(whole)) * 1000))
+		return "\(stem) \(clock).\(ext ?? source.pathExtension)"
+	}
+
 	/// Writes `working` over `original` in the original's own format: its
 	/// container, codec, rate and channels. The file is replaced whole, so a
 	/// failure leaves the original as it was.
