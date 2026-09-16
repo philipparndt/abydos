@@ -29,6 +29,26 @@ struct SongRenderTests {
 			== "/tmp/run-3/mix.stream.json")
 	}
 
+	/// A `mat` from before a5f7d05 refuses `--stream` and the render with it, so
+	/// the help is read before the flag is passed. Both texts are `mat render
+	/// --help` as it stands, with and without the option.
+	@Test func aMatThatDoesNotStreamIsToldApartByItsHelp() {
+		let streams = """
+		      --stems <STEMS>
+		          Also write one file per layer
+		      --stream
+		          Render the song in order of time and write it as it goes
+		"""
+		#expect(SongRender.supportsStreaming(help: streams))
+		let older = """
+		      --stems <STEMS>
+		          Also write one file per layer
+		      --cache <CACHE>
+		          Keep each layer here between renders
+		"""
+		#expect(!SongRender.supportsStreaming(help: older))
+	}
+
 	/// `mat render --stream` beside the mix, caught while the drive example was
 	/// rendering on 2026-09-16 and again when it was done.
 	@Test func theStreamSaysHowMuchOfTheMixCanBePlayed() throws {

@@ -437,7 +437,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// one replaces it, and until it does the old mix plays to its end
 		// rather than waiting for a stretch nobody is writing.
 		stopGrowing()
-		run.render(song: url, executable: executable, fingerprint: sources.fingerprint(of: url))
+		run.render(
+			song: url, executable: executable, fingerprint: sources.fingerprint(of: url),
+			streaming: Self.streamingSupported(by: executable)
+		)
 	}
 
 	/// Nothing more is coming for the mix that is playing — the run ended, or a

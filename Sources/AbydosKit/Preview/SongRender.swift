@@ -227,6 +227,13 @@ public enum SongRender {
 		help.contains("--bitrate")
 	}
 
+	/// Whether a `mat` writes the mix while it renders (a5f7d05), from its
+	/// `render --help`. An older one takes no `--stream` and refuses the whole
+	/// render over it, so the question is asked before it is passed.
+	public static func supportsStreaming(help: String) -> Bool {
+		help.contains("--stream\n") || help.contains("--stream ")
+	}
+
 	static func quoted(_ argument: String) -> String {
 		if argument.allSatisfy({ $0.isLetter || $0.isNumber || "-_./=:".contains($0) }) { return argument }
 		return "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"

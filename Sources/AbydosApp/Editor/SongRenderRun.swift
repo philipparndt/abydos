@@ -97,7 +97,11 @@ final class SongRenderRun {
 	}
 
 	/// Runs `mat` on `song`, with `fingerprint` as what this render is of.
-	func render(song: URL, executable: String, fingerprint: String) {
+	///
+	/// - Parameter streaming: whether this `mat` writes the mix as it renders,
+	///   which is what the pane plays before the render is done. A `mat` from
+	///   before a5f7d05 refuses the flag, so the pane asks first.
+	func render(song: URL, executable: String, fingerprint: String, streaming: Bool) {
 		stop()
 		self.fingerprint = fingerprint
 		runs += 1
@@ -115,7 +119,7 @@ final class SongRenderRun {
 
 		let line = SongRender.command(
 			executable: executable, song: song, output: directory,
-			cache: SongRender.cacheDirectory(for: song), streaming: true
+			cache: SongRender.cacheDirectory(for: song), streaming: streaming
 		)
 		let invocation = UserShell.invocation(for: line)
 		let process = Process()
@@ -149,7 +153,7 @@ final class SongRenderRun {
 		}
 		watchdog = watching
 		DispatchQueue.main.asyncAfter(deadline: .now() + Self.deadline, execute: watching)
-		watchTheStream(in: directory, of: process)
+		if streaming { watchTheStream(in: directory, of: process) }
 
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 			var said = ""

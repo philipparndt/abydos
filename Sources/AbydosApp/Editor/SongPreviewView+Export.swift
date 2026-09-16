@@ -131,7 +131,20 @@ extension SongPreviewView {
 	/// Whether this `mat` writes FLAC and M4A, asked once per executable.
 	static func formatsSupported(by executable: String?) -> Bool {
 		guard let executable else { return false }
-		if let known = formatSupport[executable] { return known }
+		return SongRender.supportsFormats(help: renderHelp(of: executable))
+	}
+
+	/// Whether this `mat` writes the mix while it renders, so the pane can play
+	/// a song before it is rendered. Asked, because a `mat` from before a5f7d05
+	/// refuses `--stream` and with it the render.
+	static func streamingSupported(by executable: String?) -> Bool {
+		guard let executable else { return false }
+		return SongRender.supportsStreaming(help: renderHelp(of: executable))
+	}
+
+	/// What `mat render --help` says, asked once per executable.
+	static func renderHelp(of executable: String) -> String {
+		if let known = renderHelpText[executable] { return known }
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: executable)
 		process.arguments = ["render", "--help"]
@@ -144,11 +157,10 @@ extension SongPreviewView {
 			process.waitUntilExit()
 			help = String(decoding: data, as: UTF8.self)
 		}
-		let supported = SongRender.supportsFormats(help: help)
-		formatSupport[executable] = supported
-		return supported
+		renderHelpText[executable] = help
+		return help
 	}
 }
 
-/// What each `mat` said about its formats, for the life of the process.
-@MainActor private var formatSupport: [String: Bool] = [:]
+/// What each `mat` said for itself, for the life of the process.
+@MainActor private var renderHelpText: [String: String] = [:]
