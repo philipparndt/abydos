@@ -105,11 +105,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private var rendered: Rendered?
 	private var running: Process?
 	private var pending: DispatchWorkItem?
-	/// One per directory a source is in, none inside another.
-	private var watchers: [String: FileSystemWatcher] = [:]
-	/// The files the last render read, the song first; the song alone before.
-	private var sources: [URL] = []
-	private var watchedSources: [URL] { sources.isEmpty ? [url] : sources }
+	/// The files the song is made of, and the watch on them.
+	private lazy var sources = SongSources { [weak self] in self?.fileChanged() }
 	private var fingerprint: String?
 	private var runs = 0
 	private var analysis: (flag: CancelFlag, task: Task<Void, Never>)?
@@ -167,14 +164,13 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private func start() {
 		// The files it was read from last time, so the fingerprint asks about
 		// all of them.
-		if let known = SongRenderCache.shared.manifest(for: url) {
-			sources = known.sources.map { URL(fileURLWithPath: $0) }
-		}
-		watch()
+		sources.begin(song: url, files: (SongRenderCache.shared.manifest(for: url)?.sources ?? []).map {
+			URL(fileURLWithPath: $0)
+		})
 		// The last render of this song, when nothing it is made of has changed
 		// since: the pane before this one was torn down with its tab, and
 		// rendering again would be twenty seconds for nothing.
-		let now = currentFingerprint()
+		let now = sources.fingerprint(of: url)
 		if let kept = SongRenderCache.shared.entry(for: url, fingerprint: now) {
 			fingerprint = now
 			infoLabel.stringValue = info(kept.info)
@@ -203,9 +199,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		onPlayhead?(nil, false)
 		url = song
 		outputRoot = SongRender.outputRoot(for: song)
-		sources = []
+		sources.begin(song: song, files: [])
 		fingerprint = nil
-		watchers = [:]
 		isSettled = false
 		show(notice: "Waiting to render \(song.lastPathComponent)…")
 		if window != nil { start() } else { whenShown = { [weak self] in self?.start() } }
@@ -362,43 +357,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		errorStrip.applyTheme()
 	}
 
-	// MARK: - Watching the file
-
-	/// The song's directory, since FSEvents watches directories; whether the
-	/// song itself changed is the fingerprint's question, asked after the
-	/// debounce. The samples beside it are read by the render too, and a
-	/// change to one of them is a change to the sound, but the file somebody
-	/// edits is the song — and a render on every write to the directory would
-	/// render when the project's own tools write beside it.
-	///
-	/// Every source's directory since includes (mat e72d7e5): a song made of
-	/// three files is changed by a save of any, and an included kit can sit
-	/// beside the song, below it or above it.
-	private func watch() {
-		let directories = Set(watchedSources.map { $0.deletingLastPathComponent().standardizedFileURL.path })
-		// FSEvents watches a tree, so a directory inside another is watched already.
-		let roots = directories.filter { directory in
-			!directories.contains { $0 != directory && directory.hasPrefix($0 + "/") }
-		}
-		for gone in Set(watchers.keys).subtracting(roots) {
-			watchers.removeValue(forKey: gone)
-		}
-		for root in roots where watchers[root] == nil {
-			let watcher = FileSystemWatcher(root: URL(fileURLWithPath: root, isDirectory: true)) { [weak self] _ in
-				DispatchQueue.main.async { self?.fileChanged() }
-			}
-			watcher.start()
-			watchers[root] = watcher
-		}
-	}
-
-	/// The files a manifest says the song was read from.
-	private func adoptSources(of manifest: SongRender.Manifest) {
-		let read = manifest.sources.map { URL(fileURLWithPath: $0) }
-		guard read != sources else { return }
-		sources = read
-		watch()
-	}
+	// MARK: - Watching the files
 
 	private func fileChanged() {
 		pending?.cancel()
@@ -407,17 +366,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
 	}
 
-	/// Size and date rather than the event: an event says something in the
-	/// directory happened, and most of what happens is not the song.
-	private func currentFingerprint() -> String {
-		watchedSources.map { source in
-			let values = try? source.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-			return "\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values?.fileSize ?? 0)"
-		}.joined(separator: ";")
-	}
-
 	private func renderIfChanged() {
-		guard currentFingerprint() != fingerprint else { return }
+		guard sources.fingerprint(of: url) != fingerprint else { return }
 		render()
 	}
 
@@ -432,7 +382,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			running.terminate()
 			self.running = nil
 		}
-		fingerprint = currentFingerprint()
+		fingerprint = sources.fingerprint(of: url)
 		runs += 1
 		// Named at random rather than by count: two panes on one song in one
 		// process share the root, and would otherwise both write `run-1`.
@@ -524,11 +474,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		lastDiagnostics = []
 		errorStrip.isHidden = true
 		infoLabel.stringValue = info(Self.info(of: manifest, rendered: SongRender.renderedLine(in: output)))
-		let before = sources
-		adoptSources(of: manifest)
 		// A render that found more files than were being fingerprinted: this
 		// render is of them, and it is not a change to render again for.
-		if sources != before { fingerprint = currentFingerprint() }
+		if sources.adopt(manifest.sources, of: url) { fingerprint = sources.fingerprint(of: url) }
 		load(directory: directory, manifest: manifest, mix: mixURL, kept: nil)
 	}
 
@@ -579,7 +527,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 		if kept == nil {
 			SongRenderCache.shared.store(SongRenderCache.Entry(
-				fingerprint: fingerprint ?? currentFingerprint(), directory: directory, manifest: manifest,
+				fingerprint: fingerprint ?? sources.fingerprint(of: url), directory: directory, manifest: manifest,
 				files: files, info: infoLabel.stringValue, overviews: Array(repeating: nil, count: files.count)
 			), for: url)
 		}
