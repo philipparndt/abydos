@@ -557,6 +557,27 @@ cache. Driven on a cold copy at load 10: the lane was drawn at 3.0 s and 4.7 s,
 with 54 s and 136 s of the song written and `mat` still running, where it had
 been empty until the render landed.
 
+**The whole song's length, from the first stretch.** The status `mat` 357f7f5
+writes says `seconds_total` and `bars_total` before a sample is rendered, so the
+timeline is laid out once instead of growing under the playhead, and what has
+not been rendered yet is dimmed with the edge the render has reached drawn on
+it. Two things it is not: the file can end *past* that length, because a reverb
+rings on past the last bar (221.6 s written against 216.5 for the drive
+example), so what is shown is the longer of the two; and a `mat` that says
+neither leaves the pane where it was, growing with what arrives. Driven at load
+5: the timeline was 198.6 s at every report while what could be played grew
+48.8 → 136.2 → 203.4 s.
+
+**And the songs that still waited.** `mat` a5f7d05 rendered tb303, scratch and
+CLAP tracks whole before the first stretch, which is the wait streaming was
+meant to remove. mat 46d41fb, 75ac25f and ff89b37 render them a stretch at a
+time — the tb303's state now lives in its player, a CLAP plugin is asked only
+for the blocks the stretch needs, and a scratch track waits only for the record
+it cuts from. Harbour, on two Surge XT plugins, went from 11.22 s to 0.20 s
+before its first sound; a song on six of them from 14.27 s to 0.48 s; the tb303
+songs from 0.34–0.96 s to 0.01–0.15 s. Audio Unit tracks are still rendered
+whole by the `mat-au` host, which hands `mat` finished stems.
+
 Driven with a save under a playing song, load 90: the pane was playing the old
 render at 14.8 s when the edit landed, took the new one over at 16.3 s — by
 which point 48.8 s of it was written, well past the playhead — and the playhead

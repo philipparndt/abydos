@@ -56,6 +56,13 @@ final class SongCanvas: NSView {
 		didSet { if loopRange != oldValue { needsDisplay = true } }
 	}
 
+	/// How far the render has been written, while it is still being written:
+	/// past it the song is laid out but not there yet, and is dimmed. Nil when
+	/// what is shown is the whole of it.
+	var writtenThrough: Double? {
+		didSet { if writtenThrough != oldValue { needsDisplay = true } }
+	}
+
 	var sections: [SongRender.Manifest.Section] = [] {
 		didSet { needsDisplay = true }
 	}
@@ -372,6 +379,7 @@ final class SongCanvas: NSView {
 		// Over the lanes: what the loop leaves out is dimmed, and a band under
 		// the waves would have been painted over by them.
 		drawLoop()
+		drawUnwritten()
 		if isZoomed { drawPositionBar() }
 	}
 
@@ -534,6 +542,23 @@ final class SongCanvas: NSView {
 				label.draw(at: NSPoint(x: left + 4, y: band.midY - label.size().height / 2))
 			}
 		}
+	}
+
+	/// What has not been rendered yet: dimmed, with the edge the render has
+	/// reached drawn, so the song's length is there from the first stretch
+	/// rather than growing under the playhead.
+	private func drawUnwritten() {
+		guard let writtenThrough, duration > 0, writtenThrough < duration else { return }
+		let left = x(atSeconds: writtenThrough)
+		guard left < bounds.width else { return }
+		let top = sectionBandHeight
+		let height = max(0, bounds.height - top)
+		Theme.current.editorBackground.withAlphaComponent(0.55).setFill()
+		NSRect(x: max(0, left), y: top, width: max(0, bounds.width - max(0, left)), height: height)
+			.fill(using: .sourceOver)
+		guard left >= 0 else { return }
+		Theme.current.separator.withAlphaComponent(0.8).setFill()
+		NSRect(x: left, y: top, width: max(1, Theme.current.scaled(1)), height: height).fill()
 	}
 
 	/// What the loop plays: everything outside it dimmed, its edges drawn.

@@ -55,6 +55,7 @@ struct SongRenderTests {
 		let going = Data("""
 		{
 		  "bar_seconds": 1.8045112781954886,
+		  "bars_total": 120,
 		  "bars_written": 0,
 		  "bits": 24,
 		  "bytes_per_frame": 6,
@@ -64,6 +65,7 @@ struct SongRenderTests {
 		  "finished": false,
 		  "frames_written": 48913,
 		  "sample_rate": 48000,
+		  "seconds_total": 216.54135338345864,
 		  "seconds_written": 1.0190208333333333,
 		  "tempo": 133.0
 		}
@@ -73,19 +75,36 @@ struct SongRenderTests {
 		#expect(first.sampleRate == 48000)
 		#expect(abs(first.seconds - 1.019) < 0.001)
 		#expect(!first.finished)
-		// Enough of the song to open a pane on: its tempo and its bars.
+		// Enough of the song to open a pane on: its tempo, its bars, and how
+		// long the whole of it is — so the timeline is laid out once rather
+		// than growing under the playhead.
+		#expect(first.totalBars == 120)
 		let manifest = SongRender.manifest(ofStream: first)
 		#expect(manifest.tempo == 133)
 		#expect(abs(manifest.barSeconds - 1.8045) < 0.001)
+		#expect(abs(manifest.seconds - 216.541) < 0.001)
 		#expect(manifest.layers.isEmpty)
 
 		let done = Data(String(data: going, encoding: .utf8)!
+			.replacingOccurrences(of: "\"seconds_written\": 1.0190208333333333", with: "\"seconds_written\": 221.55720833333334")
 			.replacingOccurrences(of: "\"finished\": false", with: "\"finished\": true")
 			.replacingOccurrences(of: "\"frames_written\": 48913", with: "\"frames_written\": 10634746").utf8)
 		let whole = try #require(SongRender.stream(from: done))
 		#expect(whole.finished)
 		#expect(whole.frames == 10634746)
 		#expect(whole != first)
+		// A reverb rings past the last bar, so the file outlives the song: the
+		// pane shows what is there, not what the tempo says.
+		#expect(whole.seconds > whole.totalSeconds ?? 0)
+		#expect(abs(SongRender.manifest(ofStream: whole).seconds - 221.557) < 0.001)
+
+		// A mat that says neither leaves the length to what has been written.
+		let older = Data(String(data: going, encoding: .utf8)!
+			.replacingOccurrences(of: "\"bars_total\": 120,", with: "")
+			.replacingOccurrences(of: "\"seconds_total\": 216.54135338345864,", with: "").utf8)
+		let quiet = try #require(SongRender.stream(from: older))
+		#expect(quiet.totalSeconds == nil)
+		#expect(abs(SongRender.manifest(ofStream: quiet).seconds - 1.019) < 0.001)
 	}
 
 	/// Half a file, or none: the reader says nothing rather than a length.

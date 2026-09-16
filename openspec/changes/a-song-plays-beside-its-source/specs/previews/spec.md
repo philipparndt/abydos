@@ -140,7 +140,10 @@ is still being written SHALL take over from a song that is playing only once it
 has reached the playhead. A render that falls behind what is being played SHALL
 leave the playhead where it is and go on when more is written, rather than
 reporting the end of the song. A `mat` that does not stream SHALL still render
-the whole song, which is then heard when it lands.
+the whole song, which is then heard when it lands. The pane SHALL draw the mix
+as it is written rather than when it lands, and SHALL lay out the whole song's
+length from the first stretch when the render says what it is, dimming what has
+not been rendered yet.
 
 Asked for 2026-09-16.
 

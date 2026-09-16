@@ -139,6 +139,16 @@ public enum SongRender {
 		public let seconds: Double
 		public let barSeconds: Double
 		public let tempo: Double
+		/// How long the whole song is, in seconds and in bars, from the first
+		/// reading on (`mat` 357f7f5) — so a timeline is laid out once rather
+		/// than growing under the playhead. Nil from a `mat` that does not say.
+		///
+		/// It is the *music's* length: the last bar, at the song's tempo. A
+		/// reverb or a delay rings past it, so the file ends a little later —
+		/// 228.4 s against 226.9 for neon — and what is written is what is
+		/// played.
+		public let totalSeconds: Double?
+		public let totalBars: Int?
 		/// The render is over: this is the whole song, and the file will not
 		/// change again. It can be *shorter* than the last reading — the tail
 		/// is trimmed and faded at the end — so what was scheduled past it is
@@ -157,6 +167,8 @@ public enum SongRender {
 			seconds: (top["seconds_written"] as? NSNumber)?.doubleValue ?? Double(frames) / rate,
 			barSeconds: (top["bar_seconds"] as? NSNumber)?.doubleValue ?? 0,
 			tempo: (top["tempo"] as? NSNumber)?.doubleValue ?? 0,
+			totalSeconds: (top["seconds_total"] as? NSNumber)?.doubleValue,
+			totalBars: (top["bars_total"] as? NSNumber)?.intValue,
 			finished: top["finished"] as? Bool ?? false
 		)
 	}
@@ -166,7 +178,7 @@ public enum SongRender {
 	public static func manifest(ofStream stream: Stream) -> Manifest {
 		Manifest(
 			tempo: stream.tempo, meter: [4, 4], barSeconds: stream.barSeconds,
-			seconds: stream.seconds, layers: []
+			seconds: max(stream.totalSeconds ?? 0, stream.seconds), layers: []
 		)
 	}
 

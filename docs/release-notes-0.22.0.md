@@ -81,7 +81,11 @@ from it, with the stems landing at the end. It needs `mat` a5f7d05 or newer; an
 older one renders the whole song before anything can be heard. A render that is
 still writing takes over from a playing song only once it has passed the
 playhead, so a save under a playing song is heard from the same bar. The wave
-is drawn as it is written rather than at the end. Opening a
+is drawn as it is written rather than at the end, and the timeline is the whole
+song's from the first stretch, with what has not been rendered yet dimmed.
+
+Songs on plugins start as fast as the rest now: with `mat` 75ac25f, harbour —
+two Surge XT plugins — takes 0.20 s to its first sound instead of 11.22 s. Opening a
 file a song includes no longer renders that file first.
 
 ## The stems sound like the mix

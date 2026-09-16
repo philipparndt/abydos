@@ -469,7 +469,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let frames = AVAudioFramePosition(stream.frames)
 		if streaming == directory, let playback = rendered?.playback, rendered?.directory == directory {
 			playback.grew(toFrames: frames, finished: stream.finished)
-			canvas.duration = playback.duration
+			canvas.duration = max(stream.totalSeconds ?? 0, playback.duration)
+			canvas.writtenThrough = stream.finished ? nil : playback.duration
 			// The wave of what has been written, drawn again as more arrives.
 			if stream.finished { streaming = nil } else { drawings.readGrowing(mix: mix, seconds: stream.seconds) }
 			return
@@ -594,7 +595,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// The previous render's directory is the cache's to delete, which it
 		// did when the new one was stored.
 
-		canvas.duration = playback.duration
+		canvas.duration = max(partial ? manifest.seconds : 0, playback.duration)
+		canvas.writtenThrough = canvas.duration > playback.duration ? playback.duration : nil
 		canvas.barSeconds = manifest.barSeconds
 		canvas.sections = manifest.sections
 		if previous == nil { canvas.fit() }
