@@ -73,6 +73,12 @@ and its stems — as WAV, FLAC or M4A beside the song, and asks before replacing
 a file. Stems now start on the same sample, so played together they sound
 like the mix.
 
+## A song is heard sooner
+
+The pane plays the mix as soon as it is written, while the stems are still
+being rendered, and the whole render takes over from the same bar. Opening a
+file a song includes no longer renders that file first.
+
 ## Loop a few bars while you change them
 
 Option-click a line's bar beside the line numbers: the song loops the stretch

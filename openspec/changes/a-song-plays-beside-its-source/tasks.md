@@ -75,6 +75,9 @@
 - [x] 5.5 The Stack as a tree: `CallTree` and its tests, `CallStackOutline`,
       the session's stacks per open thread; the song adapter's parents, subtle
       lines and stems; driven and captured.
+- [x] 5.10 The mix plays while the stems are still being written, and a file of
+      a song holds its first render until the server says which song it is in;
+      `SongRenderRun`, `SongOverviews`, `SongSettled`, `SongBreakpointStops`.
 - [x] 5.9 A render is stopped only when it is running: `Process.terminate()`
       on an unlaunched process aborts the app. Reproduced and fixed, and the
       same two lines in the 3D and PlantUML panes.

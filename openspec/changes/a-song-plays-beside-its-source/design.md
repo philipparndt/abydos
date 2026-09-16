@@ -500,6 +500,40 @@ song rendered and played in each, and no new crash report.
 The 3D and PlantUML panes store and launch their process the same way and had
 the same two lines; they ask now too.
 
+### 17. The mix before the stems, and no render of a file that is not a song
+
+*Added 2026-09-16.* Asked: "it looks like we are rendering again when navigating
+to files of the same projects, also it seems that we always need the complete
+rendering till something is shown".
+
+- **A file of a song renders nothing of its own.** Opening one started a render
+  of it before the server had said which song it belongs to — a kit, twenty
+  seconds, thrown away the moment the answer arrived. The pane now holds its
+  first render for a moment (1.5 s) when a file's song is not yet known, and
+  the timeline releases it: `showSong(at:)` for another song, `songIsKnown()`
+  for its own. Driven: opening `drums.song` of the drive example renders
+  nothing (`runs=0`) and plays the song.
+- **The mix is played while the stems are still being written.** `mat` writes
+  the mix, then a stem per layer, then the manifest — and the manifest was what
+  the pane waited for. It now watches the mix while the render runs and takes
+  it as soon as it has stopped growing: one lane, no bar grid, and the song
+  plays. The whole render replaces it a moment later, from the same place,
+  through the same path a save takes. Driven on a fresh copy of the drive
+  example: the pane has the song's 3:41 with `tempo=0 stems=0` while `mat` is
+  still running, and `tempo=133 stems=7` when it lands.
+
+This is half of what was asked — "ideally we can start early before the render
+is even complete". The other half is `mat` rendering a stretch of bars, so the
+bars being worked on can be heard within a second rather than the whole song
+having to be rendered first.
+
+**The pane's own size.** These went in beside three other splits: the files a
+song is made of and their watch (`SongSources`), where a breakpoint stopped it
+(`SongBreakpointStops`), whether the first render has landed (`SongSettled`),
+what has been read of the render to draw it (`SongOverviews`), and running
+`mat` itself with its debounce, watchdog and fingerprint (`SongRenderRun`). The
+pane is 1039 lines from 1119, and what left it is state.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

@@ -212,9 +212,12 @@ extension EditorViewController {
 		)
 		view.onPlaybackChange = { [weak self, target] change in self?.onSongPlayback?(target, change) }
 		// A file some song includes has no sound of its own: the pane plays the
-		// song, once a timeline says which one that is.
+		// song, once a timeline says which one that is — and waits a moment for
+		// that answer rather than rendering a kit nobody asked for.
 		if let song = tab.codeView?.timeline?.song, let url = URL(string: song) {
 			view.showSong(at: url)
+		} else if tab.codeView?.timeline == nil {
+			view.holdForItsSong()
 		}
 		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
 		tab.codeView?.onTimelineLoop = { [weak view] range in view?.loopFromSource(range) }

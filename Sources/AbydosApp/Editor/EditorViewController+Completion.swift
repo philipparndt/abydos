@@ -370,9 +370,13 @@ extension EditorViewController {
 			tab.codeView?.timeline = timeline
 			// A file of a song: the pane plays the song, not the file, which on
 			// its own has no tracks and no sound.
-			if let song = timeline?.song, let songURL = URL(string: song),
-			   let pane: SongPreviewView = Self.pane(in: tab.contentView) {
-				pane.showSong(at: songURL)
+			if let pane: SongPreviewView = Self.pane(in: tab.contentView) {
+				if let song = timeline?.song, let songURL = URL(string: song) {
+					pane.showSong(at: songURL)
+				} else {
+					// Its own song after all: whatever waited for the answer can go.
+					pane.songIsKnown()
+				}
 			}
 		}
 	}
