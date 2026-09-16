@@ -51,6 +51,11 @@ final class SongCanvas: NSView {
 	var barSeconds: Double = 0 {
 		didSet { needsDisplay = true }
 	}
+	/// The stretch the loop plays, in seconds, drawn across every lane.
+	var loopRange: ClosedRange<Double>? {
+		didSet { if loopRange != oldValue { needsDisplay = true } }
+	}
+
 	var sections: [SongRender.Manifest.Section] = [] {
 		didSet { needsDisplay = true }
 	}
@@ -364,6 +369,9 @@ final class SongCanvas: NSView {
 			}
 		}
 		drawBars()
+		// Over the lanes: what the loop leaves out is dimmed, and a band under
+		// the waves would have been painted over by them.
+		drawLoop()
 		if isZoomed { drawPositionBar() }
 	}
 
@@ -526,6 +534,23 @@ final class SongCanvas: NSView {
 				label.draw(at: NSPoint(x: left + 4, y: band.midY - label.size().height / 2))
 			}
 		}
+	}
+
+	/// What the loop plays: everything outside it dimmed, its edges drawn.
+	private func drawLoop() {
+		guard let loopRange, duration > 0 else { return }
+		let left = x(atSeconds: loopRange.lowerBound)
+		let right = x(atSeconds: loopRange.upperBound)
+		guard right > left else { return }
+		let top = sectionBandHeight
+		let height = max(0, bounds.height - top)
+		Theme.current.editorBackground.withAlphaComponent(0.62).setFill()
+		NSRect(x: 0, y: top, width: max(0, left), height: height).fill(using: .sourceOver)
+		NSRect(x: right, y: top, width: max(0, bounds.width - right), height: height).fill(using: .sourceOver)
+		Theme.current.gitModified.withAlphaComponent(0.9).setFill()
+		let edge = max(1, Theme.current.scaled(1.5))
+		NSRect(x: left, y: 0, width: edge, height: bounds.height).fill()
+		NSRect(x: right - edge, y: 0, width: edge, height: bounds.height).fill()
 	}
 
 	private func drawPositionBar() {

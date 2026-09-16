@@ -594,6 +594,10 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		rendered = Rendered(directory: directory, manifest: manifest, files: files, playback: playback)
 		applyVolumes()
 		playback.seek(toSeconds: min(position, playback.duration))
+		// A render landing under a loop keeps it: the loop is seconds of the
+		// song, and the song is what has just been rendered again.
+		playback.loopRange = loopRange
+		if loopRange != nil { playback.isLooping = true }
 		if wasPlaying {
 			playback.play()
 			if playback.isPlaying { OnePlayer.started(self) }
@@ -783,8 +787,52 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private func toggleLoop() {
 		guard let playback else { return }
 		playback.isLooping.toggle()
+		// Off means the whole song again: a loop over a few bars is the thing
+		// being turned off, not a hidden setting kept for the next press.
+		if !playback.isLooping { setLoop(nil) }
 		loopButton.isLit = playback.isLooping
 		followPlayback()
+	}
+
+	/// The stretch the loop plays, in seconds, or nil for the whole song.
+	private(set) var loopRange: ClosedRange<Double>?
+
+	/// Loops a stretch of the song and plays it: a section, or the bars where
+	/// one line is heard.
+	///
+	/// Asked for 2026-09-16, to change a sound and hear it at once: "play one
+	/// section in a loop and while playing make the changes to the sounds". A
+	/// render landing under it keeps the loop, since the loop is seconds of the
+	/// song rather than anything the render owns.
+	func setLoop(_ range: ClosedRange<Double>?) {
+		loopRange = range
+		canvas.loopRange = range
+		guard let playback else { return }
+		playback.loopRange = range
+		if let range {
+			playback.isLooping = true
+			if playback.currentSeconds < range.lowerBound || playback.currentSeconds >= range.upperBound {
+				playback.seek(toSeconds: range.lowerBound)
+			}
+			if !playback.isPlaying {
+				playback.play()
+				if playback.isPlaying { OnePlayer.started(self) }
+			}
+			playingChanged()
+		}
+		loopButton.isLit = playback.isLooping
+		followPlayback()
+	}
+
+	/// A line's bar, option-clicked in the source: loop where that line is
+	/// heard. The same line again turns the loop off.
+	func loopFromSource(_ range: ClosedRange<Double>) {
+		if let loopRange, abs(loopRange.lowerBound - range.lowerBound) < 0.01, abs(loopRange.upperBound - range.upperBound) < 0.01 {
+			playback?.isLooping = false
+			setLoop(nil)
+			return
+		}
+		setLoop(range)
 	}
 
 	/// A click on a timeline bar in the source: the playhead goes there, and a
@@ -851,6 +899,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		if let manifest, manifest.barSeconds > 0 {
 			let place = manifest.bar(at: now)
 			clock += " · bar \(place.bar)"
+		}
+		if let loopRange, let manifest, manifest.barSeconds > 0 {
+			let from = manifest.bar(at: loopRange.lowerBound).bar
+			let to = manifest.bar(at: max(loopRange.lowerBound, loopRange.upperBound - 0.001)).bar
+			clock += from == to ? " · loop bar \(from)" : " · loop bars \(from)–\(to)"
 		}
 		timeLabel.stringValue = clock
 		playButton.setSymbol(isPlaying ? "pause.fill" : "play.fill", description: isPlaying ? "Pause" : "Play")
@@ -950,6 +1003,11 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// that says where the playhead is for every tab of its song.
 	var isTheOneSounding: Bool {
 		OnePlayer.isCurrent(self) || (playback?.isPlaying == true)
+	}
+
+	/// What the loop is playing, for a driven run.
+	var loopRangeForTesting: String {
+		loopRange.map { String(format: "%.2f-%.2f", $0.lowerBound, $0.upperBound) } ?? "whole"
 	}
 
 	/// Where the song is, for the debugger.

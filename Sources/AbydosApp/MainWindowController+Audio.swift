@@ -212,6 +212,7 @@ extension MainWindowController {
 					.map { String(format: "%.3f-%.3f", $0.lowerBound, $0.upperBound) } ?? []
 				print("LINE-TIMELINE line=\(line) column=\(timeline == nil ? "none" : "shown")"
 					+ " gutter=\(Int(codeView?.gutterWidth ?? 0)) lit=[\(fractions.joined(separator: " "))]"
+					+ " loop=\(pane.loopRangeForTesting)"
 					+ " playhead=\(codeView?.timelinePlayhead.map { String(format: "%.2f", $0) } ?? "none")"
 					+ " tick-pixel=\(codeView?.drawnPlayheadPixel.map(String.init) ?? "none")"
 					+ " code=\(timeline?.timeCode(line: line - 1) ?? "none")"
@@ -273,6 +274,15 @@ extension MainWindowController {
 				default:
 					print(songDebugReportForTesting())
 					fflush(stdout)
+				}
+			case "loop-click":
+				// `loop-click:<line>[:<fraction>]` — a bar option-clicked, which
+				// loops the stretch of the song where that line is heard.
+				let numbers = step.split(separator: ":").dropFirst().compactMap { Double($0) }
+				if let line = numbers.first, let codeView = editor.activeGroup?.activeTab?.codeView {
+					codeView.clickTimelineForTesting(
+						line: Int(line), at: numbers.count > 1 ? numbers[1] : 0.5, dragTo: nil, option: true
+					)
 				}
 			case "timecode-click":
 				// `timecode-click:<line>` — a press on that line's time code.

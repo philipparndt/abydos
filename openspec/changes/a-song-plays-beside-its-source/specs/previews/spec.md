@@ -127,3 +127,20 @@ Asked for 2026-09-15.
 - **WHEN** the Stack is shown
 - **THEN** every playing track is open to its pattern's lines, the resting one
   is shut and dimmed, and `verse: A4:q` is selected and scrolled into sight
+
+### Requirement: A few bars of a song loop while it is changed
+
+Option-clicking a line's bar in a song's gutter SHALL loop the stretch of the
+song where that line is heard and play it, option-clicking the same line again
+SHALL stop looping, and a render landing while it loops SHALL keep looping the
+same stretch. The pane SHALL show what the loop leaves out as dimmed and say
+which bars it plays.
+
+Asked for 2026-09-16.
+
+#### Scenario: looping a pattern's line while its sound is changed
+
+- **GIVEN** the shanty playing, and the first line of `pattern verse`, heard at bars 5–6
+- **WHEN** its bar is option-clicked, and the kit's snare is then changed and saved
+- **THEN** those two bars play round and round, the clock says `loop bars 5–6`,
+  and the new sound is heard on the next pass

@@ -181,7 +181,7 @@ extension CodeView {
 
 	/// Presses a line's bar at a fraction of its width, and drags to another
 	/// before letting go when asked — real events, through `mouseDown`.
-	func clickTimelineForTesting(line: Int, at fraction: Double, dragTo: Double?) {
+	func clickTimelineForTesting(line: Int, at fraction: Double, dragTo: Double?, option: Bool = false) {
 		guard let window else { return }
 		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
 		let (left, width) = timelineBarSpan(scrollX: scrollX)
@@ -189,7 +189,7 @@ extension CodeView {
 		func event(_ type: NSEvent.EventType, _ f: Double) -> NSEvent? {
 			let local = NSPoint(x: left + CGFloat(f) * width, y: y)
 			return NSEvent.mouseEvent(
-				with: type, location: convert(local, to: nil), modifierFlags: [], timestamp: 0,
+				with: type, location: convert(local, to: nil), modifierFlags: option ? [.option] : [], timestamp: 0,
 				windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
 			)
 		}

@@ -75,6 +75,9 @@
 - [x] 5.5 The Stack as a tree: `CallTree` and its tests, `CallStackOutline`,
       the session's stacks per open thread; the song adapter's parents, subtle
       lines and stems; driven and captured.
+- [x] 5.8 A loop over a stretch: `AudioPlayback.loopRange`, the pane's loop and
+      its band, option-click on a line's bar, `loop-click` step; driven and
+      captured.
 - [x] 5.7 The tree holds still while a song plays — stable frame ids, rebuilds
       that redraw rather than reload, the session keeping the chosen frame —
       and takes the keyboard; the in-process adapter is the main queue's.

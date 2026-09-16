@@ -391,6 +391,9 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	var drawnPlayheadPixel: Int?
 	/// A bar was clicked, or dragged along: that many seconds into the song.
 	var onTimelineSeek: ((Double) -> Void)?
+	/// A bar was option-clicked: loop the stretch of the song under the
+	/// pointer, where that line is heard.
+	var onTimelineLoop: ((ClosedRange<Double>) -> Void)?
 	/// The press that is down began on a bar, so dragging it scrubs.
 	var draggingTimeline = false
 

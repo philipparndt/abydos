@@ -135,7 +135,7 @@ extension CodeView {
 		super.mouseUp(with: event)
 	}
 
-	func handleGutterClick(at point: NSPoint) {
+	func handleGutterClick(at point: NSPoint, modifiers: NSEvent.ModifierFlags = []) {
 		guard let document else { return }
 		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
 		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
@@ -184,6 +184,14 @@ extension CodeView {
 				return
 			}
 			guard let seconds = timelineSeconds(atX: point.x, scrollX: scrollX) else { return }
+			// Held down: loop where this line is heard, rather than going there.
+			if modifiers.contains(.option) {
+				let spans = timeline.spans[docLine] ?? []
+				if let heard = spans.first(where: { $0.contains(seconds) }) ?? spans.first {
+					onTimelineLoop?(heard)
+				}
+				return
+			}
 			draggingTimeline = true
 			onTimelineSeek?(seconds)
 

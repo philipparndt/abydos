@@ -80,7 +80,7 @@ extension CodeView {
 		// pinned to the clip view, so its hit area moves with horizontal scroll.
 		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
 		if point.x < scrollX + gutterWidth {
-			handleGutterClick(at: point)
+			handleGutterClick(at: point, modifiers: event.modifierFlags)
 			return
 		}
 

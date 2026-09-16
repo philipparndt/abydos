@@ -448,6 +448,36 @@ has the keyboard, three ↓ land on `pattern gallop_d · pass 3 of 4` and stay
 there across two updates — one of which grew the tree from 16 rows to 29 as
 three tracks came in — and a fourth ↓ moves to `D2: x@41` and stays.
 
+### 15. A few bars round and round, while the sound is changed under them
+
+*Added 2026-09-16.* Asked: "it is hard to make one small change and directly
+replay exactly this. Would be nice if we could play one section in a loop and
+while playing make the changes to the sounds".
+
+Option-click a line's bar in the gutter: the song loops the stretch where that
+line is heard — the pass under the pointer, or its first — and plays it at once.
+Option-click the same line again to stop looping. It is the line's own stretch
+rather than a section only, so a pattern, a `play` step, a track, a section or
+an instrument each loop what they are heard across, which is what "this bit"
+usually means while working on a sound.
+
+- **Playback** loops a range: `AudioPlayback.loopRange`, a stretch in seconds.
+  A pass schedules to the loop's end rather than the file's, the queued pass is
+  that stretch again, and the playhead wraps within it. A playhead outside the
+  loop is brought to its start.
+- **A render landing under it keeps it**: the loop is seconds of the song, and
+  the song is what was rendered again. So a save while it plays is heard on the
+  next pass, which is what this is for.
+- **The pane** dims what the loop leaves out, draws its edges, and says
+  `loop bars 5–6` beside the clock. The loop button turns it off, and turning
+  looping off drops the range rather than keeping it for the next press.
+
+Driven on the shanty (`loop-click:<line>[:<fraction>]`): option-clicking the
+first `play verse` loops 7.27–21.82, `loop bars 5–12`, and the playhead stays
+inside it; an edit to the kit rendered again (`runs=2`) with the loop still
+playing; the same click again turned it off. On line 56, two bars, the playhead
+went 8.94 → 7.44 → 9.58 → 8.14 → 10.35, round and round.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the

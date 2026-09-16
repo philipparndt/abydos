@@ -74,6 +74,28 @@ final class AudioPlayback {
 		}
 	}
 
+	/// What the loop plays, in seconds; nil for the whole of it.
+	///
+	/// Asked for 2026-09-16: "Would be nice if we could play one section in a
+	/// loop and while playing make the changes to the sounds" — so a few bars
+	/// go round while the song is rendered again under them.
+	var loopRange: ClosedRange<Double>? {
+		didSet {
+			guard loopRange != oldValue, isPlaying else { return }
+			let here = currentFrame
+			stopNodes()
+			start(from: here)
+		}
+	}
+
+	/// The loop's first frame and the frame it ends before.
+	private var loopBounds: (from: AVAudioFramePosition, to: AVAudioFramePosition) {
+		guard let loopRange, sampleRate > 0 else { return (0, frameCount) }
+		let from = AVAudioFramePosition(max(0, loopRange.lowerBound * sampleRate))
+		let to = AVAudioFramePosition(min(Double(frameCount), loopRange.upperBound * sampleRate))
+		return to > from ? (from, to) : (0, frameCount)
+	}
+
 	convenience init(url: URL) throws {
 		try self.init(urls: [url])
 	}
@@ -169,8 +191,15 @@ final class AudioPlayback {
 		      let playerTime = node.playerTime(forNodeTime: renderTime)
 		else { return restingFrame }
 		let played = scheduledFrom + max(0, playerTime.sampleTime)
-		guard played >= frameCount, frameCount > 0 else { return played }
-		return isLooping ? (played - frameCount) % frameCount : frameCount
+		guard frameCount > 0 else { return played }
+		if isLooping {
+			let (from, to) = loopBounds
+			let length = max(1, to - from)
+			guard played >= to else { return played }
+			return from + (played - to) % length
+		}
+		guard played >= frameCount else { return played }
+		return frameCount
 	}
 
 	var currentSeconds: Double {
@@ -217,6 +246,13 @@ final class AudioPlayback {
 	private func start(from frame: AVAudioFramePosition) {
 		generation += 1
 		let scheduled = generation
+		// Into the loop, when the playhead is outside it: a pass that begins
+		// past the loop's end has nothing to play.
+		var frame = frame
+		if isLooping {
+			let (from, to) = loopBounds
+			if frame < from || frame >= to { frame = from }
+		}
 		scheduledFrom = frame
 		restingFrame = frame
 
@@ -252,6 +288,22 @@ final class AudioPlayback {
 	private func schedulePass(ofVoice index: Int, from frame: AVAudioFramePosition, generation scheduled: Int) {
 		let voice = voices[index]
 		let own = AVAudioFramePosition((Double(frame) * voice.rate / sampleRate).rounded())
+		// A loop over part of the song ends where it ends, and has no padding:
+		// the file goes on past it.
+		if isLooping, loopRange != nil {
+			let ownEnd = AVAudioFramePosition((Double(loopBounds.to) * voice.rate / sampleRate).rounded())
+			let count = min(ownEnd, voice.length) - own
+			guard count > 0 else { return }
+			var ended: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)?
+			if index == 0 {
+				ended = { [weak self] _ in DispatchQueue.main.async { self?.passPlayed(scheduled) } }
+			}
+			voice.node.scheduleSegment(
+				voice.file, startingFrame: own, frameCount: AVAudioFrameCount(count), at: nil,
+				completionCallbackType: .dataPlayedBack, completionHandler: ended
+			)
+			return
+		}
 		let remaining = voice.length - own
 		let padding = voice.padding.map { AVAudioFrameCount(max(0, Int64($0.frameLength) - max(0, own - voice.length))) } ?? 0
 		var ended: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)?
@@ -285,6 +337,18 @@ final class AudioPlayback {
 				guard let self, self.generation == scheduled, self.isLooping, self.isPlaying else { return }
 				self.queuePass(ofVoice: index, generation: scheduled)
 			}
+		}
+		// Part of the song: the same stretch again, and nothing after it.
+		if loopRange != nil {
+			let (from, to) = loopBounds
+			let ownFrom = AVAudioFramePosition((Double(from) * voice.rate / sampleRate).rounded())
+			let ownTo = min(AVAudioFramePosition((Double(to) * voice.rate / sampleRate).rounded()), voice.length)
+			guard ownTo > ownFrom else { return }
+			voice.node.scheduleSegment(
+				voice.file, startingFrame: ownFrom, frameCount: AVAudioFrameCount(ownTo - ownFrom), at: nil,
+				completionCallbackType: .dataConsumed, completionHandler: again
+			)
+			return
 		}
 		let onSegment: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)? = voice.padding == nil ? again : nil
 		voice.node.scheduleSegment(

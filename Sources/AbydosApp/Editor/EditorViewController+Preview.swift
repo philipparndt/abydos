@@ -28,6 +28,7 @@ extension EditorViewController {
 		tab.codeView?.setSongPlayhead(nil, marking: false)
 		tab.codeView?.setSongStoppedLine(nil)
 		tab.codeView?.onTimelineSeek = nil
+		tab.codeView?.onTimelineLoop = nil
 		tab.contentView = makeContentView(for: tab, mode: mode)
 
 		activeIndex = nil
@@ -216,6 +217,7 @@ extension EditorViewController {
 			view.showSong(at: url)
 		}
 		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
+		tab.codeView?.onTimelineLoop = { [weak view] range in view?.loopFromSource(range) }
 		// Where the caret already is: a pane made for a tab whose caret sits in
 		// a track should light that track from the start.
 		tab.codeView?.reportCaretPosition()

@@ -71,6 +71,13 @@ and its stems — as WAV, FLAC or M4A beside the song, and asks before replacing
 a file. Stems now start on the same sample, so played together they sound
 like the mix.
 
+## Loop a few bars while you change them
+
+Option-click a line's bar beside the line numbers: the song loops the stretch
+where that line is heard — a pattern, a `play` step, a track, a section — and
+plays it. Saving while it loops renders under it, so the new sound is heard on
+the next pass. Option-click the same line again to stop.
+
 ## Cut a sound file
 
 In a sound tab, `i` and `o` mark a selection at the playhead; `k` keeps only
