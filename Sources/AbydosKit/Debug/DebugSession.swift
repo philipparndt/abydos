@@ -40,7 +40,12 @@ public final class DebugSession {
 	public var location: String?
 
 	/// Breakpoints by file, kept across runs so they survive restarting.
-	public internal(set) var breakpoints: [String: [Breakpoint]] = [:]
+	public var breakpoints: [String: [Breakpoint]] {
+		get { stateLock.withLock { storedBreakpoints } }
+		set { stateLock.withLock { storedBreakpoints = newValue } }
+	}
+
+	private var storedBreakpoints: [String: [Breakpoint]] = [:]
 
 	/// The stack of the thread being shown.
 	///
@@ -58,17 +63,39 @@ public final class DebugSession {
 
 	private var storedStackFrames: [StackFrame] = []
 	let stateLock = NSLock()
-	public internal(set) var scopes: [Scope] = []
+	/// The frame's scopes and their variables.
+	///
+	/// Behind the same lock as the stacks, and for the same reason: they are
+	/// written by the task that read them and drawn on the main thread. A crash
+	/// on 2026-09-16 was a `StackFrame` array being released while
+	/// `refreshStack` ran — `EXC_BAD_ACCESS` in `swift_release_dealloc` — which
+	/// is what a Swift collection read while it is written does.
+	public var scopes: [Scope] {
+		get { stateLock.withLock { storedScopes } }
+		set { stateLock.withLock { storedScopes = newValue } }
+	}
+
+	private var storedScopes: [Scope] = []
 	/// What the editor should draw beside the code, or nil while nothing is
 	/// stopped.
 	///
 	/// Built once per stop and per frame change rather than asked for per line:
 	/// the names of a frame's variables are a dictionary, and a row's drawing is
 	/// then a scan of that row's tokens against it. See `InlineValues`.
-	public internal(set) var inlineValues: InlineValueSet?
+	public var inlineValues: InlineValueSet? {
+		get { stateLock.withLock { storedInlineValues } }
+		set { stateLock.withLock { storedInlineValues = newValue } }
+	}
+
+	private var storedInlineValues: InlineValueSet?
 
 	/// Frame whose variables are shown.
-	public internal(set) var selectedFrameID: Int?
+	public var selectedFrameID: Int? {
+		get { stateLock.withLock { storedSelectedFrameID } }
+		set { stateLock.withLock { storedSelectedFrameID = newValue } }
+	}
+
+	private var storedSelectedFrameID: Int?
 
 	/// Told whenever the state changes.
 	///
@@ -870,7 +897,12 @@ public final class DebugSession {
 
 	private var storedThreads: [DebugThread] = []
 	/// Which one the stack is being shown for.
-	public internal(set) var selectedThreadID: Int?
+	public var selectedThreadID: Int? {
+		get { stateLock.withLock { storedSelectedThreadID } }
+		set { stateLock.withLock { storedSelectedThreadID = newValue } }
+	}
+
+	private var storedSelectedThreadID: Int?
 	/// Every thread's stack that has been read, by thread: the selected one's,
 	/// and those of the threads opened in the Stack's tree.
 	public var threadStacks: [Int: [StackFrame]] {

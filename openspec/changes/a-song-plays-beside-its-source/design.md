@@ -546,6 +546,23 @@ what has been read of the render to draw it (`SongOverviews`), and running
 `mat` itself with its debounce, watchdog and fingerprint (`SongRenderRun`). The
 pane is 1039 lines from 1119, and what left it is state.
 
+### 18. The debugger's state is behind a lock
+
+*Added 2026-09-16.* Two crashes came in a day, and both are the same thing: a
+`DebugSession` is written by the task that read the adapter's answer — a
+cooperative thread — and read on the main thread by the pane that draws it, ten
+times a second while a song plays. A Swift collection read while it is being
+written does not answer wrongly; it crashes. The first looked like a dictionary
+with a string where a collection belonged, inside a launch; the second was
+`EXC_BAD_ACCESS` in `swift_release_dealloc` with `StackFrame`'s value witnesses
+and `refreshStack` on the stack.
+
+The threads, the stack, the stack per thread, the scopes, the inline values,
+the selected thread and frame and the breakpoints are now behind one lock in
+the session. The right answer is for the session to be main-actor, which is a
+change across the debugger and every adapter it drives; the lock is what makes
+the collections safe today.
+
 ## Open Questions
 
 - Whether a lane's name should *select* the track block rather than put the
