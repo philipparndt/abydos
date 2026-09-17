@@ -95,16 +95,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	// MARK: The render
 
 	/// What one render produced and what plays it.
-	private struct Rendered {
-		let directory: URL
-		let manifest: SongRender.Manifest
-		/// The mix first, then a stem per layer, in the manifest's order —
-		/// the same order as the playback's voices.
-		let files: [URL]
-		let playback: AudioPlayback
-	}
-
-	private var rendered: Rendered?
+	private var rendered: SongRendered?
 	/// The render whose mix is still being written: see `SongStream`.
 	private let stream = SongStream()
 	/// Running `mat`, and what it writes: see `SongRenderRun`.
@@ -112,8 +103,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// The files the song is made of, and the watch on them.
 	private lazy var sources = SongSources { [weak self] in self?.fileChanged() }
 	private let cancelled = CancelFlag()
-	/// What has been read of the render, to draw: see `SongOverviews`.
+	/// What has been read of the render, to draw: see `SongOverviews` and `SongDetail`.
 	private let drawings = SongOverviews()
+	private let detail = SongDetail()
 
 	// MARK: What is shown
 
@@ -127,6 +119,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 	/// The layers the caret lights, kept so a new render lights the same.
 	private var lit: Set<String> = []
+	/// The stems last shown, for the stems view while a render is only a mix.
+	private var shownLayers: [SongRender.Manifest.Layer] = []
 	private var ticker: Timer?
 	/// What a render last complained about, and what the header says: see
 	/// `SongPaneErrors`.
@@ -261,7 +255,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		holding = false
 		SongPlaybackHub.shared.release(url, pane: self)
 		run.cancelPending()
-		drawings.cancel()
+		drawings.forget()
 		run.stop()
 		let wasPlaying = rendered?.playback.isPlaying == true
 		rendered = nil
@@ -303,6 +297,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 	/// Stops for good: the tab is closing, or its window is.
 	func tearDown() {
+		detail.cancel()
 		cancelled.set()
 		drawings.cancel()
 		run.cancelPending()
@@ -364,6 +359,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		canvas.onWindowChanged = { [weak self] in
 			guard let self else { return }
 			self.fitButton.isEnabled = self.canvas.isZoomed
+			self.readDetail()
 		}
 		canvas.onToggleLane = { [weak self] index in self?.toggleLane(at: index) }
 		canvas.onRevealLane = { [weak self] index in self?.revealLane(at: index) }
@@ -486,7 +482,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		guard stream.mayTakeOver(
 			from: rendered?.playback.currentSeconds, written: written.seconds, finished: written.finished
 		) else { return }
-		drawings.keep([nil])
+		drawings.keep([nil], names: ["mix"])
 		load(
 			directory: directory, manifest: SongRender.manifest(ofStream: written),
 			mix: mix, kept: nil, partial: true, reading: false
@@ -513,13 +509,20 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			failed(with: SongRender.complaint(in: output), diagnostics: SongRender.diagnostics(in: output))
 			return
 		}
-		errors.worked()
-		errorStrip.isHidden = true
+		errors.worked(warnings: SongRender.warnings(in: output))
+		if let warning = errors.warningLine {
+			errorStrip.show(warning, warning: true, detail: errors.warnings.joined(separator: "\n"))
+		}
+		errorStrip.isHidden = errors.warningLine == nil
 		say(info: SongPaneErrors.info(of: manifest, rendered: SongRender.renderedLine(in: output)))
-		// A render that found more files than were being fingerprinted: this
-		// render is of them, and it is not a change to render again for.
-		if sources.adopt(manifest.sources, of: url) { run.note(fingerprint: sources.fingerprint(of: url)) }
+		// A render that found more files than were being fingerprinted is of them
+		// as they were when it started: one saved since is a change it missed.
+		// See `SongSources.changed(after:of:)`.
+		let adopted = sources.adopt(manifest.sources, of: url)
+		let missed = adopted && sources.changed(after: run.startedAt, of: url)
+		if adopted, !missed { run.note(fingerprint: sources.fingerprint(of: url)) }
 		load(directory: directory, manifest: manifest, mix: mixURL, kept: nil)
+		if missed { render() }
 	}
 
 	/// The sound stays; the error goes over it. Unless there was never a
@@ -579,16 +582,19 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			SongPlaybackHub.shared.said(self.url)
 		}
 
-		rendered = Rendered(directory: directory, manifest: manifest, files: files, playback: playback)
+		rendered = SongRendered(directory: directory, manifest: manifest, files: files, playback: playback)
 		applyVolumes()
 		// The previous render's directory is the cache's to delete, which it
 		// did when the new one was stored.
 
+		// Showing the whole song, it goes on showing the whole song: the stream
+		// lays the timeline out to the last bar, and a reverb rings past it.
+		let wasWhole = !canvas.isZoomed
 		canvas.duration = max(partial ? manifest.seconds : 0, playback.duration)
 		canvas.writtenThrough = canvas.duration > playback.duration ? playback.duration : nil
 		canvas.barSeconds = manifest.barSeconds
 		canvas.sections = manifest.sections
-		if previous == nil { canvas.fit() }
+		if previous == nil || wasWhole { canvas.fit() }
 		playButton.isEnabled = true
 		loopButton.isEnabled = true
 		show(notice: nil)
@@ -602,7 +608,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// not change — the mix is always new.
 		drawings.keep(kept?.overviews ?? ([nil] + manifest.layers.map {
 			SongRenderCache.shared.overview(ofStem: $0.key, of: url)
-		}))
+		}), names: ["mix"] + manifest.layers.map(\.name))
 		rebuildLanes()
 		if reading { analyse(files: files, manifest: manifest, directory: directory) }
 		// A driver waiting for a sound has one, even with the stems to come.
@@ -623,18 +629,39 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	private var overviews: [AudioOverview?] { drawings.readings }
 	private var manifest: SongRender.Manifest? { rendered?.manifest }
 
+	private func readDetail() {
+		detail.windowChanged(on: canvas, files: SongDetail.files(of: rendered?.files ?? [], stems: view == .stems))
+	}
+
 	private func rebuildLanes() {
+		defer { readDetail() }
 		guard let manifest else { return }
+		if !manifest.layers.isEmpty { shownLayers = manifest.layers }
 		switch view {
 		case .mix:
 			canvas.showsHeaders = false
-			canvas.setLanes([SongCanvas.Lane(name: "mix", tracks: [], overview: overviews.first ?? nil)])
+			canvas.setLanes([SongCanvas.Lane(
+				name: "mix", tracks: [], overview: overviews.first ?? nil, spectrum: drawings.image(at: 0)
+			)])
+		case .stems where manifest.layers.isEmpty && !shownLayers.isEmpty:
+			// A render still being written has no stems yet: the last render's
+			// go on being shown, as they were drawn, until its own land.
+			canvas.showsHeaders = true
+			canvas.setLanes(shownLayers.map { layer in
+				SongCanvas.Lane(
+					name: layer.name, tracks: layer.tracks,
+					overview: drawings.lastDrawing(ofLane: layer.name),
+					spectrum: drawings.lastImage(ofLane: layer.name),
+					isEnabled: !silenced.contains(layer.name), isLit: lit.contains(layer.name)
+				)
+			})
 		case .stems:
 			canvas.showsHeaders = true
 			canvas.setLanes(manifest.layers.enumerated().map { index, layer in
 				SongCanvas.Lane(
 					name: layer.name, tracks: layer.tracks,
 					overview: overviews.indices.contains(index + 1) ? overviews[index + 1] : nil,
+					spectrum: drawings.image(at: index + 1),
 					isEnabled: !silenced.contains(layer.name),
 					isLit: lit.contains(layer.name)
 				)
@@ -663,7 +690,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// it, short of the limiter's own squeeze.
 	private func applyVolumes() {
 		guard let rendered else { return }
-		rendered.playback.setVolume(view == .mix ? 1 : 0, ofVoice: 0)
+		// A render that is still being written is the mix alone: heard whichever
+		// view is up, since there are no stems yet to hear in its place.
+		rendered.playback.setVolume(view == .mix || rendered.manifest.layers.isEmpty ? 1 : 0, ofVoice: 0)
 		let share = Float(rendered.manifest.stemGain)
 		for (index, layer) in rendered.manifest.layers.enumerated() {
 			let heard = view == .stems && !silenced.contains(layer.name)
@@ -998,6 +1027,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		seek(to: seconds)
 	}
 
+	func zoomForTesting(start: Double, span: Double) { canvas.setWindow(start: start, span: span) }
+	func dragBarForTesting(from at: CGFloat, by points: CGFloat) { canvas.dragBarForTesting(from: at, by: points) }
 	func playForTesting() { if !isPlaying { togglePlayback() } }
 	func loopForTesting() { if playback?.isLooping == false { toggleLoop() } }
 
@@ -1025,7 +1056,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			"\(lane.name):\(lane.isEnabled ? "on" : "off")\(lane.isLit ? "*" : "")"
 				+ (lane.overview == nil ? "(unread)" : "")
 		}
-		let error = errors.firstLine.map { "\"\($0)\"" } ?? "none"
+		let error = (errors.firstLine.map { "\"\($0)\"" } ?? "none") + " warnings=\(errors.warnings.count)"
+			+ " detail=\(canvas.detailInUse.map(String.init) ?? "-")"
 		let editing = FilePath.canonical(file) == FilePath.canonical(url)
 			? "" : " file=\(file.lastPathComponent)"
 		return "SONG: \(url.lastPathComponent)\(editing) state=\(state) runs=\(run.runs) view=\(view.name) "
@@ -1043,51 +1075,4 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			+ " drawn=\(overviews.compactMap { $0 }.count)/\(overviews.count)"
 			+ " info=\"\(infoLabel.stringValue)\" error=\(error)"
 	}
-}
-
-/// One line of complaint over a pane, clickable.
-///
-/// Drawn rather than an `NSButton`, so it takes the theme's colours and the
-/// zoom the way everything else in the strip does.
-final class ErrorStripView: NSView {
-	private let label = ScaledLabel("", size: 11) { Theme.current.editorText }
-	private var height: NSLayoutConstraint!
-	var onClick: (() -> Void)?
-
-	override init(frame frameRect: NSRect) {
-		super.init(frame: frameRect)
-		wantsLayer = true
-		label.lineBreakMode = .byTruncatingTail
-		label.maximumNumberOfLines = 1
-		label.translatesAutoresizingMaskIntoConstraints = false
-		addSubview(label)
-		height = heightAnchor.constraint(equalToConstant: Theme.current.scaled(22))
-		NSLayoutConstraint.activate([
-			height,
-			label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.current.scaled(10)),
-			label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Theme.current.scaled(10)),
-			label.centerYAnchor.constraint(equalTo: centerYAnchor),
-		])
-		applyTheme()
-	}
-
-	required init?(coder: NSCoder) { fatalError("not used") }
-
-	func show(_ text: String) {
-		label.stringValue = "⚠︎ " + text
-		label.toolTip = text
-	}
-
-	func applyTheme() {
-		height.constant = Theme.current.scaled(22)
-		layer?.backgroundColor = Theme.current.gitConflict.withAlphaComponent(0.18).cgColor
-	}
-
-	override var isHidden: Bool {
-		didSet { height.constant = isHidden ? 0 : Theme.current.scaled(22) }
-	}
-
-	override func mouseDown(with event: NSEvent) { onClick?() }
-
-	override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }

@@ -22,6 +22,9 @@ final class SongCanvas: NSView {
 		/// The tracks rendered into it, for the header.
 		var tracks: [String]
 		var overview: AudioOverview?
+		/// The reading's spectrum, already drawn: see `SpectrumPicture`. A lane
+		/// without one shows its wave and no spectrum until it has one.
+		var spectrum: CGImage?
 		/// Heard, or muted from the pane.
 		var isEnabled = true
 		/// The caret is in a block that makes this stem.
@@ -30,6 +33,43 @@ final class SongCanvas: NSView {
 
 	private(set) var lanes: [Lane] = []
 	private var spectrumImages: [CGImage?] = []
+
+	/// The window on screen, read again at its own detail, a reading per lane:
+	/// see `SongDetail`. Drawn only while there is one for every lane and they
+	/// cover what is on screen; a pan past them falls back to the overviews.
+	private(set) var details: [AudioOverview?] = []
+	private var detailImages: [CGImage?] = []
+
+	/// The details and their spectra, drawn where they were read — never here.
+	func setDetails(_ readings: [AudioOverview?], images: [CGImage?] = []) {
+		details = readings
+		detailImages = images
+		refresh()
+	}
+
+	/// Whether the details are what is drawn now.
+	var detailCovers: Bool {
+		guard details.count == lanes.count, !lanes.isEmpty,
+		      let first = details.first ?? nil, first.sampleRate > 0,
+		      details.allSatisfy({ $0 != nil }) else { return false }
+		let from = Double(first.startFrame) / first.sampleRate
+		let to = Double(first.startFrame + first.frameCount) / first.sampleRate
+		// A reading that stops at the end of the file covers a window that
+		// reaches past it.
+		let end = min(windowStart + windowSpan, duration)
+		return from <= windowStart + 1e-6 && to >= end - 1e-3
+	}
+
+	/// What each lane is drawn from: its detail while the details cover the
+	/// window, its overview otherwise.
+	private var drawn: [AudioOverview?] {
+		detailCovers ? details : lanes.map(\.overview)
+	}
+
+	/// The details' frames per peak while they are drawn, for a report.
+	var detailInUse: Int? {
+		detailCovers ? details.first??.lanes.first?.framesPerPeak : nil
+	}
 	private var folded: [[(minimums: [Float], maximums: [Float])]] = []
 	private var foldedKey: String?
 
@@ -119,11 +159,20 @@ final class SongCanvas: NSView {
 
 	// MARK: - The lanes
 
-	/// New stems: their spectrum images are drawn once, here, and not again
-	/// for a switch or a light.
+	/// New lanes, each with the spectrum it was given.
+	///
+	/// **No picture is made here.** This used to draw every lane's spectrum
+	/// each time it was called, and it is called whenever *one* reading lands:
+	/// seven lanes, seven landings, forty-nine pictures of two million pixels a
+	/// render, all on the main thread. The stall log had it as 1.4 s at 97 %
+	/// CPU, over and over, and it is what a Quit waited behind — reported
+	/// 2026-09-17 as "abydos does not exit very fast at least when working with
+	/// music". A picture is made once, where its reading was read.
 	func setLanes(_ new: [Lane]) {
 		lanes = new
-		spectrumImages = new.map { $0.overview.flatMap(AudioCanvas.makeSpectrumImage(of:)) }
+		spectrumImages = new.map(\.spectrum)
+		// Readings of other lanes, or of an older render: read again.
+		if details.count != new.count { setDetails([]) }
 		refresh()
 	}
 
@@ -222,6 +271,13 @@ final class SongCanvas: NSView {
 		window?.makeFirstResponder(superview)
 		let point = convert(event.locationInWindow, from: nil)
 		pressedHeader = false
+		// The bar along the bottom first: a press on it scrolls, not seeks.
+		if isZoomed, let start = bar.press(
+			at: point, in: bounds, start: windowStart, span: windowSpan, duration: duration
+		) {
+			setWindow(start: start, span: windowSpan)
+			return
+		}
 		// A header first: its switch, then its name. Anywhere else is the
 		// timeline.
 		if showsHeaders {
@@ -247,7 +303,22 @@ final class SongCanvas: NSView {
 		// a drag, and every drag here seeked — to wherever along the song the
 		// pointer was, which on a header near the left edge is the first bars.
 		guard !pressedHeader else { return }
+		if bar.isDragging {
+			let point = convert(event.locationInWindow, from: nil)
+			if let start = bar.drag(to: point, in: bounds, span: windowSpan, duration: duration) {
+				setWindow(start: start, span: windowSpan)
+			}
+			return
+		}
 		seek(to: event)
+	}
+
+	override func mouseUp(with event: NSEvent) {
+		if bar.isDragging {
+			bar.release()
+			needsDisplay = true
+		}
+		super.mouseUp(with: event)
 	}
 
 	/// A press on a lane's switch that moves a pixel before it lets go — the
@@ -287,7 +358,9 @@ final class SongCanvas: NSView {
 
 	// MARK: - Where things go
 
-	private var positionBarHeight: CGFloat { isZoomed ? max(3, Theme.current.scaled(4)) : 0 }
+	private var positionBarHeight: CGFloat { isZoomed ? PositionBar.height : 0 }
+	/// The bar along the bottom, and whether it is in hand: see `PositionBar`.
+	private var bar = PositionBar()
 	private var sectionBandHeight: CGFloat { sections.isEmpty ? 0 : Theme.current.scaled(16) }
 	private var headerHeight: CGFloat { showsHeaders ? Theme.current.scaled(20) : 0 }
 
@@ -423,17 +496,19 @@ final class SongCanvas: NSView {
 
 	private func drawWave(ofLane index: Int, in rect: NSRect) {
 		let lane = lanes[index]
-		guard let source = lane.overview, let firstLane = source.lanes.first, firstLane.count > 0 else { return }
+		let readings = drawn
+		guard readings.indices.contains(index), let source = readings[index],
+		      let firstLane = source.lanes.first, firstLane.count > 0 else { return }
 		let scale = window?.backingScaleFactor ?? 2
 		let columns = max(1, Int(rect.width * scale))
 		let rate = source.sampleRate
 		let perPeak = Double(firstLane.framesPerPeak)
 		let first = (windowStart * rate - Double(source.startFrame)) / perPeak
 		let last = ((windowStart + windowSpan) * rate - Double(source.startFrame)) / perPeak
-		let key = "\(columns):\(first):\(last):\(lanes.count):\(mode)"
+		let key = "\(columns):\(first):\(last):\(lanes.count):\(mode):\(perPeak):\(source.startFrame)"
 		if foldedKey != key {
-			folded = lanes.map { lane in
-				lane.overview?.lanes.map { AudioCanvas.fold($0, from: first, to: last, into: columns) } ?? []
+			folded = readings.map { reading in
+				reading?.lanes.map { AudioCanvas.fold($0, from: first, to: last, into: columns) } ?? []
 			}
 			foldedKey = key
 		}
@@ -469,8 +544,10 @@ final class SongCanvas: NSView {
 	}
 
 	private func drawSpectrum(ofLane index: Int, in rect: NSRect) {
-		guard spectrumImages.indices.contains(index), let image = spectrumImages[index],
-		      let source = lanes[index].overview, source.sampleRate > 0,
+		let covered = detailCovers
+		let images = covered ? detailImages : spectrumImages
+		guard images.indices.contains(index), let image = images[index],
+		      let source = covered ? details[index] : lanes[index].overview, source.sampleRate > 0,
 		      let context = NSGraphicsContext.current?.cgContext else { return }
 
 		let spectrogram = source.spectrogram
@@ -579,16 +656,27 @@ final class SongCanvas: NSView {
 	}
 
 	private func drawPositionBar() {
-		let height = positionBarHeight
-		let track = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
-		Theme.current.separator.withAlphaComponent(0.5).setFill()
-		track.fill()
-		let from = CGFloat(windowStart / duration) * bounds.width
-		let width = max(Theme.current.scaled(6), CGFloat(windowSpan / duration) * bounds.width)
-		Theme.current.gitModified.withAlphaComponent(0.8).setFill()
-		NSBezierPath(
-			roundedRect: NSRect(x: from, y: track.minY, width: width, height: height),
-			xRadius: height / 2, yRadius: height / 2
-		).fill()
+		PositionBar.draw(
+			in: bounds, start: windowStart, span: windowSpan, duration: duration, active: bar.isDragging
+		)
+	}
+
+	/// A press on the bar at `fraction` of its width and a drag of `by`
+	/// points, sent as real events: what a hand on the scrollbar does.
+	func dragBarForTesting(from fraction: CGFloat, by points: CGFloat) {
+		guard let window else { return }
+		let y = bounds.height - PositionBar.height / 2
+		let at = convert(NSPoint(x: bounds.width * fraction, y: y), to: nil)
+		for (type, dx) in [(NSEvent.EventType.leftMouseDown, 0.0), (.leftMouseDragged, points / 2), (.leftMouseDragged, points), (.leftMouseUp, points)] {
+			guard let event = NSEvent.mouseEvent(
+				with: type, location: NSPoint(x: at.x + dx, y: at.y), modifierFlags: [], timestamp: 0,
+				windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+			) else { continue }
+			switch type {
+			case .leftMouseDown: mouseDown(with: event)
+			case .leftMouseDragged: mouseDragged(with: event)
+			default: mouseUp(with: event)
+			}
+		}
 	}
 }

@@ -620,6 +620,71 @@ arithmetic. `mat`'s own check, at 32-bit float and over four songs, puts it at
 −122 to −135 dBFS: neon +4.83 → 0.00 dB, drive +3.68 → 0.00, harbour −6.46 →
 0.00, drunken sailor −0.02 → 0.00.
 
+**Zoomed in, the window is read again.** Reported 2026-09-16: "when zooming,
+the wave form looses all of its details". A lane is drawn from one reading of
+its whole file at 256 frames a peak — under two hundred peaks a second — so a
+window of two seconds had fewer peaks than pixels. The sound tab has read its
+window again at a peak per pixel since it was written; `SongDetail` is that for a
+pane of several files: once the window has been still for 0.15 s every lane is
+read over the window and half a window either side, all at one frames-per-peak,
+and drawn from while they cover the screen. Driven: zoomed to two seconds the
+lanes are drawn at 59 frames a peak instead of 256, in both views.
+
+**The bar along the bottom is a scrollbar.** "it is currently not possible to
+scroll with the scrollbar at the bottom": it was four points of paint with no
+hand on it, so a press there moved the playhead. `PositionBar` is one handle for
+both the song pane and the sound tab — press the thumb and drag, or press the
+track to bring the thumb there — drawn six points tall and answering within
+twelve. Driven: a drag of 200 points moved a two-second window from 40 s to 96 s.
+
+**A render is of its files as they were when it started.** Before a song's first
+render only the song is watched, since which files it includes is what that
+render finds out; a save of one of them meanwhile changed nothing watched, and
+the render then landed and was credited with the files *as they were by then*.
+Reproduced by changing the kick during a first render: the pane stayed at
+`runs=1` with a mix that differed from a fresh render. A render now notes when
+it started, and a source saved after that renders again: `runs=2`, and the mix
+byte-identical to a fresh one.
+
+**What `mat` warns about is shown.** The report that led to the two above —
+"Mix view loses the drums" — was neither: an installed `mat` could not find its
+sample library, warned `cannot open assets/samples/…` for every voice of the
+kit, and exited 0 with the drums at −23 dBFS. `mat` 9766ff9 finds the library
+from an install. The pane now reads the warnings out of a render that worked
+and shows the first, and how many more, in an amber strip: a render missing its
+kit must not look like a render.
+
+**A lane is never emptied.** Reported 2026-09-17: "while playing also the wave
+and spectrum renders often disapears and appears again. This also always happens
+once the complete song is rendered (switch from stream to render)". Every render
+taking over — the stream, then the finished render behind it — threw the
+drawings away and showed nothing until its files had been read: two blanks a
+save under a playing song. `SongOverviews` now keeps the last drawing of every
+lane by name, marked stale, until its replacement has been read; a render still
+being written goes on showing the last render's stems, and is heard as the mix
+whichever view is up (it had been silent in the stems view, where the mix is
+muted and there were no stems yet). Reported every half second across a cold
+render and a save under a playing song: not one blank lane.
+
+**Pictures are made where readings are read.** Reported 2026-09-17: "abydos does
+not exit very fast at least when working with music … it was some longer
+sessions". A quit could not be made slow — 0.35 s rendered, 0.38 s playing, 0.37
+s mid-render, 0.36 s after twenty-one renders — until the quit was timed from
+inside: the app's own steps took 270 ms and the process lived 1.9 s, because the
+Quit waited 1.6 s to be *looked at*. The stall log had the rest: in a session of
+twenty-one renders, 59 main-thread stalls, 41 of them over a second, the longest
+2.7 s, 64 s in all, at 97 % CPU. `SongCanvas.setLanes` drew every lane's spectrum
+each time it was called, and it is called whenever one reading lands: seven
+lanes, seven landings, forty-nine pictures of two million pixels a render, on the
+main thread. A `SpectrumPicture` is now made once, with its reading, off the main
+thread, and the canvas is handed both. The same session after: seven renders in the stems view under a playing song, debug build — one stall of 438 ms, and a quit in 0.36 s.
+
+**A quit says how long it took.** "if we cant find a trace we need to improve the
+logging": `QuitTrace` writes one line per quit to `~/Library/Logs/Abydos/quit.log`
+with each step's time, and a process still alive 1.5 s after the quit was asked
+for has `/usr/bin/sample` pointed at it from another thread — the main thread's
+stack is the answer, and it cannot be asked for from inside once it is stuck.
+
 **The pane's own size.** These went in beside three other splits: the files a
 song is made of and their watch (`SongSources`), where a breakpoint stopped it
 (`SongBreakpointStops`), whether the first render has landed (`SongSettled`),

@@ -48,6 +48,27 @@ final class SongSources {
 		return true
 	}
 
+	/// Whether any source was written after `date` — after a render started,
+	/// and so possibly after that render read it.
+	///
+	/// **A render is of its files as they were when it started, not as they are
+	/// when it lands.** Before a song's first render only the song is watched,
+	/// since which files it includes is what the render finds out. A save of one
+	/// of those files while that render runs changes nothing that is watched, so
+	/// nothing renders again — and the render then landed, adopted the files it
+	/// had read, and was credited with them *as they were by then*. Reported
+	/// 2026-09-16 as "Mix view loses the drums for a mat .song render": the
+	/// pane had rendered a `drums.song` from before a save at 20:26:49 in a run
+	/// that started before it and ended at 20:27:18, and showed that for the
+	/// rest of the session. Its drums layer was keyed `76eaae…`; the file on
+	/// disk renders as `7d1626…`, which the pane never made.
+	func changed(after date: Date, of song: URL) -> Bool {
+		watched(song).contains { source in
+			let values = try? source.resourceValues(forKeys: [.contentModificationDateKey])
+			return (values?.contentModificationDate ?? .distantPast) > date
+		}
+	}
+
 	/// Size and date of every source: an event says something in a directory
 	/// happened, and most of what happens is not the song.
 	func fingerprint(of song: URL) -> String {

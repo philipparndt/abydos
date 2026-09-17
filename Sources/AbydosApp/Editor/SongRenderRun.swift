@@ -33,6 +33,8 @@ final class SongRenderRun {
 	private var watchdog: DispatchWorkItem?
 	/// The sources as they were when the last render started.
 	private var fingerprint: String?
+	/// When the last render started: what it read is what was on disk then.
+	private(set) var startedAt = Date.distantPast
 	/// This pane's own directory under the temporary one, one subdirectory per
 	/// render.
 	var outputRoot: URL
@@ -104,6 +106,7 @@ final class SongRenderRun {
 	func render(song: URL, executable: String, fingerprint: String, streaming: Bool) {
 		stop()
 		self.fingerprint = fingerprint
+		startedAt = Date()
 		runs += 1
 		// Named at random rather than by count: two panes on one song in one
 		// process share the root, and would otherwise both write `run-1`.

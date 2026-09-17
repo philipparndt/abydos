@@ -106,6 +106,21 @@ where that line is heard — a pattern, a `play` step, a track, a section — an
 plays it. Saving while it loops renders under it, so the new sound is heard on
 the next pass. Option-click the same line again to stop.
 
+## Working on a song no longer stalls the app
+
+The song pane drew every lane's spectrum on the main thread each time any one
+lane finished loading — forty-nine pictures a render — which stalled the app for
+a second or two at a time and made a Quit wait its turn. A picture is now made
+once, in the background. Lanes also no longer go blank when a render takes over:
+the last drawing stays until the new one is ready.
+
+Zoomed in, the wave is read again at the screen's own detail, and the bar along
+the bottom of a zoomed song or sound is a scrollbar you can drag.
+
+What `mat` warns about — a sample it could not open — is shown over the pane
+instead of passing as a normal render. A quit that takes more than a second and
+a half now samples itself into `~/Library/Logs/Abydos`.
+
 ## A song is edited in one tab
 
 A song written across files is edited in the song's own tab: opening one of its

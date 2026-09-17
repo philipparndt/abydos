@@ -123,6 +123,8 @@ extension MainWindowController {
 	///
 	///  * `report` — the pane's line; `wait:<s>` — that long before the next step.
 	///  * `tabs` — the group's tabs and which file the one in front shows.
+	///  * `zoom:<start>:<span>` — the window; `drag-bar:<fraction>:<points>` — the
+	///    bar along the bottom, pressed and moved.
 	///  * `mix`, `stems` — which view; `wave`, `spectrum`, `both` — what is drawn.
 	///  * `off:<layer>`, `on:<layer>` — a stem's switch; `wobble:<layer>` — a
 	///    press on it that drags a pixel, as real mouse events.
@@ -325,6 +327,17 @@ extension MainWindowController {
 				print("SONG-EXPORT menu: " + items.map { "\($0.title)\($0.isEnabled ? "" : " (disabled)")" }.joined(separator: " | "))
 				fflush(stdout)
 			case "seek": pane.seekForTesting(seconds: Double(parts.dropFirst().first ?? "") ?? 0)
+			case "zoom":
+				// `zoom:<start>:<span>` — the window, in seconds, as a pinch leaves it.
+				if parts.count == 3, let start = Double(parts[1]), let span = Double(parts[2]) {
+					pane.zoomForTesting(start: start, span: span)
+				}
+			case "drag-bar":
+				// `drag-bar:<fraction>:<points>` — a hand on the bar along the
+				// bottom, pressed that far along it and moved that far.
+				if parts.count == 3, let at = Double(parts[1]), let by = Double(parts[2]) {
+					pane.dragBarForTesting(from: CGFloat(at), by: CGFloat(by))
+				}
 			case "caret":
 				if let line = Int(parts.dropFirst().first ?? ""),
 				   let codeView = editor.activeGroup?.activeTab?.codeView {

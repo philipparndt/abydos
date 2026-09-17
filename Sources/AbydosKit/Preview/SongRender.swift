@@ -490,6 +490,21 @@ public enum SongRender {
 		return tail.isEmpty ? "The render said nothing and wrote no sound." : tail
 	}
 
+	/// What `mat` warned about while it rendered, one line each, without the
+	/// `warning:` in front.
+	///
+	/// **A warning can be the whole story.** A sample `mat` cannot open is a
+	/// warning, and the render goes on and succeeds without it: an installed
+	/// `mat` that could not find its library wrote `examples/ember` with every
+	/// voice of the kit missing and exited 0, and the pane showed that as an
+	/// ordinary render. Reported 2026-09-16 as "Mix view loses the drums".
+	public static func warnings(in output: String) -> [String] {
+		output.split(whereSeparator: \.isNewline)
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { $0.hasPrefix("warning:") }
+			.map { $0.dropFirst("warning:".count).trimmingCharacters(in: .whitespaces) }
+	}
+
 	/// The line `mat` prints when it has rendered: `rendered 1:10.6 in 0.83s
 	/// (85x realtime), peak -1.0 dBFS, rms -16.0 dBFS`. Shown in the strip
 	/// once, since the peak is what somebody mastering a song wants to know.

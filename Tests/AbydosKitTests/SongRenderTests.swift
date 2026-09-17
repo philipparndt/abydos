@@ -29,6 +29,24 @@ struct SongRenderTests {
 			== "/tmp/run-3/mix.stream.json")
 	}
 
+	/// What an installed `mat` said on 2026-09-16 when it could not find its
+	/// sample library: warnings, and a render that went on and succeeded with
+	/// the kit missing. The pane has to be able to say so.
+	@Test func whatMatWarnedAboutIsReadOutOfARenderThatWorked() {
+		let said = """
+		warning: track 'drums': cannot open assets/samples/sonic-pi/bd_tek.wav: No such file or directory (os error 2)
+		warning: track 'perc': cannot open assets/samples/sonic-pi/elec_wood.wav: No such file or directory (os error 2)
+		  drums.wav: peak -23.3 dBFS
+		rendered 4:37.9 in 6.20s (44x realtime), peak -1.0 dBFS, rms -15.9 dBFS
+		"""
+		let warnings = SongRender.warnings(in: said)
+		#expect(warnings.count == 2)
+		#expect(warnings.first == "track 'drums': cannot open assets/samples/sonic-pi/bd_tek.wav: No such file or directory (os error 2)")
+		// Nothing in it is an error: the render worked, as far as mat is concerned.
+		#expect(SongRender.diagnostics(in: said).isEmpty)
+		#expect(SongRender.warnings(in: "rendered 0:08.0 in 0.4s\n").isEmpty)
+	}
+
 	/// A `mat` from before a5f7d05 refuses `--stream` and the render with it, so
 	/// the help is read before the flag is passed. Both texts are `mat render
 	/// --help` as it stands, with and without the option.

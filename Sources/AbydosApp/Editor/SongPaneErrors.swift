@@ -20,11 +20,23 @@ final class SongPaneErrors {
 	func failed(with complaint: String, diagnostics: [SongRender.Diagnostic]) {
 		self.complaint = complaint
 		self.diagnostics = diagnostics
+		warnings = []
 	}
 
-	func worked() {
+	/// What `mat` warned about in a render that worked: see
+	/// `SongRender.warnings(in:)`.
+	private(set) var warnings: [String] = []
+
+	func worked(warnings: [String] = []) {
 		complaint = nil
 		diagnostics = []
+		self.warnings = warnings
+	}
+
+	/// What the strip says about the warnings: the first, and how many more.
+	var warningLine: String? {
+		guard let first = warnings.first else { return nil }
+		return warnings.count == 1 ? "mat: \(first)" : "mat: \(first) — and \(warnings.count - 1) more"
 	}
 
 	/// The first line, which is what the strip shows.
