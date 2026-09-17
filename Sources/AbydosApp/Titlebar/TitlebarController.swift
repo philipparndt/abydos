@@ -181,7 +181,12 @@ final class TitlebarController: NSObject, NSToolbarDelegate {
 	/// What the last run said, and whether that was bad news.
 	func setStatus(_ text: String, failed: Bool) {
 		titlebarStatus?.set(text, failed: failed)
-		layoutStatus()
+		// `Soon` rather than the bare one, as every other caller here does. A
+		// message that arrives before the toolbar's first layout pass measures
+		// the run control at the window's left edge, finds no room between the
+		// traffic lights and it, and hides itself — and since the text does not
+		// change again, nothing would ever ask a second time.
+		layoutStatusSoon()
 	}
 
 	/// The status view, for a driven run that hovers or aims at it.

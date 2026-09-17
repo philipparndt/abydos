@@ -427,8 +427,9 @@ struct LaunchOptions {
 	/// Zoom the window and say what its frame did: `--zoom-gesture click@4`,
 	/// `click-status@4` for a click on the run control's status area,
 	/// `click-clear@4` for one on the cross that clears it, `click-x<n>@4` for
-	/// a point at that x, or `--zoom-gesture zoom@4`. `+back` after any of them
-	/// repeats the gesture.
+	/// a point at that x, or `--zoom-gesture zoom@4`. `+back` repeats the
+	/// gesture, and goes on the gesture rather than after the delay —
+	/// `click+back@4`, since the delay is what follows the `@`.
 	var zoomGesture: String?
 	var zoomGestureAt: Double = 4
 	/// Press play, as if from the titlebar.

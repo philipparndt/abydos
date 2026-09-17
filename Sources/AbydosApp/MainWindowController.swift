@@ -92,7 +92,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self?.run.runControl?.applyThemeChange()
 		}
 		bar.runControlView = { [weak self] in self?.run.runControl }
-		bar.onClearStatus = { [weak self] in self?.run.runControl?.setStatus("") }
+		// Both halves, because the message is held in both. The run control
+		// keeps it to draw the seam from, and the title bar keeps a copy to
+		// draw. `RunControl.setStatus` returns early when nothing changed, so
+		// against a control AppKit has rebuilt — which starts with no status —
+		// the cross would tell the one that already agrees and leave the one
+		// with the message on it untouched.
+		bar.onClearStatus = { [weak self] in
+			self?.run.runControl?.setStatus("")
+			self?.titlebar.setStatus("", failed: false)
+		}
 		bar.onProjectPressed = { [weak self] in self?.showProjectSwitcherAtPill() }
 		bar.onBranchPressed = { [weak self] in self?.showBranchMenu() }
 		bar.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
