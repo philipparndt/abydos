@@ -778,6 +778,15 @@ extension EditorViewController {
 			// did not follow ⌘+: settings opened at 1× kept 1× rows and 1× type
 			// for as long as it stayed open.
 			(tab.contentView as? ScalingPage)?.applySettings()
+			// A rendered markdown page is set from the body size, and the body
+			// size is the zoom's: rendered again here, it follows ⌘+ with the
+			// window instead of staying at the size it opened at.
+			if tab.isShowingMarkdownPreview, let page = Self.markdownPane(in: tab.contentView) {
+				page.textContainerInset = MarkdownRenderer.pageInset
+				page.backgroundColor = Theme.current.editorBackground
+				page.linkTextAttributes?[.foregroundColor] = Theme.current.color(for: .link)
+				renderPreview(into: page, tab: tab)
+			}
 		}
 	}
 

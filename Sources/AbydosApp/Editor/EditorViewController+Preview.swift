@@ -119,7 +119,9 @@ extension EditorViewController {
 	}
 
 	private func makePreviewView(for tab: Tab) -> NSView {
-		let textView = MarkdownPreviewTextView()
+		// On the page's own layout manager, which is what paints the pills
+		// behind inline code; see `MarkdownPage`.
+		let textView = MarkdownPage.textView { MarkdownPreviewTextView(frame: .zero, textContainer: $0) }
 		// Which document this is, and where its text is — the pane's own `Export ▸`
 		// writes the diagrams in it beside it, and draws the buffer rather than
 		// what is on disk, exactly as the `.mmd` pane does.
@@ -131,11 +133,11 @@ extension EditorViewController {
 		textView.backgroundColor = Theme.current.editorBackground
 		textView.textColor = Theme.current.editorText
 		textView.linkTextAttributes = [
-			.foregroundColor: Theme.current.gitModified,
+			.foregroundColor: Theme.current.color(for: .link),
 			.underlineStyle: NSUnderlineStyle.single.rawValue,
 			.cursor: NSCursor.pointingHand,
 		]
-		textView.textContainerInset = NSSize(width: 28, height: 24)
+		textView.textContainerInset = MarkdownRenderer.pageInset
 		textView.isRichText = true
 
 		let scrollView = NSScrollView()
@@ -144,12 +146,6 @@ extension EditorViewController {
 		scrollView.drawsBackground = true
 		scrollView.backgroundColor = Theme.current.editorBackground
 		scrollView.scrollerStyle = .overlay
-
-		// Width-tracking so text reflows with the pane.
-		textView.autoresizingMask = [.width]
-		textView.isVerticallyResizable = true
-		textView.isHorizontallyResizable = false
-		textView.textContainer?.widthTracksTextView = true
 
 		renderPreview(into: textView, tab: tab)
 
@@ -364,7 +360,7 @@ extension EditorViewController {
 		activeTab.flatMap { Self.markdownPane(in: $0.contentView) }
 	}
 
-	private static func markdownPane(in view: NSView) -> MarkdownPreviewTextView? {
+	static func markdownPane(in view: NSView) -> MarkdownPreviewTextView? {
 		if let pane = view as? MarkdownPreviewTextView { return pane }
 		for subview in view.subviews {
 			if let found = markdownPane(in: subview) { return found }
@@ -372,7 +368,7 @@ extension EditorViewController {
 		return nil
 	}
 
-	private func renderPreview(into textView: NSTextView, tab: Tab) {
+	func renderPreview(into textView: NSTextView, tab: Tab) {
 		guard let document = tab.document else { return }
 		let rendered = MarkdownRenderer.render(
 			document.rope.string,

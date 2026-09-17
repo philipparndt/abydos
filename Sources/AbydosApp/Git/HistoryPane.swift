@@ -352,17 +352,13 @@ final class HistoryPane: NSView, ScaleFollowing {
 		// paragraphs in it, and the column's label had the newlines replaced
 		// with spaces to fit on one line — which on a page is exactly the half
 		// of the message nobody can then read.
-		let message = NSTextView()
+		let message = MarkdownPage.textView { NSTextView(frame: .zero, textContainer: $0) }
 		message.isEditable = false
 		message.isSelectable = true
 		message.drawsBackground = false
 		message.textContainerInset = NSSize(width: 8, height: 8)
 		message.font = Theme.current.uiFont(11.5)
 		message.textColor = Theme.current.sidebarText
-		message.isVerticallyResizable = true
-		message.isHorizontallyResizable = false
-		message.autoresizingMask = [.width]
-		message.textContainer?.widthTracksTextView = true
 		messageView = message
 
 		let messageScroll = NSScrollView()
@@ -781,7 +777,9 @@ final class HistoryPane: NSView, ScaleFollowing {
 			// message is exactly where the asterisks stop being punctuation and
 			// start being noise. The renderer is the app's own — the same one
 			// the editor previews with.
-			let rendered = MarkdownRenderer.render(whole, baseURL: root)
+			// At the column's own size rather than the page's: this is a
+			// message in a sidebar, not a document in a pane.
+			let rendered = MarkdownRenderer.render(whole, baseURL: root, body: Theme.current.scaled(11.5))
 			messageView.textStorage?.setAttributedString(rendered)
 		} else {
 			detailLabel.stringValue = flat.replacingOccurrences(of: "\n", with: " ")

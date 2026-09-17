@@ -279,6 +279,17 @@ public enum SchemeContrast {
 					))
 				}
 			}
+			// The rendered markdown page sets its code on `currentLineBackground`,
+			// so the text has to read there as well as on the page.
+			let text = app.colour(.editorText, isLight: isLight)
+			let panel = app.colour(.currentLineBackground, isLight: isLight)
+			let textFloor = floor(promised: app.floor, dim: false)
+			if ratio(text, panel) < textFloor {
+				found.append(AppShortfall(
+					scheme: scheme.id, isLight: isLight, role: SchemeRole.editorText.rawValue,
+					ground: SchemeRole.currentLineBackground.rawValue, value: text, ratio: ratio(text, panel), floor: textFloor
+				))
+			}
 		}
 		return found
 	}

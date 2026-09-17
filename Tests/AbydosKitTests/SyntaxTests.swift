@@ -223,6 +223,69 @@ struct SyntaxTests {
 			#expect(detected == expected, "\(filename) detected as \(detected ?? "nil")")
 		}
 	}
+
+	// MARK: - TypeScript on top of JavaScript
+
+	/// The kind painted over each occurrence of `word` in `source`, by grammar.
+	private func kinds(of word: String, in source: String, language: String) throws -> [HighlightKind] {
+		let engine = try #require(SyntaxEngine(languageId: language))
+		let rope = Rope(source)
+		engine.parse(rope: rope)
+		let tokens = engine.highlights(rope: rope, byteRange: 0..<rope.byteCount)
+		let text = source as NSString
+		var found: [HighlightKind] = []
+		var search = NSRange(location: 0, length: text.length)
+		while true {
+			let hit = text.range(of: word, options: [], range: search)
+			guard hit.location != NSNotFound else { return found }
+			// The kind covering the word's first character; `plain` when nothing does.
+			found.append(tokens.first { $0.range.contains(hit.location) }?.kind ?? .plain)
+			search = NSRange(location: hit.upperBound, length: text.length - hit.upperBound)
+		}
+	}
+
+	/// The line from the screenshot that showed the fault: only `USER` was
+	/// coloured, because the TypeScript grammar's own queries know types and
+	/// nothing else. Read on top of JavaScript's, the keyword, the string and
+	/// the calls are what they are in a `.js` file.
+	@Test(arguments: ["typescript", "tsx"])
+	func typeScriptIsColouredAsJavaScriptPlusItsOwnAdditions(language: String) throws {
+		let source = """
+		async function run(page: Page): Promise<void> {
+			await cast.type(page.locator('input[name="email"]'), USER)
+		}
+		"""
+		#expect(try kinds(of: "await", in: source, language: language) == [.keyword])
+		#expect(try kinds(of: "'input[name=\"email\"]'", in: source, language: language) == [.string])
+		#expect(try kinds(of: "type(", in: source, language: language) == [.method])
+		#expect(try kinds(of: "locator", in: source, language: language) == [.method])
+		// TypeScript's own addition: a type annotation is a type.
+		#expect(try kinds(of: "Promise", in: source, language: language) == [.type])
+		// And a screaming identifier is still not plain text.
+		let user = try kinds(of: "USER", in: source, language: language)
+		#expect(user.count == 1 && user[0] != .plain && user[0] != .variable, "\(user)")
+	}
+
+	/// A grammar bump that renames a node the JavaScript query names would make
+	/// the joined query fail to compile, and the registry would fall back to no
+	/// colour at all. This is where that becomes a red test naming the pattern.
+	@Test(arguments: ["typescript", "tsx"])
+	func theInheritedHighlightQueryCompiles(language: String) throws {
+		let registry = LanguageRegistry.shared
+		let base = try #require(registry.inheritedLanguage(of: language))
+		#expect(base == "javascript")
+		let directory = try #require(registry.queriesDirectory(for: language))
+		let baseDirectory = try #require(registry.queriesDirectory(for: base))
+		let source = try #require(
+			LanguageRegistry.querySource(.highlights, in: directory, inheriting: baseDirectory)
+		)
+		let ownLength = try String(contentsOf: directory.appendingPathComponent("highlights.scm"), encoding: .utf8).count
+		#expect(source.count > ownLength, "the joined query is no longer than the grammar's own")
+		let grammar = try #require(registry.configuration(for: language)).language
+		#expect(throws: Never.self, "\(language): the joined highlights query does not compile") {
+			_ = try Query(language: grammar, data: Data(source.utf8))
+		}
+	}
 }
 
 /// The structure view's data: declarations pulled from the grammar's tags

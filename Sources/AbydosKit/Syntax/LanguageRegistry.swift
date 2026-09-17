@@ -38,6 +38,15 @@ public struct LanguageDefinition {
 	/// SPM names a resource bundle `<package>_<target>`; several packages ship
 	/// more than one grammar, so the bundle name cannot be derived from the id.
 	let bundleName: String
+	/// A language whose queries this one is written on top of.
+	///
+	/// tree-sitter-typescript ships thirty-five lines of `highlights.scm` — the
+	/// types, the parameters, the keywords JavaScript has not got — and expects
+	/// an editor to read the JavaScript queries first, the way nvim's
+	/// `; inherits: ecma` does. Loaded alone, a `.ts` file coloured only the
+	/// identifiers beginning with a capital, and a `ts` fence in a README beside
+	/// GitHub's rendering of the same file made that visible.
+	let inherits: String?
 
 	public private(set) var configuration: LanguageConfiguration?
 	/// Loaded separately: `Query.queries(for:in:)` only knows about highlights,
@@ -62,8 +71,8 @@ public final class LanguageRegistry {
 	private init() {
 		register(id: "swift", name: "Swift", bundle: "TreeSitterSwift_TreeSitterSwift") { tree_sitter_swift() }
 		register(id: "rust", name: "Rust", bundle: "TreeSitterRust_TreeSitterRust") { tree_sitter_rust() }
-		register(id: "typescript", name: "TypeScript", bundle: "TreeSitterTypeScript_TreeSitterTypeScript") { tree_sitter_typescript() }
-		register(id: "tsx", name: "TSX", bundle: "TreeSitterTypeScript_TreeSitterTSX") { tree_sitter_tsx() }
+		register(id: "typescript", name: "TypeScript", bundle: "TreeSitterTypeScript_TreeSitterTypeScript", inherits: "javascript") { tree_sitter_typescript() }
+		register(id: "tsx", name: "TSX", bundle: "TreeSitterTypeScript_TreeSitterTSX", inherits: "javascript") { tree_sitter_tsx() }
 		// Vendored targets live in this package, so their resource bundles are
 		// named `<package>_<target>`, and the package is this app.
 		register(id: "javascript", name: "JavaScript", bundle: "Abydos_TreeSitterJavaScriptVendored") { tree_sitter_javascript() }
@@ -95,9 +104,12 @@ public final class LanguageRegistry {
 		id: String,
 		name: String,
 		bundle: String,
+		inherits: String? = nil,
 		parser: @escaping () -> OpaquePointer
 	) {
-		definitions[id] = LanguageDefinition(id: id, displayName: name, parser: parser, bundleName: bundle)
+		definitions[id] = LanguageDefinition(
+			id: id, displayName: name, parser: parser, bundleName: bundle, inherits: inherits
+		)
 	}
 
 	// MARK: - Detection
@@ -342,13 +354,16 @@ public final class LanguageRegistry {
 		// LanguageConfiguration's bundleName initialiser, which only looks under
 		// `Contents/Resources/`. `swift build` emits flat bundles, so that lookup
 		// silently finds nothing and every file renders uncoloured.
-		if let queriesURL = Self.queriesDirectory(bundleName: definition.bundleName),
-		   let loadedConfiguration = try? LanguageConfiguration(
-			   language,
-			   name: definition.displayName,
-			   queriesURL: queriesURL
-		   ) {
-			configuration = loadedConfiguration
+		if let queriesURL = Self.queriesDirectory(bundleName: definition.bundleName) {
+			configuration = LanguageConfiguration(
+				language,
+				name: definition.displayName,
+				queries: Self.queries(
+					for: language,
+					in: queriesURL,
+					inheriting: definition.inherits.flatMap { definitions[$0] }
+				)
+			)
 		} else {
 			// Still usable: the file parses and folds structurally, just without
 			// colour. Better than refusing to open it.
@@ -357,6 +372,68 @@ public final class LanguageRegistry {
 
 		loaded[languageId] = configuration
 		return configuration
+	}
+
+	/// The queries in a directory, each compiled against `language`, with a base
+	/// language's file of the same name read ahead of it where there is one.
+	///
+	/// Joined as text and compiled once rather than compiled twice and run
+	/// twice: one cursor pass per highlight, and capture precedence stays what
+	/// tree-sitter's least-specific-first ordering gives a single query. A
+	/// pattern that names a node the inheriting grammar has not got makes the
+	/// whole query fail to compile, which is what `SyntaxTests` asserts against —
+	/// the fallback is that definition uncoloured, never a crash.
+	static func queries(
+		for language: Language,
+		in directory: URL,
+		inheriting base: LanguageDefinition?
+	) -> [Query.Definition: Query] {
+		let baseDirectory = base.flatMap { Self.queriesDirectory(bundleName: $0.bundleName) }
+		var queries: [Query.Definition: Query] = [:]
+		for definition in [Query.Definition.injections, .highlights, .locals] {
+			guard let source = Self.querySource(definition, in: directory, inheriting: baseDirectory)
+			else { continue }
+			if let query = try? Query(language: language, data: Data(source.utf8)) {
+				queries[definition] = query
+			}
+		}
+		return queries
+	}
+
+	/// The text a query is compiled from: the base's file, then the language's own.
+	///
+	/// Exposed to the tests so a grammar bump that renames a node is a red test
+	/// naming the pattern, rather than a language that quietly stopped colouring.
+	static func querySource(
+		_ definition: Query.Definition,
+		in directory: URL,
+		inheriting baseDirectory: URL?
+	) -> String? {
+		let own = try? String(contentsOf: directory.appendingPathComponent(definition.filename), encoding: .utf8)
+		let inherited = baseDirectory.flatMap {
+			try? String(contentsOf: $0.appendingPathComponent(definition.filename), encoding: .utf8)
+		}
+		switch (inherited, own) {
+		case (nil, nil): return nil
+		case let (inherited?, nil): return inherited
+		case let (nil, own?): return own
+		case let (inherited?, own?): return inherited + "\n" + own
+		}
+	}
+
+	/// The queries directory of a language, for a test that wants the source.
+	public func queriesDirectory(for languageId: String) -> URL? {
+		lock.lock()
+		defer { lock.unlock() }
+		guard let definition = definitions[languageId] else { return nil }
+		return Self.queriesDirectory(bundleName: definition.bundleName)
+	}
+
+	/// The language whose queries `languageId` is written on top of, if any.
+	public func inheritedLanguage(of languageId: String) -> String? {
+		lock.lock()
+		defer { lock.unlock() }
+		return definitions[languageId]?.inherits
 	}
 
 	/// The grammar's `folds.scm`, when it ships one.
