@@ -63,6 +63,34 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// name nobody needs in full.
 	private static var maximumWidth: CGFloat { Theme.current.scaled(360) }
 
+	/// The narrowest the capsule can be shown, edge to edge.
+	var minimumOuterWidth: CGFloat { Self.inset * 2 + Self.minimumWidth }
+
+	/// How much room the title bar has for it, when that is less than its
+	/// maximum: the names shorten to this instead. Set by the title bar from
+	/// the window's width, so the toolbar never has to put the capsule away.
+	var roomWidth: CGFloat? {
+		didSet {
+			guard roomWidth != oldValue else { return }
+			invalidateIntrinsicContentSize()
+			needsDisplay = true
+		}
+	}
+
+	/// Folded away for want of room; see `PillButton.isCollapsedForRoom`.
+	var isCollapsedForRoom = false {
+		didSet {
+			guard isCollapsedForRoom != oldValue else { return }
+			isHidden = isCollapsedForRoom
+			invalidateIntrinsicContentSize()
+		}
+	}
+
+	/// The width the names are shortened to fit: the maximum, or the room.
+	private var widthCeiling: CGFloat {
+		min(Self.maximumWidth, max(Self.minimumWidth, roomWidth ?? Self.maximumWidth))
+	}
+
 	/// How far the drawn shape sits inside the frame it is given.
 	///
 	/// Not zero — a hairline of air keeps the shape from touching the capsule
@@ -255,9 +283,12 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	}
 
 	override var intrinsicContentSize: NSSize {
-		NSSize(
+		// A toolbar measures a hidden view too, and warns about a zero
+		// dimension: a sliver rather than nothing.
+		guard !isCollapsedForRoom else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+		return NSSize(
 			width: Self.inset * 2
-				+ min(Self.maximumWidth, max(Self.minimumWidth, projectWidth + branchWidth)),
+				+ min(widthCeiling, max(Self.minimumWidth, projectWidth + branchWidth)),
 			height: heightConstraint?.constant ?? Self.wantedHeight
 		)
 	}
@@ -271,14 +302,14 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// of `admin-user-service` is well under it — and the clamp is here for the
 	/// folder somebody names in a sentence.
 	private var shownName: String {
-		shortened(name, toFit: Self.maximumWidth * 0.55, font: Self.nameFont)
+		shortened(name, toFit: widthCeiling * 0.55, font: Self.nameFont)
 	}
 
 	/// The branch as it is drawn: the whole of it, or as much as the room left
 	/// over from the project half allows.
 	private var shownBranch: String? {
 		guard let branchText else { return nil }
-		let room = Self.maximumWidth
+		let room = widthCeiling
 			- Self.inset * 2
 			- projectWidth
 			- Self.padding * 2

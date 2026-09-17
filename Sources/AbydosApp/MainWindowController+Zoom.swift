@@ -14,13 +14,24 @@ import AbydosKit
 /// In a file of its own: the two driving files are at the length aim, and this
 /// is one instrument with one subject.
 extension MainWindowController {
-	/// `--zoom-gesture click` or `zoom`, optionally `@<seconds>`.
+	/// `--zoom-gesture click`, `click-status` or `zoom`, optionally `@<seconds>`.
 	///
-	/// Both, because they are different claims. `zoom` calls what AppKit calls
-	/// when the system setting says a double-click zooms, so it exercises the
-	/// frame arithmetic and nothing else. `click` posts the double-click itself,
-	/// which is the gesture that was reported — and can land on one of the
-	/// title bar's own controls, so it says what was under it.
+	/// All three, because they are different claims. `zoom` calls what AppKit
+	/// calls when the system setting says a double-click zooms, so it exercises
+	/// the frame arithmetic and nothing else. `click` posts the double-click
+	/// itself, which is the gesture that was reported — and can land on one of
+	/// the title bar's own controls, so it says what was under it.
+	/// `click-status` aims the same four events at the run control's status
+	/// area, where the gesture was reported to do nothing on 2026-09-16, and
+	/// `click-clear` a single click at the cross that clears the status.
+	///
+	/// **What a posted click can and cannot show.** Under macOS 26.7 the zoom
+	/// is decided in `NSWindow.mouseDown` from the real mouse's state, and a
+	/// posted `NSEvent` does not carry it: a posted double-click zooms nothing,
+	/// not even on the backdrop where a mouse zooms every time. So the reading
+	/// worth having from `click` is where the press went — the view under the
+	/// point and the responder chain above it, which this prints — and the
+	/// frame readings are for `zoom`, and for the day posted events act again.
 	func exerciseZoomForTesting(_ how: String) {
 		guard let window else {
 			print("ZOOM: no window")
@@ -58,7 +69,11 @@ extension MainWindowController {
 
 		func gesture() {
 			if how.hasPrefix("click") {
-				print("ZOOM click: \(doubleClickTitleBar(of: window))")
+				let place: TitleBarPlace = how.hasPrefix("click-status") ? .runControlStatus
+					: how.hasPrefix("click-clear") ? .runControlClear
+					: how.hasPrefix("click-x") ? .x(Double(how.dropFirst(7).prefix { $0.isNumber }) ?? 0)
+					: .leftOfRunControl
+				print("ZOOM click: \(doubleClickTitleBar(of: window, at: place))")
 				fflush(stdout)
 			} else {
 				window.zoom(nil)
@@ -119,12 +134,71 @@ extension MainWindowController {
 	/// as it would a real click, and so a press that runs a tracking loop finds
 	/// its release already in the queue.
 	///
-	/// The point is above the content the app draws and left of the run
-	/// control: a click that lands on a control of ours is the instrument
-	/// missing rather than the zoom failing, so what was under it is said.
-	private func doubleClickTitleBar(of window: NSWindow) -> String {
-		let point = NSPoint(x: window.frame.width * 0.42, y: window.frame.height - 14)
-		let under = window.contentView?.hitTest(point).map { String(describing: type(of: $0)) } ?? "nothing"
+	/// Where in the title bar a posted double-click lands.
+	private enum TitleBarPlace {
+		/// Above the content the app draws and left of the run control, where
+		/// nothing of ours claims the press: a click that lands on a control
+		/// here is the instrument missing rather than the zoom failing, so
+		/// what was under it is said.
+		case leftOfRunControl
+		/// The middle of the status message on the title bar, left of the run
+		/// control — or, with no message showing, the room where one would be.
+		/// The reading wanted is the backdrop under the point: the status view
+		/// declines the hit, so the click is the title bar's.
+		case runControlStatus
+		/// The cross that clears the status — a single click, not a double,
+		/// because the claim is that the cross still does its own job and
+		/// the window stays where it was.
+		case runControlClear
+		/// `click-x<n>`: a point at that x, just under the top edge. A
+		/// diagnostic for finding out what a spot in the strip belongs to.
+		case x(CGFloat)
+	}
+
+	private func doubleClickTitleBar(of window: NSWindow, at place: TitleBarPlace) -> String {
+		let point: NSPoint
+		var detail = ""
+		switch place {
+		case .leftOfRunControl:
+			point = NSPoint(x: window.frame.width * 0.42, y: window.frame.height - 14)
+		case .x(let x):
+			point = NSPoint(x: x, y: window.frame.height - 14)
+		case .runControlStatus, .runControlClear:
+			guard let control = run.runControl, control.window === window else { return "no run control" }
+			let controlFrame = control.convert(control.bounds, to: nil)
+			let status = titlebar.statusForTesting
+			let shown = status.map { !$0.isHidden && $0.hasMessage } ?? false
+			if case .runControlClear = place {
+				guard let status, shown else { return "no status showing" }
+				let cross = status.convert(status.clearRect, to: nil)
+				point = NSPoint(x: cross.midX, y: cross.midY)
+			} else if let status, shown {
+				let area = status.convert(status.bounds, to: nil)
+				point = NSPoint(x: area.midX, y: area.midY)
+			} else {
+				// No message: the room where it would be, left of the buttons.
+				point = NSPoint(x: controlFrame.minX - Theme.current.scaled(60), y: controlFrame.midY)
+			}
+			detail = String(
+				format: " control=(%.0f,%.0f %.0f×%.0f) status=%@", controlFrame.minX, controlFrame.minY,
+				controlFrame.width, controlFrame.height, shown ? "shown" : "none"
+			)
+		}
+		// Asked of the frame view, not the content view: the toolbar's views
+		// hang off the window's frame, so a content-view hit test answers
+		// "the backdrop" for a point that a real click would give to a pill.
+		let frameView = window.contentView?.superview ?? window.contentView
+		let hit = frameView?.hitTest(point)
+		let under = hit.map { String(describing: type(of: $0)) } ?? "nothing"
+		// The chain the press climbs, so a forwarded event can be followed to
+		// whoever keeps it.
+		var chain: [String] = []
+		var responder: NSResponder? = hit?.nextResponder
+		while let next = responder, chain.count < 12 {
+			chain.append(String(describing: type(of: next)))
+			responder = next.nextResponder
+		}
+		detail += " chain=" + chain.joined(separator: ">")
 		func event(_ type: NSEvent.EventType, count: Int) -> NSEvent? {
 			NSEvent.mouseEvent(
 				with: type, location: point, modifierFlags: [],
@@ -133,14 +207,15 @@ extension MainWindowController {
 				eventNumber: 0, clickCount: count, pressure: type == .leftMouseDown ? 1 : 0
 			)
 		}
-		let sequence: [(NSEvent.EventType, Int)] = [
-			(.leftMouseDown, 1), (.leftMouseUp, 1), (.leftMouseDown, 2), (.leftMouseUp, 2),
-		]
+		var sequence: [(NSEvent.EventType, Int)] = [(.leftMouseDown, 1), (.leftMouseUp, 1)]
+		if case .runControlClear = place {} else {
+			sequence += [(.leftMouseDown, 2), (.leftMouseUp, 2)]
+		}
 		let events = sequence.compactMap { event($0.0, count: $0.1) }
 		guard events.count == sequence.count else { return "no event" }
 		NSApp.activate(ignoringOtherApps: true)
 		window.makeKeyAndOrderFront(nil)
 		for event in events { NSApp.postEvent(event, atStart: false) }
-		return "at (\(Int(point.x)),\(Int(point.y))) on \(under)"
+		return "at (\(Int(point.x)),\(Int(point.y))) on \(under)\(detail)"
 	}
 }

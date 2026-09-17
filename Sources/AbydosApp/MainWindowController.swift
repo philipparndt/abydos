@@ -91,6 +91,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self?.run.runControl?.invalidateIntrinsicContentSize()
 			self?.run.runControl?.applyThemeChange()
 		}
+		bar.runControlView = { [weak self] in self?.run.runControl }
+		bar.onClearStatus = { [weak self] in self?.run.runControl?.setStatus("") }
 		bar.onProjectPressed = { [weak self] in self?.showProjectSwitcherAtPill() }
 		bar.onBranchPressed = { [weak self] in self?.showBranchMenu() }
 		bar.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
