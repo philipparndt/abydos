@@ -48,6 +48,16 @@ final class SongPlaybackHub {
 				songs[key(song)] = known
 				return known.playback
 			}
+			// The same mix with stems behind it: a streamed render that has
+			// finished. They join what is playing rather than replacing it.
+			if files.count > known.files.count, Array(files.prefix(known.files.count)) == known.files {
+				try known.playback.add(urls: Array(files.dropFirst(known.files.count)))
+				known.files = files
+				known.panes.insert(id)
+				songs[key(song)] = known
+				said(song)
+				return known.playback
+			}
 			let made = try AudioPlayback(urls: files)
 			let was = known.playback
 			made.isLooping = was.isLooping

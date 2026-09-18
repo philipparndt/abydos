@@ -29,17 +29,23 @@ import Foundation
 final class AudioPlayback {
 	/// One file and the node that plays it.
 	private struct Voice {
-		let file: AVAudioFile
+		/// A `var` because a file that is still being written is opened again
+		/// to see what has arrived: an `AVAudioFile` knows the length it had
+		/// when it was opened, and never more.
+		var file: AVAudioFile
 		let node = AVAudioPlayerNode()
 		/// Silence to the longest file's end, in this file's own frames; nil
 		/// when this is the longest.
-		let padding: AVAudioPCMBuffer?
+		var padding: AVAudioPCMBuffer?
 		/// This file's length in its own frames.
 		var length: AVAudioFramePosition { file.length }
 		var rate: Double { file.processingFormat.sampleRate }
 	}
 
-	private let voices: [Voice]
+	private var voices: [Voice]
+	/// The volume each voice is at, or on its way to: see `setVolumes`.
+	private var volumes: [Float]
+	private var fade: Timer?
 	private let engine = AVAudioEngine()
 	/// The one whose sample time is the playhead: the first.
 	private var node: AVAudioPlayerNode { voices[0].node }
@@ -126,11 +132,8 @@ final class AudioPlayback {
 		let longest = files.map { Double($0.length) / max(1, $0.processingFormat.sampleRate) }.max() ?? 0
 		frameCount = AVAudioFramePosition((longest * rate).rounded())
 
-		voices = files.map { file in
-			let own = AVAudioFramePosition((longest * file.processingFormat.sampleRate).rounded())
-			let short = AVAudioFrameCount(max(0, own - file.length))
-			return Voice(file: file, padding: short > 0 ? Self.silence(short, as: file.processingFormat) : nil)
-		}
+		voices = files.map { Voice(file: $0, padding: Self.padding(of: $0, toSeconds: longest)) }
+		volumes = Array(repeating: 1, count: files.count)
 		for voice in voices {
 			engine.attach(voice.node)
 			engine.connect(voice.node, to: engine.mainMixerNode, format: voice.file.processingFormat)
@@ -152,6 +155,13 @@ final class AudioPlayback {
 		}
 	}
 
+	/// Silence from a file's end to `longest` seconds; nil when it reaches that.
+	private static func padding(of file: AVAudioFile, toSeconds longest: Double) -> AVAudioPCMBuffer? {
+		let own = AVAudioFramePosition((longest * file.processingFormat.sampleRate).rounded())
+		let short = AVAudioFrameCount(max(0, own - file.length))
+		return short > 0 ? silence(short, as: file.processingFormat) : nil
+	}
+
 	/// Silence, `frames` long, in a file's format.
 	private static func silence(_ frames: AVAudioFrameCount, as format: AVAudioFormat) -> AVAudioPCMBuffer? {
 		guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
@@ -169,6 +179,8 @@ final class AudioPlayback {
 		if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
 		configurationObserver = nil
 		generation += 1
+		fade?.invalidate()
+		fade = nil
 		for voice in voices { voice.node.stop() }
 		engine.stop()
 		isPlaying = false
@@ -182,15 +194,62 @@ final class AudioPlayback {
 	/// its place, so unmuting it is instant and in step.
 	func setVolume(_ volume: Float, ofVoice index: Int) {
 		guard voices.indices.contains(index) else { return }
-		voices[index].node.volume = max(0, min(1, volume))
+		var all = volumes
+		all[index] = volume
+		setVolumes(all)
 	}
 
+	/// How loud every file plays, 0 to 1, changed together and faded.
+	///
+	/// Reported 2026-09-18: "when switching between stem and Mix there is a
+	/// small interruption / click". The switch set one node's volume after
+	/// another, so a render cycle could fall between the mix going to nothing
+	/// and the stems coming up — a hole — and even without one, a mix after
+	/// its limiter and the stems before it are not the same wave, so a cut
+	/// from one to the other is a step in the signal. Now every voice moves in
+	/// the same tick, from where it is to where it is going, over `fadeSeconds`.
+	func setVolumes(_ targets: [Float]) {
+		for index in voices.indices where index < targets.count {
+			volumes[index] = max(0, min(1, targets[index]))
+		}
+		fade?.invalidate()
+		fade = nil
+		guard isPlaying else {
+			for index in voices.indices { voices[index].node.volume = volumes[index] }
+			return
+		}
+		let from = voices.map(\.node.volume)
+		let to = volumes
+		let began = ProcessInfo.processInfo.systemUptime
+		let timer = Timer(timeInterval: 0.005, repeats: true) { [weak self] timer in
+			MainActor.assumeIsolated {
+				guard let self else { timer.invalidate(); return }
+				let done = min(1, (ProcessInfo.processInfo.systemUptime - began) / Self.fadeSeconds)
+				for index in self.voices.indices where index < to.count {
+					self.voices[index].node.volume = from[index] + (to[index] - from[index]) * Float(done)
+				}
+				if done >= 1 {
+					timer.invalidate()
+					self.fade = nil
+				}
+			}
+		}
+		RunLoop.main.add(timer, forMode: .common)
+		fade = timer
+	}
+
+	/// How long a change of volume takes. Long enough that the steps it is
+	/// made in — a render cycle apart, some ten milliseconds — are small.
+	static let fadeSeconds: Double = 0.08
+
+	/// Where a voice's volume is going, which is where it is once a fade is over.
 	func volume(ofVoice index: Int) -> Float {
-		voices.indices.contains(index) ? voices[index].node.volume : 0
+		volumes.indices.contains(index) ? volumes[index] : 0
 	}
 
-	/// Where the playhead is, in frames, wrapped by the length while looping.
-	var currentFrame: AVAudioFramePosition {
+	/// Where the timeline's node has got to since it was scheduled, neither
+	/// wrapped nor stopped at the end; nil while nothing plays.
+	private var playedFrame: AVAudioFramePosition? {
 		// **A render time with no valid time in it crashes the app.** Right
 		// after nodes are started at a future sample time, `lastRenderTime` is
 		// an `AVAudioTime` with neither its sample time nor its host time valid,
@@ -203,8 +262,19 @@ final class AudioPlayback {
 		      let renderTime = node.lastRenderTime,
 		      renderTime.isSampleTimeValid,
 		      let playerTime = node.playerTime(forNodeTime: renderTime)
-		else { return restingFrame }
-		let played = scheduledFrom + max(0, playerTime.sampleTime)
+		else { return nil }
+		return scheduledFrom + max(0, playerTime.sampleTime)
+	}
+
+	/// Where the playhead is, in frames, wrapped by the length while looping.
+	var currentFrame: AVAudioFramePosition {
+		guard let played = playedFrame else { return restingFrame }
+		return wrapped(played)
+	}
+
+	/// A frame on the node's timeline as a place in the song: into the loop
+	/// while looping, and no further than the end.
+	private func wrapped(_ played: AVAudioFramePosition) -> AVAudioFramePosition {
 		guard frameCount > 0 else { return played }
 		if isLooping {
 			let (from, to) = loopBounds
@@ -271,9 +341,13 @@ final class AudioPlayback {
 		restingFrame = frame
 		scheduledThrough = frameCount
 		isStarved = false
+		// What has been written since the files were opened, which the files
+		// as they were opened cannot see.
+		if isGrowing { for index in voices.indices { reopen(index) } }
 
 		for index in voices.indices {
-			schedulePass(ofVoice: index, from: frame, generation: scheduled)
+			let through = schedulePass(ofVoice: index, from: frame, generation: scheduled)
+			if index == 0, isGrowing { scheduledThrough = through }
 			if isLooping { queuePass(ofVoice: index, generation: scheduled) }
 		}
 
@@ -301,31 +375,37 @@ final class AudioPlayback {
 	/// The rest of one file from `frame` — its sound, then its silence to
 	/// the longest file's end. The timeline's voice reports the end of the
 	/// pass; the others play theirs and say nothing.
-	private func schedulePass(ofVoice index: Int, from frame: AVAudioFramePosition, generation scheduled: Int) {
+	///
+	/// - Returns: the frame the pass ends before, on the timeline. While the
+	///   file grows that is as far as it has been written, which is not the end.
+	@discardableResult
+	private func schedulePass(
+		ofVoice index: Int, from frame: AVAudioFramePosition, generation scheduled: Int
+	) -> AVAudioFramePosition {
 		let voice = voices[index]
-		let own = AVAudioFramePosition((Double(frame) * voice.rate / sampleRate).rounded())
+		let own = ownFrame(frame, of: voice)
 		// A loop over part of the song ends where it ends, and has no padding:
 		// the file goes on past it.
 		if isLooping, loopRange != nil {
-			let ownEnd = AVAudioFramePosition((Double(loopBounds.to) * voice.rate / sampleRate).rounded())
+			let ownEnd = ownFrame(loopBounds.to, of: voice)
 			let count = min(ownEnd, voice.length) - own
-			guard count > 0 else { return }
-			var ended: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)?
-			if index == 0 {
-				ended = { [weak self] _ in DispatchQueue.main.async { self?.passPlayed(scheduled) } }
-			}
+			guard count > 0 else { return frame }
 			voice.node.scheduleSegment(
 				voice.file, startingFrame: own, frameCount: AVAudioFrameCount(count), at: nil,
-				completionCallbackType: .dataPlayedBack, completionHandler: ended
+				completionCallbackType: .dataPlayedBack, completionHandler: ended(ofVoice: index, generation: scheduled)
 			)
-			return
+			return loopBounds.to
 		}
-		let remaining = voice.length - own
-		let padding = voice.padding.map { AVAudioFrameCount(max(0, Int64($0.frameLength) - max(0, own - voice.length))) } ?? 0
-		var ended: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)?
-		if index == 0 {
-			ended = { [weak self] _ in DispatchQueue.main.async { self?.passPlayed(scheduled) } }
-		}
+		// Growing, the file may hold a little more than the render has said is
+		// written — the stretch being written — and that is not played yet.
+		let written = isGrowing ? min(voice.length, ownFrame(frameCount, of: voice)) : voice.length
+		let remaining = written - own
+		// Nor is it padded: its end is not the song's end.
+		let padding = isGrowing ? 0 : voice.padding.map {
+			AVAudioFrameCount(max(0, Int64($0.frameLength) - max(0, own - voice.length)))
+		} ?? 0
+		let through = isGrowing ? timelineFrame(max(own, written), of: voice) : frameCount
+		let ended = ended(ofVoice: index, generation: scheduled, through: through)
 
 		if remaining > 0 {
 			let onSegment: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)? = padding > 0 ? nil : ended
@@ -337,11 +417,39 @@ final class AudioPlayback {
 		if padding > 0, let silence = voice.padding {
 			// The tail of the padding: what is left of it after `own`.
 			let buffer = padding == silence.frameLength ? silence : Self.silence(padding, as: voice.file.processingFormat)
-			guard let buffer else { return }
+			guard let buffer else { return through }
 			voice.node.scheduleBuffer(
 				buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack, completionHandler: ended
 			)
 		}
+		return through
+	}
+
+	/// What the timeline's voice says when a stretch of it has been heard;
+	/// nil for the others, which say nothing.
+	///
+	/// - Parameter through: the frame the stretch ends before, so a stretch
+	///   with more queued behind it is not taken for the last one.
+	private func ended(
+		ofVoice index: Int, generation scheduled: Int, through: AVAudioFramePosition = .max
+	) -> (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)? {
+		guard index == 0 else { return nil }
+		return { [weak self] _ in DispatchQueue.main.async { self?.passPlayed(scheduled, through: through) } }
+	}
+
+	/// A frame on the timeline as a frame of one voice's file, and back.
+	private func ownFrame(_ frame: AVAudioFramePosition, of voice: Voice) -> AVAudioFramePosition {
+		AVAudioFramePosition((Double(frame) * voice.rate / sampleRate).rounded())
+	}
+
+	private func timelineFrame(_ own: AVAudioFramePosition, of voice: Voice) -> AVAudioFramePosition {
+		AVAudioFramePosition((Double(own) * sampleRate / voice.rate).rounded())
+	}
+
+	/// Opens a voice's file again, to see what has been written to it since.
+	private func reopen(_ index: Int) {
+		guard let file = try? AVAudioFile(forReading: voices[index].file.url) else { return }
+		voices[index].file = file
 	}
 
 	/// One more whole pass behind whatever is queued, and another when this one
@@ -378,6 +486,61 @@ final class AudioPlayback {
 		}
 	}
 
+	// MARK: - Files that join
+
+	/// Plays these files too, from where the others are, without stopping
+	/// them. They join silent; `setVolumes` brings them in.
+	///
+	/// For the stems of a streamed render, which land when the mix is already
+	/// playing. Before this the song was made again from all of its files — a
+	/// new engine, started where the old one was torn down — and that was a
+	/// hole in the sound at the moment the render finished.
+	func add(urls: [URL]) throws {
+		let files = try urls.map { try AVAudioFile(forReading: $0) }
+		guard !files.isEmpty else { return }
+		// The files already playing, whole: a render that has finished.
+		for index in voices.indices { reopen(index) }
+		let longest = max(
+			Double(frameCount) / max(1, sampleRate),
+			files.map { Double($0.length) / max(1, $0.processingFormat.sampleRate) }.max() ?? 0
+		)
+		let lengthened = AVAudioFramePosition((longest * sampleRate).rounded()) > frameCount
+		if lengthened {
+			frameCount = AVAudioFramePosition((longest * sampleRate).rounded())
+			for index in voices.indices {
+				voices[index].padding = Self.padding(of: voices[index].file, toSeconds: longest)
+			}
+		}
+		let first = voices.count
+		for file in files {
+			let voice = Voice(file: file, padding: Self.padding(of: file, toSeconds: longest))
+			voice.node.volume = 0
+			engine.attach(voice.node)
+			engine.connect(voice.node, to: engine.mainMixerNode, format: file.processingFormat)
+			voices.append(voice)
+			volumes.append(0)
+		}
+		guard isPlaying else { return }
+		// Longer than what is queued: the passes queued end too soon, and what
+		// plays is scheduled again, once.
+		let now = engine.outputNode.lastRenderTime
+		let at = now.flatMap { $0.isSampleTimeValid ? AVAudioTime(sampleTime: $0.sampleTime + 2048, atRate: $0.sampleRate) : nil }
+		guard !lengthened, let at, let playerTime = node.playerTime(forNodeTime: at) else {
+			let here = currentFrame
+			stopNodes()
+			start(from: here)
+			return
+		}
+		// Where the timeline's node will be at that sample time, which is where
+		// the new ones start from: on the same clock, as `start` does it.
+		let frame = wrapped(scheduledFrom + max(0, playerTime.sampleTime))
+		for index in first..<voices.count {
+			schedulePass(ofVoice: index, from: frame, generation: generation)
+			if isLooping { queuePass(ofVoice: index, generation: generation) }
+			voices[index].node.play(at: at)
+		}
+	}
+
 	// MARK: - A file that is still being written
 
 	/// Plays this file as one that grows: nothing stops at what is in it now.
@@ -398,7 +561,12 @@ final class AudioPlayback {
 	///   from where the playhead is.
 	func grew(toFrames frames: AVAudioFramePosition, finished: Bool = false) {
 		guard isGrowing else { return }
-		if finished { isGrowing = false }
+		if finished {
+			isGrowing = false
+			// The whole file, for every schedule from now on: a seek, a loop,
+			// a play from the top.
+			for index in voices.indices { reopen(index) }
+		}
 		let shrank = frames < frameCount
 		frameCount = max(0, frames)
 		guard isPlaying || isStarved else { return }
@@ -422,10 +590,27 @@ final class AudioPlayback {
 			start(from: restingFrame)
 			return
 		}
-		guard frameCount > scheduledThrough else { return }
-		for index in voices.indices { append(toVoice: index, upTo: frameCount) }
-		scheduledThrough = frameCount
+		// A loop plays what it has, and takes what has arrived on its next
+		// pass: a stretch put behind it would play after the loop, not in it.
+		guard frameCount > scheduledThrough, !isLooping else { return }
+		// **Ran dry before this arrived.** The node's clock goes on through
+		// the silence, and what is put behind it now would play from wherever
+		// that clock is while the playhead says it is later in the song. So
+		// on again from where the sound ran out, scheduled afresh.
+		if let played = playedFrame, played + AVAudioFramePosition(sampleRate * Self.margin) >= scheduledThrough {
+			let here = min(played, scheduledThrough)
+			stopNodes()
+			start(from: here)
+			return
+		}
+		guard let through = append(toVoice: 0, upTo: frameCount) else { return }
+		for index in voices.indices.dropFirst() { _ = append(toVoice: index, upTo: through) }
+		scheduledThrough = through
 	}
+
+	/// How close to running dry a node can be and still have a stretch put
+	/// behind it in time: a few render cycles.
+	static let margin: Double = 0.03
 
 	/// Nothing more is coming: what is in the file is the whole song. Said when
 	/// a render ends without saying so itself — it failed, or it was replaced.
@@ -440,36 +625,48 @@ final class AudioPlayback {
 
 	/// The stretch between what is queued and what has been written, out of the
 	/// file as it is now — the file opened before the write cannot see it.
-	private func append(toVoice index: Int, upTo frames: AVAudioFramePosition) {
+	///
+	/// - Returns: the frame on the timeline the stretch ends before; nil when
+	///   there was nothing new in the file to put behind what is queued.
+	private func append(toVoice index: Int, upTo frames: AVAudioFramePosition) -> AVAudioFramePosition? {
+		reopen(index)
 		let voice = voices[index]
-		guard let file = try? AVAudioFile(forReading: voice.file.url) else { return }
-		let from = AVAudioFramePosition((Double(scheduledThrough) * voice.rate / sampleRate).rounded())
-		let to = min(AVAudioFramePosition((Double(frames) * voice.rate / sampleRate).rounded()), file.length)
-		guard to > from else { return }
-		let scheduled = generation
-		var ended: (@Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)?
-		if index == 0 {
-			ended = { [weak self] _ in DispatchQueue.main.async { self?.passPlayed(scheduled) } }
-		}
+		let from = ownFrame(scheduledThrough, of: voice)
+		let to = min(ownFrame(frames, of: voice), voice.length)
+		guard to > from else { return nil }
+		let through = timelineFrame(to, of: voice)
 		voice.node.scheduleSegment(
-			file, startingFrame: from, frameCount: AVAudioFrameCount(to - from), at: nil,
-			completionCallbackType: .dataPlayedBack, completionHandler: ended
+			voice.file, startingFrame: from, frameCount: AVAudioFrameCount(to - from), at: nil,
+			completionCallbackType: .dataPlayedBack,
+			completionHandler: ended(ofVoice: index, generation: generation, through: through)
 		)
+		return through
 	}
 
-	private func passPlayed(_ scheduled: Int) {
+	private func passPlayed(_ scheduled: Int, through: AVAudioFramePosition) {
 		// Everything written has been played and there is more coming: the
-		// render fell behind. It waits where it is, playing to whoever is
-		// watching, until the next stretch lands.
-		if generation == scheduled, isPlaying, isGrowing {
-			restingFrame = min(currentFrame, frameCount)
+		// render fell behind. It waits where the sound ran out, until the next
+		// stretch lands.
+		//
+		// **Only the last stretch queued says so.** Reported 2026-09-18: "when
+		// open a song file and start it while it is still streaming, there are
+		// some heavy interruptions and false playbacks in the first seconds".
+		// Every stretch put behind the first said it had been played, and every
+		// one was taken for the render having fallen behind: the sound stopped
+		// at each and started again at the next, from a file opened before any
+		// of them had been written.
+		if generation == scheduled, isPlaying, isGrowing, !isLooping {
+			guard through >= scheduledThrough else { return }
+			restingFrame = min(through, frameCount)
 			stopNodes()
 			isPlaying = false
 			isStarved = true
 			return
 		}
 		// A pass that ends while looping is followed by the one queued behind it.
-		guard generation == scheduled, isPlaying, !isLooping else { return }
+		// A stretch that ends with more queued behind it is not the end: the
+		// render finished while it was queued.
+		guard generation == scheduled, isPlaying, !isLooping, through >= scheduledThrough else { return }
 		restingFrame = frameCount
 		stopNodes()
 		isPlaying = false

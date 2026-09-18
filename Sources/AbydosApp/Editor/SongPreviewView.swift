@@ -692,12 +692,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		guard let rendered else { return }
 		// A render that is still being written is the mix alone: heard whichever
 		// view is up, since there are no stems yet to hear in its place.
-		rendered.playback.setVolume(view == .mix || rendered.manifest.layers.isEmpty ? 1 : 0, ofVoice: 0)
 		let share = Float(rendered.manifest.stemGain)
-		for (index, layer) in rendered.manifest.layers.enumerated() {
-			let heard = view == .stems && !silenced.contains(layer.name)
-			rendered.playback.setVolume(heard ? share : 0, ofVoice: index + 1)
-		}
+		// All at once and faded, so a switch is neither a hole nor a click: see
+		// `AudioPlayback.setVolumes`.
+		rendered.playback.setVolumes([view == .mix || rendered.manifest.layers.isEmpty ? 1 : 0] + rendered.manifest.layers.map {
+			view == .stems && !silenced.contains($0.name) ? share : 0
+		})
 	}
 
 	private func toggleLane(at index: Int) {
