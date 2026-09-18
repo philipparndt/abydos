@@ -809,6 +809,14 @@ final class BranchDeleteList: NSView {
 		table.addTableColumn(column)
 		table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
 		table.headerView = nil
+		// **`.plain`, because `.automatic` pads the content and the height
+		// below does not know it.** The inset style adds a constant ten points
+		// to what the table asks for, whatever the row count, so the list was
+		// always ten points taller than the frame it was given and the last row
+		// lost half of itself behind the buttons — three branches showed two and
+		// a sliver. Measured at two, three, four, five and eight rows: the
+		// overshoot is ten every time, and nought under this style.
+		table.style = .plain
 		table.rowHeight = Self.rowHeight
 		table.backgroundColor = .clear
 		table.selectionHighlightStyle = .none
