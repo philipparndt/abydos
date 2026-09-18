@@ -161,6 +161,13 @@ extension EditorViewController {
 			tab?.codeView?.reveal(line: line, column: column)
 			if let codeView = tab?.codeView { codeView.window?.makeFirstResponder(codeView) }
 		}
+		// A region's `play` line, in whichever of the song's files it is written.
+		view.onRevealPlace = { [weak self, weak tab] file, line in
+			guard let self, let tab else { return }
+			self.showInTab(file: file, in: tab)
+			tab.codeView?.reveal(line: line, column: 1)
+			if let codeView = tab.codeView { codeView.window?.makeFirstResponder(codeView) }
+		}
 		view.onPlayingChanged = { [weak self, weak tab] playing in
 			guard let tab else { return }
 			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil

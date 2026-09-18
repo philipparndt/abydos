@@ -77,6 +77,31 @@ final class SongCanvas: NSView {
 		didSet { refresh() }
 	}
 
+	/// Each lane drawn as its patterns and notes rather than as `mode` says:
+	/// see `SongNotesDrawing`. The same lanes, the same sound.
+	var showsNotes = false {
+		didSet { if showsNotes != oldValue { refresh() } }
+	}
+	/// What each lane draws as notes, a strip or several per lane.
+	private(set) var noteStrips: [[SongNotesDrawing.Strip]] = []
+	/// A sixteenth note, in seconds, which the detail is chosen by.
+	private var sixteenth: Double = 0
+	var notesLit = SongNotesDrawing.Lit.nothing {
+		didSet { if notesLit != oldValue, showsNotes { needsDisplay = true } }
+	}
+	/// Why there are no notes to draw, said where they would be.
+	var notesMessage: String? {
+		didSet { if notesMessage != oldValue, showsNotes { needsDisplay = true } }
+	}
+	/// A region was clicked; true with ⌥, which asks for its pattern.
+	var onRegionClicked: ((SongArrangement.Region, Bool) -> Void)?
+
+	func setNotes(_ strips: [[SongNotesDrawing.Strip]], sixteenth: Double) {
+		noteStrips = strips
+		self.sixteenth = sixteenth
+		if showsNotes { needsDisplay = true }
+	}
+
 	/// Whether each lane has a header naming it. The mix alone has none.
 	var showsHeaders = true {
 		didSet { refresh() }
@@ -278,8 +303,8 @@ final class SongCanvas: NSView {
 			setWindow(start: start, span: windowSpan)
 			return
 		}
-		// A header first: its switch, then its name. Anywhere else is the
-		// timeline.
+		// A header first: its switch, then its name. Then, drawn as notes, a
+		// region. Anywhere else is the timeline.
 		if showsHeaders {
 			for index in lanes.indices {
 				let header = headerRect(ofLane: index)
@@ -293,7 +318,64 @@ final class SongCanvas: NSView {
 				return
 			}
 		}
+		if showsNotes, let (_, region) = region(at: point) {
+			pressedHeader = true
+			onRegionClicked?(region, event.modifierFlags.contains(.option))
+			return
+		}
 		seek(to: event)
+	}
+
+	/// The region under a point, when lanes are drawn as notes.
+	private func region(at point: NSPoint) -> (SongArrangement.Track, SongArrangement.Region)? {
+		for index in lanes.indices where noteStrips.indices.contains(index) {
+			for (strip, rect) in stripRects(ofLane: index) {
+				if let hit = SongNotesDrawing.region(at: point, in: strip, rect: rect, window: notesWindow) {
+					return (hit.track, hit.region)
+				}
+			}
+		}
+		return nil
+	}
+
+	private var notesWindow: SongNotesDrawing.Window {
+		SongNotesDrawing.Window(start: windowStart, span: windowSpan, width: bounds.width)
+	}
+
+	/// A lane's strips and where each is: the body under its header, shared out.
+	private func stripRects(ofLane index: Int) -> [(SongNotesDrawing.Strip, NSRect)] {
+		guard noteStrips.indices.contains(index), !noteStrips[index].isEmpty else { return [] }
+		let lane = laneRect(index)
+		let body = NSRect(x: 0, y: lane.minY + headerHeight, width: lane.width, height: max(0, lane.height - headerHeight))
+		let strips = noteStrips[index]
+		let height = body.height / CGFloat(strips.count)
+		return strips.enumerated().map { number, strip in
+			(strip, NSRect(x: body.minX, y: body.minY + height * CGFloat(number), width: body.width, height: height))
+		}
+	}
+
+	/// The detail each lane's strips are drawn at, for a report.
+	var notesDetails: [String] {
+		lanes.indices.map { index in
+			stripRects(ofLane: index).map { strip, rect in
+				SongNotesDrawing.detail(of: strip, in: rect, window: notesWindow, sixteenth: sixteenth).rawValue
+			}.joined(separator: "/")
+		}
+	}
+
+	/// The regions on screen, and how many are lit.
+	var notesOnScreen: (regions: Int, lit: Int) {
+		var regions = 0
+		var lit = 0
+		for strip in noteStrips.flatMap({ $0 }) {
+			for track in strip.tracks {
+				for region in SongNotesDrawing.visible(track.regions, in: notesWindow) where region.end > windowStart {
+					regions += 1
+					if notesLit.lights(region, of: track) { lit += 1 }
+				}
+			}
+		}
+		return (regions, lit)
 	}
 
 	override func mouseDragged(with event: NSEvent) {
@@ -319,6 +401,19 @@ final class SongCanvas: NSView {
 			needsDisplay = true
 		}
 		super.mouseUp(with: event)
+	}
+
+	/// A click at fractions of the canvas, sent as real events.
+	func clickForTesting(at x: Double, _ y: Double, option: Bool) {
+		guard let window else { return }
+		let at = convert(NSPoint(x: bounds.width * x, y: bounds.height * y), to: nil)
+		for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+			guard let event = NSEvent.mouseEvent(
+				with: type, location: at, modifierFlags: option ? .option : [], timestamp: 0,
+				windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+			) else { continue }
+			if type == .leftMouseDown { mouseDown(with: event) } else { mouseUp(with: event) }
+		}
 	}
 
 	/// A press on a lane's switch that moves a pixel before it lets go — the
@@ -436,9 +531,17 @@ final class SongCanvas: NSView {
 				Theme.current.selectionActive.withAlphaComponent(0.14).setFill()
 				rect.fill()
 			}
-			if let waveRect = waveRect(ofLane: index) { drawWave(ofLane: index, in: waveRect) }
-			if let spectrumRect = spectrumRect(ofLane: index) { drawSpectrum(ofLane: index, in: spectrumRect) }
-			if mode == .both, let waveRect = waveRect(ofLane: index) {
+			if showsNotes {
+				for (strip, rect) in stripRects(ofLane: index) {
+					SongNotesDrawing.draw(
+						strip, in: rect, window: notesWindow, sixteenth: sixteenth, lit: notesLit, enabled: lane.isEnabled
+					)
+				}
+			} else {
+				if let waveRect = waveRect(ofLane: index) { drawWave(ofLane: index, in: waveRect) }
+				if let spectrumRect = spectrumRect(ofLane: index) { drawSpectrum(ofLane: index, in: spectrumRect) }
+			}
+			if !showsNotes, mode == .both, let waveRect = waveRect(ofLane: index) {
 				Theme.current.separator.setFill()
 				NSRect(x: 0, y: waveRect.maxY, width: bounds.width, height: 1).fill()
 			}
@@ -447,6 +550,13 @@ final class SongCanvas: NSView {
 				Theme.current.separator.setFill()
 				NSRect(x: 0, y: rect.minY, width: bounds.width, height: 1).fill()
 			}
+		}
+		if showsNotes, noteStrips.allSatisfy(\.isEmpty), let notesMessage {
+			let text = NSAttributedString(string: notesMessage, attributes: [
+				.font: Theme.current.uiFont(11), .foregroundColor: Theme.current.gitIgnored,
+			])
+			let size = text.size()
+			text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: lanesArea.midY - size.height / 2))
 		}
 		drawBars()
 		// Over the lanes: what the loop leaves out is dimmed, and a band under
