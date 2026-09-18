@@ -210,6 +210,75 @@ struct SessionTmuxWindowTests {
 	}
 }
 
+/// Remembering the *session* a project was left in, and going back to it.
+///
+/// The window alone was not enough: a terminal moved into another session
+/// with `C-b s` came back the next morning in a fresh session named after the
+/// project's folder — one window, nothing in it — and the one with the work in
+/// it was a menu away. Reported 2026-09-18, with twenty-odd of the fresh ones
+/// on the server to show for it.
+struct SessionTmuxSessionTests {
+	private func roundTrip(_ session: ProjectSession) throws -> ProjectSession? {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("session-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+		try SessionStore.write(session, in: root)
+		return SessionStore.read(in: root)
+	}
+
+	@Test func theSessionSurvivesBeingWrittenAndRead() throws {
+		let written = ProjectSession(tmuxWindow: "@7", tmuxSession: "work")
+		#expect(!written.isEmpty)
+		#expect(try roundTrip(written)?.tmuxSession == "work")
+	}
+
+	/// A file from before this existed reads as remembering none, and the
+	/// project then opens the way it always did.
+	@Test func anOlderSessionSimplyHasNoSession() throws {
+		let written = ProjectSession(tmuxWindow: "@3")
+		#expect(try roundTrip(written)?.tmuxSession == nil)
+	}
+
+	/// The session the terminal was left in is the one it goes back to.
+	@Test func aRememberedSessionStillOnTheServerIsAttachedTo() {
+		var asked: [String] = []
+		let chosen = ProjectSession.sessionToAttach(
+			projectNamed: "abydos", remembered: "work",
+			stillThere: { asked.append($0); return true }
+		)
+		#expect(chosen == "work")
+		#expect(asked == ["work"])
+	}
+
+	/// **A remembered session is never made.** The server restarted and took
+	/// it with it: making `work` again, in this project's directory, would be
+	/// a session named after something else with nothing of it inside.
+	@Test func aRememberedSessionThatHasGoneFallsBackToTheProjectsOwn() {
+		let chosen = ProjectSession.sessionToAttach(
+			projectNamed: "abydos", remembered: "work", stillThere: { _ in false }
+		)
+		#expect(chosen == "abydos")
+	}
+
+	/// The common case pays nothing: a terminal that never left its own
+	/// session, or a project with nothing remembered, does not ask the server.
+	@Test func theProjectsOwnSessionIsNotAskedAbout() {
+		var asked = 0
+		let count: (String) -> Bool = { _ in asked += 1; return true }
+		#expect(ProjectSession.sessionToAttach(
+			projectNamed: "abydos", remembered: "abydos", stillThere: count
+		) == "abydos")
+		#expect(ProjectSession.sessionToAttach(
+			projectNamed: "abydos", remembered: nil, stillThere: count
+		) == "abydos")
+		#expect(ProjectSession.sessionToAttach(
+			projectNamed: "abydos", remembered: "", stillThere: count
+		) == "abydos")
+		#expect(asked == 0)
+	}
+}
+
 /// What this app runs to put a terminal into a project's session.
 struct TmuxAttachTests {
 	/// `new -A` — attach if it exists, make it if it does not — and then the

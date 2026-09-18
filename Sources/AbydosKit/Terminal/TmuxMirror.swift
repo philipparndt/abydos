@@ -480,6 +480,36 @@ public enum TmuxMirror {
 		return await run(tmux, ["has-session", "-t", "=\(name)"])?.exitCode == 0
 	}
 
+	/// The same, answered before returning.
+	///
+	/// For the one caller that cannot wait: a project opening decides which
+	/// session its first terminal attaches to, and the terminal is started in
+	/// the same pass. `has-session` is a round trip to a socket — a millisecond
+	/// or two with a server up, and an immediate refusal without one — which is
+	/// the same price `TmuxConfig` already pays at launch for `show-environment`.
+	public static func sessionExistsNow(_ name: String) -> Bool {
+		guard let tmux = Executables.locate("tmux") else { return false }
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: tmux)
+		process.arguments = ["has-session", "-t", "=\(name)"]
+		// Rather than inheriting it, for the reason in `TmuxSocketPath`.
+		process.environment = TmuxSocketPath.environment
+		process.standardOutput = FileHandle.nullDevice
+		process.standardError = FileHandle.nullDevice
+		do { try process.run() } catch { return false }
+		process.waitUntilExit()
+		return process.terminationStatus == 0
+	}
+
+	/// Ends a session, taking every window in it and whatever was running
+	/// there. Answers whether tmux did it.
+	///
+	/// `=` so a name is the whole name: a plain target is a prefix match, and
+	/// closing `song` must not close `songs`.
+	public static func killSession(named name: String) async -> Bool {
+		await succeeds(["kill-session", "-t", "=\(name)"])
+	}
+
 	/// Moves a window to where another one is, shifting the rest along.
 	///
 	/// tmux does this properly — `move-window -b/-a` inserts before or after a

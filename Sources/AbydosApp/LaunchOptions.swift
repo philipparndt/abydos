@@ -164,6 +164,10 @@ struct LaunchOptions {
 	/// Open a detail dialog over the window, for verifying that it shows what it
 	/// was given. It cannot be reached without a click otherwise.
 	var detailDialog = false
+	/// Open the close-sessions sheet over a list of made-up sessions, for
+	/// seeing it without a tmux server — and without one that has anybody's
+	/// sessions on it, since the sheet exists to kill them.
+	var closeSessionsSheet = false
 	/// Show the window as it looks while presenting, without storing the mode.
 	var presentation = false
 	/// Close every terminal tab after this many seconds, leaving the panel

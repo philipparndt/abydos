@@ -392,3 +392,42 @@ it does with a set of terminals today.
   called
 - **THEN** the terminals open and none is brought forward on account of the note
 
+
+### Requirement: The terminal goes back to the tmux session it was in
+
+A project's session SHALL carry the name of the tmux session its terminal was
+looking at when the project was left, beside the window, and the terminal
+SHALL attach to that session on the next open when the server still has it.
+
+A project's terminal starts in a session named after the project's folder,
+and `C-b s` or the session tag can move it into another. Attaching to the
+folder's name regardless made a fresh one-window session on every open for
+whoever keeps one long-lived session and moves each project's terminal into
+it, and left the one with the work in it a menu away.
+
+The remembered name SHALL NOT be made: a server that has restarted has none
+of its sessions, and a session named after somebody else's project in this
+project's directory is a wrong session in place of the old one. Then, as for
+a project that remembers nothing, the project's own name is attached to and
+made if it has to be. The server is asked only when the remembered name
+differs from the project's own.
+
+#### Scenario: moved to a long-lived session
+
+- **GIVEN** a project `abydos` whose terminal was switched to the session
+  `work`
+- **WHEN** the project is left and opened again
+- **THEN** the terminal attaches to `work`, and no session `abydos` is made
+
+#### Scenario: the server has restarted since
+
+- **GIVEN** a project remembering `work`, on a server that no longer has it
+- **WHEN** the project is opened
+- **THEN** the terminal attaches to the project's own session, made if need be,
+  and `work` is not made
+
+#### Scenario: a session file from before this was remembered
+
+- **GIVEN** a session file naming a window and no session
+- **WHEN** the project is opened
+- **THEN** the terminal attaches to the project's own session, as it always did

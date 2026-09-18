@@ -283,8 +283,20 @@ extension MainWindowController {
 		// The terminal is where half the work happens, so a window arrives with
 		// it up — unless this project was left with it closed, which is a
 		// decision and outlives the default.
-		// One tmux session per project, for whoever asked for tmux at all.
-		bottomPanel.tmuxSession = TmuxSessionName.of(project.root)
+		// One tmux session per project, for whoever asked for tmux at all —
+		// unless the terminal was left looking at another one, which is then
+		// the one it goes back to. Decided here and not when the terminal
+		// starts, since `tmuxSession` is also what the tabs mirror, and the
+		// strip should come up on the session the client is about to attach to
+		// rather than on one it is about to leave.
+		//
+		// Asked only with tmux switched on: the check is a subprocess, and a
+		// window that will never start tmux has no business starting one.
+		bottomPanel.tmuxSession = ProjectSession.sessionToAttach(
+			projectNamed: TmuxSessionName.of(project.root),
+			remembered: Settings.shared.startsTmux ? remembered?.tmuxSession : nil,
+			stillThere: TmuxMirror.sessionExistsNow
+		)
 
 		// Once per window. Opening another project in the same window is not a
 		// window opening, and having the terminal take the screen again — in

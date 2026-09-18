@@ -1195,6 +1195,41 @@ and to nobody else.
 - **THEN** what it says names the tmux session those tabs belong to and what
   clicking it does
 
+### Requirement: Several tmux sessions can be closed at once
+
+The session tag's menu SHALL offer *Close Sessions…* whenever the server has a
+session other than the one the tabs are showing, and the sheet it opens SHALL
+list every session on the server with its window count, a box beside each, a
+way to tick or clear them all, and one button that kills the ticked ones.
+
+The session the tabs are showing SHALL be listed and SHALL NOT be tickable:
+closing the session under the tabs is what closing its last window does, and
+a sheet about other sessions must not take the terminal with it. A session
+attached elsewhere is marked as attached and may still be closed.
+
+Each ticked session is killed by its whole name, never by prefix, and what
+happened is said afterwards: how many were closed, and how many tmux refused.
+
+#### Scenario: tidying the sessions each project left behind
+
+- **GIVEN** a server with `work` under the tabs and twenty one-window sessions
+  named after project folders
+- **WHEN** *Close Sessions…* is opened, *Select All* pressed and *Close* chosen
+- **THEN** the twenty are killed, `work` is not, and the toast says twenty were
+  closed
+
+#### Scenario: the session under the tabs
+
+- **WHEN** the sheet is open
+- **THEN** the session the tabs are showing is listed with its box disabled and
+  a note saying why
+
+#### Scenario: a name that is a prefix of another
+
+- **GIVEN** sessions `song` and `songs`
+- **WHEN** `song` is ticked and closed
+- **THEN** `songs` is still there
+
 ### Requirement: Following the terminal is remembered
 
 Turning following on or off SHALL be remembered between sittings, whichever of

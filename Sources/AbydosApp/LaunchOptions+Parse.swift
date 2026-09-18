@@ -180,6 +180,7 @@ extension LaunchOptions {
 			case "--presentation": options.presentation = true
 			case "--version": options.reportVersion = true
 			case "--detail-dialog": options.detailDialog = true
+			case "--close-sessions": options.closeSessionsSheet = true
 			case "--click-panel-tab": options.clickPanelTab = next()
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()

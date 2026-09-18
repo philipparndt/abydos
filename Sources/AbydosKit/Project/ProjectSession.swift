@@ -253,6 +253,17 @@ public struct ProjectSession: Equatable, Sendable {
 	/// everything after moves down. Nil for a project whose terminal was not
 	/// mirroring a session, and for one saved before this was written.
 	public var tmuxWindow: String?
+	/// Which tmux session the terminal was looking at when the project was
+	/// left — not necessarily the one named after the project.
+	///
+	/// A project's terminal starts in a session called after the project's
+	/// folder, and `C-b s` or the session tag can move it to another. Left
+	/// unrecorded, every launch attached to the folder's name again: whoever
+	/// keeps one long-lived session and moves each project's terminal into it
+	/// got a fresh, empty session made for them every morning, and a list of
+	/// them to show for it by the end of the month. Nil for a terminal that was
+	/// not mirroring a session, and for a file written before this existed.
+	public var tmuxSession: String?
 	/// Which part of the project was being worked on, relative to it.
 	public var subprojectPath: String?
 	/// The launch configuration that was chosen in the titlebar.
@@ -331,6 +342,7 @@ public struct ProjectSession: Equatable, Sendable {
 		terminals: [OpenTerminal] = [],
 		isPanelVisible: Bool = false,
 		tmuxWindow: String? = nil,
+		tmuxSession: String? = nil,
 		subprojectPath: String? = nil,
 		selectedConfiguration: String? = nil,
 		xcodeDestinations: [String: String] = [:],
@@ -357,6 +369,7 @@ public struct ProjectSession: Equatable, Sendable {
 		self.terminals = terminals
 		self.isPanelVisible = isPanelVisible
 		self.tmuxWindow = tmuxWindow
+		self.tmuxSession = tmuxSession
 		self.subprojectPath = subprojectPath
 		self.selectedConfiguration = selectedConfiguration
 	}
@@ -369,7 +382,7 @@ public struct ProjectSession: Equatable, Sendable {
 	public var isEmpty: Bool {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
-			&& breakpoints.isEmpty && tmuxWindow == nil && reviewTicks.isEmpty
+			&& breakpoints.isEmpty && tmuxWindow == nil && tmuxSession == nil && reviewTicks.isEmpty
 			&& reviewCheckouts.isEmpty && pages.isEmpty
 			&& (composedMessage?.isEmpty ?? true)
 	}
@@ -412,6 +425,27 @@ public struct ProjectSession: Equatable, Sendable {
 		followingTerminal: Bool
 	) -> String? {
 		followingTerminal ? stored : showing
+	}
+
+	/// Which tmux session a project's terminal attaches to when it opens.
+	///
+	/// The one it was left looking at, when that is still on the server;
+	/// otherwise the project's own, which `new -A` makes if it has to. The
+	/// remembered name is never *made*: a server that has restarted since has
+	/// none of its sessions, and making one called after somebody else's
+	/// project in this project's directory would be a new wrong session in
+	/// place of the old one.
+	///
+	/// `stillThere` is only asked when the answer would change anything — it is
+	/// a subprocess, and the common case of a terminal that never left its own
+	/// session should not pay for one.
+	public static func sessionToAttach(
+		projectNamed own: String,
+		remembered: String?,
+		stillThere: (String) -> Bool
+	) -> String {
+		guard let remembered, !remembered.isEmpty, remembered != own else { return own }
+		return stillThere(remembered) ? remembered : own
 	}
 }
 

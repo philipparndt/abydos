@@ -239,6 +239,21 @@ extension BottomPanel {
 			new.representedObject = tty
 			menu.addItem(new)
 
+			// And the way out of the list this menu turns into: a session per
+			// project, each left behind when its terminal moved elsewhere.
+			// Only with something to close — the one under the tabs does not
+			// count, and a sheet offering nothing is a sheet that should not
+			// have opened.
+			if TmuxSessionClosing.isWorthOffering(all, showing: current) {
+				let close = NSMenuItem(
+					title: "Close Sessions…",
+					action: #selector(BottomPanel.closeSessionsFromMenu(_:)),
+					keyEquivalent: ""
+				)
+				close.target = self
+				menu.addItem(close)
+			}
+
 			menu.popUp(
 				positioning: nil,
 				at: NSPoint(x: rect.minX, y: rect.maxY + Theme.current.scaled(4)),
@@ -311,6 +326,53 @@ extension BottomPanel {
 			}
 		}
 		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
+	}
+
+	@objc private func closeSessionsFromMenu(_ sender: NSMenuItem) {
+		offerToCloseSessions()
+	}
+
+	/// Asks the server again rather than reusing the menu's list: the sheet
+	/// is what somebody reads before killing things, and it should say what
+	/// is true when it opens, not what was true when the menu did.
+	func offerToCloseSessions() {
+		Task { @MainActor in
+			let offers = TmuxSessionClosing.offers(
+				await TmuxMirror.sessions(), showing: self.mirroredTmuxSession
+			)
+			self.offerToCloseSessions(offers)
+		}
+	}
+
+	func offerToCloseSessions(_ offers: [TmuxSessionClosing.Offer]) {
+		CloseSessionsSheet.ask(offers, over: window) { [weak self] chosen in
+			self?.closeSessions(named: chosen)
+		}
+	}
+
+	/// Kills each, and says how it went.
+	///
+	/// One at a time and each answered: a name tmux refuses — a session that
+	/// went between the sheet opening and the button — is a count in the
+	/// toast rather than a silent gap in what happened.
+	func closeSessions(named names: [String]) {
+		guard !names.isEmpty else { return }
+		Task { @MainActor in
+			var closed = 0
+			for name in names {
+				if await TmuxMirror.killSession(named: name) {
+					closed += 1
+					// The badges seeded from that session's windows are for
+					// windows that no longer exist.
+					self.runningSessions.forgetSeeded(inTmuxSession: name)
+				}
+			}
+			Toast.post(
+				TmuxSessionClosing.said(closed: closed, refused: names.count - closed),
+				kind: closed == names.count ? .information : .warning
+			)
+			self.refreshTmuxWindows()
+		}
 	}
 
 	/// Reorders tmux's windows to match a dragged tab.

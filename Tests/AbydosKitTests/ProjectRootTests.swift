@@ -690,6 +690,7 @@ struct FolderSessionTests {
 		var full = session(file: "/a/b.swift")
 		full.terminals = [ProjectSession.OpenTerminal(name: "zsh", directory: "/a")]
 		full.tmuxWindow = "3"
+		full.tmuxSession = "work"
 		full.selectedConfiguration = "run"
 		full.subprojectPath = "sub"
 		try SessionStore.write(full, in: nil, driven: false, sharedFile: shared)
@@ -698,6 +699,7 @@ struct FolderSessionTests {
 		#expect(read.files.map(\.path) == ["/a/b.swift"])
 		#expect(read.terminals.isEmpty)
 		#expect(read.tmuxWindow == nil)
+		#expect(read.tmuxSession == nil)
 		#expect(read.selectedConfiguration == nil)
 		#expect(read.subprojectPath == nil)
 	}
@@ -710,6 +712,7 @@ struct FolderSessionTests {
 		full.isPanelVisible = true
 		full.terminals = [ProjectSession.OpenTerminal(name: "zsh", directory: "/a")]
 		full.tmuxWindow = "3"
+		full.tmuxSession = "work"
 		full.selectedConfiguration = "run"
 		full.subprojectPath = "sub"
 		full.breakpoints = ["/a/b.swift": []]
@@ -721,6 +724,7 @@ struct FolderSessionTests {
 		#expect(only.isPanelVisible)
 		#expect(only.terminals.isEmpty)
 		#expect(only.tmuxWindow == nil)
+		#expect(only.tmuxSession == nil)
 		#expect(only.selectedConfiguration == nil)
 		#expect(only.subprojectPath == nil)
 		#expect(only.breakpoints.isEmpty)

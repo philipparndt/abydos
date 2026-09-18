@@ -764,6 +764,14 @@ extension AppDelegate {
 			}
 		}
 
+		if options.closeSessionsSheet {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				controller?.panelForTesting.offerToCloseSessions(
+					TmuxSessionClosing.offers(CloseSessionsSheet.sampleForTesting, showing: "work")
+				)
+			}
+		}
+
 		if options.detailDialog {
 			// The real thing a missing server offers, so what is captured is what
 			// somebody pressing "How to install" would actually be shown.
@@ -1040,6 +1048,10 @@ extension AppDelegate {
 				if options.openAbout {
 					return NSApp.windows.first { $0.isVisible && $0 !== controller?.window }
 				}
+				// A sheet is a window of its own too, and a capture of the
+				// window under it shows a dimmed project and none of the
+				// sheet — which is the whole of what the run opened it for.
+				if options.closeSessionsSheet { return controller?.window?.attachedSheet }
 				return nil
 			}
 		}

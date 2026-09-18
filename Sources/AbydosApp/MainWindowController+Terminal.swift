@@ -418,6 +418,11 @@ extension MainWindowController {
 					?? SessionStore.read(in: wasLooseFolder ? nil : current)?.tmuxWindow,
 				followingTerminal: followingTerminal
 			)
+			// And the session that window is in. Following the terminal is no
+			// hazard here: a shell that moved checkout moved *within* the
+			// session, so the session showing is the one both projects were
+			// left in, and attaching to it again selects nothing.
+			session.tmuxSession = bottomPanel.mirroredTmuxSession
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			session.selectedConfiguration = run.selectedConfigurationName
 			session.xcodeDestinations = run.xcodeDestinations
@@ -521,6 +526,7 @@ extension MainWindowController {
 		session.terminals = bottomPanel.captureTerminals()
 		session.isPanelVisible = isPanelVisible
 		session.tmuxWindow = bottomPanel.currentTmuxWindowID
+		session.tmuxSession = bottomPanel.mirroredTmuxSession
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
 		session.selectedConfiguration = run.selectedConfigurationName
 		session.xcodeDestinations = run.xcodeDestinations
