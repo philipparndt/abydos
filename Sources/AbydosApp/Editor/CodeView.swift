@@ -106,6 +106,11 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	var desiredColumnX: CGFloat?
 
 	var onCaretMoved: ((Int, Int) -> Void)?   // line, column (1-based)
+	/// The same move, for a preview that follows the caret — the song pane
+	/// lights the stem the caret is in. A second closure rather than a second
+	/// caller of the first, because `onCaretMoved` is the status bar's and is
+	/// rebound whenever a tab moves between groups.
+	var onCaretLine: ((Int) -> Void)?
 	var onDirtyChanged: ((Bool) -> Void)?
 
 	/// Search matches to highlight, and which one is current.
@@ -309,6 +314,88 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	var baselineOffset: CGFloat = 4
 	var charWidth: CGFloat = 7
 	var gutterWidth: CGFloat = 60
+
+	/// Where each line is heard, when the file is a song whose server says —
+	/// drawn as a bar beside each line's number. See `LineTimeline`.
+	var timeline: LineTimeline? {
+		didSet {
+			guard timeline != oldValue else { return }
+			if (timeline == nil) != (oldValue == nil) { updateFrameSize() }
+			needsDisplay = true
+		}
+	}
+
+	/// Where the song's playhead is, in seconds, drawn through the bars; nil
+	/// when no song pane is showing this file.
+	///
+	/// **Redrawn when a tick would move, not when the time does.** The pane
+	/// says where it is thirty times a second, and a bar of 26 points over a
+	/// four-minute song moves its tick about once every four seconds; redrawing
+	/// the gutter at the pane's rate would be most of a code view's frames spent
+	/// on nothing.
+	var timelinePlayhead: Double? {
+		didSet {
+			// The lines heard now, marked the way the debugger marks the line it
+			// stopped on — several at once, since a song is several lines at once.
+			let heard = timelineMarking ? (timelinePlayhead.flatMap { timeline?.sounding(at: $0) } ?? []) : []
+			if heard != soundingLines {
+				redrawRows(of: heard.symmetricDifference(soundingLines))
+				soundingLines = heard
+			}
+			// And the notes under the playhead, lit on their lines.
+			let notes = timelineMarking ? (timelinePlayhead.flatMap { timeline?.playing(at: $0) } ?? [:]) : [:]
+			if notes != playingNotes {
+				let changed = Set(notes.keys).union(playingNotes.keys).filter { notes[$0] != playingNotes[$0] }
+				playingNotes = notes
+				redrawRows(of: changed)
+			}
+			let pixel = timelinePlayheadPixel()
+			guard pixel != drawnPlayheadPixel, showsTimelineBars else { return }
+			drawnPlayheadPixel = pixel
+			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+			let visible = visibleRect
+			setNeedsDisplay(NSRect(
+				x: timelineColumnX(scrollX: scrollX), y: visible.minY,
+				width: Self.timelineColumnWidth, height: visible.height
+			))
+		}
+	}
+	/// Whether the lines heard at the playhead are marked: while the song
+	/// plays, and while it is stopped on a breakpoint.
+	var timelineMarking = false
+	/// The lines heard at the playhead, 0-based, while `timelineMarking`.
+	var soundingLines: Set<Int> = []
+	/// The notes heard at the playhead: 0-based line to UTF-16 columns on it.
+	var playingNotes: [Int: [Range<Int>]] = [:]
+	/// The line whose breakpoint stopped the song, marked as the debugger's
+	/// stopped line is.
+	var songStoppedLine: Int?
+	/// The bar column, when the file has a timeline; hidden from the gutter's
+	/// menu and remembered in `Settings.songTimelineBars`.
+	var showsTimelineBars = true {
+		didSet {
+			guard showsTimelineBars != oldValue else { return }
+			updateFrameSize()
+			needsDisplay = true
+		}
+	}
+	/// The time-code column, when the file has a timeline.
+	var showsTimeCodes = true {
+		didSet {
+			guard showsTimeCodes != oldValue else { return }
+			updateFrameSize()
+			needsDisplay = true
+		}
+	}
+	/// The device pixel the tick was last drawn at, or nil for no tick.
+	var drawnPlayheadPixel: Int?
+	/// A bar was clicked, or dragged along: that many seconds into the song.
+	var onTimelineSeek: ((Double) -> Void)?
+	/// A bar was option-clicked: loop the stretch of the song under the
+	/// pointer, where that line is heard.
+	var onTimelineLoop: ((ClosedRange<Double>) -> Void)?
+	/// The press that is down began on a bar, so dragging it scrubs.
+	var draggingTimeline = false
 
 	/// Which lines differ from HEAD, for the gutter's change marks. 1-based
 	/// document lines, as `GitChangedLines` reads them off the diff.
@@ -548,6 +635,9 @@ final class CodeView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 	/// Clickable strip on the far left of the gutter, where a runnable line
 	/// gets its play triangle.
 	static var breakpointColumnWidth: CGFloat { Theme.current.scaled(18) }
+	/// The column of song-timeline bars, between the breakpoint strip and the
+	/// numbers; there only while a timeline is.
+	static var timelineColumnWidth: CGFloat { Theme.current.scaled(34) }
 	/// The strip at the right of the gutter that folds and unfolds.
 	///
 	/// Its own column now: a click on the line number makes a breakpoint, so

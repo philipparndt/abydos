@@ -13,6 +13,10 @@
 # state the file list explicitly instead of depending on that check.
 #
 # Re-run to update: adjust the pinned tags below and run from the repo root.
+#
+# TreeSitterSongVendored is not in this list and is left alone: its source is
+# `tree-sitter-song/` in musik-as-text, copied as generated (src/parser.c,
+# src/tree_sitter/, queries/highlights.scm, LICENSE).
 
 set -euo pipefail
 

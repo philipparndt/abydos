@@ -87,6 +87,12 @@ extension CodeView {
 	override func mouseDragged(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 
+		if draggingTimeline {
+			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+			if let seconds = timelineSeconds(atX: point.x, scrollX: scrollX) { onTimelineSeek?(seconds) }
+			return
+		}
+
 		// A marker dragged out of the gutter is thrown away, as it is in Xcode.
 		// Well clear of it: a wobble while clicking is not somebody deleting a
 		// breakpoint. Shown while dragging and done on release — dragging back
@@ -117,6 +123,7 @@ extension CodeView {
 			onDeleteBreakpoint?(line)
 		}
 		draggingBreakpointLine = nil
+		draggingTimeline = false
 
 		// The puff belongs to the drag that ended. Left set, it would follow the
 		// pointer around the file as though everything under it were about to be
@@ -128,7 +135,7 @@ extension CodeView {
 		super.mouseUp(with: event)
 	}
 
-	func handleGutterClick(at point: NSPoint) {
+	func handleGutterClick(at point: NSPoint, modifiers: NSEvent.ModifierFlags = []) {
 		guard let document else { return }
 		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
 		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
@@ -162,6 +169,31 @@ extension CodeView {
 			} else {
 				onToggleBreakpoint?(docLine)
 			}
+
+		case .timeline:
+			// A click on a bar moves the song there, and a drag along it scrubs;
+			// never a breakpoint on a line of a song. A row with no bar is
+			// nothing to aim at, so a click there does nothing.
+			guard let timeline, !timeline.fractions(line: docLine).isEmpty else { return }
+			// A time code goes to where the line is next heard, so pressing it
+			// again walks a pattern's repeats.
+			if point.x < timelineColumnX(scrollX: scrollX) {
+				if let start = timeline.nextStart(line: docLine, after: timelinePlayhead ?? -1) {
+					onTimelineSeek?(start)
+				}
+				return
+			}
+			guard let seconds = timelineSeconds(atX: point.x, scrollX: scrollX) else { return }
+			// Held down: loop where this line is heard, rather than going there.
+			if modifiers.contains(.option) {
+				let spans = timeline.spans[docLine] ?? []
+				if let heard = spans.first(where: { $0.contains(seconds) }) ?? spans.first {
+					onTimelineLoop?(heard)
+				}
+				return
+			}
+			draggingTimeline = true
+			onTimelineSeek?(seconds)
 
 		case .fold:
 			// Only here. The line number belongs to breakpoints now, and a

@@ -18,6 +18,8 @@ public struct DebugAdapter: Equatable, Sendable {
 		/// debug session and answers with a port. Nothing is spawned here, and
 		/// nothing can be debugged until the server is running.
 		case languageServer
+		/// The adapter is an object in this app — see `InProcessDebugAdapter`.
+		case inProcess
 	}
 
 	public let id: String
@@ -52,6 +54,18 @@ public struct DebugAdapter: Equatable, Sendable {
 
 /// The debuggers this app knows how to drive.
 public enum DebugAdapters {
+	/// A musik-as-text song, played by the song pane: its tracks are the
+	/// threads. See `SongDebugAdapter`.
+	public static let song = DebugAdapter(
+		id: "song",
+		name: "Song",
+		command: "",
+		arguments: [],
+		transport: .inProcess,
+		adapterID: "song",
+		installHint: "Built in: play a song."
+	)
+
 	/// Delve, which is Go's debugger and understands goroutines and Go's own
 	/// types in a way nothing else does.
 	public static let delve = DebugAdapter(

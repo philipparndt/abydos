@@ -54,8 +54,13 @@ extension CodeView {
 			let rowRect = NSRect(x: 0, y: y, width: bounds.width, height: lineHeight)
 
 			// The line execution is stopped on wins over the caret's own band.
-			if docLine == executionLine {
+			if docLine == executionLine || docLine == songStoppedLine {
 				NSColor.hex(0x3A4A2A).setFill()
+				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
+			} else if soundingLines.contains(docLine) {
+				// The lines of a song heard now: the stopped line's colour, lighter,
+				// since there are several and they move.
+				NSColor.hex(0x3A4A2A).withAlphaComponent(0.6).setFill()
 				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
 			} else if docLine == caretLine, selection.isEmpty {
 				Theme.current.currentLineBackground.setFill()
@@ -77,6 +82,9 @@ extension CodeView {
 				Theme.current.searchMatchBackground.setFill()
 				for band in matches.others { band.fill() }
 			}
+			// The notes of a song heard now, lit like a karaoke line — painted in
+			// `drawLine`, after the selection, so selecting the line hides nothing.
+			let noteBands = playingNotes.isEmpty ? [] : playingNoteBands(docLine: docLine, segment: segment, rect: rowRect)
 
 			drawLine(
 				docLine: docLine,
@@ -85,6 +93,7 @@ extension CodeView {
 				tokenIndex: tokenIndex,
 				selection: selection,
 				currentMatch: matches.current,
+				playingNotes: noteBands,
 				context: context
 			)
 		}
@@ -128,6 +137,9 @@ extension CodeView {
 	}
 
 	/// Builds the attributed line and draws text, selection, and any fold marker.
+	/// The amber a playing note is lit in, in every theme.
+	static let playingNoteColour = NSColor.hex(0xE8A33A)
+
 	private func drawLine(
 		docLine: Int,
 		segment: Int = 0,
@@ -135,6 +147,7 @@ extension CodeView {
 		tokenIndex: TokenIndex,
 		selection: Range<Int>,
 		currentMatch: NSRect? = nil,
+		playingNotes: [NSRect] = [],
 		context: CGContext
 	) {
 		guard let document else { return }
@@ -203,6 +216,22 @@ extension CodeView {
 		if let currentMatch {
 			Theme.current.searchMatchCurrentBackground.setFill()
 			currentMatch.fill()
+		}
+
+		// **The notes a song is playing, after the selection too, and in amber.**
+		// Asked for 2026-09-15: in the blue of the git marks they read as a
+		// selection, and under a selection they were gone. Amber is neither the
+		// selection's blue nor the debugger band's green; the outline is what
+		// still shows where the fill mixes with a selection under it.
+		if !playingNotes.isEmpty {
+			for band in playingNotes {
+				let shape = NSBezierPath(roundedRect: band.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
+				Self.playingNoteColour.withAlphaComponent(0.38).setFill()
+				shape.fill()
+				Self.playingNoteColour.setStroke()
+				shape.lineWidth = 1
+				shape.stroke()
+			}
 		}
 
 		// This view is flipped, which inverts the context's y-axis. CoreText would

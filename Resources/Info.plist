@@ -55,6 +55,7 @@
 				<string>de.rnd7.abydos.svelte-source</string>
 				<string>de.rnd7.abydos.vue-source</string>
 				<string>de.rnd7.abydos.plantuml</string>
+				<string>de.rnd7.abydos.song</string>
 				<string>de.rnd7.abydos.mdx</string>
 				<string>de.rnd7.abydos.jsonc</string>
 				<string>de.rnd7.abydos.javascript-source</string>
@@ -303,6 +304,23 @@
 					<string>pu</string>
 					<string>iuml</string>
 					<string>wsd</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.source-code</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>musik-as-text song</string>
+			<key>UTTypeIdentifier</key>
+			<string>de.rnd7.abydos.song</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>song</string>
 				</array>
 			</dict>
 		</dict>

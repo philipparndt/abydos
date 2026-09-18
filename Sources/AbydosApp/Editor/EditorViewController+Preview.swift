@@ -23,6 +23,12 @@ extension EditorViewController {
 		guard mode != tab.previewMode else { return }
 
 		tab.previewMode = mode
+		// A song shown as source alone has no pane to say where its playhead is
+		// or to seek; the new pane, if there is one, says again.
+		tab.codeView?.setSongPlayhead(nil, marking: false)
+		tab.codeView?.setSongStoppedLine(nil)
+		tab.codeView?.onTimelineSeek = nil
+		tab.codeView?.onTimelineLoop = nil
 		tab.contentView = makeContentView(for: tab, mode: mode)
 
 		activeIndex = nil
@@ -74,7 +80,26 @@ extension EditorViewController {
 		// which no fraction of a 970 pt pane fits — so the divider is not the
 		// lever, and half is the answer for the same reason it is everywhere else.
 		split.wantedFraction = dividerFraction.map { CGFloat($0) } ?? 0.5
-		return split
+		return withFilesBar(split, for: tab)
+	}
+
+	/// A song's files named above it: which of them is being edited, and a menu
+	/// of the rest. Nothing for any other kind of file.
+	private func withFilesBar(_ body: NSView, for tab: Tab) -> NSView {
+		guard FilePreview.kind(for: tab.url, facts: tab.previewFacts) == .song else { return body }
+		let bar = SongFilesBar()
+		bar.onChoose = { [weak self, weak tab] file in
+			guard let self, let tab else { return }
+			self.showInTab(file: file, in: tab)
+		}
+		let stack = NSStackView(views: [bar, body])
+		stack.orientation = .vertical
+		stack.spacing = 0
+		stack.distribution = .fill
+		stack.alignment = .width
+		stack.translatesAutoresizingMaskIntoConstraints = false
+		bar.setContentHuggingPriority(.required, for: .vertical)
+		return stack
 	}
 
 	/// The rendered form of a file, whichever kind it has.
@@ -113,10 +138,128 @@ extension EditorViewController {
 			return VideoFileView(url: tab.url)
 		case .audio:
 			return AudioFileView(url: tab.url)
+		case .song:
+			return makeSongView(for: tab)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
 	}
+
+	/// A song's sound beside its text — see `SongPreviewView`.
+	///
+	/// Wired both ways: the caret tells the pane which block it is in, and a
+	/// click on a stem's name or on the error strip tells the source which
+	/// line to show. The pane reads the buffer for the block under the caret
+	/// and the disk for the render, which is the same split the Cadova pane
+	/// makes: `mat` reads the disk.
+	private func makeSongView(for tab: Tab) -> NSView {
+		// The tab is the song's: its other files are shown in it rather than in
+		// tabs of their own. See `EditorViewController+SongFiles`.
+		tab.song = tab.url
+		let view = SongPreviewView(url: tab.url, sourceText: { [weak tab] in tab?.document?.rope.string })
+		view.onRevealLine = { [weak tab] line, column in
+			tab?.codeView?.reveal(line: line, column: column)
+			if let codeView = tab?.codeView { codeView.window?.makeFirstResponder(codeView) }
+		}
+		view.onPlayingChanged = { [weak self, weak tab] playing in
+			guard let tab else { return }
+			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil
+			self?.refreshTabBar()
+		}
+		// The playhead through the source's timeline bars, and a click on a bar
+		// seeks the song.
+		view.onPlayhead = { [weak tab, weak view] seconds, marking in
+			guard let tab, let view else { return }
+			// This tab's own marks when the pane is playing this tab's file.
+			if Self.same(LanguageService.shared.uri(for: view.url), LanguageService.shared.uri(for: tab.url)) {
+				tab.codeView?.setSongPlayhead(seconds, marking: marking)
+			}
+			// And every tab of the song, from whichever pane is the one playing
+			// it: the song's own tab, or a tab of a file it includes.
+			guard view.isTheOneSounding, let files = tab.codeView?.timeline?.files, files.count > 1 else { return }
+			SongNews.playhead(song: LanguageService.shared.uri(for: view.url), seconds: seconds, marking: marking)
+		}
+		// Breakpoints on a song's lines stop it where the line starts to be
+		// heard: the ones the gutter holds, enabled, placed by the timeline.
+		view.breakpointAhead = { [weak self, weak tab] from, to in
+			guard let self, let tab, let codeView = tab.codeView, let timeline = codeView.timeline else { return nil }
+			let own = Set(codeView.breakpointLines.filter { $0.value.isEnabled }.keys)
+			var best = own.isEmpty ? nil : timeline.breakpoint(in: own, from: from, to: to).map { ($0.line, $0.seconds, URL?.none) }
+			// And the breakpoints in the files it includes, placed by their own
+			// timelines, whether or not they are open.
+			for uri in timeline.files.dropFirst() {
+				guard let url = URL(string: uri), let placed = LanguageService.shared.timeline(for: url) else { continue }
+				let lines = Set((self.breakpointsByFile[FilePath.canonical(url)] ?? [:]).filter { $0.value.isEnabled }.map { $0.key - 1 })
+				guard !lines.isEmpty, let hit = placed.breakpoint(in: lines, from: from, to: to) else { continue }
+				func reach(_ seconds: Double) -> Double { seconds > from ? seconds - from : seconds + timeline.seconds - from }
+				if best.map({ reach(hit.seconds) < reach($0.1) }) ?? true { best = (hit.line, hit.seconds, url) }
+			}
+			return best.map { (line: $0.0, seconds: $0.1, file: $0.2) }
+		}
+		view.onBreakpointStop = { [weak tab, weak view] file, line in
+			guard let tab, let view else { return }
+			let song = LanguageService.shared.uri(for: view.url)
+			guard let files = tab.codeView?.timeline?.files, files.count > 1 else {
+				tab.codeView?.setSongStoppedLine(line)
+				return
+			}
+			SongNews.stopped(song: song, file: file.map { LanguageService.shared.uri(for: $0) } ?? song, line: line)
+		}
+		// The debugger over the song: what it plays, and what it needs to say
+		// where it is.
+		let lines = SongLineCache()
+		let target = SongDebugTarget(
+			pane: view, url: tab.url,
+			files: { [weak tab] in
+				guard let tab else { return [] }
+				let files = (tab.codeView?.timeline?.files ?? []).compactMap { URL(string: $0)?.path }
+				return files.isEmpty ? [FilePath.canonical(tab.url)] : files
+			},
+			timeline: { [weak tab] index in
+				guard let song = tab?.codeView?.timeline else { return nil }
+				guard index > 0 else { return song }
+				guard song.files.indices.contains(index), let url = URL(string: song.files[index]) else { return nil }
+				return LanguageService.shared.timeline(for: url)
+			},
+			lineText: { [weak tab, lines] file, line in
+				if file == 0 {
+					guard let rope = tab?.document?.rope, line >= 0, line < rope.lineCount else { return nil }
+					return rope.string(in: rope.lineByteRange(line))
+				}
+				guard let song = tab?.codeView?.timeline, song.files.indices.contains(file),
+				      let url = URL(string: song.files[file]) else { return nil }
+				return lines.line(line, of: url.path)
+			}
+		)
+		view.onPlaybackChange = { [weak self, target] change in self?.onSongPlayback?(target, change) }
+		// A file some song includes has no sound of its own: the pane plays the
+		// song, once a timeline says which one that is — and waits a moment for
+		// that answer rather than rendering a kit nobody asked for.
+		if let song = tab.codeView?.timeline?.song, let url = URL(string: song) {
+			view.showSong(at: url)
+		} else if tab.codeView?.timeline == nil {
+			view.holdForItsSong()
+		}
+		bindSong(view, to: tab)
+		return view
+	}
+
+	/// What ties a song's pane to the code view showing one of its files: the
+	/// caret's lane, a click on a timeline bar, an option-click's loop.
+	///
+	/// Said again whenever the tab shows another of the song's files, since
+	/// each of them has a code view of its own and the pane has not changed.
+	func bindSong(_ view: SongPreviewView, to tab: Tab) {
+		tab.codeView?.onCaretLine = { [weak view] line in view?.caretMoved(toLine: line) }
+		tab.codeView?.onTimelineSeek = { [weak view] seconds in view?.seekFromSource(seconds) }
+		tab.codeView?.onTimelineLoop = { [weak view] range in view?.loopFromSource(range) }
+		// Where the caret already is: a pane made for a tab whose caret sits in
+		// a track should light that track from the start.
+		tab.codeView?.reportCaretPosition()
+	}
+
+	/// The song pane the file in front is showing, when it is showing one.
+	var songPreview: SongPreviewView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
 
 	private func makePreviewView(for tab: Tab) -> NSView {
 		// On the page's own layout manager, which is what paints the pills
@@ -270,6 +413,10 @@ extension EditorViewController {
 		}
 		if let video: VideoFileView = Self.pane(in: tab.contentView) {
 			video.togglePlayback()
+			return true
+		}
+		if let song: SongPreviewView = Self.pane(in: tab.contentView) {
+			song.togglePlayback()
 			return true
 		}
 		return false
@@ -577,6 +724,11 @@ extension EditorViewController {
 		player.onPlayingChanged = { [weak self, weak tab] playing in
 			guard let tab else { return }
 			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil
+			self?.refreshTabBar()
+		}
+		// A cut is a commitment to the tab, as typing into a file is.
+		player.onDirtyChanged = { [weak self, weak tab] in
+			tab?.isPreview = false
 			self?.refreshTabBar()
 		}
 		return tab

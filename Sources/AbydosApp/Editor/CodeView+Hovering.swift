@@ -36,6 +36,17 @@ extension CodeView {
 		)
 		updateBlameHover(at: hoverPoint)
 
+		// Over a song's timeline bar: where the line is heard, in bars and time.
+		if let timeline {
+			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+			if gutterZone(at: hoverPoint, scrollX: scrollX) == .timeline {
+				let docLine = documentLine(forVisualRow: max(0, Int(hoverPoint.y / lineHeight)))
+				let said = timeline.summary(line: docLine)
+				if toolTip != said { toolTip = said }
+				return
+			}
+		}
+
 		guard hasDiagnostics, let document else {
 			if toolTip != nil { toolTip = nil }
 			return
@@ -83,6 +94,32 @@ extension CodeView {
 	/// selection and the current one over it. Measured *once* for both, since the
 	/// CTLine this asks for offsets from is not free and a row is redrawn on
 	/// every caret blink.
+	/// The bands behind a song's notes heard now, on one visual row: measured
+	/// as the search bands are, along the row being painted.
+	func playingNoteBands(docLine: Int, segment: Int, rect: NSRect) -> [NSRect] {
+		guard let document, let columns = playingNotes[docLine] else { return [] }
+		let lineRange = document.rope.lineByteRange(docLine)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let text = document.rope.string(in: lineRange)
+		var rowRangeInLine = 0..<(text as NSString).length
+		var rowText = text
+		if isWordWrapEnabled, let wrap = wrapColumns {
+			rowRangeInLine = WrapLayout.segmentRange(in: text, segment: segment, columns: wrap, tabWidth: Theme.current.tabWidth)
+			rowText = (text as NSString).substring(with: NSRange(location: rowRangeInLine.lowerBound, length: rowRangeInLine.count))
+		}
+		let ctLine = CTLineCreateWithAttributedString(attributedLine(
+			text: rowText, lineStartUTF16: lineStart + rowRangeInLine.lowerBound, tokenIndex: TokenIndex(tokens: [])
+		))
+		return columns.compactMap { range in
+			let absolute = (lineStart + range.lowerBound)..<(lineStart + range.upperBound)
+			guard let band = WrapLayout.bandRange(for: absolute, lineStart: lineStart, segment: rowRangeInLine)
+			else { return nil }
+			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.lowerBound, nil)
+			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.upperBound, nil)
+			return NSRect(x: startX - 1, y: rect.minY + 1, width: max(2, endX - startX) + 2, height: rect.height - 2)
+		}
+	}
+
 	func searchHighlights(
 		docLine: Int, segment: Int, rect: NSRect
 	) -> (others: [NSRect], current: NSRect?, occurrences: [NSRect]) {

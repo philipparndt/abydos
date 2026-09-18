@@ -505,6 +505,9 @@ extension MainWindowController {
 		editor.onToggleBreakpoint = { [weak self] url, line in
 			self?.debug.toggleBreakpoint(file: url, line: line)
 		}
+		editor.onSongPlayback = { [weak self] target, change in
+			self?.songPlayback(target, change)
+		}
 		editor.onSetBreakpointEnabled = { [weak self] url, line, enabled in
 			self?.debug.setBreakpoint(file: url, line: line, enabled: enabled)
 		}
@@ -902,6 +905,14 @@ extension MainWindowController {
 
 	@objc func toggleBlame(_ sender: Any?) {
 		editor.toggleBlame()
+	}
+
+	@objc func toggleSongTimeCodes(_ sender: Any?) {
+		editor.toggleSongColumn(bars: false)
+	}
+
+	@objc func toggleSongTimelineBars(_ sender: Any?) {
+		editor.toggleSongColumn(bars: true)
 	}
 
 	/// The explicit action the covers wait for, file-wide: enabled only for a

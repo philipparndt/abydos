@@ -190,6 +190,18 @@ public enum LanguageServers {
 			// place this server can answer.
 			rootMarkers: []
 		),
+		LanguageServerDefinition(
+			languageIds: ["song"],
+			// The renderer is the server: `mat lsp` is a subcommand of the same
+			// binary the song pane renders with, so there is one thing to
+			// install and one thing to find, and the diagnostics the server
+			// sends are the ones `mat check` prints.
+			command: "mat",
+			arguments: ["lsp"],
+			installHint: "cargo install --path crates/mat-cli, in a checkout of musik-as-text",
+			// A song is a file, and a project is a directory of them.
+			rootMarkers: []
+		),
 	]
 
 	// MARK: - Which server a language uses

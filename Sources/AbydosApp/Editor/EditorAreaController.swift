@@ -119,6 +119,7 @@ final class EditorAreaController: NSViewController {
 	var onFilesDropped: (([URL]) -> Void)?
 	var onActiveFileChanged: ((URL?) -> Void)?
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
+	var onSongPlayback: ((SongDebugTarget, SongPlaybackChange) -> Void)?
 	var onSetBreakpointEnabled: ((URL, Int, Bool) -> Void)?
 	var onDeleteBreakpoint: ((URL, Int) -> Void)?
 	var onSetOtherBreakpointsEnabled: ((URL, Int, Bool) -> Void)?
@@ -257,6 +258,9 @@ final class EditorAreaController: NSViewController {
 		}
 		group.onToggleBreakpoint = { [weak self] url, line in
 			self?.onToggleBreakpoint?(url, line)
+		}
+		group.onSongPlayback = { [weak self] target, change in
+			self?.onSongPlayback?(target, change)
 		}
 		group.onEditBreakpoint = onEditBreakpoint
 		group.onSetBreakpointEnabled = { [weak self] url, line, enabled in

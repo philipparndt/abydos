@@ -304,6 +304,15 @@ extension MainWindowController {
 	/// it had refused would be doing something nobody pressed.
 	func trustGranted() {
 		refreshTrustBanner()
+		// The files already open are announced to their servers now. Opening
+		// something and then pressing Trust is the order a new project is
+		// used in, and `LanguageService.opened` returns silently for an
+		// untrusted project — so without this, a file opened before the
+		// press never reached a server until it was closed and opened again.
+		// Found driving the song server: the run opens the file at once and
+		// trusts half a second later. A rescope is the same re-announcement a
+		// change of scope makes.
+		editor.rescope()
 		Toast.post(
 			"Trusted \(project?.root.lastPathComponent ?? "")",
 			detail: "It can run, debug, open a terminal and start language servers.",

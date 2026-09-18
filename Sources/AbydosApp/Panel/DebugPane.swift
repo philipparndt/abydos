@@ -41,7 +41,9 @@ final class DebugPane: NSView {
 	var debuggedProject: URL { projectRoot }
 
 	private var toolbar: DebugToolbar!
-	private var stackTable: NSTableView!
+	private var stackTable: NSOutlineView!
+	/// The Stack's tree — threads at the root, their frames under them.
+	private var callStack: CallStackOutline!
 	/// Stack | Breakpoints, above the left-hand side.
 	///
 	/// A tab rather than a third column: the pane is a split of two at a panel
@@ -56,7 +58,6 @@ final class DebugPane: NSView {
 	private var scopeNodes: [ScopeNode] = []
 	private var watchNodes: [WatchNode] = []
 	private var watchField: NSTextField!
-	private var threadPopUp: NSPopUpButton!
 
 	init(session: DebugSession?, projectRoot: URL) {
 		self.session = session
@@ -160,9 +161,11 @@ final class DebugPane: NSView {
 	@objc private func leftTabChanged() {
 		let showsStack = leftTabs.selectedSegment == 0
 		stackScroll.isHidden = !showsStack
-		threadPopUp.isHidden = !showsStack
 		breakpointList.isHidden = showsStack
 	}
+
+	/// The Stack's tree as it is drawn, for a driven run.
+	var callStackReportForTesting: String { callStack.reportForTesting }
 
 	/// Shows the variables, which is what stopping somewhere is *for*.
 	///
@@ -231,18 +234,10 @@ final class DebugPane: NSView {
 
 		// Stack on the left, variables on the right — the arrangement every
 		// debugger uses, because you pick a frame and then read its values.
-		let stack = NSTableView()
-		stack.headerView = nil
-		stack.backgroundColor = Theme.current.editorBackground
-		stack.selectionHighlightStyle = .regular
-		stack.rowSizeStyle = .custom
-		stack.intercellSpacing = .zero
-		stack.gridStyleMask = []
-		stack.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("frame")))
-		stack.delegate = self
-		stack.dataSource = self
-		stack.target = self
-		stack.action = #selector(frameClicked)
+		// Every thread at the root and its frames under it: see `CallStackOutline`.
+		callStack = CallStackOutline(session: session, projectRoot: projectRoot)
+		callStack.onNavigate = { [weak self] url, line in self?.onNavigate?(url, line) }
+		let stack = callStack.makeOutline()
 		stackTable = stack
 
 		let variables = VariablesOutlineView()
@@ -261,16 +256,6 @@ final class DebugPane: NSView {
 		variables.dataSource = self
 		variables.menu = makeVariablesMenu()
 		variablesOutline = variables
-
-		// A goroutine picker above the stack: the one that hit the breakpoint is
-		// rarely the only one worth looking at, and a deadlock is a question
-		// about the others.
-		threadPopUp = NSPopUpButton()
-		threadPopUp.controlSize = .small
-		threadPopUp.font = Theme.current.uiFont(10.5)
-		threadPopUp.target = self
-		threadPopUp.action = #selector(threadChosen)
-		threadPopUp.isEnabled = false
 
 		// A watch field under it: an expression is the thing you actually want
 		// the value of, and hunting for it in a tree of locals is not the same.
@@ -307,7 +292,6 @@ final class DebugPane: NSView {
 
 		let leftSide = NSView()
 		leftSide.addSubview(leftTabs)
-		leftSide.addSubview(threadPopUp)
 		leftSide.addSubview(stackScroll)
 		leftSide.addSubview(breakpointList)
 
@@ -386,7 +370,7 @@ final class DebugPane: NSView {
 		addSubview(clearButton)
 
 		for view in [
-			console, variablesScroll, sideTabs, clearButton, threadPopUp, watchField, stackScroll,
+			console, variablesScroll, sideTabs, clearButton, watchField, stackScroll,
 			leftTabs, breakpointList,
 		] as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
@@ -426,13 +410,6 @@ final class DebugPane: NSView {
 		NSLayoutConstraint.activate([
 			leftTabs.topAnchor.constraint(equalTo: leftSide.topAnchor, constant: inset / 2),
 			leftTabs.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor, constant: inset),
-
-			// Beside the tabs and taking what is left: the goroutine picker is
-			// about the stack, and the two share a row rather than stacking two
-			// rows of chrome over a pane this short.
-			threadPopUp.centerYAnchor.constraint(equalTo: leftTabs.centerYAnchor),
-			threadPopUp.leadingAnchor.constraint(equalTo: leftTabs.trailingAnchor, constant: inset),
-			threadPopUp.trailingAnchor.constraint(equalTo: leftSide.trailingAnchor, constant: -inset),
 
 			stackScroll.topAnchor.constraint(equalTo: leftTabs.bottomAnchor, constant: inset / 2),
 			stackScroll.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor),
@@ -489,6 +466,20 @@ final class DebugPane: NSView {
 	/// reachable because nothing ever made it the first responder. So this is
 	/// the whole of the keyboard work on this side: hand it over, and select a
 	/// row so that the first arrow has somewhere to start from.
+	/// Whichever side of the pane is in front: the Stack's tree while it shows,
+	/// the variables otherwise. A stopped session arrives to be read, and the
+	/// stack is what it stopped in.
+	func focusReading() {
+		if stackScroll.isHidden { focusVariables() } else { focusStack() }
+	}
+
+	/// Gives the Stack's tree the keyboard.
+	func focusStack() {
+		callStack.focus()
+	}
+
+	var stackHasKeyboardForTesting: Bool { callStack.hasKeyboardForTesting }
+
 	func focusVariables() {
 		guard let window = variablesOutline.window else { return }
 		window.makeFirstResponder(variablesOutline)
@@ -607,10 +598,7 @@ final class DebugPane: NSView {
 			self?.onRunningChanged?()
 		}
 		session?.onStackChanged = { [weak self] in
-			self?.stackTable.reloadData()
-			if let self, self.session?.stackFrames.isEmpty == false {
-				self.stackTable.selectRowIndexes([0], byExtendingSelection: false)
-			}
+			self?.callStack.reload()
 		}
 		session?.observeVariables { [weak self] in
 			self?.rebuildVariableTree()
@@ -619,7 +607,7 @@ final class DebugPane: NSView {
 			self?.rebuildWatches()
 		}
 		session?.onThreadsChanged = { [weak self] in
-			self?.rebuildThreads()
+			self?.callStack.reload()
 		}
 		session?.observeStopped { [weak self] file, line in
 			// Stopping is what the variables are for, and the console has
@@ -635,7 +623,8 @@ final class DebugPane: NSView {
 		toolbarHeight.constant = Theme.current.scaled(30)
 		variablesOutline.rowHeight = Theme.current.scaled(20)
 		variablesOutline.indentationPerLevel = Theme.current.scaled(13)
-		stackTable.reloadData()
+		stackTable.indentationPerLevel = Theme.current.scaled(12)
+		callStack.reload()
 		variablesOutline.reloadData()
 		toolbar.needsDisplay = true
 	}
@@ -655,31 +644,6 @@ final class DebugPane: NSView {
 		guard !expression.trimmingCharacters(in: .whitespaces).isEmpty else { return }
 		session?.addWatch(expression)
 		watchField.stringValue = ""
-	}
-
-	@objc private func threadChosen() {
-		let index = threadPopUp.indexOfSelectedItem
-		guard let session, session.threads.indices.contains(index) else { return }
-		let thread = session.threads[index]
-		Task { await session.selectThread(id: thread.id) }
-	}
-
-	private func rebuildThreads() {
-		threadPopUp.removeAllItems()
-		let threads = session?.threads ?? []
-		threadPopUp.isEnabled = threads.count > 1
-
-		guard !threads.isEmpty else {
-			threadPopUp.addItem(withTitle: "No goroutines")
-			return
-		}
-		for thread in threads {
-			threadPopUp.addItem(withTitle: thread.name.isEmpty ? "Thread \(thread.id)" : thread.name)
-		}
-		if let selected = session?.selectedThreadID,
-		   let index = threads.firstIndex(where: { $0.id == selected }) {
-			threadPopUp.selectItem(at: index)
-		}
 	}
 
 	private func rebuildWatches() {
@@ -793,37 +757,6 @@ final class DebugPane: NSView {
 		}
 	}
 
-	@objc private func frameClicked() {
-		let row = stackTable.clickedRow >= 0 ? stackTable.clickedRow : stackTable.selectedRow
-		guard let session, session.stackFrames.indices.contains(row) else { return }
-		let frame = session.stackFrames[row]
-
-		Task { await session.selectFrame(id: frame.id) }
-		if let file = frame.file {
-			onNavigate?(URL(fileURLWithPath: file), frame.line)
-		}
-	}
-}
-
-// MARK: - Call stack
-
-extension DebugPane: NSTableViewDataSource, NSTableViewDelegate {
-	func numberOfRows(in tableView: NSTableView) -> Int {
-		session?.stackFrames.count ?? 0
-	}
-
-	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-		Theme.current.scaled(34)
-	}
-
-	func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-		ThemedRowView()
-	}
-
-	func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-		guard let session, session.stackFrames.indices.contains(row) else { return nil }
-		return StackFrameCell(stackFrame: session.stackFrames[row], projectRoot: projectRoot)
-	}
 }
 
 // MARK: - Variables

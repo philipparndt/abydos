@@ -151,6 +151,7 @@ extension CodeView {
 		// The extra column on the left is the breakpoint gutter.
 		gutterWidth = ceil(CGFloat(digits) * charWidth) + Self.gutterPadding * 2 + 14
 			+ GutterMetrics.columnWidth(scale: Theme.current.scale) + Self.breakpointColumnWidth + blameWidth
+			+ songColumnsWidth
 
 		if isWordWrapEnabled { rebuildWrapLayout() }
 

@@ -179,6 +179,16 @@ final class DrawnButton: NSButton, ScaleFollowing {
 		fontSize = 11
 		super.init(frame: .zero)
 		imagePosition = .imageOnly
+		// **A square that stays square.** A glyph button's size is its side,
+		// and nothing else in a strip is that shape — so a stack with room to
+		// spare stretched it to the strip's height while the words beside it
+		// kept theirs, and it drew as a tall box sitting above the row.
+		// Reported 2026-09-16 with a picture: "the export button looks off (too
+		// high compared to the other buttons)". Measured in that capture, at
+		// two pixels to the point: 53 px tall against 38 for the choice beside
+		// it, its middle a pixel and a half above theirs.
+		setContentHuggingPriority(.required, for: .vertical)
+		setContentCompressionResistancePriority(.required, for: .vertical)
 		setAccessibilityLabel(description)
 		setUp(action)
 	}

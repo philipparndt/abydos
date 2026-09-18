@@ -74,12 +74,13 @@ extension CodeView {
 
 		window?.makeFirstResponder(self)
 		draggingBreakpointLine = nil
+		draggingTimeline = false
 
 		// Gutter clicks toggle folds rather than moving the caret. The gutter is
 		// pinned to the clip view, so its hit area moves with horizontal scroll.
 		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
 		if point.x < scrollX + gutterWidth {
-			handleGutterClick(at: point)
+			handleGutterClick(at: point, modifiers: event.modifierFlags)
 			return
 		}
 
@@ -226,6 +227,19 @@ extension CodeView {
 				keyEquivalent: ""
 			)
 			gutter.addItem(blame)
+			// A song's own columns, hidden and shown the same way.
+			if timeline != nil {
+				gutter.addItem(NSMenuItem(
+					title: showsTimeCodes ? "Hide Time Codes" : "Show Time Codes",
+					action: #selector(MainWindowController.toggleSongTimeCodes(_:)),
+					keyEquivalent: ""
+				))
+				gutter.addItem(NSMenuItem(
+					title: showsTimelineBars ? "Hide Timeline" : "Show Timeline",
+					action: #selector(MainWindowController.toggleSongTimelineBars(_:)),
+					keyEquivalent: ""
+				))
+			}
 			return gutter
 		}
 

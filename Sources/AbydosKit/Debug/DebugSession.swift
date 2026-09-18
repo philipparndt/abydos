@@ -40,20 +40,62 @@ public final class DebugSession {
 	public var location: String?
 
 	/// Breakpoints by file, kept across runs so they survive restarting.
-	public internal(set) var breakpoints: [String: [Breakpoint]] = [:]
+	public var breakpoints: [String: [Breakpoint]] {
+		get { stateLock.withLock { storedBreakpoints } }
+		set { stateLock.withLock { storedBreakpoints = newValue } }
+	}
 
-	public internal(set) var stackFrames: [StackFrame] = []
-	public internal(set) var scopes: [Scope] = []
+	private var storedBreakpoints: [String: [Breakpoint]] = [:]
+
+	/// The stack of the thread being shown.
+	///
+	/// **Behind a lock, with the threads and their stacks.** They are written
+	/// by the task that read them — a cooperative thread — and read on the main
+	/// thread by the pane that draws them, which for a song is ten times a
+	/// second while it plays. A Swift collection read while it is being written
+	/// is not a wrong value but a crash, and one arrived on 2026-09-16 with
+	/// `-[NSTaggedPointerString count]` inside `Dictionary.setValue` during a
+	/// session's launch.
+	public var stackFrames: [StackFrame] {
+		get { stateLock.withLock { storedStackFrames } }
+		set { stateLock.withLock { storedStackFrames = newValue } }
+	}
+
+	private var storedStackFrames: [StackFrame] = []
+	let stateLock = NSLock()
+	/// The frame's scopes and their variables.
+	///
+	/// Behind the same lock as the stacks, and for the same reason: they are
+	/// written by the task that read them and drawn on the main thread. A crash
+	/// on 2026-09-16 was a `StackFrame` array being released while
+	/// `refreshStack` ran — `EXC_BAD_ACCESS` in `swift_release_dealloc` — which
+	/// is what a Swift collection read while it is written does.
+	public var scopes: [Scope] {
+		get { stateLock.withLock { storedScopes } }
+		set { stateLock.withLock { storedScopes = newValue } }
+	}
+
+	private var storedScopes: [Scope] = []
 	/// What the editor should draw beside the code, or nil while nothing is
 	/// stopped.
 	///
 	/// Built once per stop and per frame change rather than asked for per line:
 	/// the names of a frame's variables are a dictionary, and a row's drawing is
 	/// then a scan of that row's tokens against it. See `InlineValues`.
-	public internal(set) var inlineValues: InlineValueSet?
+	public var inlineValues: InlineValueSet? {
+		get { stateLock.withLock { storedInlineValues } }
+		set { stateLock.withLock { storedInlineValues = newValue } }
+	}
+
+	private var storedInlineValues: InlineValueSet?
 
 	/// Frame whose variables are shown.
-	public internal(set) var selectedFrameID: Int?
+	public var selectedFrameID: Int? {
+		get { stateLock.withLock { storedSelectedFrameID } }
+		set { stateLock.withLock { storedSelectedFrameID = newValue } }
+	}
+
+	private var storedSelectedFrameID: Int?
 
 	/// Told whenever the state changes.
 	///
@@ -220,6 +262,9 @@ public final class DebugSession {
 			throw DAPClient.ClientError.adapterError(
 				"\(adapter.name) is started by its language server, not from here."
 			)
+		case .inProcess:
+			state = .idle
+			throw DAPClient.ClientError.adapterError("\(adapter.name) runs inside the app; start it with startInProcess.")
 		}
 
 		try await handshake(with: adapter)
@@ -235,6 +280,21 @@ public final class DebugSession {
 		))
 
 		startLaunchWatchdog()
+	}
+
+	/// Starts a session on an adapter that lives in this app.
+	///
+	/// The same handshake and launch as any other, so the pane, the toolbar and
+	/// the breakpoints behave as they do for a program; only nothing is spawned.
+	public func startInProcess(adapter: DebugAdapter, inProcess: InProcessDebugAdapter, program: String) async throws {
+		state = .starting
+		launchGeneration += 1
+		exitCode = nil
+		saidTheSessionEnded = false
+		self.adapter = adapter
+		await MainActor.run { client.start(inProcess: inProcess) }
+		try await handshake(with: adapter)
+		send("launch", watching: ["program": program, "noDebug": false])
 	}
 
 	/// Debugs a native program that is stopped in a pod.
@@ -368,6 +428,9 @@ public final class DebugSession {
 			throw DAPClient.ClientError.adapterError(
 				"\(adapter.name) is started by its language server, not from here."
 			)
+		case .inProcess:
+			state = .idle
+			throw DAPClient.ClientError.adapterError("\(adapter.name) runs inside the app; start it with startInProcess.")
 		}
 
 		try await handshake(with: adapter)
@@ -664,6 +727,23 @@ public final class DebugSession {
 			case "continued":
 				self.state = .running
 
+			// The threads came or went, or changed their names — a song's tracks
+			// name what they are playing. Re-read, whether or not stopped.
+			case "thread":
+				Task { await self.refreshThreads() }
+
+			// An adapter whose program can be looked at while it runs — a song —
+			// says when the stack under the thread being shown has moved.
+			case Self.stackMovedEvent:
+				guard self.state == .running else { return }
+				let selected = self.selectedThreadID ?? self.threads.first?.id
+				Task {
+					for other in self.expandedThreads where other != selected {
+						await self.loadStack(thread: other)
+					}
+					if let selected { await self.refreshStack(thread: selected, reportStop: false) }
+				}
+
 			case "terminated", "exited":
 				self.adapterSaidItEnded(body: body)
 
@@ -805,10 +885,35 @@ public final class DebugSession {
 
 	// MARK: - Threads
 
+	/// Not a DAP event: sent by an adapter whose stack can be read while it
+	/// runs, when the stack of the thread being shown has moved.
+	public static let stackMovedEvent = "abydos/stackMoved"
+
 	/// The goroutines, or threads in anything that is not Go.
-	public private(set) var threads: [DebugThread] = []
+	public var threads: [DebugThread] {
+		get { stateLock.withLock { storedThreads } }
+		set { stateLock.withLock { storedThreads = newValue } }
+	}
+
+	private var storedThreads: [DebugThread] = []
 	/// Which one the stack is being shown for.
-	public internal(set) var selectedThreadID: Int?
+	public var selectedThreadID: Int? {
+		get { stateLock.withLock { storedSelectedThreadID } }
+		set { stateLock.withLock { storedSelectedThreadID = newValue } }
+	}
+
+	private var storedSelectedThreadID: Int?
+	/// Every thread's stack that has been read, by thread: the selected one's,
+	/// and those of the threads opened in the Stack's tree.
+	public var threadStacks: [Int: [StackFrame]] {
+		get { stateLock.withLock { storedThreadStacks } }
+		set { stateLock.withLock { storedThreadStacks = newValue } }
+	}
+
+	private var storedThreadStacks: [Int: [StackFrame]] = [:]
+	/// The threads open in the Stack's tree, whose stacks are read again after
+	/// a stop and, for an adapter that says so, while running.
+	public var expandedThreads: Set<Int> = []
 
 	public var onThreadsChanged: (() -> Void)?
 
@@ -846,8 +951,16 @@ public final class DebugSession {
 		let response = try? await client.request("threads", arguments: [:])
 		let entries = (response?["threads"] as? [[String: Any]]) ?? []
 		threads = entries.map {
-			DebugThread(id: $0["id"] as? Int ?? 0, name: $0["name"] as? String ?? "?")
+			DebugThread(
+				id: $0["id"] as? Int ?? 0, name: $0["name"] as? String ?? "?",
+				group: $0["abydos/group"] as? String, isQuiet: $0["abydos/quiet"] as? Bool
+			)
 		}
+		let present = Set(threads.map(\.id))
+		threadStacks = threadStacks.filter { present.contains($0.key) }
+		// Something to pause, before anything has stopped: the pause request
+		// names a thread, and a session that has never stopped knew of none.
+		if currentThreadID == nil { currentThreadID = threads.first?.id }
 		onMain { [weak self] in self?.onThreadsChanged?() }
 	}
 

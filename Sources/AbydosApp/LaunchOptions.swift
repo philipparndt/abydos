@@ -751,6 +751,10 @@ struct LaunchOptions {
 	var audioLoop = false
 	var audioPlay = false
 	var audioWait: Double = 0
+	var audioSteps: String?
+	/// `--song <steps>`: the front song pane, driven once its render has
+	/// landed — see `driveSongForTesting`.
+	var songSteps: String?
 	/// Drive the secret covers: report, reveal, caret, toggle.
 	var secretsSteps: String?
 	/// `--sops <steps>`: the SOPS chip, driven — see `sopsForTesting`.

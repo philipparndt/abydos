@@ -32,6 +32,9 @@ public final class LSPClient: @unchecked Sendable {
 
 	/// Diagnostics arrived for a document.
 	public var onDiagnostics: ((_ uri: String, _ diagnostics: [LSPDiagnostic]) -> Void)?
+	/// A notification this client has no case for — a server's own, like
+	/// `mat/timeline` — with its parameters.
+	public var onNotification: ((_ method: String, _ parameters: [String: Any]) -> Void)?
 	/// The server said something to the user — a progress note, a warning.
 	public var onMessage: ((_ level: Int, _ text: String) -> Void)?
 	/// How far the server has got, in its own words.
@@ -933,6 +936,8 @@ public final class LSPClient: @unchecked Sendable {
 			// reply, or a server that waits for one stops working.
 			if let id = message["id"] {
 				write(["jsonrpc": "2.0", "id": id, "result": NSNull()])
+			} else {
+				callbackQueue.async { self.onNotification?(method, parameters) }
 			}
 		}
 	}

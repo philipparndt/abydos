@@ -210,15 +210,20 @@ struct DrawioEditorLiveTests {
 			} finally { graph.getModel().endUpdate(); }
 			return true;
 			""", arguments: [:], in: nil, contentWorld: .page)
-		// **Watched, not slept through.** This file's `settle` is for waits with
-		// nothing to watch, and its own comment says so; this one has something
-		// — `reported` filling — so it waits for that instead of for four
-		// seconds. Four was enough on a quiet machine and not on a loaded one,
-		// which is the whole of why this test was intermittently red.
-		await waitUntil { !reported.isEmpty }
+		// **Watched, and watched for the right thing.** Waiting for `reported` to
+		// fill was still intermittently red: the editor reports every change it
+		// makes, and one of its own — a refresh after the load — can arrive
+		// before the shape does, so the wait ended on a report that predated the
+		// drawing and the check read that. It now waits for the report that
+		// carries the shape, which is the thing being claimed.
+		func carriesTheShape(_ said: String) -> Bool {
+			guard let read = Drawio.read(Data(said.utf8)) else { return false }
+			return read.pages.first?.model.contains("Drawn by a test") == true
+		}
+		await waitUntil { reported.contains(where: carriesTheShape) }
 
 		#expect(!reported.isEmpty, "drawing in the editor said nothing to the app")
-		let last = try #require(reported.last)
+		let last = try #require(reported.last(where: carriesTheShape), "no report carried the shape")
 		let read = try #require(Drawio.read(Data(last.utf8)))
 		#expect(read.pages[0].model.contains("Drawn by a test"))
 	}

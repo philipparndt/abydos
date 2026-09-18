@@ -23,9 +23,23 @@ import AVFoundation
 /// The file is analysed off the main thread when the tab is first shown — see
 /// `DelayedPaneView` — and play works before the drawing arrives.
 final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
-	private let url: URL
-	private let playback: AudioPlayback?
-	private let canvas = AudioCanvas()
+	let url: URL
+	var playback: AudioPlayback?
+	let canvas = AudioCanvas()
+	/// The marks, the working copy and its undo — see `AudioFileView+Cut`.
+	var cutState = CutState()
+	/// The last mark key pressed and when, so `ii` and `oo` can mean more than
+	/// `i` and `o` twice.
+	var lastMark: (key: String, at: Date)?
+	/// The last file a selection was written to, for a driven run.
+	var lastWrittenForTesting: URL?
+	var keepButton: DrawnButton!
+	var deleteButton: DrawnButton!
+	var selectionLabel: ScaledLabel!
+	/// Writes the selection to a file of its own, leaving this one alone.
+	var saveAsButton: DrawnButton!
+	/// Told when a cut or a save changes whether the tab has unsaved edits.
+	var onDirtyChanged: (() -> Void)?
 	private let heights = ScaledHeights()
 
 	private var playButton: DrawnButton!
@@ -50,8 +64,8 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var onPlayingChanged: ((Bool) -> Void)?
 
 	/// What the analysis found, or why there is none.
-	private(set) var failure: String?
-	private var isSettled = false
+	var failure: String?
+	var isSettled = false
 	private var whenSettled: [() -> Void] = []
 
 	init(url: URL) {
@@ -76,6 +90,7 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// Stops for good. The tab is closing — see `EditorViewController.teardown`
 	/// — or its window is.
 	func tearDown() {
+		discardAllWorkingCopies()
 		cancelled.set()
 		detailRead?.flag.set()
 		ticker?.invalidate()
@@ -98,13 +113,28 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		loopButton.tip = StyledTip.Tip(
 			title: "Loop", detail: "Plays the file round and round, with no gap at the seam."
 		)
-		timeLabel = ScaledLabel("0:00 / 0:00", size: 11.5)
+		timeLabel = ScaledLabel("0:00.000 / 0:00", size: 11.5, fixedDigits: true)
 		infoLabel = ScaledLabel("", size: 11) { Theme.current.gitIgnored }
 		fitButton = DrawnButton(title: "Fit") { [weak self] in self?.canvas.fit() }
 		fitButton.tip = StyledTip.Tip(
 			title: "Show the whole file", detail: "Pinch or ⌥-scroll to zoom; scroll to move along."
 		)
 		fitButton.isEnabled = false
+		selectionLabel = ScaledLabel("", size: 11, fixedDigits: true) { Theme.current.caret }
+		selectionLabel.isHidden = true
+		keepButton = DrawnButton(title: "Keep Selection") { [weak self] in self?.keepSelection() }
+		keepButton.tip = StyledTip.Tip(title: "Keep only the selection", detail: "Nothing is written until you save.", shortcut: "K")
+		keepButton.isHidden = true
+		deleteButton = DrawnButton(title: "Delete Selection") { [weak self] in self?.deleteSelection() }
+		deleteButton.tip = StyledTip.Tip(title: "Delete the selection", detail: "Nothing is written until you save.", shortcut: "⌫")
+		deleteButton.isHidden = true
+		saveAsButton = DrawnButton(title: "Save Selection As…") { [weak self] in self?.saveSelectionAs() }
+		saveAsButton.tip = StyledTip.Tip(
+			title: "Write the selection to a new file",
+			detail: "This file is left as it is. Press i and i again to carry on from where the selection ended.",
+			shortcut: "S"
+		)
+		saveAsButton.isHidden = true
 		modeChoice = DrawnChoice(
 			segments: [.words("Wave"), .words("Spectrum"), .words("Both")],
 			selectedIndex: AudioCanvas.Mode.both.rawValue
@@ -114,7 +144,10 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 		let spacer = NSView()
 		spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-		strip = NSStackView(views: [playButton, loopButton, timeLabel, infoLabel, spacer, fitButton, modeChoice])
+		strip = NSStackView(views: [
+			playButton, loopButton, timeLabel, infoLabel, selectionLabel,
+			keepButton, deleteButton, saveAsButton, spacer, fitButton, modeChoice,
+		])
 		strip.orientation = .horizontal
 		strip.alignment = .centerY
 		strip.setCustomSpacing(Theme.current.scaled(4), after: playButton)
@@ -162,13 +195,20 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		canvas.applyTheme()
 	}
 
+	/// Undo and redo are offered only when there is a cut to step to.
+	override func responds(to selector: Selector!) -> Bool {
+		if selector == #selector(undo(_:)) { return !cutState.undo.isEmpty }
+		if selector == #selector(redo(_:)) { return !cutState.redo.isEmpty }
+		return super.responds(to: selector)
+	}
+
 	// MARK: - Reading
 
 	/// Decodes and analyses the file off the main thread, under the waiting
 	/// strip at the tab's top edge.
 	private func analyse() {
 		activity = PaneActivityView.install(over: self, message: "Reading \(url.lastPathComponent)…")
-		let url = self.url
+		let url = self.source
 		let cancelled = self.cancelled
 		Task { @MainActor [weak self] in
 			// The read captures nothing of the view: only the file and the flag
@@ -216,6 +256,19 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		waiting.forEach { $0() }
 	}
 
+	/// A cut, an undo or a save put another file in the tab: draw it again.
+	func reanalyse() {
+		detailRead?.flag.set()
+		detailRead = nil
+		canvas.detail = nil
+		isSettled = false
+		failure = nil
+		failureLabel.isHidden = true
+		analyse()
+	}
+
+	var currentSeconds: Double { playback?.currentSeconds ?? canvas.playhead }
+
 	/// The window moved: stretch the overview now, and read the window at the
 	/// width's detail once it has stopped moving.
 	private func windowChanged() {
@@ -255,7 +308,7 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 
 		detailRead?.flag.set()
 		let flag = CancelFlag()
-		let url = self.url
+		let url = self.source
 		let columns = min(8192, pixels * 2)
 		let task = Task { @MainActor [weak self] in
 			let reading = await Task.detached(priority: .userInitiated) { () -> AudioOverview? in
@@ -307,13 +360,13 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		followPlayback()
 	}
 
-	private func seek(to seconds: Double) {
+	func seek(to seconds: Double) {
 		playback?.seek(toSeconds: seconds)
 		followPlayback()
 	}
 
 	/// Playing started or stopped: the button, the ticker and the tab.
-	private func playingChanged() {
+	func playingChanged() {
 		ticker?.invalidate()
 		ticker = nil
 		if isPlaying {
@@ -335,15 +388,23 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		guard window != nil || !isPlaying else { return }
 		canvas.playhead = now
 		if isPlaying { canvas.follow(now) }
-		timeLabel.stringValue = "\(Self.clock(now)) / \(Self.clock(duration))"
+		timeLabel.stringValue = "\(Self.clock(now, milliseconds: true)) / \(Self.clock(duration))"
 		playButton.setSymbol(isPlaying ? "pause.fill" : "play.fill", description: isPlaying ? "Pause" : "Play")
 	}
 
-	static func clock(_ seconds: Double) -> String {
-		let whole = Int(seconds.isFinite ? seconds : 0)
-		return whole >= 3600
+	/// `1:05`, `1:02:05` past the hour — and with `milliseconds`, `1:05.123`,
+	/// which is what the playhead reads: asked for on 2026-09-14, since a
+	/// beat at 132 bpm is 454 ms and a whole second does not say which one
+	/// the playhead is on. Truncated rather than rounded, so a clock at
+	/// 0:59.9996 does not read 1:00.000 while the playhead is still in the
+	/// minute before.
+	static func clock(_ seconds: Double, milliseconds: Bool = false) -> String {
+		let total = Int(((seconds.isFinite ? max(0, seconds) : 0) * 1000).rounded(.down))
+		let whole = total / 1000
+		let clock = whole >= 3600
 			? String(format: "%d:%02d:%02d", whole / 3600, whole / 60 % 60, whole % 60)
 			: String(format: "%d:%02d", whole / 60, whole % 60)
+		return milliseconds ? clock + String(format: ".%03d", total % 1000) : clock
 	}
 
 	// MARK: - Keyboard and window
@@ -357,6 +418,19 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			togglePlayback()
 			return
 		}
+		// `i` and `o` mark the selection at the playhead, as in every editor
+		// of sound or picture; `k` keeps it, ⌫ deletes it, Escape clears it.
+		if modifiers.isEmpty, failure == nil {
+			switch event.charactersIgnoringModifiers?.lowercased() {
+			case "i": pressedMark("i"); return
+			case "o": pressedMark("o"); return
+			case "k": keepSelection(); return
+			case "s": saveSelectionAs(); return
+			default: break
+			}
+			if event.keyCode == 51 || event.keyCode == 117 { deleteSelection(); return }
+			if event.keyCode == 53, cutState.inPoint != nil || cutState.outPoint != nil { clearSelection(); return }
+		}
 		// ← and →: five seconds, and one with ⇧. Five rather than ten, the web
 		// players' step, because many files here are loops of a few seconds,
 		// where ten would only ever land on an end.
@@ -367,6 +441,26 @@ final class AudioFileView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 		super.keyDown(with: event)
 	}
+
+	/// `i` or `o`, and the same key again straight after.
+	///
+	/// A second press within `carryOn` carries the selection on from where it
+	/// ended, rather than marking the same point twice — which is what a second
+	/// press meant before, and meant nothing.
+	func pressedMark(_ key: String) {
+		let now = Date()
+		let again = lastMark.map { $0.key == key && now.timeIntervalSince($0.at) < Self.carryOn } ?? false
+		lastMark = (key, now)
+		switch (key, again) {
+		case ("i", false): markIn()
+		case ("i", true): carryOnFromSelection()
+		case ("o", false): markOut()
+		default: carryBackFromSelection()
+		}
+	}
+
+	/// How long a second press of the same mark key still counts as a double.
+	static let carryOn: TimeInterval = 0.6
 
 	static let step = 5.0
 	static let fineStep = 1.0

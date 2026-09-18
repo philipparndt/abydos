@@ -64,7 +64,13 @@ struct DeclaredFileTypesTests {
 	/// covered while the Finder offered nothing, because `public.toml` exists
 	/// and this bundle was not declaring it.
 	private func isOffered(_ extensionName: String) -> Bool {
+		// A dynamic type is the system saying it has no type of its own, which
+		// is where an imported declaration applies. Without this, an extension
+		// added to the plist failed here on every machine where the bundle that
+		// declares it had not been installed yet — `.song` did, while `.puml`
+		// passed only because /Applications already registered it.
 		if let type = UTType(filenameExtension: extensionName),
+		   !type.isDynamic,
 		   !type.identifier.hasPrefix("de.rnd7.abydos") {
 			return Self.declaredTypes.contains { declared in
 				guard let parent = UTType(declared) else { return false }

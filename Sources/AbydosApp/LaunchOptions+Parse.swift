@@ -491,6 +491,8 @@ extension LaunchOptions {
 			case "--audio-loop": options.audioLoop = true
 			case "--audio-play": options.audioPlay = true
 			case "--audio-wait": options.audioWait = next().flatMap(Double.init) ?? 0
+			case "--audio-steps": options.audioSteps = next()
+			case "--song": options.songSteps = next() ?? "report"
 			case "--secrets":    options.secretsSteps = next()
 			case "--sops":       options.sopsSteps = next()
 			case "--indent":     options.indentSteps = next()

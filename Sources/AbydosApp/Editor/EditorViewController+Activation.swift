@@ -211,7 +211,11 @@ extension EditorViewController {
 			// feature exists not to do.
 			if tab.isDecrypted { return encryptAndSaveSync(tab) }
 			do {
-				try tab.document?.save()
+				if let audio = tab.contentView as? AudioFileView {
+					try audio.save()
+				} else {
+					try tab.document?.save()
+				}
 				return true
 			} catch {
 				Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
@@ -230,6 +234,17 @@ extension EditorViewController {
 	/// once per tab that goes, and only when no other tab here is still showing
 	/// the same file.
 	func announceClosed(_ closing: Tab) {
+		// A song's tab has shown more than one of the song's files, and the
+		// server was told about each as it was shown.
+		for (path, half) in closing.halves {
+			guard let languageId = half.document?.languageId, let root = half.serverRoot,
+			      !tabs.contains(where: { $0 !== closing && FilePath.canonical($0.url) == path })
+			else { continue }
+			LanguageService.shared.closed(
+				url: URL(fileURLWithPath: path), languageId: languageId, project: root
+			)
+		}
+		closing.halves.removeAll()
 		guard let languageId = closing.document?.languageId,
 		      let root = serverRoot(for: closing),
 		      !tabs.contains(where: { $0 !== closing && $0.url == closing.url })
@@ -243,6 +258,8 @@ extension EditorViewController {
 		// A sound keeps playing while its tab is out of sight, so closing the
 		// tab is what stops it.
 		(tab.contentView as? AudioFileView)?.tearDown()
+		// A song's pane is half of a split, so it is found rather than cast.
+		if let song: SongPreviewView = Self.pane(in: tab.contentView) { song.tearDown() }
 		if let scrollView = tab.contentView as? NSScrollView {
 			NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
 		}
@@ -297,6 +314,8 @@ extension EditorViewController {
 		do {
 			if let hex = tab.hex {
 				try hex.save()
+			} else if let audio = tab.contentView as? AudioFileView {
+				try audio.save()
 			} else {
 				try tab.document?.save()
 			}

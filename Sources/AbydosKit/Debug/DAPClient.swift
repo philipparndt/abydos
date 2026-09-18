@@ -15,6 +15,26 @@ import Network
 /// guarded by `lock`, and everything else is set once during start-up before
 /// any callback can run. Process and socket callbacks arrive on background
 /// queues and need to reach it.
+/// A debug adapter that lives in this process: messages go to it as
+/// dictionaries and come back through `send`, framed by nobody.
+///
+/// For a debugger over something the app itself runs — a song the song pane
+/// plays — where there is no program to start and nothing to dial, but the
+/// debug pane, its toolbar and its breakpoints should work exactly as they do
+/// for Delve.
+///
+/// **On the main queue, all of it.** The app's side of such an adapter — the
+/// song pane — is main-actor, and the session's launch runs on a cooperative
+/// thread: an adapter touched from both is an object mutated from two threads,
+/// which is how a dictionary comes to be read while it is being written.
+@MainActor
+public protocol InProcessDebugAdapter: AnyObject {
+	/// Where the adapter's responses and events go; set by the client.
+	var send: (([String: Any]) -> Void)? { get set }
+	/// A request.
+	func receive(_ message: [String: Any])
+}
+
 public final class DAPClient: @unchecked Sendable {
 	public enum ClientError: Error, LocalizedError {
 		case notRunning
@@ -69,6 +89,7 @@ public final class DAPClient: @unchecked Sendable {
 	/// Socket transport, used by adapters that speak DAP over TCP rather than
 	/// stdio. `dlv dap` is one: it is a server, and writing to its stdin
 	/// reaches nothing at all.
+	private var inProcess: InProcessDebugAdapter?
 	private var connection: NWConnection?
 	private var listener: NWListener?
 
@@ -84,6 +105,7 @@ public final class DAPClient: @unchecked Sendable {
 	}
 
 	public var isRunning: Bool {
+		if inProcess != nil { return true }
 		if let process { return process.isRunning }
 		return connection != nil
 	}
@@ -225,6 +247,14 @@ public final class DAPClient: @unchecked Sendable {
 	/// running, reached through a forwarded port, and nothing here starts or
 	/// owns the process. Everything after the socket is identical, which is
 	/// the point — a session in a cluster is a session.
+	/// Speaks to an adapter in this process. On the main queue, where the
+	/// adapter lives.
+	@MainActor
+	public func start(inProcess adapter: InProcessDebugAdapter) {
+		adapter.send = { [weak self] message in self?.dispatch(message) }
+		inProcess = adapter
+	}
+
 	public func connect(host: String, port: Int) async throws {
 		let connection = NWConnection(
 			host: NWEndpoint.Host(host),
@@ -427,6 +457,11 @@ public final class DAPClient: @unchecked Sendable {
 		// that has ended.
 		outputPipe?.fileHandleForReading.readabilityHandler = nil
 		errorPipe?.fileHandleForReading.readabilityHandler = nil
+		if let inProcess {
+			// The adapter is the main queue's; a stop can come from anywhere.
+			DispatchQueue.main.async { MainActor.assumeIsolated { inProcess.send = nil } }
+		}
+		inProcess = nil
 		connection?.cancel()
 		listener?.cancel()
 		// Told to go, and then made to.
@@ -494,7 +529,7 @@ public final class DAPClient: @unchecked Sendable {
 		arguments: [String: Any]? = nil,
 		completion: (((Result<[String: Any], Error>) -> Void))? = nil
 	) {
-		guard inputPipe != nil || connection != nil else {
+		guard inputPipe != nil || connection != nil || inProcess != nil else {
 			completion.map { handler in callbackQueue.async { handler(.failure(ClientError.notRunning)) } }
 			return
 		}
@@ -511,6 +546,14 @@ public final class DAPClient: @unchecked Sendable {
 			"command": command,
 		]
 		if let arguments { message["arguments"] = arguments }
+
+		if let inProcess {
+			// Always a hop, never a call: a reply delivered inside `send` would
+			// run its handler before the caller had finished registering it —
+			// and the adapter is the main queue's, wherever `send` was called.
+			DispatchQueue.main.async { MainActor.assumeIsolated { inProcess.receive(message) } }
+			return
+		}
 
 		guard let payload = try? JSONSerialization.data(withJSONObject: message) else { return }
 		var framed = Data("Content-Length: \(payload.count)\r\n\r\n".utf8)

@@ -91,6 +91,10 @@ public final class Settings {
 			Key.presentationAppearance: "light",
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
+			// Both on: a song's gutter columns are there only beside a song, and
+			// the menu on the gutter hides either, as it hides blame.
+			Key.songTimelineBars: true,
+			Key.songTimeCodes: true,
 			Key.fontLigatures: true,
 			// On, because the day it matters is the day nobody remembered to
 			// turn it on: a shared screen does not announce itself first.
@@ -169,6 +173,8 @@ public final class Settings {
 		static let presentationAppearance = "presentationAppearance"
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
+		static let songTimelineBars = "songTimelineBars"
+		static let songTimeCodes = "songTimeCodes"
 		static let fontLigatures = "fontLigatures"
 		static let terminalGPURendering = "terminalGPURendering"
 		static let terminalGhosttyEngine = "terminalGhosttyEngine"
@@ -442,6 +448,18 @@ public final class Settings {
 	public var wordWrap: Bool {
 		get { defaults.bool(forKey: Key.wordWrap) }
 		set { set(newValue, Key.wordWrap) }
+	}
+
+	/// Whether a song's gutter shows the bar of where each line is heard.
+	public var songTimelineBars: Bool {
+		get { defaults.bool(forKey: Key.songTimelineBars) }
+		set { set(newValue, Key.songTimelineBars) }
+	}
+
+	/// Whether a song's gutter shows the time each line is first heard.
+	public var songTimeCodes: Bool {
+		get { defaults.bool(forKey: Key.songTimeCodes) }
+		set { set(newValue, Key.songTimeCodes) }
 	}
 
 	/// Which set of colours the terminal uses.

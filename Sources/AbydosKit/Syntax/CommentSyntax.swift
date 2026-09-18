@@ -87,6 +87,10 @@ public enum CommentSyntax: Equatable, Sendable {
 		// PlantUML's line comment is an apostrophe; its block comment is
 		// `/' … '/`, which is not this gesture.
 		"plantuml": .line("'"),
+		// A song's comment is `#`, except inside a note name like `C#4` —
+		// which is the lexer's problem, not this gesture's: it comments a
+		// whole line from its first column.
+		"song": .line("#"),
 
 		// ── The refusals, and why each one is a refusal ──────────────────────
 		//

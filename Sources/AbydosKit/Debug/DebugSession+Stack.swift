@@ -15,6 +15,47 @@ extension DebugSession {
 		selectedThreadID = thread
 		await refreshThreads()
 		await refreshStack(thread: thread, reportStop: true)
+		// And every other thread open in the tree: stopped is when they are read.
+		for other in expandedThreads where other != thread {
+			await loadStack(thread: other)
+		}
+	}
+
+	/// Reads a thread's stack for the tree, without choosing it or its frame.
+	public func loadStack(thread: Int) async {
+		threadStacks[thread] = await stack(of: thread)
+		onMain { [weak self] in self?.onStackChanged?() }
+	}
+
+	/// Chooses a frame of any thread the tree shows: that thread becomes the
+	/// one whose stack and variables are shown.
+	public func selectFrame(id: Int, thread: Int) async {
+		if thread != selectedThreadID, let frames = threadStacks[thread] {
+			selectedThreadID = thread
+			stackFrames = frames
+			onMain { [weak self] in self?.onStackChanged?() }
+		}
+		await selectFrame(id: id)
+	}
+
+	private func stack(of thread: Int) async -> [StackFrame] {
+		let response = try? await client.request("stackTrace", arguments: [
+			"threadId": thread,
+			"startFrame": 0,
+			"levels": 50,
+		])
+		let frames = (response?["stackFrames"] as? [[String: Any]]) ?? []
+		return frames.map { frame in
+			let source = frame["source"] as? [String: Any]
+			return StackFrame(
+				id: frame["id"] as? Int ?? 0,
+				name: frame["name"] as? String ?? "?",
+				file: source?["path"] as? String,
+				line: frame["line"] as? Int ?? 0,
+				parentID: frame["abydos/parentId"] as? Int,
+				isSubtle: frame["presentationHint"] as? String == "subtle"
+			)
+		}
 	}
 
 	/// Reads one thread's stack.
@@ -23,22 +64,8 @@ extension DebugSession {
 	/// should follow the stack, but nothing has stopped, so the execution
 	/// marker must not move as though it had.
 	func refreshStack(thread: Int, reportStop: Bool) async {
-		let response = try? await client.request("stackTrace", arguments: [
-			"threadId": thread,
-			"startFrame": 0,
-			"levels": 50,
-		])
-		let frames = (response?["stackFrames"] as? [[String: Any]]) ?? []
-
-		stackFrames = frames.map { frame in
-			let source = frame["source"] as? [String: Any]
-			return StackFrame(
-				id: frame["id"] as? Int ?? 0,
-				name: frame["name"] as? String ?? "?",
-				file: source?["path"] as? String,
-				line: frame["line"] as? Int ?? 0
-			)
-		}
+		stackFrames = await stack(of: thread)
+		threadStacks[thread] = stackFrames
 		let top = stackFrames.first
 		onMain { [weak self] in
 			guard let self else { return }
@@ -50,7 +77,13 @@ extension DebugSession {
 			}
 		}
 
-		if let top { await selectFrame(id: top.id) }
+		// **The frame stays where somebody put it while the program runs.** A
+		// song's stack is re-read several times a second, and re-selecting the
+		// top frame each time took the selection out of their hands — asked for
+		// 2026-09-16: "the selection is not stable during the tree update".
+		// A stop is different: it is a new place, and its top frame is the news.
+		let keep = !reportStop ? stackFrames.first { $0.id == selectedFrameID } : nil
+		if let frame = keep ?? top { await selectFrame(id: frame.id) }
 	}
 
 	/// Loads the scopes and top-level variables for a frame.

@@ -49,6 +49,11 @@ final class AudioCanvas: NSView {
 		didSet { refresh() }
 	}
 
+	/// The selection's in- and out-points, in seconds, either or both.
+	var marks: (Double?, Double?) = (nil, nil) {
+		didSet { needsDisplay = true }
+	}
+
 	/// Where the playhead is, in seconds.
 	var playhead: Double = 0 {
 		didSet { placePlayhead() }
@@ -70,9 +75,9 @@ final class AudioCanvas: NSView {
 	private var overviewImage: CGImage?
 	private var detailImage: CGImage?
 
-	private static let spectrumRows = 256
-	private static let lowestFrequency = 20.0
-	private static let decibelRange: Float = 80
+	private nonisolated static let spectrumRows = 256
+	private nonisolated static let lowestFrequency = 20.0
+	private nonisolated static let decibelRange: Float = 80
 	/// The closest a window may come.
 	static let shortestSpan = 0.02
 
@@ -184,11 +189,34 @@ final class AudioCanvas: NSView {
 
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(superview)
+		// The bar along the bottom first: a press on it scrolls, not seeks.
+		let point = convert(event.locationInWindow, from: nil)
+		if isZoomed, let start = bar.press(
+			at: point, in: bounds, start: windowStart, span: windowSpan, duration: duration
+		) {
+			setWindow(start: start, span: windowSpan)
+			return
+		}
 		seek(to: event)
 	}
 
 	override func mouseDragged(with event: NSEvent) {
+		if bar.isDragging {
+			let point = convert(event.locationInWindow, from: nil)
+			if let start = bar.drag(to: point, in: bounds, span: windowSpan, duration: duration) {
+				setWindow(start: start, span: windowSpan)
+			}
+			return
+		}
 		seek(to: event)
+	}
+
+	override func mouseUp(with event: NSEvent) {
+		if bar.isDragging {
+			bar.release()
+			needsDisplay = true
+		}
+		super.mouseUp(with: event)
 	}
 
 	private func seek(to event: NSEvent) {
@@ -205,7 +233,9 @@ final class AudioCanvas: NSView {
 
 	// MARK: - Where things go
 
-	private var positionBarHeight: CGFloat { isZoomed ? max(3, Theme.current.scaled(4)) : 0 }
+	private var positionBarHeight: CGFloat { isZoomed ? PositionBar.height : 0 }
+	/// The bar along the bottom, and whether it is in hand: see `PositionBar`.
+	private var bar = PositionBar()
 
 	private var drawingBounds: NSRect {
 		NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - positionBarHeight)
@@ -268,7 +298,26 @@ final class AudioCanvas: NSView {
 			Theme.current.separator.setFill()
 			NSRect(x: 0, y: (drawingBounds.height / 2).rounded(), width: bounds.width, height: 1).fill()
 		}
+		drawSelection()
 		if isZoomed { drawPositionBar() }
+	}
+
+	/// The selection across the wave and the spectrum: a band between the
+	/// marks, and a line at each.
+	private func drawSelection() {
+		let area = drawingBounds
+		let xs = [marks.0, marks.1].compactMap { $0 }.map { x(atSeconds: $0) }
+		guard !xs.isEmpty else { return }
+		if xs.count == 2 {
+			let (left, right) = (min(xs[0], xs[1]), max(xs[0], xs[1]))
+			Theme.current.selectionBackground.withAlphaComponent(0.35).setFill()
+			NSRect(x: left, y: 0, width: max(1, right - left), height: area.height).fill(using: .sourceOver)
+		}
+		let width = max(1, Theme.current.scaled(1))
+		Theme.current.caret.withAlphaComponent(0.8).setFill()
+		for x in xs where x >= -width && x <= bounds.width {
+			NSRect(x: x.rounded() - width / 2, y: 0, width: width, height: area.height).fill()
+		}
 	}
 
 	private func drawWave(_ source: AudioOverview, in rect: NSRect) {
@@ -381,23 +430,16 @@ final class AudioCanvas: NSView {
 
 	/// Which part of the file is on screen, along the bottom edge.
 	private func drawPositionBar() {
-		let height = positionBarHeight
-		let track = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
-		Theme.current.separator.withAlphaComponent(0.5).setFill()
-		track.fill()
-		let from = CGFloat(windowStart / duration) * bounds.width
-		let width = max(Theme.current.scaled(6), CGFloat(windowSpan / duration) * bounds.width)
-		Theme.current.gitModified.withAlphaComponent(0.8).setFill()
-		NSBezierPath(
-			roundedRect: NSRect(x: from, y: track.minY, width: width, height: height),
-			xRadius: height / 2, yRadius: height / 2
-		).fill()
+		PositionBar.draw(
+			in: bounds, start: windowStart, span: windowSpan, duration: duration, active: bar.isDragging
+		)
 	}
 
 	/// A reading's spectrogram as an image: one pixel column per spectrogram
 	/// column, rows on a logarithmic axis from 20 Hz to the Nyquist frequency,
 	/// loudness as a dark-to-bright colour scale.
-	static func makeSpectrumImage(of reading: AudioOverview) -> CGImage? {
+	/// Callable from any thread, and meant to be: see `SpectrumPicture`.
+	nonisolated static func makeSpectrumImage(of reading: AudioOverview) -> CGImage? {
 		let spectrogram = reading.spectrogram
 		let width = spectrogram.columns
 		let height = spectrumRows
@@ -438,7 +480,7 @@ final class AudioCanvas: NSView {
 	/// Near-black through violet and orange to pale yellow: quiet recedes, loud
 	/// stands out, on either theme. Fixed rather than taken from the palette,
 	/// because it is a scale to read values off, not a surface.
-	private static let colourScale: [(UInt8, UInt8, UInt8)] = {
+	private nonisolated static let colourScale: [(UInt8, UInt8, UInt8)] = {
 		let stops: [(Float, Float, Float, Float)] = [
 			(0.00, 0.02, 0.02, 0.06),
 			(0.30, 0.25, 0.07, 0.42),

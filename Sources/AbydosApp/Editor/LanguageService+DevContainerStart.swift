@@ -169,6 +169,14 @@ extension LanguageService {
 				object: URL(string: uri)
 			)
 		}
+		client.onNotification = { [weak self] method, parameters in
+			guard let self, method == LineTimeline.method,
+			      let uri = parameters["uri"] as? String,
+			      let timeline = LineTimeline(params: parameters)
+			else { return }
+			self.timelines[uri] = timeline
+			NotificationCenter.default.post(name: .abydosTimelineChanged, object: URL(string: uri))
+		}
 		// **A server asking this program to change files.** Set on every client
 		// because any server may send it — it is usually the second half of a
 		// code action that was a command — and answered by whichever window is

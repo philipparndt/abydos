@@ -402,6 +402,7 @@ extension CodeView {
 		let lineStart = document.rope.byteOffset(ofLine: line)
 		let column = document.rope.utf16Offset(fromByte: byteOffset) - document.rope.utf16Offset(fromByte: lineStart)
 		onCaretMoved?(line + 1, column + 1)
+		onCaretLine?(line + 1)
 		selectionChanged()
 	}
 

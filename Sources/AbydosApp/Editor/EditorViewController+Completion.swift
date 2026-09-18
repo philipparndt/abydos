@@ -356,12 +356,53 @@ extension EditorViewController {
 				languageId: languageId,
 				project: serverRoot(for: tab) ?? project.root
 			)
-			guard let first = locations.first, let url = first.url else { return }
+			guard let first = locations.first, let url = first.url else {
+				// **Nothing found says so.** A jump that quietly does nothing
+				// cannot be told from a server that has no jumps at all:
+				// reported 2026-09-16, "it seems not be possible to navigate to
+				// includes and functions - do we miss a navigation feature in
+				// the LSP?", of a server that answered every name asked of it
+				// and nothing for the keyword beside them.
+				Toast.post(
+					"No definition here",
+					detail: "The \(LanguageRegistry.shared.displayName(for: languageId)) server "
+						+ "answered nothing for what the caret is on.",
+					kind: .information
+				)
+				return
+			}
 			open(fileURL: url, atLine: first.range.start.line + 1)
 		}
 	}
 
 	/// Applies whatever a server last said about the files that are open.
+	/// A song's server said where its lines are heard: the gutter draws it.
+	@objc func timelineChanged(_ notification: Notification) {
+		guard let url = notification.object as? URL else { return }
+		// Canonical, since a tab keeps the spelling it was opened under and the
+		// server answers in its own.
+		for tab in tabs where FilePath.canonical(tab.url) == FilePath.canonical(url) {
+			let timeline = LanguageService.shared.timeline(for: tab.url)
+			tab.codeView?.timeline = timeline
+			// A file of a song: the pane plays the song, not the file, which on
+			// its own has no tracks and no sound. The tab becomes that song's —
+			// so the song's other files are shown in it rather than opened
+			// beside it, and the row above the text says which one this is.
+			if let pane: SongPreviewView = Self.pane(in: tab.contentView) {
+				if let song = timeline?.song, let songURL = URL(string: song),
+				   FilePath.canonical(songURL) != FilePath.canonical(tab.url) {
+					tab.song = songURL
+					pane.showSong(at: songURL)
+				} else {
+					// Its own song after all: whatever waited for the answer can go.
+					tab.song = tab.url
+					pane.songIsKnown()
+				}
+				refreshFilesBar(in: tab)
+			}
+		}
+	}
+
 	@objc func diagnosticsChanged(_ notification: Notification) {
 		guard let url = notification.object as? URL else { return }
 		for tab in tabs where tab.url.absoluteString == url.absoluteString {

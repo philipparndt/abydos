@@ -103,7 +103,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// `docker run` leaves the container up — `--rm` never fires — which
 			// is why ending the processes alone was not enough.
 			ToolProcesses.shared.terminateAll()
-			ToolContainers.shared.removeAll()
+			ToolContainers.shared.removeAllWithoutWaiting()
 		}
 	}
 
@@ -153,8 +153,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	/// by the time a normal quit gets here there is nothing left registered.
 	private static func endToolsOnExit() {
 		atexit {
+			QuitTrace.shared.step("exit called")
 			ToolProcesses.shared.terminateAll()
-			ToolContainers.shared.removeAll()
+			ToolContainers.shared.removeAllWithoutWaiting()
+			// The last thing this app's own code does: what is left is the
+			// system's, and the sample is what sees that.
+			QuitTrace.shared.step("atexit")
+			QuitTrace.shared.end()
 		}
 	}
 
@@ -496,8 +501,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		for controller in windowControllers {
 			guard controller.settleDecryptedBuffersForQuit() else { return .terminateCancel }
 		}
+		// From here the quit is timed, and sampled if it is slow: see `QuitTrace`.
+		QuitTrace.shared.begin(
+			"windows=\(windowControllers.count) up=\(Int(ProcessInfo.processInfo.systemUptime - launchedAt)) s"
+		)
 		return .terminateNow
 	}
+
+	/// When this process started, on the uptime clock, for the quit's line.
+	private let launchedAt = ProcessInfo.processInfo.systemUptime
 
 	/// ⌘, opens the settings in the window somebody is working in.
 	@objc func showSettings(_ sender: Any?) {
@@ -531,10 +543,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	public func applicationWillTerminate(_ notification: Notification) {
+		QuitTrace.shared.step("asked")
 		for controller in windowControllers {
 			controller.autoSaveAll()
 			controller.rememberOpenEditors()
 		}
+		QuitTrace.shared.step("saved and remembered")
 		// Nothing this app started outlives it. A subprocess is handed to
 		// launchd rather than killed when its parent goes, and a container that
 		// keeps running holds whatever it was doing — enough of them and the
@@ -543,7 +557,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// The container is removed separately and by name, because ending the
 		// process that started it does nothing to it at all.
 		ToolProcesses.shared.terminateAll()
-		ToolContainers.shared.removeAll()
+		QuitTrace.shared.step("tools ended")
+		// Started and not waited for: see `removeAllWithoutWaiting`. The
+		// process is gone in a moment, and the removal finishes without it.
+		ToolContainers.shared.removeAllWithoutWaiting()
+		QuitTrace.shared.step("container removals started")
 	}
 
 	/// Fills File ▸ Project Trust from the window in front when it is opened.

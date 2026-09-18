@@ -58,7 +58,10 @@ let revisionGrammars: [(pkg: String, url: String, revision: String, products: [S
 // next re-vendor, which is exactly the moment somebody wants to see one — these
 // are five files this repository carries and does not read. `make warnings`
 // counts them apart instead, as upstream's and never as a failure of ours.
-let vendoredGrammars = ["CSS", "JavaScript", "Make", "Python", "YAML"]
+//
+// **Song is vendored for another reason**: it has no upstream but musik-as-text
+// itself, `tree-sitter-song/` in that repository, copied here as generated.
+let vendoredGrammars = ["CSS", "JavaScript", "Make", "Python", "Song", "YAML"]
 
 // Spelled out rather than concatenated inside the Package literal: the type
 // checker gives up on an expression that large and the manifest stops
