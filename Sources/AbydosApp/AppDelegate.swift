@@ -103,7 +103,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// `docker run` leaves the container up — `--rm` never fires — which
 			// is why ending the processes alone was not enough.
 			ToolProcesses.shared.terminateAll()
-			ToolContainers.shared.removeAll()
+			ToolContainers.shared.removeAllWithoutWaiting()
 		}
 	}
 
@@ -155,7 +155,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		atexit {
 			QuitTrace.shared.step("exit called")
 			ToolProcesses.shared.terminateAll()
-			ToolContainers.shared.removeAll()
+			ToolContainers.shared.removeAllWithoutWaiting()
 			// The last thing this app's own code does: what is left is the
 			// system's, and the sample is what sees that.
 			QuitTrace.shared.step("atexit")
@@ -558,8 +558,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// process that started it does nothing to it at all.
 		ToolProcesses.shared.terminateAll()
 		QuitTrace.shared.step("tools ended")
-		ToolContainers.shared.removeAll()
-		QuitTrace.shared.step("containers removed")
+		// Started and not waited for: see `removeAllWithoutWaiting`. The
+		// process is gone in a moment, and the removal finishes without it.
+		ToolContainers.shared.removeAllWithoutWaiting()
+		QuitTrace.shared.step("container removals started")
 	}
 
 	/// Fills File ▸ Project Trust from the window in front when it is opened.

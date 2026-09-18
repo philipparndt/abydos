@@ -118,8 +118,12 @@ Zoomed in, the wave is read again at the screen's own detail, and the bar along
 the bottom of a zoomed song or sound is a scrollbar you can drag.
 
 What `mat` warns about — a sample it could not open — is shown over the pane
-instead of passing as a normal render. A quit that takes more than a second and
-a half now samples itself into `~/Library/Logs/Abydos`.
+instead of passing as a normal render.
+
+Quitting with a language server in a container no longer waits ten seconds for
+the container to be removed: the removal is started and finishes after the app
+has gone. Every quit writes a line to `~/Library/Logs/Abydos/quit.log`, and one
+that takes more than a second and a half samples itself there.
 
 ## A song is edited in one tab
 

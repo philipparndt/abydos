@@ -685,6 +685,17 @@ with each step's time, and a process still alive 1.5 s after the quit was asked
 for has `/usr/bin/sample` pointed at it from another thread — the main thread's
 stack is the answer, and it cannot be asked for from inside once it is stuck.
 
+It caught the real one the next morning: `containers removed 10011 ms`. The
+music is a Rust project, a Rust project has a rust-analyzer, and here that runs
+in an Apple container; at quit the app removed it with `container rm --force`
+on the main thread under a ten-second deadline — and a forced removal of a
+running container takes 11.8 s by hand, since it stops the container first and
+waits for it. So every quit waited the whole deadline and then left the
+container running. The removal is now started at quit and not waited for: a
+process this app starts outlives it, which for tools was the problem and here is
+the point. Driven with a rust-analyzer container up: the quit took 0.30 s, and
+the container was gone four seconds after the app.
+
 **The pane's own size.** These went in beside three other splits: the files a
 song is made of and their watch (`SongSources`), where a breakpoint stopped it
 (`SongBreakpointStops`), whether the first render has landed (`SongSettled`),

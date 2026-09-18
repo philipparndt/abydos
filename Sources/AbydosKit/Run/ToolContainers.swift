@@ -199,6 +199,47 @@ public final class ToolContainers: @unchecked Sendable {
 		remove(all)
 	}
 
+	/// Starts the removal of every container registered here and does not
+	/// wait for it: for a process on its way out.
+	///
+	/// **A quit is not a moment to wait ten seconds on a runtime.** `removeAll`
+	/// waits for the runtime to answer, up to `removalDeadline`, and Apple's
+	/// `container rm --force` on a running container takes 11.8 s: it stops the
+	/// container first and gives it the time a stop gives. So a quit with a
+	/// rust-analyzer in a container waited the whole deadline on the main
+	/// thread — `containers removed 10011 ms` in the quit log, 2026-09-18 —
+	/// and then *left the container running*, since the deadline cut the
+	/// removal off. Reported as "abydos does not exit very fast at least when
+	/// working with music": the music is a Rust project, and the Rust project
+	/// has a rust-analyzer.
+	///
+	/// A process this app starts and does not wait for outlives it — which is
+	/// the whole reason `removeAll` exists for tools, and here is what is
+	/// wanted: the removal finishes a few seconds after the app has gone. The
+	/// names are forgotten here at once, so the removal the exit runs again
+	/// finds nothing to do twice.
+	public func removeAllWithoutWaiting() {
+		lock.lock()
+		let all = running
+		running.removeAll()
+		lock.unlock()
+		guard !all.isEmpty else { return }
+		var byRuntime: [String: (ContainerRuntime, [String])] = [:]
+		for (name, runtime) in all {
+			byRuntime[runtime.path, default: (runtime, [])].1.append(name)
+		}
+		for (runtime, names) in byRuntime.values {
+			let command = Self.removal(of: names.sorted(), using: runtime)
+			let process = Process()
+			process.executableURL = URL(fileURLWithPath: command.executable)
+			process.arguments = command.arguments
+			process.standardInput = FileHandle.nullDevice
+			process.standardOutput = FileHandle.nullDevice
+			process.standardError = FileHandle.nullDevice
+			try? process.run()
+		}
+	}
+
 	// There was a `release(withPrefixes:)` here, and it is gone on purpose.
 	//
 	// It was written to narrow `removeAll` after that took a devcontainer out
