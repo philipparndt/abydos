@@ -556,6 +556,8 @@ final class RunCoordinator {
 	/// information to answer before the first run.
 	/// Stops whichever of the two is running.
 	func stopRunning() {
+		// Every sound first, whatever else is running: see `OnePlayer.stopAll`.
+		OnePlayer.stopAll()
 		// A launch still working its way through the cluster is the thing most
 		// worth being able to stop: it is the part that waits.
 		if let task = clusterTask {
