@@ -93,8 +93,10 @@ extension EditorViewController {
 			let scratch = ScratchFiles.isScratch(tab.url)
 			return EditorTabItem(
 				url: tab.url,
+				// A song's tab is the song, whichever of its files is in front:
+				// named after the file, going to the kit looked like a new tab.
 				title: tab.pageTitle
-					?? (scratch ? ScratchFiles.title(for: tab.url) : tab.url.lastPathComponent),
+					?? (scratch ? ScratchFiles.title(for: tab.url) : (tab.song ?? tab.url).lastPathComponent),
 				// A scratch keeps its dot whether or not it is written out. It
 				// has nowhere in the project it belongs to, and the dot is what
 				// says so — the same mark Sublime and Zed leave on one.

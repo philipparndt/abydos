@@ -134,6 +134,8 @@ extension MainWindowController {
 	///    for; `export-menu` — what the Export menu offers.
 	///  * `caret:<line>` — the caret in the source, which lights the stem it is in.
 	///  * `play`, `loop`, `seek:<s>`.
+	///  * `goto:<path>:<line>` — a file of the song at a line, as the debugger's
+	///    call stack opens one; `tabs` then says the tab and the row of files.
 	///  * `edit:<line>:<text>` — that line of the file on disk replaced, the way
 	///    a save would leave it, so the pane renders again; `rendered:<n>` —
 	///    waits until that many renders have finished.
@@ -170,8 +172,11 @@ extension MainWindowController {
 			// What the group holds, and which file the tab in front is showing:
 			// a song's files are shown in the song's tab, so the count is the
 			// claim that no tab was opened for them.
-			print("SONG-TABS: [" + (editor.activeGroup?.tabTitlesForTesting.joined(separator: ", ") ?? "no group")
-				+ "] showing=" + (editor.activeGroup?.activeTab?.url.lastPathComponent ?? "-"))
+			let bar: SongFilesBar? = editor.activeGroup?.activeTab.flatMap { EditorViewController.pane(in: $0.contentView) }
+			let titles: String = editor.activeGroup?.tabTitlesForTesting.joined(separator: ", ") ?? "no group"
+			let showing: String = editor.activeGroup?.activeTab?.url.lastPathComponent ?? "-"
+			let files: String = bar?.reportForTesting ?? "FILES: none"
+			print("SONG-TABS: [\(titles)] showing=\(showing) \(files)")
 			fflush(stdout)
 		case "mix": pane.show(.mix)
 		case "stems": pane.show(.stems)
@@ -187,6 +192,14 @@ extension MainWindowController {
 			if let base = (pane.url as URL?) ?? editor.activeGroup?.activeTab?.url {
 				let path = String(step.dropFirst("open:".count))
 				editor.open(fileURL: base.deletingLastPathComponent().appendingPathComponent(path), focusEditor: false)
+			}
+		case _ where step.hasPrefix("goto:"):
+			// `goto:<path>:<line>` — a file of the song at a line, the way the
+			// debugger's call stack opens one: through the editor, not the song.
+			let parts = step.dropFirst("goto:".count).split(separator: ":")
+			if let base = (pane.url as URL?), let path = parts.first {
+				let file = base.deletingLastPathComponent().appendingPathComponent(String(path))
+				editor.open(fileURL: file, atLine: parts.dropFirst().first.flatMap { Int($0) } ?? 1)
 			}
 		case "reopen":
 			// The tab closed and the file opened again — a new pane, which is

@@ -28,3 +28,24 @@ closer still, their names and a key strip. The caret in a `pattern` lights
 every region of it, clicking a region goes to its `play` line and ⌥-clicking
 to the pattern. It needs a `mat` whose `export` has regions (c036a81); an
 older one draws the notes without them.
+
+## A song plays straight through while it renders
+
+A song started before its render has finished now plays through its first
+seconds without stopping and starting at every stretch that arrives, and the
+stems join without a gap when the render lands. Switching between *Mix* and
+*Stems*, or silencing a stem, fades over 80 ms instead of clicking.
+
+## A song's tab stays the song's
+
+Going between a song's files no longer starts its render again or stops the
+sound, even when another open song includes the same files. The tab keeps the
+song's name, a song that has been played keeps its tab, and the row above the
+text reads `♪ ember.song › drums.song ⌄` — the song, then the file being
+edited, with the menu of the song's files on it.
+
+## Moving a playing song no longer crashes the app
+
+A song whose folder was moved or deleted while it played took Abydos down at
+its next render. The render now fails with a line saying the folder is gone,
+and the sound plays on.

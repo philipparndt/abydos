@@ -357,7 +357,7 @@ final class CadovaPreviewView: DelayedPaneView {
 			}
 
 			ToolProcesses.shared.forget(process)
-			let status = process.terminationStatus
+			let status = process.endedStatus ?? -1
 			let report = said
 			DispatchQueue.main.async {
 				watchdog.cancel()
