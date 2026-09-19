@@ -207,3 +207,28 @@ struct DrainGivingUpTests {
 		Thread.sleep(forTimeInterval: 3)
 	}
 }
+
+/// Asking a process how it ended when it never started, or has not ended,
+/// without taking the app down: see `Process.endedStatus`.
+struct ProcessEndedStatusTests {
+	/// A song moved while it played: its render is started in a folder that is
+	/// no longer there, the launch throws, and the status is asked anyway.
+	@Test func aProcessStartedInAFolderThatIsGoneHasNoStatus() {
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+		process.currentDirectoryURL = FileManager.default.temporaryDirectory
+			.appendingPathComponent("moved-\(UUID().uuidString)", isDirectory: true)
+		#expect(throws: (any Error).self) { try process.run() }
+		#expect(process.endedStatus == nil)
+	}
+
+	@Test func aProcessThatEndedSaysHow() throws {
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: "/bin/sh")
+		process.arguments = ["-c", "exit 3"]
+		#expect(process.endedStatus == nil)
+		try process.run()
+		process.waitUntilExit()
+		#expect(process.endedStatus == 3)
+	}
+}

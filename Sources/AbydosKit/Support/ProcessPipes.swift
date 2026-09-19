@@ -276,3 +276,19 @@ public enum ProcessPipes {
 		var data = Data()
 	}
 }
+
+extension Process {
+	/// How it ended, or nil for a process that never started or is still going.
+	///
+	/// **`terminationStatus` on either raises an Objective-C exception**, which
+	/// Swift cannot catch, and the app aborts. A launch that throws — the tool
+	/// gone, or the directory it is run in gone — leaves a process that never
+	/// started, and code that caught the throw and read the status anyway took
+	/// the app down with it: two crashes on 2026-09-19, `-[NSConcreteTask
+	/// terminationStatus]` under the song render, which runs `mat` in the song's
+	/// folder, after a song "was moved while playing".
+	public var endedStatus: Int32? {
+		guard processIdentifier != 0, !isRunning else { return nil }
+		return terminationStatus
+	}
+}

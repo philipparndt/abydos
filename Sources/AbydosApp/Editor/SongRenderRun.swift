@@ -168,7 +168,9 @@ final class SongRenderRun {
 				said = error.localizedDescription
 			}
 			ToolProcesses.shared.forget(process)
-			let status = process.terminationStatus
+			// -1 for a `mat` that never started: its folder moved, say. See
+			// `Process.endedStatus`.
+			let status = process.endedStatus ?? -1
 			let report = said
 			DispatchQueue.main.async {
 				guard let self else { return }
