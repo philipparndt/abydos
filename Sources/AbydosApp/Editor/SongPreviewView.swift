@@ -48,6 +48,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// The source should show a line: a lane's name was clicked, or the
 	/// error strip.
 	var onRevealLine: ((Int, Int) -> Void)?
+	/// The source should show a line of one of the song's files: a region was clicked.
+	var onRevealPlace: ((URL, Int) -> Void)?
 	/// Where the playhead is, as it moves, for the source's timeline bars; nil
 	/// when there is nothing to play.
 	var onPlayhead: ((_ seconds: Double?, _ marking: Bool) -> Void)?
@@ -71,7 +73,9 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// Told whenever playing starts or stops, so the tab can show a speaker.
 	var onPlayingChanged: ((Bool) -> Void)?
 
-	private let canvas = SongCanvas()
+	let canvas = SongCanvas()
+	/// The song's arrangement, for *Notes*: see `SongPreviewView+Notes`.
+	let notes = SongNotes()
 	private let heights = ScaledHeights()
 	private var playButton: DrawnButton!
 	private var loopButton: DrawnButton!
@@ -340,10 +344,12 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			self?.show(View(rawValue: index) ?? .mix)
 		}
 		modeChoice = DrawnChoice(
-			segments: [.words("Wave"), .words("Spectrum"), .words("Both")],
+			segments: [.words("Wave"), .words("Spectrum"), .words("Both"), .words("Notes")],
 			selectedIndex: AudioCanvas.Mode.both.rawValue
 		) { [weak self] index in
-			self?.canvas.mode = AudioCanvas.Mode(rawValue: index) ?? .both
+			// Notes are drawn over the lanes as they are, so the mode under them stays.
+			self?.canvas.showsNotes = index == AudioCanvas.Mode.allCases.count
+			if let mode = AudioCanvas.Mode(rawValue: index) { self?.canvas.mode = mode }
 		}
 		playButton.isEnabled = false
 		loopButton.isEnabled = false
@@ -363,6 +369,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		}
 		canvas.onToggleLane = { [weak self] index in self?.toggleLane(at: index) }
 		canvas.onRevealLane = { [weak self] index in self?.revealLane(at: index) }
+		canvas.onRegionClicked = { [weak self] region, pattern in self?.reveal(region: region, pattern: pattern) }
+		notes.onLanded = { [weak self] in self?.applyNotes() }
 
 		errorStrip.isHidden = true
 		errorStrip.onClick = { [weak self] in
@@ -448,6 +456,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		// one replaces it, and until it does the old mix plays to its end
 		// rather than waiting for a stretch nobody is writing.
 		stopGrowing()
+		notes.export(song: url, executable: executable)
 		run.render(
 			song: url, executable: executable, fingerprint: sources.fingerprint(of: url),
 			streaming: Self.streamingSupported(by: executable)
@@ -634,7 +643,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	}
 
 	private func rebuildLanes() {
-		defer { readDetail() }
+		defer { readDetail(); applyNotes() }
 		guard let manifest else { return }
 		if !manifest.layers.isEmpty { shownLayers = manifest.layers }
 		switch view {
@@ -738,6 +747,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	/// millisecond — and it runs on the caret, not the keystroke's redraw.
 	func caretMoved(toLine line: Int) {
 		guard let text = sourceText() else { return }
+		canvas.notesLit = notes.lit(atLine: line, in: text)
 		let layers = SongSource.parse(text).layers(litByCaretAt: line)
 		guard layers != lit else { return }
 		lit = layers
@@ -1033,6 +1043,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	func loopForTesting() { if playback?.isLooping == false { toggleLoop() } }
 
 	func showForTesting(mode name: String) {
+		canvas.showsNotes = name == "notes"
+		modeChoice.selectedIndex = canvas.showsNotes ? AudioCanvas.Mode.allCases.count : canvas.mode.rawValue
 		guard let mode = AudioCanvas.Mode.allCases.first(where: { $0.name == name }) else { return }
 		modeChoice.selectedIndex = mode.rawValue
 		canvas.mode = mode
@@ -1061,7 +1073,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		let editing = FilePath.canonical(file) == FilePath.canonical(url)
 			? "" : " file=\(file.lastPathComponent)"
 		return "SONG: \(url.lastPathComponent)\(editing) state=\(state) runs=\(run.runs) view=\(view.name) "
-			+ "mode=\(canvas.mode.name) \(isPlaying ? "playing" : "paused")"
+			+ "mode=\(canvas.showsNotes ? "notes" : canvas.mode.name) \(isPlaying ? "playing" : "paused")"
 			+ String(format: " playhead=%.2f duration=%.2f", playback?.currentSeconds ?? 0, duration)
 			+ " tempo=\(Int(manifest?.tempo ?? 0)) stems=\(manifest?.layers.count ?? 0)"
 			+ " lanes=[\(lanes.joined(separator: " "))] lit=[\(lit.sorted().joined(separator: " "))]"
@@ -1073,6 +1085,6 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 			// halves of what makes a save quick.
 			+ " cached=[\((manifest?.layers.filter(\.cached).map(\.name) ?? []).joined(separator: " "))]"
 			+ " drawn=\(overviews.compactMap { $0 }.count)/\(overviews.count)"
-			+ " info=\"\(infoLabel.stringValue)\" error=\(error)"
+			+ " info=\"\(infoLabel.stringValue)\" error=\(error)" + notesReport
 	}
 }

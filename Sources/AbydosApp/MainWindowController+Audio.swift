@@ -125,7 +125,9 @@ extension MainWindowController {
 	///  * `tabs` — the group's tabs and which file the one in front shows.
 	///  * `zoom:<start>:<span>` — the window; `drag-bar:<fraction>:<points>` — the
 	///    bar along the bottom, pressed and moved.
-	///  * `mix`, `stems` — which view; `wave`, `spectrum`, `both` — what is drawn.
+	///  * `mix`, `stems` — which view; `wave`, `spectrum`, `both`, `notes` — what
+	///    is drawn; `click:<x>:<y>[:option]` — a click at those fractions of the
+	///    lanes, as real mouse events, which on a region reveals its line.
 	///  * `off:<layer>`, `on:<layer>` — a stem's switch; `wobble:<layer>` — a
 	///    press on it that drags a pixel, as real mouse events.
 	///  * `export:<wav|flac|m4a>[:stems]` — an export beside the song, waited
@@ -173,7 +175,7 @@ extension MainWindowController {
 			fflush(stdout)
 		case "mix": pane.show(.mix)
 		case "stems": pane.show(.stems)
-		case "wave", "spectrum", "both": pane.showForTesting(mode: step)
+		case "wave", "spectrum", "both", "notes": pane.showForTesting(mode: step)
 		case "play": pane.playForTesting()
 		case "loop": pane.loopForTesting()
 		case _ where step.hasPrefix("open:"):
@@ -205,6 +207,11 @@ extension MainWindowController {
 			case "off": pane.setLane(parts.dropFirst().first ?? "", enabled: false)
 			case "on": pane.setLane(parts.dropFirst().first ?? "", enabled: true)
 			case "wobble": pane.wobbleSwitchForTesting(layer: parts.dropFirst().first ?? "")
+			case "click":
+				let numbers = step.split(separator: ":").dropFirst().compactMap { Double($0) }
+				if numbers.count >= 2 {
+					pane.canvas.clickForTesting(at: numbers[0], numbers[1], option: step.hasSuffix(":option"))
+				}
 			case "export":
 				// `export:<wav|flac|m4a>` or `export:flac:stems`, without the
 				// replace question — a driven run exports over a scratch copy —
