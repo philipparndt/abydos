@@ -133,7 +133,7 @@ extension MainWindowController {
 	///  * `export:<wav|flac|m4a>[:stems]` — an export beside the song, waited
 	///    for; `export-menu` — what the Export menu offers.
 	///  * `caret:<line>` — the caret in the source, which lights the stem it is in.
-	///  * `play`, `loop`, `seek:<s>`.
+	///  * `play`, `loop`, `seek:<s>`; `stop-button` — the run control's stop.
 	///  * `goto:<path>:<line>` — a file of the song at a line, as the debugger's
 	///    call stack opens one; `tabs` then says the tab and the row of files.
 	///  * `edit:<line>:<text>` — that line of the file on disk replaced, the way
@@ -285,6 +285,12 @@ extension MainWindowController {
 				// `panel:<points>` — the panel's height, for a capture: opening
 				// the debugger restores whatever height this machine remembers.
 				if let height = Double(parts.dropFirst().first ?? "") { setPanelHeightForTesting(height) }
+			case "stop-button":
+				// The run control's stop, as its button sends it; then whether
+				// any sound is left anywhere.
+				run.stopRunning()
+				print("SONG-STOP: playing anywhere = \(SongPlaybackHub.shared.anyPlaying)")
+				fflush(stdout)
 			case "debug":
 				// `debug` — the song's debug session: threads, the stack shown,
 				// its scopes; `debug:continue|pause|step|stop|thread:<n>` — the

@@ -110,6 +110,18 @@ final class SongPlaybackHub {
 		said(song)
 	}
 
+	/// Every song that is playing, paused where it is — whether or not a pane
+	/// that started it is still there to be asked.
+	func pauseAll() {
+		for (key, song) in songs where song.playback.isPlaying {
+			song.playback.pause()
+			NotificationCenter.default.post(name: .abydosSongPlaybackChanged, object: key as NSString)
+		}
+	}
+
+	/// Whether any song is making a sound, for a driven run.
+	var anyPlaying: Bool { songs.values.contains { $0.playback.isPlaying } }
+
 	/// Tells every pane of this song that something about its sound changed.
 	func said(_ song: URL) {
 		NotificationCenter.default.post(name: .abydosSongPlaybackChanged, object: key(song) as NSString)
