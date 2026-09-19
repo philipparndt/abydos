@@ -353,7 +353,7 @@ extension EditorViewController {
 	/// "one tab for the whole list" is a claim about which kind of tab it is.
 	var tabTitlesForTesting: [String] {
 		tabs.map { tab in
-			(tab.pageTitle ?? tab.url.lastPathComponent) + (tab.isPreview ? "~" : "")
+			(tab.pageTitle ?? (tab.song ?? tab.url).lastPathComponent) + (tab.isPreview ? "~" : "")
 				// An entry inside an archive says so, and that it is read only,
 				// which is the whole of what makes its tab different.
 				+ (tab.archiveOrigin.map { " [\($0.said)\(tab.document?.isReadOnly == true ? ", read only" : "")]" } ?? "")

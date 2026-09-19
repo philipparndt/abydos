@@ -99,6 +99,9 @@ extension EditorViewController {
 		stack.alignment = .width
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		bar.setContentHuggingPriority(.required, for: .vertical)
+		// Across the whole tab: left to the stack, the bar was as wide as what
+		// it said, and sat at the far edge.
+		bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 		return stack
 	}
 
@@ -171,6 +174,9 @@ extension EditorViewController {
 		view.onPlayingChanged = { [weak self, weak tab] playing in
 			guard let tab else { return }
 			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil
+			// A song that has been played is kept: provisional, the next file
+			// looked at would take its tab's place and the sound with it.
+			if playing { tab.isPreview = false }
 			self?.refreshTabBar()
 		}
 		// The playhead through the source's timeline bars, and a click on a bar

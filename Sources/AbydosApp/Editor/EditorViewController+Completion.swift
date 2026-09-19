@@ -389,6 +389,22 @@ extension EditorViewController {
 			// so the song's other files are shown in it rather than opened
 			// beside it, and the row above the text says which one this is.
 			if let pane: SongPreviewView = Self.pane(in: tab.contentView) {
+				// **A song's tab keeps its song** while one of its files is in
+				// front. A kit or a set of patterns can be included by several
+				// songs, and the server names one of them — not necessarily this
+				// tab's. Reported 2026-09-19: "when switching between the files
+				// within a song the render streaming starts again from the
+				// beginning, it should be one process". With `ember-short.song`
+				// open beside `ember.song`, going to `drums.song` in ember's tab
+				// was answered with ember-short, and the pane went to that song
+				// and back, rendering from the top and stopping the sound each
+				// time. Only a tab opened on the file itself asks which song it is.
+				if let song = tab.song, FilePath.canonical(song) != FilePath.canonical(tab.url),
+				   isOfTheSameSong(tab.url, as: tab) {
+					pane.songIsKnown()
+					refreshFilesBar(in: tab)
+					continue
+				}
 				if let song = timeline?.song, let songURL = URL(string: song),
 				   FilePath.canonical(songURL) != FilePath.canonical(tab.url) {
 					tab.song = songURL
