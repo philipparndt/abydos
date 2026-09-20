@@ -38,3 +38,22 @@
 - [x] 5.3 Release note entry under the next version, in the 0.20.6 shape
 - [ ] 5.4 `make test` and `make warnings` clean
 - [x] 5.5 No `.abydos/backlog/spec` file is made untrue: the backlog is retired
+
+## 6. A lane opens into its tracks
+
+- [x] 6.1 `SongLaneHeights.shared` in AbydosKit, with tests: closed lanes equal, an open one a closed one per track
+- [x] 6.2 `SongNotesDrawing.Strip.apart`, and the track's name at the right edge of each strip of an open lane
+- [x] 6.3 `SongCanvas`: `expanded` by lane name, the chevron, the press on it, lanes placed by `SongLaneHeights`
+- [x] 6.4 `--song` steps `expand:<layer>` and `collapse:<layer>`; the report gains `open=[…]`
+- [x] 6.5 A driven run over a scratchpad copy of `dream.song`: `piano`, `pad` and `fx` open, a strip per track
+
+## 7. A block is muted from its region's menu
+
+- [x] 7.1 `mat`: `mute` on a `play` line — the block keeps its place, plays nothing, and its region is exported `muted` (musik-as-text 4c678d7)
+- [x] 7.2 `SongBlockMute.toggle` in AbydosKit, with tests: the word at the end of what the line says, the comment and the line ending left alone, twice is the line as it was
+- [x] 7.3 `SongArrangement.Region.isMuted`, and a muted region drawn without colour, with a broken edge and its name struck through
+- [x] 7.4 `SongCanvas+RegionMenu.swift`: *Mute Block* / *Unmute Block*, *Go to Play Line*, *Go to Pattern*
+- [x] 7.5 The edit made through the editor — one undo — and the file saved, so the render follows
+- [x] 7.6 `--song` step `region-menu:<x>:<y>[:<title>]`
+- [x] 7.7 A driven run over a scratchpad copy of `acid.song`: `kicks` muted from its menu, the line changed and saved, rendered again, `beat` where it was
+

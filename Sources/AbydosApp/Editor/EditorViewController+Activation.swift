@@ -312,6 +312,9 @@ extension EditorViewController {
 		write(tab)
 	}
 
+	/// A song's file written because its pane changed it: see `onToggleMute`.
+	func saveForSong(_ tab: Tab) { write(tab) }
+
 	private func write(_ tab: Tab) {
 		do {
 			if let hex = tab.hex {

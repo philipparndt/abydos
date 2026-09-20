@@ -171,6 +171,17 @@ extension EditorViewController {
 			tab.codeView?.reveal(line: line, column: 1)
 			if let codeView = tab.codeView { codeView.window?.makeFirstResponder(codeView) }
 		}
+		// A block muted from its region: one word on its `play` line, made as an
+		// edit of this editor's — one undo — and saved, since `mat` reads the
+		// disk and a block muted is a block that should stop being heard.
+		view.onToggleMute = { [weak self, weak tab] file, line in
+			guard let self, let tab, self.showInTab(file: file, in: tab),
+			      let codeView = tab.codeView, let text = tab.document?.rope.string,
+			      let edit = SongBlockMute.toggle(atLine: line, in: text) else { return }
+			codeView.replace(utf16Range: edit.range, with: edit.text)
+			codeView.reveal(line: line, column: 1)
+			self.saveForSong(tab)
+		}
 		view.onPlayingChanged = { [weak self, weak tab] playing in
 			guard let tab else { return }
 			tab.pageSymbol = playing ? "speaker.wave.2.fill" : nil

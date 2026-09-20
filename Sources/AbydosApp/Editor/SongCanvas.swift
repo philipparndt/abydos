@@ -80,7 +80,12 @@ final class SongCanvas: NSView {
 	/// Each lane drawn as its patterns and notes rather than as `mode` says:
 	/// see `SongNotesDrawing`. The same lanes, the same sound.
 	var showsNotes = false {
-		didSet { if showsNotes != oldValue { refresh() } }
+		didSet {
+			guard showsNotes != oldValue else { return }
+			refresh()
+			// An open lane is only open as notes, so the headers have moved.
+			window?.invalidateCursorRects(for: self)
+		}
 	}
 	/// What each lane draws as notes, a strip or several per lane.
 	private(set) var noteStrips: [[SongNotesDrawing.Strip]] = []
@@ -95,11 +100,51 @@ final class SongCanvas: NSView {
 	}
 	/// A region was clicked; true with ⌥, which asks for its pattern.
 	var onRegionClicked: ((SongArrangement.Region, Bool) -> Void)?
+	/// A region's menu asked for its block to be muted, or heard again.
+	var onToggleRegionMute: ((SongArrangement.Region) -> Void)?
 
 	func setNotes(_ strips: [[SongNotesDrawing.Strip]], sixteenth: Double) {
 		noteStrips = strips
 		self.sixteenth = sixteenth
-		if showsNotes { needsDisplay = true }
+		arrangeStrips()
+		if showsNotes { refresh() }
+	}
+
+	/// The lanes opened into their tracks, by name: a lane of several tracks is
+	/// a group, drawn closed as one strip of all of them on shared rows, and
+	/// open as a strip per track. By name, so a render that lands — new lanes —
+	/// leaves open what was opened.
+	///
+	/// Asked for 2026-09-20: "have the track as a group that can be expanded and
+	/// collapsed. In the collapsed mode it is shown like now, in the expanded
+	/// mode we have individual sub tracks."
+	private(set) var expanded: Set<String> = []
+	/// What is drawn: `noteStrips`, with each open lane's strip taken apart.
+	private var shownStrips: [[SongNotesDrawing.Strip]] = []
+
+	/// Whether a lane can be opened: one strip of more than one track, under a
+	/// header to open it from. The mix's lane is a strip per track already.
+	func isExpandable(_ index: Int) -> Bool {
+		showsHeaders && showsNotes && noteStrips.indices.contains(index)
+			&& noteStrips[index].count == 1 && noteStrips[index][0].tracks.count > 1
+	}
+
+	func setExpanded(_ open: Bool, lane name: String) {
+		guard expanded.contains(name) != open else { return }
+		if open { expanded.insert(name) } else { expanded.remove(name) }
+		arrangeStrips()
+		refresh()
+		// The headers are where the lanes are, and a lane opened moves them.
+		window?.invalidateCursorRects(for: self)
+	}
+
+	private func arrangeStrips() {
+		shownStrips = noteStrips.enumerated().map { index, strips in
+			guard strips.count == 1, lanes.indices.contains(index), expanded.contains(lanes[index].name) else {
+				return strips
+			}
+			return strips[0].apart
+		}
 	}
 
 	/// Whether each lane has a header naming it. The mix alone has none.
@@ -198,6 +243,7 @@ final class SongCanvas: NSView {
 		spectrumImages = new.map(\.spectrum)
 		// Readings of other lanes, or of an older render: read again.
 		if details.count != new.count { setDetails([]) }
+		arrangeStrips()
 		refresh()
 	}
 
@@ -312,6 +358,8 @@ final class SongCanvas: NSView {
 				pressedHeader = true
 				if switchRect(in: header).contains(point) {
 					onToggleLane?(index)
+				} else if let disclosure = disclosureRect(ofLane: index), disclosure.contains(point) {
+					setExpanded(!expanded.contains(lanes[index].name), lane: lanes[index].name)
 				} else {
 					onRevealLane?(index)
 				}
@@ -327,7 +375,7 @@ final class SongCanvas: NSView {
 	}
 
 	/// The region under a point, when lanes are drawn as notes.
-	private func region(at point: NSPoint) -> (SongArrangement.Track, SongArrangement.Region)? {
+	func region(at point: NSPoint) -> (SongArrangement.Track, SongArrangement.Region)? {
 		for index in lanes.indices where noteStrips.indices.contains(index) {
 			for (strip, rect) in stripRects(ofLane: index) {
 				if let hit = SongNotesDrawing.region(at: point, in: strip, rect: rect, window: notesWindow) {
@@ -344,10 +392,10 @@ final class SongCanvas: NSView {
 
 	/// A lane's strips and where each is: the body under its header, shared out.
 	private func stripRects(ofLane index: Int) -> [(SongNotesDrawing.Strip, NSRect)] {
-		guard noteStrips.indices.contains(index), !noteStrips[index].isEmpty else { return [] }
+		guard shownStrips.indices.contains(index), !shownStrips[index].isEmpty else { return [] }
 		let lane = laneRect(index)
 		let body = NSRect(x: 0, y: lane.minY + headerHeight, width: lane.width, height: max(0, lane.height - headerHeight))
-		let strips = noteStrips[index]
+		let strips = shownStrips[index]
 		let height = body.height / CGFloat(strips.count)
 		return strips.enumerated().map { number, strip in
 			(strip, NSRect(x: body.minX, y: body.minY + height * CGFloat(number), width: body.width, height: height))
@@ -467,16 +515,42 @@ final class SongCanvas: NSView {
 		)
 	}
 
+	/// A lane's place: the area shared out by `SongLaneHeights`, so an open lane
+	/// is as many closed ones tall as it has tracks. Only as notes — a stem's
+	/// wave is one wave however many tracks made it.
 	private func laneRect(_ index: Int) -> NSRect {
 		let area = lanesArea
-		guard !lanes.isEmpty else { return area }
-		let height = area.height / CGFloat(lanes.count)
-		return NSRect(x: 0, y: area.minY + height * CGFloat(index), width: area.width, height: height)
+		guard lanes.indices.contains(index) else { return area }
+		let strips = lanes.indices.map { showsNotes && shownStrips.indices.contains($0) ? shownStrips[$0].count : 1 }
+		let heights = SongLaneHeights.shared(strips: strips, header: Double(headerHeight), in: Double(area.height))
+		let top = area.minY + CGFloat(heights[..<index].reduce(0, +))
+		return NSRect(x: 0, y: top, width: area.width, height: CGFloat(heights[index]))
 	}
 
 	private func headerRect(ofLane index: Int) -> NSRect {
 		let lane = laneRect(index)
 		return NSRect(x: 0, y: lane.minY, width: lane.width, height: headerHeight)
+	}
+
+	/// A lane's name as its header draws it, which is also what the disclosure
+	/// is placed by.
+	private func headerName(ofLane index: Int) -> NSAttributedString {
+		let lane = lanes[index]
+		let theme = Theme.current
+		return NSAttributedString(string: lane.name, attributes: [
+			.font: theme.uiFont(11, weight: lane.isLit ? .bold : .medium),
+			.foregroundColor: lane.isLit ? theme.caret : (lane.isEnabled ? theme.editorText : theme.gitIgnored),
+		])
+	}
+
+	/// Where a press opens or closes a lane: the chevron after its name and the
+	/// tracks listed beside it — the group's members are what it opens into.
+	/// Nil for a lane that cannot be opened.
+	private func disclosureRect(ofLane index: Int) -> NSRect? {
+		guard isExpandable(index) else { return nil }
+		let header = headerRect(ofLane: index)
+		let left = switchRect(in: header).maxX + Theme.current.scaled(6) + headerName(ofLane: index).size().width
+		return NSRect(x: left, y: header.minY, width: max(0, header.maxX - left), height: header.height)
 	}
 
 	private func switchRect(in header: NSRect) -> NSRect {
@@ -532,10 +606,17 @@ final class SongCanvas: NSView {
 				rect.fill()
 			}
 			if showsNotes {
-				for (strip, rect) in stripRects(ofLane: index) {
+				let open = isExpandable(index) && expanded.contains(lane.name)
+				for (number, (strip, rect)) in stripRects(ofLane: index).enumerated() {
 					SongNotesDrawing.draw(
 						strip, in: rect, window: notesWindow, sixteenth: sixteenth, lit: notesLit, enabled: lane.isEnabled
 					)
+					guard open else { continue }
+					SongNotesDrawing.drawTrackName(of: strip, in: rect, enabled: lane.isEnabled)
+					if number > 0 {
+						Theme.current.separator.withAlphaComponent(0.5).setFill()
+						NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: 1).fill()
+					}
 				}
 			} else {
 				if let waveRect = waveRect(ofLane: index) { drawWave(ofLane: index, in: waveRect) }
@@ -585,13 +666,28 @@ final class SongCanvas: NSView {
 			tinted.draw(in: at, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
 		}
 
-		let name = NSAttributedString(string: lane.name, attributes: [
-			.font: theme.uiFont(11, weight: lane.isLit ? .bold : .medium),
-			.foregroundColor: lane.isLit ? theme.caret : ink,
-		])
+		let name = headerName(ofLane: index)
 		var x = switchRect(in: header).maxX + theme.scaled(6)
 		name.draw(at: NSPoint(x: x, y: header.midY - name.size().height / 2))
 		x += name.size().width + theme.scaled(8)
+
+		// The chevron of a lane that opens into its tracks.
+		if isExpandable(index) {
+			let open = expanded.contains(lane.name)
+			let symbol = open ? "chevron.down" : "chevron.right"
+			if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: open ? "Collapse" : "Expand") {
+				let configuration = NSImage.SymbolConfiguration(pointSize: header.height * 0.42, weight: .semibold)
+					.applying(NSImage.SymbolConfiguration(paletteColors: [theme.gitIgnored]))
+				let tinted = image.withSymbolConfiguration(configuration) ?? image
+				let size = tinted.size
+				let side = theme.scaled(10)
+				let at = NSRect(
+					x: x + (side - size.width) / 2, y: header.midY - size.height / 2, width: size.width, height: size.height
+				)
+				tinted.draw(in: at, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+				x += side + theme.scaled(6)
+			}
+		}
 
 		// The tracks in the layer, when they are not simply the layer.
 		let others = lane.tracks.filter { $0 != lane.name }

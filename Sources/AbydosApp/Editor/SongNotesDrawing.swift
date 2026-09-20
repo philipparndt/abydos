@@ -23,6 +23,38 @@ enum SongNotesDrawing {
 		/// Each track's colour, in the order of `tracks`.
 		var colours: [NSColor]
 		var rows: SongNoteRows
+
+		/// The same tracks a strip each, on rows of its own: what a lane opened
+		/// into its tracks draws. On shared rows three tracks' regions are one
+		/// box over another and their names one word over another — reported
+		/// 2026-09-20 of `drums`, whose `tops`, `perc` and `rumble` read as
+		/// `deapble2`.
+		var apart: [Strip] {
+			tracks.indices.map { index in
+				Strip(tracks: [tracks[index]], colours: [colours[index]], rows: SongNoteRows(tracks: [tracks[index]]))
+			}
+		}
+	}
+
+	/// The name of a strip's track, at its right edge: whose strip it is, when a
+	/// lane is opened into several. On the right because a region's name is at
+	/// its left, and the first region is usually at the strip's.
+	static func drawTrackName(of strip: Strip, in rect: NSRect, enabled: Bool) {
+		guard let track = strip.tracks.first, let colour = strip.colours.first else { return }
+		let theme = Theme.current
+		let name = NSAttributedString(string: track.name, attributes: [
+			.font: theme.uiFont(9.5, weight: .medium),
+			.foregroundColor: enabled ? colour : theme.gitIgnored,
+		])
+		let size = name.size()
+		let pad = theme.scaled(4)
+		let box = NSRect(
+			x: rect.maxX - size.width - pad * 3, y: rect.minY + 2, width: size.width + pad * 2, height: size.height + 2
+		)
+		guard box.maxY <= rect.maxY, box.minX >= rect.minX else { return }
+		theme.editorBackground.withAlphaComponent(0.85).setFill()
+		NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3).fill()
+		name.draw(at: NSPoint(x: box.minX + pad, y: box.minY + 1))
 	}
 
 	/// What the caret lights: every region of a pattern, or every region of a
@@ -125,10 +157,14 @@ enum SongNotesDrawing {
 		let box = NSRect(x: left, y: rect.minY + 1, width: right - left, height: rect.height - 2)
 		let isLit = lit.lights(region, of: track)
 		let shape = NSBezierPath(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
-		colour.withAlphaComponent(isLit ? 0.34 : 0.18).setFill()
+		// A muted block: where it would be, with nothing in it, in no colour and
+		// with a broken edge — there, and not heard.
+		let colour = region.isMuted ? theme.gitIgnored : colour
+		colour.withAlphaComponent(region.isMuted ? 0.08 : (isLit ? 0.34 : 0.18)).setFill()
 		shape.fill()
 		(isLit ? theme.caret : colour.withAlphaComponent(0.75)).setStroke()
 		shape.lineWidth = isLit ? 1.5 : 1
+		if region.isMuted { shape.setLineDash([4, 3], count: 2, phase: 0) }
 		shape.stroke()
 
 		// Where each pass begins again, as a notch at the top: one `x4` line is
@@ -144,7 +180,8 @@ enum SongNotesDrawing {
 
 		let name = NSAttributedString(string: region.name + transposition(region), attributes: [
 			.font: theme.uiFont(9.5, weight: isLit ? .bold : .medium),
-			.foregroundColor: isLit ? theme.caret : theme.editorText,
+			.foregroundColor: isLit ? theme.caret : (region.isMuted ? theme.gitIgnored : theme.editorText),
+			.strikethroughStyle: region.isMuted ? NSUnderlineStyle.single.rawValue : 0,
 		])
 		let size = name.size()
 		// On screen even when the region began to the left of it, as a DAW
