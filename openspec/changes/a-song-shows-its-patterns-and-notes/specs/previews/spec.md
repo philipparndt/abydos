@@ -39,6 +39,38 @@ appropiate zoom level".
 - **THEN** it has played on throughout, from the same place, with `drums` still
   silent
 
+### Requirement: A lane of several tracks opens into them
+
+Drawn as *Notes* in the *Stems* view, a lane of more than one track SHALL be a
+group: closed, it SHALL draw every track of the layer in one strip on shared
+rows; open, it SHALL draw each track in a strip of its own, on rows of its own,
+named by its track. A chevron after the lane's name SHALL say which it is, and
+a press on it or on the tracks listed beside it SHALL open or close the lane. An
+open lane SHALL be as tall as that many closed ones, the other lanes giving way.
+A lane that was opened SHALL stay open when a new render lands. Opening a lane
+SHALL NOT change what is heard, and SHALL NOT change how the lane is drawn as
+*Wave*, *Spectrum* or *Both*: a stem is one sound however many tracks made it.
+
+Asked for 2026-09-20, of a `drums` layer of `tops`, `perc` and `rumble` whose
+regions were drawn one over another and whose names read `deapble2`: "have the
+track as a group that can be expanded and collapsed. In the collapsed mode it
+is shown like now, in the expanded mode we have individual sub tracks."
+
+#### Scenario: a layer of two tracks, opened
+
+- **GIVEN** `dream.song`, whose `piano_left` track renders into the `piano` layer
+- **WHEN** the pane shows the stems as *Notes* and the `piano` lane is opened
+- **THEN** `theme` and `left` are regions of two strips, one named `piano` and
+  one `piano_left`, neither over the other, and the lane is twice the height of
+  `strings`
+
+#### Scenario: a lane of one track
+
+- **GIVEN** `dream.song`
+- **WHEN** the pane shows the stems as *Notes*
+- **THEN** `strings` has no chevron, and a press on its name reveals its block
+  as before
+
 ### Requirement: The notes are drawn at the detail the zoom allows
 
 Drawn as *Notes*, a lane SHALL show no more detail than there is room for, and
@@ -106,3 +138,47 @@ pattern's definition.
 - **GIVEN** `neon.song` shown as *Notes*
 - **WHEN** the `brass` region at bar 81 is clicked
 - **THEN** the caret is on the `play brass x4` line after `at 81`
+
+### Requirement: A region has a menu, and its block can be muted from it
+
+Drawn as *Notes*, a right-click on a region SHALL offer a menu of that block:
+*Mute Block*, or *Unmute Block* when it is muted; *Go to Play Line*; and, for a
+pattern's region, *Go to Pattern* with the pattern's name. Muting SHALL change
+the source and nothing else: the word `mute` added at the end of what the
+block's `play` line says, before any comment, in the file the line is in, as one
+undoable edit of the editor, and unmuting SHALL take that word away and leave
+the line as it was written. The file SHALL then be saved, so that the render
+that follows is the one that is heard. A muted block SHALL keep its place and
+its length — what follows it SHALL NOT move — and SHALL be drawn where it is,
+without its notes, in no colour, with a broken edge and its name struck through.
+The pane SHALL NOT work out for itself what a muted block does to the song:
+`mat` reads the word, and says which regions are muted.
+
+Asked for 2026-09-20: "It should also be possible to enable and disable
+individual blocks. This updates the source code, maybe we need a special syntax
+for muted parts so that it is easy to toggle this without messing up the code",
+and "Context menu would be nice as we can also add other actions there like
+jumping to the source."
+
+#### Scenario: the kicks are muted from their region
+
+- **GIVEN** `acid.song`, whose `drums` track says `play kicks x4` and then
+  `play beat x28`
+- **WHEN** *Mute Block* is chosen from the menu of the `kicks` region
+- **THEN** the line reads `play kicks x4 mute` and the file is saved, the song
+  renders again, `kicks` is drawn muted from bar 1 to bar 5, and `beat` still
+  starts at bar 5
+
+#### Scenario: a line with a comment
+
+- **GIVEN** a line `  play beat x28   # the groove`
+- **WHEN** its block is muted and then unmuted
+- **THEN** it read `  play beat x28 mute   # the groove` in between, and reads
+  as it did at first afterwards
+
+#### Scenario: a line that makes several regions
+
+- **GIVEN** a `play` line inside a `repeat` block, which is a region at each pass
+- **WHEN** one of those regions is muted
+- **THEN** every one of them is, since they are one line of the source
+

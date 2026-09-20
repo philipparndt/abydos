@@ -134,6 +134,20 @@ struct SongArrangementTests {
 		#expect(arrangement.tracks[0].notes.map(\.name) == ["E4"] && arrangement.tracks[0].notes[0].region == nil)
 	}
 
+	/// `mat` marks a muted region and only a muted one, so a region that does
+	/// not say is heard — which is also every region of an older `mat`.
+	@Test func onlyARegionThatSaysSoIsMuted() throws {
+		let region = """
+			"kind":"pattern","name":"beat","pass":2.0,"repeat":1,"transpose":0.0,"file":"a.song","line":9
+			"""
+		let said = """
+			{"tempo":120.0,"meter":[4,4],"bar_seconds":2.0,"tracks":[{"name":"drums","layer":"drums","notes":[],"regions":[
+			{\(region),"start":0.0,"end":2.0,"muted":true},{\(region),"start":2.0,"end":4.0}]}]}
+			"""
+		let arrangement = try SongArrangement.decode(Data(said.utf8))
+		#expect(arrangement.tracks[0].regions.map(\.isMuted) == [true, false])
+	}
+
 	/// The detail from points: the whole of a four-minute song in a pane is
 	/// regions, four bars is notes, and a bar in a tall lane is named notes.
 	@Test func theDetailFollowsTheZoom() {
@@ -151,5 +165,25 @@ struct SongArrangementTests {
 			song: URL(fileURLWithPath: "/songs/my song.song"), output: URL(fileURLWithPath: "/tmp/a.json")
 		)
 		#expect(arguments == ["export", "/songs/my song.song", "-o", "/tmp/a.json"])
+	}
+
+	@Test func closedLanesAreAsTallAsEachOther() {
+		// What the lanes were before one could be opened: the area in equal parts.
+		let expected: [Double] = [100, 100, 100, 100]
+		#expect(SongLaneHeights.shared(strips: [1, 1, 0, 1], header: 20, in: 400) == expected)
+	}
+
+	@Test func anOpenedLaneGivesEachTrackTheRoomOfAClosedLane() {
+		// `drums` opened into tops, perc and rumble, beside two closed lanes:
+		// five strips share what the three headers leave.
+		let heights = SongLaneHeights.shared(strips: [3, 1, 1], header: 20, in: 360)
+		let expected: [Double] = [200, 80, 80]
+		#expect(heights == expected)
+	}
+
+	@Test func anAreaShorterThanItsHeadersIsOnlyHeaders() {
+		let expected: [Double] = [20, 20]
+		#expect(SongLaneHeights.shared(strips: [2, 1], header: 20, in: 30) == expected)
+		#expect(SongLaneHeights.shared(strips: [], header: 20, in: 30).isEmpty)
 	}
 }

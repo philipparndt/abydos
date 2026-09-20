@@ -50,6 +50,8 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 	var onRevealLine: ((Int, Int) -> Void)?
 	/// The source should show a line of one of the song's files: a region was clicked.
 	var onRevealPlace: ((URL, Int) -> Void)?
+	/// A block's `play` line is to be muted, or heard again: its file and line.
+	var onToggleMute: ((URL, Int) -> Void)?
 	/// Where the playhead is, as it moves, for the source's timeline bars; nil
 	/// when there is nothing to play.
 	var onPlayhead: ((_ seconds: Double?, _ marking: Bool) -> Void)?
@@ -370,6 +372,7 @@ final class SongPreviewView: DelayedPaneView, ScaleFollowing, PlaysMedia {
 		canvas.onToggleLane = { [weak self] index in self?.toggleLane(at: index) }
 		canvas.onRevealLane = { [weak self] index in self?.revealLane(at: index) }
 		canvas.onRegionClicked = { [weak self] region, pattern in self?.reveal(region: region, pattern: pattern) }
+		canvas.onToggleRegionMute = { [weak self] region in self?.toggleMute(of: region) }
 		notes.onLanded = { [weak self] in self?.applyNotes() }
 
 		errorStrip.isHidden = true

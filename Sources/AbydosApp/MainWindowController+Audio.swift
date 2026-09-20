@@ -220,10 +220,22 @@ extension MainWindowController {
 			case "off": pane.setLane(parts.dropFirst().first ?? "", enabled: false)
 			case "on": pane.setLane(parts.dropFirst().first ?? "", enabled: true)
 			case "wobble": pane.wobbleSwitchForTesting(layer: parts.dropFirst().first ?? "")
+			// `expand:<layer>` and `collapse:<layer>`: a lane into its tracks.
+			case "expand": pane.canvas.setExpanded(true, lane: parts.dropFirst().first ?? "")
+			case "collapse": pane.canvas.setExpanded(false, lane: parts.dropFirst().first ?? "")
 			case "click":
 				let numbers = step.split(separator: ":").dropFirst().compactMap { Double($0) }
 				if numbers.count >= 2 {
 					pane.canvas.clickForTesting(at: numbers[0], numbers[1], option: step.hasSuffix(":option"))
+				}
+			case "region-menu":
+				// `region-menu:<x>:<y>` or `region-menu:<x>:<y>:<title>` — the menu
+				// of the region at fractions of the canvas, and an item of it chosen.
+				let fields = step.split(separator: ":").dropFirst().map(String.init)
+				if fields.count >= 2, let x = Double(fields[0]), let y = Double(fields[1]) {
+					let said = pane.canvas.regionMenuForTesting(at: x, y, choose: fields.count > 2 ? fields[2] : nil)
+					print("SONG-REGION-MENU: \(said)")
+					fflush(stdout)
 				}
 			case "export":
 				// `export:<wav|flac|m4a>` or `export:flac:stems`, without the

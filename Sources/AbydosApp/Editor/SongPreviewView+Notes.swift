@@ -152,10 +152,19 @@ extension SongPreviewView {
 		onRevealPlace?(place.file, place.line)
 	}
 
+	/// A region's block muted, or heard again: `mute` on its `play` line, in the
+	/// file that line is in. The source is what changes, and the render that
+	/// follows its save is what is heard.
+	func toggleMute(of region: SongArrangement.Region) {
+		guard let place = SongNotes.place(of: region, pattern: false, song: url) else { return }
+		onToggleMute?(place.file, place.line)
+	}
+
 	/// How the notes are drawn now, for a driven run's report.
 	var notesReport: String {
 		let screen = canvas.notesOnScreen
 		return " notes=\(canvas.showsNotes ? "shown" : "hidden") detail=[\(canvas.notesDetails.joined(separator: " "))]"
+			+ " open=[\(canvas.expanded.sorted().joined(separator: " "))]"
 			+ " regions=\(screen.regions) regionsLit=\(screen.lit) exports=\(notes.exports)"
 			+ " caret=\(notes.caretLine.map(String.init) ?? "-")"
 			+ " lighting=\(canvas.notesLit.pattern.map { "pattern:" + $0 } ?? canvas.notesLit.track.map { "track:" + $0 } ?? "-")"

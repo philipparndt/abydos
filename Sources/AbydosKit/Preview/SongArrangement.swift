@@ -53,6 +53,9 @@ public struct SongArrangement: Equatable, Sendable {
 		/// Where the pattern is defined.
 		public var patternFile: String?
 		public var patternLine: Int?
+		/// The `play` line says `mute`: the block is where it would be and
+		/// nothing in it sounds. See `SongBlockMute`.
+		public var isMuted = false
 	}
 
 	public struct Track: Equatable, Sendable {
@@ -105,7 +108,8 @@ public struct SongArrangement: Equatable, Sendable {
 					Region(
 						isAudio: $0.kind == "audio", name: $0.name, start: $0.start, end: $0.end, pass: $0.pass,
 						repeatCount: $0.repeat, transpose: $0.transpose, file: $0.file, line: $0.line,
-						patternFile: $0.patternFile, patternLine: $0.patternLine
+						patternFile: $0.patternFile, patternLine: $0.patternLine,
+						isMuted: $0.muted ?? false
 					)
 				},
 				notes: track.notes.map {
@@ -150,6 +154,8 @@ public struct SongArrangement: Equatable, Sendable {
 			var line: Int
 			var patternFile: String?
 			var patternLine: Int?
+			/// Only on a muted region, and absent from a `mat` before 4c678d7.
+			var muted: Bool?
 		}
 		struct Track: Decodable {
 			var name: String
@@ -244,5 +250,20 @@ public struct SongNoteRows: Equatable, Sendable {
 		let midi = Int(note.midi.rounded())
 		guard pitches.contains(midi) else { return nil }
 		return drums.count + midi - pitches.lowerBound
+	}
+}
+
+/// How tall each lane of a song is: a header each, and what is left shared out
+/// by how many strips a lane draws — so a lane opened into its tracks gives
+/// each of them the room a closed lane has, and the closed ones give way.
+public enum SongLaneHeights {
+	/// - Parameter strips: how many strips each lane draws; a lane with none
+	///   still counts as one.
+	public static func shared(strips: [Int], header: Double, in height: Double) -> [Double] {
+		let weights = strips.map { Double(max(1, $0)) }
+		let total = weights.reduce(0, +)
+		guard total > 0 else { return [] }
+		let unit = max(0, height - header * Double(strips.count)) / total
+		return weights.map { header + unit * $0 }
 	}
 }
