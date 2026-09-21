@@ -228,6 +228,15 @@ extension MainWindowController {
 				if numbers.count >= 2 {
 					pane.canvas.clickForTesting(at: numbers[0], numbers[1], option: step.hasSuffix(":option"))
 				}
+			case "pack":
+				// `pack` — the song and its samples into a zip beside it, without
+				// the replace question; the next step waits for it.
+				pane.pack(confirm: false) { [weak self] said in
+					print("SONG-PACK: \(said)")
+					fflush(stdout)
+					self?.songStep(rest, on: pane)
+				}
+				return
 			case "region-menu":
 				// `region-menu:<x>:<y>` or `region-menu:<x>:<y>:<title>` — the menu
 				// of the region at fractions of the canvas, and an item of it chosen.
