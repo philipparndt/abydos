@@ -1,7 +1,8 @@
 import AbydosKit
 import AppKit
 
-/// Exporting a song as WAV, FLAC or M4A, the mix alone or with its stems.
+/// Exporting a song as WAV, FLAC or M4A, the mix alone or with its stems, and
+/// packing it with every file it reads into one zip.
 ///
 /// Asked for on 2026-09-14, once `mat` wrote more than WAV (4143e44): the pane
 /// is where a song is listened to, so it is where the file that leaves the
@@ -35,12 +36,25 @@ extension SongPreviewView {
 				menu.addItem(item)
 			}
 		}
+		menu.addItem(.separator())
+		let pack = NSMenuItem(title: "Song and Samples as ZIP", action: #selector(packChosen(_:)), keyEquivalent: "")
+		pack.target = self
+		let packs = Self.packingSupported(by: executable)
+		pack.isEnabled = executable != nil && !isExporting && packs
+		pack.toolTip = packs || executable == nil
+			? "The song, the files it includes and every sample it reads, in one zip beside it, with its paths pointing into the zip"
+			: "This mat cannot pack a song. Update it: cargo install --path crates/mat-cli"
+		menu.addItem(pack)
 		return menu
 	}
 
 	func showExportMenu() {
 		let menu = exportMenu()
 		menu.popUp(positioning: nil, at: NSPoint(x: 0, y: exportButton.bounds.height + 2), in: exportButton)
+	}
+
+	@objc private func packChosen(_ sender: NSMenuItem) {
+		pack()
 	}
 
 	@objc private func exportChosen(_ sender: NSMenuItem) {
@@ -74,6 +88,72 @@ extension SongPreviewView {
 		let line = SongRender.exportCommand(
 			executable: executable, song: url, export: export, cache: SongRender.cacheDirectory(for: url)
 		)
+		let what = format.title + (withStems ? " with stems" : "")
+		let song = url
+		runExport(line, saying: "Exporting \(url.lastPathComponent) as \(what)…", then: then) { status, report in
+			guard status == 0, FileManager.default.fileExists(atPath: export.mix.path) else {
+				Toast.post("Could not export \(song.lastPathComponent)", detail: SongRender.complaint(in: report))
+				then?("failed: " + SongRender.complaint(in: report))
+				return
+			}
+			let stems = export.stems.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.path) }?
+				.filter { $0.hasSuffix("." + format.rawValue) }.count
+			let detail = stems.map { "And \($0) stems in \(export.stems?.lastPathComponent ?? "")." }
+			Toast.post(Toast(
+				kind: .information, title: "Exported \(export.mix.lastPathComponent)", detail: detail,
+				actionTitle: "Reveal in Finder",
+				action: { NSWorkspace.shared.activateFileViewerSelecting([export.mix]) }
+			))
+			then?("wrote \(export.mix.lastPathComponent)" + (stems.map { " and \($0) stems" } ?? ""))
+		}
+	}
+
+	/// Packs the song and every file it reads into a zip beside it: see
+	/// `SongPack`. `mat` reads the files on disk, as a render does.
+	func pack(confirm: Bool = true, then: ((String) -> Void)? = nil) {
+		guard let executable, !isExporting else { then?("not packed: nothing to run, or an export is running"); return }
+		let zip = SongPack.destination(for: url)
+		if confirm, FileManager.default.fileExists(atPath: zip.path) {
+			let alert = NSAlert()
+			alert.messageText = "Replace \(zip.lastPathComponent)?"
+			alert.informativeText = "It will be packed again from \(url.lastPathComponent) and the files it reads."
+			alert.addButton(withTitle: "Replace")
+			alert.addButton(withTitle: "Cancel")
+			guard alert.runModal() == .alertFirstButtonReturn else { then?("not packed: cancelled"); return }
+		}
+		let line = SongPack.command(executable: executable, song: url, output: zip)
+		let song = url
+		runExport(line, saying: "Packing \(url.lastPathComponent) with its samples…", then: then) { status, said in
+			guard status == 0, FileManager.default.fileExists(atPath: zip.path) else {
+				// `mat pack` says each file it could not carry on a line of its own.
+				let problems = said.split(whereSeparator: \.isNewline).filter { $0.hasPrefix("error: ") }
+					.map { String($0.dropFirst("error: ".count)) }
+				let detail = problems.isEmpty ? SongRender.complaint(in: said) : problems.prefix(6).joined(separator: "\n")
+				Toast.post("Could not pack \(song.lastPathComponent)", detail: detail)
+				then?("failed: " + detail)
+				return
+			}
+			let report = SongPack.report(from: said)
+			var detail = [report.files.map { "\($0) files" }, report.megabytes.map { String(format: "%.1f MB", $0) }]
+				.compactMap { $0 }.joined(separator: ", ")
+			if !report.needs.isEmpty {
+				detail += ". It also needs, where it is played: " + report.needs.joined(separator: "; ")
+			}
+			Toast.post(Toast(
+				kind: .information, title: "Packed \(zip.lastPathComponent)", detail: detail.isEmpty ? nil : detail,
+				actionTitle: "Reveal in Finder",
+				action: { NSWorkspace.shared.activateFileViewerSelecting([zip]) }
+			))
+			then?("wrote \(zip.lastPathComponent): \(detail)")
+		}
+	}
+
+	/// Runs one of the pane's exports — a command line through the user's shell
+	/// from the song's folder — and hands what it said to `done` on the main
+	/// thread. One at a time: the Export button is off while it runs.
+	private func runExport(
+		_ line: String, saying: String, then: ((String) -> Void)?, done: @escaping (Int32, String) -> Void
+	) {
 		let invocation = UserShell.invocation(for: line)
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: invocation.executable)
@@ -92,9 +172,7 @@ extension SongPreviewView {
 
 		isExporting = true
 		exportButton.isEnabled = false
-		let what = format.title + (withStems ? " with stems" : "")
-		Toast.post("Exporting \(url.lastPathComponent) as \(what)…", kind: .information)
-		let song = url
+		Toast.post(saying, kind: .information)
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 			var said = ""
 			do {
@@ -110,20 +188,7 @@ extension SongPreviewView {
 			DispatchQueue.main.async {
 				self?.isExporting = false
 				self?.exportButton.isEnabled = true
-				guard status == 0, FileManager.default.fileExists(atPath: export.mix.path) else {
-					Toast.post("Could not export \(song.lastPathComponent)", detail: SongRender.complaint(in: report))
-					then?("failed: " + SongRender.complaint(in: report))
-					return
-				}
-				let stems = export.stems.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.path) }?
-					.filter { $0.hasSuffix("." + format.rawValue) }.count
-				let detail = stems.map { "And \($0) stems in \(export.stems?.lastPathComponent ?? "")." }
-				Toast.post(Toast(
-					kind: .information, title: "Exported \(export.mix.lastPathComponent)", detail: detail,
-					actionTitle: "Reveal in Finder",
-					action: { NSWorkspace.shared.activateFileViewerSelecting([export.mix]) }
-				))
-				then?("wrote \(export.mix.lastPathComponent)" + (stems.map { " and \($0) stems" } ?? ""))
+				done(status, report)
 			}
 		}
 	}
@@ -140,6 +205,27 @@ extension SongPreviewView {
 	static func streamingSupported(by executable: String?) -> Bool {
 		guard let executable else { return false }
 		return SongRender.supportsStreaming(help: renderHelp(of: executable))
+	}
+
+	/// Whether this `mat` packs a song, from its `--help`, asked once per executable.
+	static func packingSupported(by executable: String?) -> Bool {
+		guard let executable else { return false }
+		if let known = packHelpText[executable] { return known }
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: executable)
+		process.arguments = ["--help"]
+		let output = Pipe()
+		process.standardOutput = output
+		process.standardError = FileHandle.nullDevice
+		var help = ""
+		if (try? process.run()) != nil {
+			let data = output.fileHandleForReading.readDataToEndOfFile()
+			process.waitUntilExit()
+			help = String(decoding: data, as: UTF8.self)
+		}
+		let packs = SongPack.isSupported(help: help)
+		packHelpText[executable] = packs
+		return packs
 	}
 
 	/// What `mat render --help` says, asked once per executable.
@@ -164,3 +250,5 @@ extension SongPreviewView {
 
 /// What each `mat` said for itself, for the life of the process.
 @MainActor private var renderHelpText: [String: String] = [:]
+/// Whether each `mat` packs, for the life of the process.
+@MainActor private var packHelpText: [String: Bool] = [:]
