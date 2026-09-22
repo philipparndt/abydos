@@ -391,6 +391,15 @@ extension AppDelegate {
 			}
 		}
 
+		if let steps = options.htmlSteps {
+			// After the preview has had a moment: the line is written when the
+			// document is rendered, and a report asked before that says nothing
+			// about a pane that is about to say plenty.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.driveHtmlForTesting(steps)
+			}
+		}
+
 		if let steps = options.songSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.driveSongForTesting(steps)
