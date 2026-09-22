@@ -171,7 +171,9 @@ extension EditorViewController {
 	/// question.
 	private func makeHtmlView(for tab: Tab) -> NSView {
 		let root = project?.root ?? tab.url.deletingLastPathComponent()
-		let view = HtmlPreviewView(file: tab.url, trust: ProjectTrust.shared.decision(for: root))
+		let view = HtmlPreviewView(
+			file: tab.url, trust: ProjectTrust.shared.decision(for: root), allowed: .shared
+		)
 		view.onOpenFile = { [weak self] url in
 			self?.open(fileURL: url, focusEditor: false)
 		}
@@ -324,6 +326,11 @@ extension EditorViewController {
 
 	/// The song pane the file in front is showing, when it is showing one.
 	var songPreview: SongPreviewView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
+
+	/// The HTML pane the file in front is showing, found the same way and for
+	/// the same reason: it is the tab's whole content or half of a split,
+	/// depending on the preview mode.
+	var htmlPreview: HtmlPreviewView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
 
 	private func makePreviewView(for tab: Tab) -> NSView {
 		// On the page's own layout manager, which is what paints the pills

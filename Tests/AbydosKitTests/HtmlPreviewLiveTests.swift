@@ -24,11 +24,15 @@ struct HtmlPreviewLiveTests {
 		return directory
 	}
 
-	/// A web view wired the way the pane wires one, with the rule list in it.
+	/// A web view wired the way the pane wires one.
+	///
+	/// - Parameter blocking: whether the rule list is in it, which is the one
+	///   thing the pane changes when somebody allows a document.
 	private func page(
-		file: URL, document: String
+		file: URL, document: String, blocking: Bool = true
 	) async -> (web: WKWebView, scheme: HtmlScheme)? {
-		guard let list = await HtmlBlocking.list() else {
+		let list = await HtmlBlocking.list()
+		if blocking, list == nil {
 			print("HTML: no content rule list here — the store would not compile one")
 			return nil
 		}
@@ -36,7 +40,7 @@ struct HtmlPreviewLiveTests {
 		let configuration = WKWebViewConfiguration()
 		configuration.setURLSchemeHandler(scheme, forURLScheme: HtmlPage.scheme)
 		configuration.websiteDataStore = .nonPersistent()
-		configuration.userContentController.add(list)
+		if blocking, let list { configuration.userContentController.add(list) }
 		let web = WKWebView(
 			frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration
 		)
@@ -173,5 +177,60 @@ struct HtmlPreviewLiveTests {
 		// scheme, so they were never ours to refuse — the rule list dropped them.
 		#expect(page.scheme.refused.isEmpty)
 		#expect(await asked(page.web, "String(document.styleSheets.length)") == "0")
+	}
+
+	/// What allowing a page changes, and what it must not change.
+	///
+	/// The pane takes the rule list off that web view and loads again. The page
+	/// this side of it has to be the same page: the document still comes from
+	/// the buffer and its neighbours still come from beside the file, because
+	/// the scheme handler is not what was lifted.
+	///
+	/// **Nothing here fetches.** Whether a remote address is reached once the
+	/// list is off is the browser's own behaviour, and a suite that proved it by
+	/// reaching somebody's server would be a suite that fails on an aeroplane.
+	/// That claim is checked by hand, once, and `tasks.md` says so.
+	@Test func anAllowedPageStillGetsWhatIsBesideIt() async throws {
+		let directory = try scratch()
+		defer { try? FileManager.default.removeItem(at: directory) }
+		let file = directory.appendingPathComponent("index.html")
+		try "p { color: rgb(4, 5, 6); }".write(
+			to: directory.appendingPathComponent("style.css"), atomically: true, encoding: .utf8
+		)
+
+		guard let page = await page(file: file, document: """
+			<html><head>
+			<link rel="stylesheet" href="style.css">
+			<link rel="stylesheet" href="https://cdn.example.invalid/water.css">
+			</head><body><p id=p>allowed</p></body></html>
+			""", blocking: false) else { return }
+		#expect(await asked(page.web, "document.getElementById('p').textContent") == "allowed")
+		#expect(await asked(
+			page.web, "getComputedStyle(document.getElementById('p')).color"
+		) == "rgb(4, 5, 6)")
+		// The handler is still the only way to this machine's files: a remote
+		// address is not this app's scheme, so it never arrives here whether or
+		// not the list is on.
+		#expect(page.scheme.refused.isEmpty)
+	}
+
+	/// The containment rule is the scheme handler's, not the rule list's, so
+	/// allowing a page must not open the disk to it.
+	@Test func anAllowedPageStillCannotClimbOutOfItsDirectory() async throws {
+		let directory = try scratch()
+		let above = directory.deletingLastPathComponent()
+		defer { try? FileManager.default.removeItem(at: directory) }
+		let secret = above.appendingPathComponent("html-live-secret-\(UUID().uuidString).css")
+		try "body { margin: 99px; }".write(to: secret, atomically: true, encoding: .utf8)
+		defer { try? FileManager.default.removeItem(at: secret) }
+
+		let file = directory.appendingPathComponent("index.html")
+		guard let page = await page(file: file, document: """
+			<html><head>
+			<link rel="stylesheet" href="../\(secret.lastPathComponent)">
+			</head><body>here</body></html>
+			""", blocking: false) else { return }
+		#expect(await asked(page.web, "getComputedStyle(document.body).marginTop") != "99px")
+		#expect(page.scheme.refused.contains("/\(secret.lastPathComponent)"))
 	}
 }

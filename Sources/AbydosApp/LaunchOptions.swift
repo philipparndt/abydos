@@ -747,6 +747,8 @@ struct LaunchOptions {
 	/// `--audio-report`, `--audio-seek <s>` and `--audio-view wave|spectrum|both`:
 	/// the front sound tab, once its analysis has landed.
 	var audioReport = false
+	/// The HTML preview's own steps, comma separated: `report`, `press`.
+	var htmlSteps: String?
 	var audioSeek: Double?
 	var audioView: String?
 	/// `--audio-zoom <start>:<end>`, `--audio-loop`, `--audio-play`, and

@@ -105,6 +105,62 @@ public enum HtmlPage {
 		}
 	}
 
+	/// What the pane says at its foot, and what it offers beside it.
+	///
+	/// Both states of the line in one place. They are two sentences about one
+	/// subject — whether this document reaches the network — and written apart
+	/// they drift: the first said "were not loaded" while the second said
+	/// "blocked", which reads as two different mechanisms to anybody who sees
+	/// both in a day.
+	public struct PaneLine: Equatable, Sendable {
+		/// What to say, or nil when there is nothing worth a line.
+		public let said: String?
+		/// What the button offers, or nil when there is nothing to offer.
+		public let offer: Offer?
+
+		public enum Offer: Equatable, Sendable {
+			/// Let this document fetch.
+			case load
+			/// Put the refusal back and forget the allow.
+			case block
+
+			public var title: String {
+				switch self {
+				case .load:  return "Load"
+				case .block: return "Block"
+				}
+			}
+		}
+	}
+
+	/// The line under a document, given what it asks for and what it is allowed.
+	///
+	/// - Parameters:
+	///   - references: what the document itself names, from
+	///     `remoteReferences(in:)`.
+	///   - allowed: whether somebody has let this document fetch.
+	///   - driven: whether this is a driven run, which reaches nothing whatever
+	///     is remembered. Said rather than hidden: a pane that quietly refused a
+	///     page somebody had allowed would be a pane whose screenshot argues
+	///     against the feature.
+	public static func line(
+		references: RemoteReferences, allowed: Bool, driven: Bool
+	) -> PaneLine {
+		guard allowed else {
+			// Nothing remote in the document: nothing was refused, so there is
+			// nothing to say and nothing to offer.
+			guard let said = references.said else { return PaneLine(said: nil, offer: nil) }
+			return PaneLine(said: said, offer: .load)
+		}
+		if driven {
+			return PaneLine(
+				said: "This page is allowed the network — a driven run fetches nothing.",
+				offer: .block
+			)
+		}
+		return PaneLine(said: "This page is being fetched from the network.", offer: .block)
+	}
+
 	/// The remote addresses written into a document.
 	///
 	/// **A count of what the file says, not of what WebKit refused.** The

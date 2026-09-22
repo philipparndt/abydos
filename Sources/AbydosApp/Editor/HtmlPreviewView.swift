@@ -14,11 +14,14 @@ import WebKit
 ///  * **The buffer, not the disk.** The document is served out of `HtmlScheme`
 ///    from a string this pane hands it, so an unsaved edit is on screen. See
 ///    `HtmlPage.scheme` for the two arrangements that cannot do this.
-///  * **Nothing is fetched.** A relative reference reaches the scheme handler,
-///    which serves it from beside the file or refuses it; an absolute one is
-///    blocked by a content rule list, and the page is not loaded at all until
-///    that list is in the web view. A page built on a CDN says so rather than
-///    rendering unstyled in silence.
+///  * **Nothing is fetched until somebody asks for it.** A relative reference
+///    reaches the scheme handler, which serves it from beside the file or
+///    refuses it; an absolute one is blocked by a content rule list, and the
+///    page is not loaded at all until that list is in the web view. A page built
+///    on a CDN says so rather than rendering unstyled in silence, and offers to
+///    load it — which takes the list off for that document and remembers the
+///    answer in `AllowedPages`. A driven run fetches nothing whatever is
+///    remembered, and says that is why.
 ///  * **Nothing of the project's runs until the project is trusted.** A page's
 ///    own `<script>` is the project's code, which is the line `project-trust`
 ///    draws. The previews this app renders itself are unaffected by trust; this
@@ -38,7 +41,17 @@ final class HtmlPreviewView: NSView, SnapshotDrawable {
 	/// reason the diagram pane has one: a toast is gone by the time anybody
 	/// wonders why the page looks wrong.
 	private let captionLabel = NSTextField(labelWithString: "")
-	private var captionHeight: NSLayoutConstraint?
+	/// The line is a row rather than a label since 2026-09-22: the sentence, and
+	/// at its end the offer to load what was refused.
+	private let captionRow = NSStackView()
+	private let offerButton = NSButton(title: "", target: nil, action: nil)
+	/// What the button would do if pressed, or nil when there is nothing on
+	/// offer and the button is out of the row.
+	private var offer: HtmlPage.PaneLine.Offer?
+
+	/// The list of documents somebody has let reach the network. Held rather
+	/// than asked for each time, so a test can give the pane a store of its own.
+	let allowed: AllowedPages
 
 	/// Opening a file the page links to. Set by whoever builds the pane; a pane
 	/// that navigated itself would leave the tab bar naming one document while
@@ -55,15 +68,18 @@ final class HtmlPreviewView: NSView, SnapshotDrawable {
 	private var generation = 0
 	/// Where the page was before the reload that is under way.
 	private var keptScroll: CGPoint?
-	/// Nil until the content rule list is in the web view. Nothing is loaded
-	/// before then: a preview that cannot promise the network is shut is not one
-	/// this app offers.
-	private var isBlocking = false
+	/// Whether what this page may reach has been settled — the blocking list put
+	/// on the web view, or deliberately left off for a document somebody allowed.
+	/// Nothing is loaded before then: a preview that can neither promise the
+	/// network is shut nor say it was asked to open it is not one this app
+	/// offers.
+	private var isSettled = false
 	private var watchingSettings: Any?
 
-	init(file: URL, trust: TrustDecision) {
+	init(file: URL, trust: TrustDecision, allowed: AllowedPages) {
 		self.file = file
 		self.trust = trust
+		self.allowed = allowed
 		self.scheme = HtmlScheme(file: file)
 
 		let configuration = WKWebViewConfiguration()
@@ -105,23 +121,42 @@ final class HtmlPreviewView: NSView, SnapshotDrawable {
 		// the front.
 		captionLabel.lineBreakMode = .byTruncatingTail
 		captionLabel.translatesAutoresizingMaskIntoConstraints = false
-		addSubview(captionLabel)
-		captionHeight = captionLabel.heightAnchor.constraint(equalToConstant: 0)
+
+		// The offer, at the trailing end of the line it belongs to. Asked for
+		// 2026-09-22 against a page that had lost its typeface one reference
+		// short: "this is fine — but maybe it would be good to have a button to
+		// allow it".
+		offerButton.bezelStyle = .inline
+		offerButton.controlSize = .small
+		offerButton.target = self
+		offerButton.action = #selector(offerPressed)
+		offerButton.translatesAutoresizingMaskIntoConstraints = false
+		// It keeps its title's width whatever the sentence beside it wants, and
+		// the sentence takes what is left — which is why the label truncates and
+		// the button never does.
+		offerButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+		offerButton.setContentHuggingPriority(.required, for: .horizontal)
+
+		captionRow.orientation = .horizontal
+		captionRow.alignment = .centerY
+		captionRow.spacing = 8
+		captionRow.translatesAutoresizingMaskIntoConstraints = false
+		captionRow.setViews([captionLabel, offerButton], in: .leading)
+		addSubview(captionRow)
 
 		NSLayoutConstraint.activate([
 			web.leadingAnchor.constraint(equalTo: leadingAnchor),
 			web.trailingAnchor.constraint(equalTo: trailingAnchor),
 			web.topAnchor.constraint(equalTo: topAnchor),
-			web.bottomAnchor.constraint(equalTo: captionLabel.topAnchor),
+			web.bottomAnchor.constraint(equalTo: captionRow.topAnchor),
 
 			noticeLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
 			noticeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 			noticeLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -32),
 
-			captionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-			captionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-			captionLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-			captionHeight!,
+			captionRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+			captionRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+			captionRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
 		])
 
 		notice = "Rendering \(file.lastPathComponent)…"
@@ -137,19 +172,12 @@ final class HtmlPreviewView: NSView, SnapshotDrawable {
 			MainActor.assumeIsolated { self?.applyTheme() }
 		}
 
-		// The rule list first, the page second. `HtmlBlocking.list()` is
-		// compiled once for the process, so this is a turn of the run loop after
-		// the first pane and nothing after that.
+		// What this document may reach, settled before anything is loaded. A pane
+		// built for a file somebody already allowed never puts the list on at
+		// all, so an allowed page does not come up refused and correct itself a
+		// moment later.
 		Task { [weak self] in
-			let list = await HtmlBlocking.list()
-			guard let self else { return }
-			guard let list else {
-				self.notice = "This build could not compile the rule that keeps a preview "
-					+ "off the network, so the page was not shown."
-				return
-			}
-			self.web.configuration.userContentController.add(list)
-			self.isBlocking = true
+			guard let self, await self.settleWhatThePageMayReach() else { return }
 			self.render()
 		}
 	}
@@ -176,12 +204,60 @@ final class HtmlPreviewView: NSView, SnapshotDrawable {
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
 	}
 
+	/// Puts the blocking list on this pane's web view, or takes it off, to match
+	/// what the document is allowed.
+	///
+	/// Removing the list rather than compiling a permissive one: the effect is
+	/// the same and a second list is a second thing to keep right. The web view
+	/// is this pane's own, so nothing here can reach another document.
+	///
+	/// - Returns: whether the page may be loaded at all. False is a build whose
+	///   rule list would not compile, which is the one case where this app has
+	///   no way to promise the network is shut — so it shows nothing rather than
+	///   a page it cannot make that promise about.
+	@discardableResult
+	private func settleWhatThePageMayReach() async -> Bool {
+		let controller = web.configuration.userContentController
+		guard !allowed.isAllowed(file) else {
+			controller.removeAllContentRuleLists()
+			isSettled = true
+			return true
+		}
+		guard let list = await HtmlBlocking.list() else {
+			notice = "This build could not compile the rule that keeps a preview "
+				+ "off the network, so the page was not shown."
+			isSettled = false
+			return false
+		}
+		controller.removeAllContentRuleLists()
+		controller.add(list)
+		isSettled = true
+		return true
+	}
+
+	/// The offer was pressed: remember it, or forget it, and show the page again
+	/// under the answer.
+	@objc private func offerPressed() {
+		switch offer {
+		case .load:  allowed.allow(file)
+		case .block: allowed.forget(file)
+		case nil:    return
+		}
+		Task { [weak self] in
+			guard let self, await self.settleWhatThePageMayReach() else { return }
+			// The same text, under a different policy — so the guard that stops a
+			// pointless reload has to be told this is not one.
+			self.loaded = nil
+			self.render()
+		}
+	}
+
 	/// Loads what `source` holds, keeping the page where it was.
 	private func render() {
-		guard isBlocking, source != loaded else { return }
+		guard isSettled, source != loaded else { return }
 		loaded = source
 		scheme.document = source
-		sayWhatWasNotLoaded()
+		sayWhatThisPageReaches()
 
 		generation += 1
 		let mine = generation
@@ -217,15 +293,29 @@ final class HtmlPreviewView: NSView, SnapshotDrawable {
 		}
 	}
 
-	/// The line at the foot: what the document asked for that this pane will not
-	/// fetch, and the trust that is keeping its scripts still.
-	private func sayWhatWasNotLoaded() {
+	/// The line at the foot: what this document reaches, and the trust that is
+	/// keeping its scripts still.
+	///
+	/// Two rules about two different things, said side by side because that is
+	/// the one place somebody sees the difference. Fetching a stylesheet does not
+	/// run the project's code, so an allowed page in an untrusted project fetches
+	/// its fonts and still runs no script.
+	private func sayWhatThisPageReaches() {
+		let line = HtmlPage.line(
+			references: HtmlPage.remoteReferences(in: source),
+			allowed: allowed.isRemembered(file),
+			driven: allowed.isHeldBackByDrivenRun
+		)
 		var said: [String] = []
-		if let refused = HtmlPage.remoteReferences(in: source).said { said.append(refused) }
+		if let reach = line.said { said.append(reach) }
 		// The same sentence every other refusal in this window says, offering the
 		// same one gesture. A second wording for the same rule teaches somebody
 		// that they are two different rules.
 		if let untrusted = trust.said { said.append(untrusted) }
+
+		offer = line.offer
+		offerButton.title = line.offer?.title ?? ""
+		offerButton.isHidden = line.offer == nil
 		caption = said.isEmpty ? nil : said.joined(separator: "  ")
 	}
 
@@ -234,10 +324,45 @@ final class HtmlPreviewView: NSView, SnapshotDrawable {
 			guard caption != oldValue else { return }
 			captionLabel.stringValue = caption ?? ""
 			captionLabel.isHidden = caption == nil
-			// A foot with nothing in it takes no room from the page.
-			captionHeight?.constant = caption == nil ? 0 : captionLabel.intrinsicContentSize.height
+			// A foot with nothing in it takes no room from the page, and the stack
+			// is what decides that: `NSStackView` closes up around a *hidden*
+			// arranged view, which is `DiagramPaneView`'s note in its own words.
+			//
+			// **Not a height constraint set from `fittingSize`.** That is what this
+			// was, and it measured zero — the row is asked before it has laid out —
+			// so the line was set, reported, and drawn nowhere. Photographed with
+			// the page filling the pane and the sentence missing, and found by
+			// putting the row's height into the pane's own report.
 			needsLayout = true
 		}
+	}
+
+	/// Presses the offer as somebody would, and says what it was.
+	///
+	/// The button's own action rather than a second path to the same effect: a
+	/// driven check that took a shortcut would be checking a mechanism nobody
+	/// uses.
+	func pressOfferForTesting() -> String {
+		guard let offer else { return "nothing — there is no offer on this page" }
+		offerPressed()
+		return offer.title
+	}
+
+	/// What the pane is showing, for a driven run to report.
+	///
+	/// Never a bare "not found": which state the line is in, what it says and
+	/// what the button offers, so a run that photographs the wrong one says
+	/// which one it got.
+	var reportForTesting: String {
+		// The row's height as well as its words. A line that is set and not shown
+		// is the way this goes wrong — photographed exactly once, with the page
+		// filling the pane and the sentence nowhere — and a report of the words
+		// alone says everything is fine.
+		"html \(file.lastPathComponent) allowed=\(allowed.isRemembered(file)) "
+			+ "fetching=\(allowed.isAllowed(file)) offer=\(offer?.title ?? "none") "
+			+ "line=\(Int(captionRow.frame.height))pt "
+			+ "button=\(offerButton.isHidden ? "hidden" : Int(offerButton.frame.width).description) "
+			+ "said=\(caption ?? "nothing")"
 	}
 
 	// MARK: - Being photographed

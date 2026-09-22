@@ -484,6 +484,7 @@ extension LaunchOptions {
 			case "--image-zoom": options.imageZoom = next()
 			case "--video-report": options.videoReport = true
 			case "--audio-report": options.audioReport = true
+			case "--html":       options.htmlSteps = next()
 			case "--audio-seek": options.audioSeek = next().flatMap(Double.init)
 			case "--audio-view": options.audioView = next()
 			case "--audio-zoom":
