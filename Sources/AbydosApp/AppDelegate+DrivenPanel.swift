@@ -883,7 +883,7 @@ extension AppDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.5)) {
 				if let text = options.typeText { controller?.simulateTyping(text) }
 				if options.collapseFolds { controller?.collapseAllFolds(nil) }
-				if options.markdownPreview { controller?.toggleMarkdownPreview(nil) }
+				if options.markdownPreview { controller?.togglePreview(nil) }
 			}
 		}
 

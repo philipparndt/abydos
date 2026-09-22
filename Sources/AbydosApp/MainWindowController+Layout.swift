@@ -990,8 +990,8 @@ extension MainWindowController {
 		editor.toggleWordWrap()
 	}
 
-	@objc func toggleMarkdownPreview(_ sender: Any?) {
-		editor.toggleMarkdownPreview()
+	@objc func togglePreview(_ sender: Any?) {
+		editor.togglePreview()
 	}
 
 	/// ⌘⇧] and ⌘⇧[: the tabs in front of whoever is typing.

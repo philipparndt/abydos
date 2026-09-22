@@ -596,7 +596,7 @@ extension EditorAreaController {
 	var secretsState: (conceals: Bool, revealed: Bool) { activeGroup.secretsState }
 	func secretsForTesting(_ steps: String) { activeGroup.secretsForTesting(steps) }
 	func editorMenuForTesting(_ steps: String) { activeGroup.editorMenuForTesting(steps) }
-	func toggleMarkdownPreview() { activeGroup.toggleMarkdownPreview() }
+	func togglePreview() { activeGroup.togglePreview() }
 	func setPreviewMode(_ mode: PreviewMode) { activeGroup.setPreviewMode(mode) }
 	var currentPreviewMode: PreviewMode { activeGroup.currentPreviewMode }
 	func focusActiveEditor() { activeGroup.focusActiveEditor() }
