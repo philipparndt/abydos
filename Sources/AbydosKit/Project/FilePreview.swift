@@ -129,6 +129,16 @@ public enum FilePreview {
 		/// per layer, and shown beside the source as the wave and spectrum of
 		/// each. Asked for 2026-09-13.
 		case song
+		/// An HTML document, shown as the page it makes. Asked for 2026-09-22:
+		/// "would be nice to have the same preview as for markdown also for html
+		/// docs", and it was the oldest file in this list still missing a pane.
+		///
+		/// Neither of the two kinds it sits between. **Not `.drawio`**: HTML is
+		/// text somebody types, so the source half is the editor and the pane is
+		/// a picture of it — nothing comes back out of the web view. **Not
+		/// `.image`**: an `.svg` is a drawing whose text happens to be readable,
+		/// where this is a document whose text is the work half the time.
+		case html
 
 		/// Whether this kind is a diagram with an Export beside it.
 		public var isDiagram: Bool {
@@ -183,6 +193,14 @@ public enum FilePreview {
 			return .audio
 		case "song":
 			return .song
+		// The three that are pages. `.vue`, `.xml`, `.xsd`, `.xsl` and `.pom`
+		// are deliberately not here although `LanguageRegistry` colours them
+		// with the same grammar: a component and a build file are not documents
+		// a browser lays out, and previewing one would be a blank rectangle with
+		// the file's own text in it. A grammar is about syntax; this is about
+		// what the file *is*.
+		case "html", "htm", "xhtml":
+			return .html
 		default:
 			return nil
 		}
@@ -305,6 +323,23 @@ public enum FilePreview {
 			// cost instead is SwiftPM's lock on `.build`, which is somebody else's
 			// terminal waiting — see `CadovaPreviewView`.
 			return .splitRight
+		case .html:
+			// Markdown's answer, for markdown's reason and one of its own.
+			//
+			// HTML is read as well as rendered — half the HTML in a repository is
+			// a template somebody is editing, where the text *is* the work. And it
+			// is the one kind here that is routinely machine-written and enormous:
+			// a coverage report or a generated API document is megabytes of
+			// markup, and this is asked on every open including the provisional
+			// tab a single click makes while somebody arrows down a directory.
+			//
+			// A hand-written page would pass the "written in order to make
+			// something else" test the `.puml` case above states, and the name
+			// cannot tell one from the other. The cost of being wrong decides it:
+			// a preview nobody wanted is a WebContent process and a multi-megabyte
+			// parse, where a preview somebody wanted is one click, once, and the
+			// mode is remembered from then on.
+			return .source
 		case .markdown, .none:
 			return .source
 		}

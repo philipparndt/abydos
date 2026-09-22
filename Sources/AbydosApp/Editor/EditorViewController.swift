@@ -307,6 +307,16 @@ final class EditorViewController: NSViewController {
 		}
 		var isMarkdown: Bool { document?.languageId == "markdown" }
 		var isShowingMarkdownPreview: Bool { previewMode != .source && isMarkdown }
+		/// Whether this file has both halves, so swapping between them means
+		/// something.
+		///
+		/// Asked of `FilePreview` rather than of the language: the tab bar's
+		/// control is drawn from that answer already, and a second rule here is
+		/// how the menu comes to disagree with the control beside it.
+		var canPreview: Bool {
+			FilePreview.hasPreview(url, facts: previewFacts)
+				&& FilePreview.hasReadableSource(url)
+		}
 
 		init(url: URL, document: TextDocument?, codeView: CodeView?, contentView: NSView, isPreview: Bool) {
 			self.url = url

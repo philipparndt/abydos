@@ -614,8 +614,8 @@ extension AppDelegate {
 			keyEquivalent: ""
 		))
 		let preview = NSMenuItem(
-			title: "Toggle Markdown Preview",
-			action: #selector(MainWindowController.toggleMarkdownPreview(_:)),
+			title: "Toggle Preview",
+			action: #selector(MainWindowController.togglePreview(_:)),
 			keyEquivalent: "v"
 		)
 		preview.keyEquivalentModifierMask = [.command, .shift]

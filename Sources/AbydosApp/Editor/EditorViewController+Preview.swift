@@ -9,10 +9,19 @@ import SwiftUI
 extension EditorViewController {
 	// MARK: - Markdown preview
 
-	/// Swaps the active markdown tab between source and rendered preview.
-	/// Cycles a markdown tab between source and preview, for the menu command.
-	func toggleMarkdownPreview() {
-		guard let tab = activeTab, tab.isMarkdown else { return }
+	/// Swaps the tab in front between its source and its rendered form.
+	///
+	/// **Not only markdown, and it never was.** The command was called *Toggle
+	/// Markdown Preview* and gated on `languageId == "markdown"`, which meant a
+	/// `.puml`, a `.scad` and — since 2026-09-22 — a `.html` had the tab bar's
+	/// control and no key for it. What it does is the sentence it now carries:
+	/// a file with both halves is shown as one or the other.
+	///
+	/// A file with no readable source is left alone. A `.drawio` and a PDF open
+	/// rendered and have nothing to toggle to, and `setPreviewMode` would refuse
+	/// it anyway — this is the same answer said where somebody can read it.
+	func togglePreview() {
+		guard let tab = activeTab, tab.canPreview else { return }
 		setPreviewMode(tab.previewMode == .source ? .preview : .source)
 	}
 
@@ -143,9 +152,40 @@ extension EditorViewController {
 			return AudioFileView(url: tab.url)
 		case .song:
 			return makeSongView(for: tab)
+		case .html:
+			return makeHtmlView(for: tab)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
+	}
+
+	/// The page an HTML document makes, kept current while it is edited.
+	///
+	/// The Mermaid pane's shape — the text goes in, a picture of it comes out,
+	/// and nothing comes back — with one thing neither diagram pane needs: the
+	/// project's trust, because a page's own `<script>` is the project's code
+	/// and `project-trust` holds that an untrusted project runs none of its own.
+	///
+	/// A file opened outside a project is judged by the folder it is in, which
+	/// is the same question asked of a smaller root rather than a different
+	/// question.
+	private func makeHtmlView(for tab: Tab) -> NSView {
+		let root = project?.root ?? tab.url.deletingLastPathComponent()
+		let view = HtmlPreviewView(file: tab.url, trust: ProjectTrust.shared.decision(for: root))
+		view.onOpenFile = { [weak self] url in
+			self?.open(fileURL: url, focusEditor: false)
+		}
+		if let document = tab.document {
+			view.show(document.rope.string)
+			// Every edit rather than every reparse, for the diagram panes' reason:
+			// what is being rendered is the text, and the grammar has nothing to
+			// do with it. The pane debounces on top of this.
+			document.onTextChanged = { [weak view, weak document] in
+				guard let view, let document else { return }
+				view.show(document.rope.string)
+			}
+		}
+		return view
 	}
 
 	/// A song's sound beside its text — see `SongPreviewView`.
@@ -565,8 +605,13 @@ extension EditorViewController {
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
 	}
 
-	/// True when the active tab is markdown, so the UI can offer the toggle.
-	var canPreviewMarkdown: Bool { activeTab?.isMarkdown ?? false }
+	/// True when the tab in front is showing rendered markdown.
+	///
+	/// What sat beside this — `canPreviewMarkdown`, "so the UI can offer the
+	/// toggle" — had had no caller since it was written: the menu item is always
+	/// enabled and `togglePreview()` is what decides. It is gone rather than left
+	/// describing a rule nothing keeps, and `Tab.canPreview` is now the one place
+	/// that answers it.
 	var isShowingMarkdownPreview: Bool { activeTab?.isShowingMarkdownPreview ?? false }
 
 	/// How long a provisional tab's model pane waits before it renders anything.
