@@ -235,7 +235,11 @@ public final class PseudoTerminal {
 		)
 		let argumentArray = Self.cStrings([executable] + arguments)
 		let executablePath = strdup(executable)
-		let directoryPath = workingDirectory.map { strdup($0.path) } ?? nil
+		// Home when nobody said where: otherwise the child keeps the app's own
+		// directory, which for an app started from the Finder is `/`.
+		let directoryPath = strdup(
+			(workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser).path
+		)
 		// An empty signal mask, built here for the same reason as everything else
 		// on this side of the fork: the child only gets to make C calls on memory
 		// that already existed. What it is for is where it is used, below.

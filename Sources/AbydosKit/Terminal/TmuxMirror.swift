@@ -562,6 +562,9 @@ public enum TmuxMirror {
 				// socket turns every one of these into silence, since stderr
 				// goes to the null device and a failure comes back as `nil`.
 				process.environment = TmuxSocketPath.environment
+				// Home, not the app's `/`: a session made without `-c`, and a
+				// server one of these starts, begin in whatever directory ran it.
+				process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
 				let pipe = Pipe()
 				process.standardOutput = pipe
