@@ -75,7 +75,7 @@ extension BottomPanel {
 	func addTmuxWindow(to session: String) {
 		Task {
 			self.mirrorChangedLocally()
-			let made = await TmuxMirror.newWindow(inSession: session)
+			let made = await TmuxMirror.newWindow(inSession: session, in: self.workingDirectory)
 			Self.trace("addTmuxWindow session=\(session) newWindow=\(made)")
 			if made {
 				self.refreshTmuxWindows()

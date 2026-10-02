@@ -358,17 +358,31 @@ public enum TmuxMirror {
 	/// It cannot when the session is gone — which is what closing its last
 	/// window does — and the caller's answer to that is to start the session
 	/// again rather than to do nothing.
+	///
+	/// The directory is said, with `-c`, and never left to tmux: without it a
+	/// window starts wherever the `tmux` that asked for it was run, and that
+	/// was seen to be `/` in the installed app even with the command's own
+	/// directory set to home.
 	@discardableResult
-	public static func newWindow(inSession session: String) async -> Bool {
+	public static func newWindow(
+		inSession session: String, in directory: URL? = nil
+	) async -> Bool {
 		guard let tmux = Executables.locate("tmux") else { return false }
+		return await run(tmux, newWindowArguments(session: session, directory: directory))?
+			.exitCode == 0
+	}
+
+	/// What `newWindow` asks tmux for: the project's directory when there is
+	/// one, home when there is not.
+	static func newWindowArguments(session: String, directory: URL?) -> [String] {
+		let start = directory ?? FileManager.default.homeDirectoryForCurrentUser
 		// `<session>:` — with the colon, and exact. Without it tmux reads the
 		// argument as a *target window*: the session's current window, whose
 		// index is then the index the new one is asked to take. On a session
 		// sitting on window 0 that is "create window failed: index 0 in use",
 		// every time. The colon means the session itself, next free index; the
 		// `=` means this session rather than anything it is a prefix of.
-		let result = await run(tmux, ["new-window", "-t", "=\(session):"])
-		return result?.exitCode == 0
+		return ["new-window", "-t", "=\(session):", "-c", start.path]
 	}
 
 	/// How many rows this session's status bar takes.

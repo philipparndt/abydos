@@ -328,3 +328,20 @@ struct TmuxAttachTests {
 		#expect(TmuxMirror.attachArguments(to: "x").contains("-q"))
 	}
 }
+
+/// Where a window added from the tab strip starts.
+struct TmuxNewWindowTests {
+	@Test func aNewWindowStartsInTheProject() {
+		let project = URL(fileURLWithPath: "/Users/x/dev/pulse")
+		#expect(TmuxMirror.newWindowArguments(session: "pulse", directory: project)
+			== ["new-window", "-t", "=pulse:", "-c", "/Users/x/dev/pulse"])
+	}
+
+	/// Said rather than left out: a window with no `-c` starts wherever the
+	/// command that asked for it ran, which for this app has been `/`.
+	@Test func withoutAProjectItStartsAtHome() {
+		let home = FileManager.default.homeDirectoryForCurrentUser.path
+		#expect(TmuxMirror.newWindowArguments(session: "pulse", directory: nil)
+			== ["new-window", "-t", "=pulse:", "-c", home])
+	}
+}
