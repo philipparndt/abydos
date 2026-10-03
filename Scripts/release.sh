@@ -15,6 +15,24 @@
 set -euo pipefail
 
 APP="build/Abydos.app"
+
+# Every copy of the app this script makes outside /Applications is unregistered
+# from Launch Services again before it is let go.
+#
+# **Because the Local Network grant is only as good as that registry.** macOS
+# files the grant under `de.rnd7.ideai`, and nehelper turns it into a list of
+# executable UUIDs by asking Launch Services which bundle that identifier is.
+# Each release left one more answer behind: the staging folder for the disk
+# image, the mounted image, and `build/Abydos.app` — all under the shipping
+# identifier, all with the release's unpinned UUID. On 2026-10-03 there were 61
+# registrations of `de.rnd7.ideai` and 59 of them pointed at folders that no
+# longer existed; nehelper cached "0 UUID(s) for de.rnd7.ideai", and the
+# installed app and everything it launched lost the LAN with EHOSTUNREACH.
+# Unregistering a path that is gone is fine, and one that is opened again is
+# registered again, so this takes away nothing anybody uses.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+forget() { [ -x "$LSREGISTER" ] && "$LSREGISTER" -u "$1" >/dev/null 2>&1 || true; }
+
 PROFILE="${NOTARY_PROFILE:-notarytool}"
 IDENTITY="${SIGN_IDENTITY:-Developer ID Application}"
 
@@ -189,6 +207,7 @@ STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -quiet -volname "Abydos" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+forget "$STAGE/Abydos.app"
 rm -rf "$STAGE"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
@@ -217,6 +236,7 @@ xcrun stapler validate "$DMG"
 MOUNT=$(mktemp -d)
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
 if xcrun stapler validate "$MOUNT/Abydos.app"; then STAPLED=0; else STAPLED=1; fi
+forget "$MOUNT/Abydos.app"
 hdiutil detach -quiet "$MOUNT" || true
 rmdir "$MOUNT" 2>/dev/null || true
 if [ "$STAPLED" -ne 0 ]; then
@@ -228,5 +248,9 @@ fi
 echo "==> Gatekeeper:"
 spctl --assess --type open --context context:primary-signature -vv "$DMG"
 spctl --assess --type execute -vv "$APP"
+
+# And the build itself, last, after Gatekeeper has looked at it. It stays on
+# disk for `make install`, which registers the copy it puts in /Applications.
+forget "$APP"
 
 echo "==> Done: $DMG"

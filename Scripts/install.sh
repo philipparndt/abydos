@@ -97,6 +97,23 @@ if [ -e "$DESTINATION" ]; then
 fi
 mv "$STAGING" "$DESTINATION"
 
+# Launch Services is left knowing the installed copy and nothing else.
+#
+# The Local Network grant follows whatever bundle Launch Services answers for
+# `de.rnd7.ideai`, so a registration left at the staging path, at the retired
+# bundle or at the build it came from can win that answer and take the LAN away
+# from the copy in /Applications and everything it launches (see release.sh).
+# The retired bundle is unregistered even while a copy still runs from it: that
+# copy keeps running, and the old UUID is lost to it either way once the new
+# bundle is the one registered.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$LSREGISTER" ]; then
+	for stale in "$STAGING" "$RETIRED" "$SOURCE"; do
+		"$LSREGISTER" -u "$stale" >/dev/null 2>&1 || true
+	done
+	"$LSREGISTER" -f "$DESTINATION" >/dev/null 2>&1 || true
+fi
+
 if running; then
 	echo "==> Installed $DESTINATION"
 	echo "    a copy is still running the previous build — quit and reopen it to get this one"
