@@ -201,6 +201,19 @@ extension MainWindowController {
 			return project != nil
 		}
 
+		// **Ticked from the preference, not from the last click on the item.**
+		// The tick used to be set when the menu was built and when the item was
+		// chosen, so the pull request page's own switch — the same preference —
+		// left the menu saying the opposite of the diff until a relaunch.
+		if item.action == #selector(toggleSideBySideDiff(_:)) {
+			item.state = Settings.shared.diffIsSideBySide ? .on : .off
+			return true
+		}
+		if item.action == #selector(toggleDiffChrome(_:)) {
+			item.state = Settings.shared.diffShowsChrome ? .on : .off
+			return true
+		}
+
 		if item.action == #selector(toggleRevealSecrets(_:)) {
 			// Enabled only where there are covers to lift, ticked while they
 			// are lifted: the item is the file-wide explicit action the

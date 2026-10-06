@@ -378,6 +378,23 @@ final class PullRequestReview {
 	/// - `diff-rows` — every row of the diff, numbered, as a `text:` step names
 	///   them
 	/// - `measured` — how many rows have been measured for a selection
+	/// - `find:count` — ⌘F over the diff, then `count` typed; `find-next` and
+	///   `find-previous` are ⌘G and ⇧⌘G, `find-close` is ⎋, and `find-status`
+	///   says what the bar and the diff say without pressing anything
+	/// - `side-by-side:on` / `side-by-side:off` — the page's switch, and where
+	///   the diff's top row is afterwards
+	/// - `scroll-diff:300` — scroll the diff so that row is at the top
+	/// - `cmd-f` / `cmd-f-diff` — ⌘F down the responder chain from the file
+	///   list, or from the diff
+	/// - `sideways:right=200` / `sideways:left=end` — a column put at an offset
+	///   as its scroller would; `swipe:left=-120` is a real horizontal scroll
+	///   event over that column; `sideways-link` presses the link between the
+	///   halves; `sideways-status` says every column's offset, room and widest line;
+	///   `edge-click:right.1` double-clicks at the visible left edge of that
+	///   column's text on row 1, found from the point; `sideways-timing` times
+	///   the width measurement over the rows on screen
+	/// - `menu-tick` — what View ▸ Diff ▸ Side by Side Diff's tick says;
+	///   `menu-choose` chooses it
 	/// - `press-checkout` — the page's checkout switch
 	/// - `sheet` — open the verdict sheet; `sheet:36-40` opens the remark one
 	/// - `mark:on` / `mark:off` — mark the selected file read, as the row menu does
@@ -468,7 +485,10 @@ final class PullRequestReview {
 			     "comments", "write", "submit", "moved", "erase", "menu", "select-comment",
 			     "press-checkout", "mark", "sheet", "file-menu", "arrange",
 			     "text", "text-left", "word", "row-text", "all", "copied", "copy",
-			     "diff-menu", "diff-rows", "regions", "measured":
+			     "diff-menu", "diff-rows", "regions", "measured",
+			     "find", "find-next", "find-previous", "find-status", "find-close",
+			     "side-by-side", "scroll-diff", "menu-tick", "menu-choose", "cmd-f", "cmd-f-diff",
+			     "sideways", "swipe", "sideways-link", "sideways-status", "edge-click", "sideways-timing":
 				// The page is a second round of network calls, so a step that
 				// addresses it waits — and takes the rest of the script with it
 				// rather than running the tail against a page that is not there.
@@ -546,6 +566,40 @@ final class PullRequestReview {
 						+ page.diffRegionsForTesting(row: Int(argument) ?? 0))
 				case "measured":
 					print("PULL-REQUEST PAGE measured: " + page.measuredRowsForTesting())
+				case "find":
+					print("PULL-REQUEST PAGE find: " + page.findForTesting(argument))
+				case "find-next":
+					print("PULL-REQUEST PAGE find-next: " + page.stepFindForTesting(by: 1))
+				case "find-previous":
+					print("PULL-REQUEST PAGE find-previous: " + page.stepFindForTesting(by: -1))
+				case "find-status":
+					print("PULL-REQUEST PAGE find-status: " + page.findReportForTesting())
+				case "find-close":
+					print("PULL-REQUEST PAGE find-close: " + page.closeFindForTesting())
+				case "side-by-side":
+					print("PULL-REQUEST PAGE side-by-side: "
+						+ page.setSideBySideForTesting(argument == "on"))
+				case "sideways":
+					print("PULL-REQUEST PAGE sideways: " + page.sidewaysForTesting(argument))
+				case "swipe":
+					print("PULL-REQUEST PAGE swipe: " + page.swipeForTesting(argument))
+				case "sideways-link":
+					print("PULL-REQUEST PAGE sideways-link: " + page.sidewaysLinkForTesting())
+				case "sideways-timing":
+					print("PULL-REQUEST PAGE sideways-timing: " + page.sidewaysTimingForTesting())
+				case "edge-click":
+					print("PULL-REQUEST PAGE edge-click: " + page.edgeClickForTesting(argument))
+				case "sideways-status":
+					print("PULL-REQUEST PAGE sideways-status: " + page.sidewaysStatusForTesting())
+				case "cmd-f", "cmd-f-diff":
+					print("PULL-REQUEST PAGE \(step): "
+						+ page.pressFindForTesting(fromDiff: step == "cmd-f-diff"))
+				case "menu-tick", "menu-choose":
+					print("PULL-REQUEST PAGE \(step): "
+						+ page.sideBySideMenuForTesting(choosing: step == "menu-choose"))
+				case "scroll-diff":
+					print("PULL-REQUEST PAGE scroll-diff: "
+						+ page.scrollDiffForTesting(toRow: Int(argument) ?? 0))
 				case "press-checkout":
 					page.pressCheckOutForTesting()
 				case "sheet":

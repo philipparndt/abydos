@@ -91,6 +91,27 @@ final class DiffView: NSView {
 	/// read. Here because an extension may not hold state.
 	var commentRange: (from: Int, to: Int)?
 
+	/// What the find bar asked for, what it found, and which one is being
+	/// looked at — see `DiffView+Search`. Nil while nobody is searching.
+	var searchQuery: (text: String, options: SearchOptions)?
+	var matches: [Match] = []
+	var currentMatch: Int?
+	/// The matches or the current one moved, so whatever shows `n of m` should
+	/// say it again.
+	var onMatchesChanged: (() -> Void)?
+	/// Which file the diff on screen is of, when the caller said: a search keeps
+	/// its current match across a rebuild of the same file — the whole-file
+	/// switch — and starts again on a different one, where a match at the same
+	/// line and offset is a coincidence and not the same match.
+	private var diffIdentity: URL?
+
+	/// How far each text column is scrolled sideways, the widest line in each,
+	/// and which was scrolled last — see `DiffView+Sideways`.
+	var sidewaysOffsets: [Column: CGFloat] = [:]
+	var widestLines: [Column: CGFloat] = [:]
+	var lastScrolledColumn: Column = .right
+	var sidewaysBar: DiffSidewaysBar?
+
 	/// A remark somebody left on a line of this diff.
 	///
 	/// The view's own shape rather than `ReviewComment`: what it needs is three
@@ -148,11 +169,13 @@ final class DiffView: NSView {
 	/// has already reviewed and says it again**, which is worse than saying
 	/// nothing: the author now has two conversations about one line.
 	func setComments(at lines: [Int: [Comment]], andOutdated outdated: [Comment]) {
+		let kept = currentMatchKey
 		comments = lines
 		outdatedComments = outdated
 		rebuildRows()
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
+		findMatches(keeping: kept, reveal: false)
 	}
 
 	/// Whether git's own preamble is drawn, and whether the sides are beside
@@ -179,11 +202,27 @@ final class DiffView: NSView {
 		let chrome = Settings.shared.diffShowsChrome
 		let sideBySide = Settings.shared.diffIsSideBySide
 		guard metricsMoved || chrome != showsChrome || sideBySide != isSideBySide else { return }
+		// **The reader's place, by line rather than by pixel.** Side by side is
+		// fewer rows than unified — a removal and its replacement share one — so
+		// the same scroll offset is a different part of the file, and somebody
+		// half-way down who switched to see a change in pairs was put somewhere
+		// they had not been.
+		let top = sideBySide != isSideBySide ? topPlace() : nil
+		let kept = currentMatchKey
+		// Followed to its new row only if it was on screen: a reader who has
+		// scrolled away from the match has said where they want to be, and the
+		// place kept above is that.
+		let matchWasShown = currentMatchIsVisible
 		showsChrome = chrome
+		// The two arrangements have different column widths, so an offset
+		// carried across would point at a different part of the line.
+		if sideBySide != isSideBySide { sidewaysOffsets = [:] }
 		isSideBySide = sideBySide
 		rebuildRows()
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
+		if let top { scrollToTop(top) }
+		findMatches(keeping: kept, reveal: matchWasShown)
 	}
 
 	enum Row {
@@ -286,11 +325,15 @@ final class DiffView: NSView {
 		// Inline, for the callers that have the text in hand and nowhere to
 		// hop. Marked so a diff that took a second says it was a diff.
 		StallWatch.mark("diff render") {
-			setDiff(Self.prepare(text, url: url), staged: staged)
+			setDiff(Self.prepare(text, url: url), staged: staged, identity: url)
 		}
 	}
 
-	func setDiff(_ prepared: Prepared, staged: Bool) {
+	func setDiff(_ prepared: Prepared, staged: Bool, identity: URL? = nil) {
+		let kept = identity != nil && identity == diffIdentity ? currentMatchKey : nil
+		diffIdentity = identity
+		// A different diff starts at the left edge, as it starts at the top.
+		sidewaysOffsets = [:]
 		isStaged = staged
 		// The conversation belongs to the file that was on screen, and this
 		// is a different file — or the same one at a different head. The
@@ -305,6 +348,7 @@ final class DiffView: NSView {
 		highlights = prepared.highlights
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
+		findMatches(keeping: kept, reveal: true)
 	}
 
 	/// How many lines of one remark are drawn before it is cut short.
@@ -422,6 +466,7 @@ final class DiffView: NSView {
 			rows.append(.header(""))
 			rows.append(.header("No textual changes."))
 		}
+		measureWidestLines()
 	}
 
 	/// The rows of one hunk, with the two sides beside each other.

@@ -813,15 +813,14 @@ extension MainWindowController {
 	}
 
 	/// The two questions every diff in this app answers, flipped from the View
-	/// menu. Each `DiffView` hears about it through the settings notification.
+	/// menu. Each `DiffView` hears about it through the settings notification,
+	/// and the items' ticks are `validateMenuItem`'s.
 	@objc func toggleSideBySideDiff(_ sender: Any?) {
 		Settings.shared.diffIsSideBySide.toggle()
-		(sender as? NSMenuItem)?.state = Settings.shared.diffIsSideBySide ? .on : .off
 	}
 
 	@objc func toggleDiffChrome(_ sender: Any?) {
 		Settings.shared.diffShowsChrome.toggle()
-		(sender as? NSMenuItem)?.state = Settings.shared.diffShowsChrome ? .on : .off
 	}
 
 	/// A key that used to open something and now opens the git tool.

@@ -242,3 +242,17 @@ struct ProjectWindowSettingTests {
 		}
 	}
 }
+
+struct DiffHalvesLinkTests {
+	/// A row's two halves are nearly always the old and new version of one line,
+	/// so scrolling one sideways should take the other with it unless somebody
+	/// has said otherwise.
+	@Test func theHalvesOfASideBySideDiffAreLinkedUntilSomebodyUnlinksThem() {
+		let defaults = TestDefaults.make()
+		let settings = Settings(defaults: defaults)
+		#expect(settings.diffHalvesScrollTogether)
+
+		settings.diffHalvesScrollTogether = false
+		#expect(!Settings(defaults: defaults).diffHalvesScrollTogether)
+	}
+}

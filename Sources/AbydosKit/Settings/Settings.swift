@@ -80,6 +80,7 @@ public final class Settings {
 			Key.showHiddenFiles: true,
 			Key.reviewRequestsIncludeTeams: true,
 			Key.diffShowsChrome: false,
+			Key.diffHalvesScrollTogether: true,
 			Key.diffIsSideBySide: false,
 			Key.pictureDiffMode: 0,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
@@ -161,6 +162,7 @@ public final class Settings {
 		static let reviewRequestsIncludeTeams = "reviewRequestsIncludeTeams"
 		static let reviewShowsWholeFile = "reviewShowsWholeFile"
 		static let diffShowsChrome = "diffShowsChrome"
+		static let diffHalvesScrollTogether = "diffHalvesScrollTogether"
 		static let diffIsSideBySide = "diffIsSideBySide"
 		static let pictureDiffMode = "pictureDiffMode"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
@@ -891,6 +893,14 @@ public final class Settings {
 	public var diffShowsChrome: Bool {
 		get { defaults.bool(forKey: Key.diffShowsChrome) }
 		set { set(newValue, Key.diffShowsChrome) }
+	}
+
+	/// Whether the two halves of a side-by-side diff scroll sideways together.
+	/// On by default: a row's halves are nearly always the old and new version
+	/// of one line, and the change being read is at the same column in both.
+	public var diffHalvesScrollTogether: Bool {
+		get { defaults.bool(forKey: Key.diffHalvesScrollTogether) }
+		set { set(newValue, Key.diffHalvesScrollTogether) }
 	}
 
 	/// Whether a diff draws the two sides beside each other rather than one

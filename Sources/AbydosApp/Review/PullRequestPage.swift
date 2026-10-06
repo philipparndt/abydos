@@ -35,8 +35,13 @@ final class PullRequestPage: NSView {
 	private var contents: [String: String] = [:]
 
 	private var fileList: ChangedFileList!
-	private var diffView: DiffView!
-	private var diffScroll: NSScrollView!
+	/// Internal rather than private for `PullRequestPage+Find`, which hosts the
+	/// find bar over them.
+	var diffView: DiffView!
+	var diffScroll: NSScrollView!
+	var findBar: FindBar!
+	var findBarHeight: NSLayoutConstraint!
+	var sideBySideSwitch: DrawnCheckbox!
 	/// The text diff and the picture diff, and which is in the scroll view: a
 	/// changed picture diffs as two pictures rather than as one sentence.
 	///
@@ -182,6 +187,8 @@ final class PullRequestPage: NSView {
 		}
 		hideReadSwitch.toolTip = "Leave only the files still to read"
 
+		sideBySideSwitch = makeSideBySideSwitch()
+
 		progressLabel = ScaledLabel(colour: { Theme.current.gitIgnored })
 
 		// **The point of reading a review in an editor**, one button along from
@@ -220,7 +227,7 @@ final class PullRequestPage: NSView {
 
 		let controls = NSStackView(views: [
 			progressLabel, reviewButton, checkOutButton, hideReadSwitch,
-			arrangeControl, wholeFileSwitch,
+			arrangeControl, wholeFileSwitch, sideBySideSwitch,
 		])
 		controls.orientation = .horizontal
 		controls.spacing = Theme.current.scaled(10)
@@ -242,7 +249,7 @@ final class PullRequestPage: NSView {
 		split.isVertical = true
 		split.dividerStyle = .thin
 		split.addArrangedSubview(listSide)
-		split.addArrangedSubview(diffScroll)
+		split.addArrangedSubview(makeDiffSide())
 		split.delegate = self
 		split.translatesAutoresizingMaskIntoConstraints = false
 
@@ -433,6 +440,9 @@ final class PullRequestPage: NSView {
 		// are fetched. A side that is not says so rather than pretending.
 		if PictureDiffLoader.isPicture(file.path, in: root), let documents = diffDocuments {
 			onFileShown?(file.path)
+			// The text half emptied, so a search that is open says it found
+			// nothing in a picture rather than keeping the last file's answer.
+			diffView.setDiff("", staged: false)
 			Task { @MainActor [weak self] in
 				guard let self else { return }
 				let loaded = await PictureDiffLoader.load(
