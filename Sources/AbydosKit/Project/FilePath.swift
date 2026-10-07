@@ -112,14 +112,25 @@ public enum FilePath {
 	/// Anything not starting with `/` is passed through untouched: the same set
 	/// carries the Dependencies section's own rows, which are not files and have
 	/// no ancestors on disk.
+	///
+	/// **Cut from the string, never walked with `URL`.** This used to step up
+	/// with `deletingLastPathComponent()` until `pathComponents` said the root,
+	/// and nothing promises that step gets shorter — on a `..` Foundation may
+	/// append another one instead. On macOS 15.8 a terminal following into a
+	/// folder kept the main thread in that loop for minutes, at 18 GB, every
+	/// step a path not yet in the set. Cutting at the last `/` shortens the
+	/// string every time, whatever is in it.
 	public static func withAncestors(of paths: Set<String>) -> Set<String> {
 		var all = paths
 		for path in paths where path.hasPrefix("/") {
-			var url = URL(fileURLWithPath: path).deletingLastPathComponent()
+			var current = Substring(path)
+			while current.count > 1, current.hasSuffix("/") { current = current.dropLast() }
 			// Stopping at the first one already in the set: everything above it
 			// was put there by whoever put that one there.
-			while url.pathComponents.count > 1, all.insert(url.path).inserted {
-				url = url.deletingLastPathComponent()
+			while let slash = current.lastIndex(of: "/") {
+				current = current[..<slash]
+				while current.hasSuffix("/") { current = current.dropLast() }
+				guard !current.isEmpty, all.insert(String(current)).inserted else { break }
 			}
 		}
 		return all
