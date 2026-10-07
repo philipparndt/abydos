@@ -14,7 +14,9 @@ extension DiffView {
 	override var intrinsicContentSize: NSSize {
 		NSSize(
 			width: NSView.noIntrinsicMetric,
-			height: max(CGFloat(rows.count) * lineHeight + Theme.current.scaled(16), 10)
+			// The sideways bar's height on top while it shows: it sits over the
+			// bottom of the visible rows, and the last one must scroll clear.
+			height: max(CGFloat(rows.count) * lineHeight + Theme.current.scaled(16) + sidewaysBarHeight, 10)
 		)
 	}
 
@@ -141,7 +143,15 @@ extension DiffView {
 
 			guard !line.marker.isEmpty || !line.text.isEmpty else { return }
 
+			// The text is clipped to start after the marker, so a line scrolled
+			// sideways runs under nothing: the marker and the numbers stay, and
+			// say which line it is.
+			let start = textStart(ofRow: index)
+			NSGraphicsContext.saveGraphicsState()
+			NSRect(x: start, y: y, width: max(0, bounds.width - start), height: lineHeight).clip()
 			highlight(rowAt: index, in: .only, at: y)
+			drawText(line, index: lineIndex, at: NSPoint(x: textOrigin(ofRow: index), y: y))
+			NSGraphicsContext.restoreGraphicsState()
 
 			// The marker keeps the diff's own colour — it is what the line does,
 			// not what it says — and the text is coloured as code. Which side a
@@ -149,7 +159,6 @@ extension DiffView {
 			// review: reading a diff is reading code, and code that is all one
 			// colour is the thing syntax highlighting exists to fix.
 			line.marker.draw(at: NSPoint(x: textX, y: y), font: font, color: color(for: line.kind))
-			drawText(line, index: lineIndex, at: NSPoint(x: textOrigin(ofRow: index), y: y))
 		}
 	}
 
@@ -163,7 +172,13 @@ extension DiffView {
 	///
 	/// Grey while the keyboard is somewhere else: a selection in the strong
 	/// colour is a claim that the next key will act on it.
+	///
+	/// The find bar's marks go first. A selection that is exactly the current
+	/// match is not drawn over it: the match's own colour already says which
+	/// one it is, and selection grey on top of it would hide that.
 	private func highlight(rowAt index: Int, in column: Column, at y: CGFloat) {
+		drawMatches(rowAt: index, in: column, at: y)
+		guard !selectionIsCurrentMatch else { return }
 		guard textRun.column == column, let covered = textRun.covered(row: index) else { return }
 
 		let startX = textRun.x(ofOffset: covered.lowerBound, row: index, in: column)
@@ -217,7 +232,7 @@ extension DiffView {
 				withAttributes: [.font: font, .foregroundColor: numbers]
 			)
 
-			let start = textOrigin(ofRow: index, in: which)
+			let start = textStart(ofRow: index, in: which)
 			NSGraphicsContext.saveGraphicsState()
 			NSRect(
 				x: start, y: y, width: max(0, column.maxX - start), height: lineHeight
@@ -226,7 +241,9 @@ extension DiffView {
 			// The marker is dropped: which side a line is on is what the column
 			// says, and a `+` down the left of every line of the right-hand file
 			// is a column of punctuation.
-			drawText(side.line, index: side.index, at: NSPoint(x: start, y: y))
+			drawText(
+				side.line, index: side.index, at: NSPoint(x: textOrigin(ofRow: index, in: which), y: y)
+			)
 			NSGraphicsContext.restoreGraphicsState()
 		}
 

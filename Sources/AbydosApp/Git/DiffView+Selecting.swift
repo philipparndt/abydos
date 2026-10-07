@@ -58,7 +58,25 @@ extension DiffView {
 	/// expression that puts the text there used to live inside `draw(row:)` —
 	/// so a highlight drawn from `textX` sat one marker-width to the left of the
 	/// glyphs it was meant to be behind.
+	///
+	/// **Moved left by the column's sideways offset**, for the rows that scroll
+	/// — a line of code, unified or side by side. Everything that draws text or
+	/// turns a pointer into an offset asks this, so scrolling a column moves the
+	/// glyphs, their highlight and their hit-testing together; where the text
+	/// *area* begins, which does not move, is `textStart`.
 	func textOrigin(ofRow index: Int, in column: Column = .only) -> CGFloat {
+		let start = textStart(ofRow: index, in: column)
+		guard rows.indices.contains(index) else { return start }
+		switch rows[index] {
+		case .line: return start - sidewaysOffset(of: .only)
+		case .pair: return start - sidewaysOffset(of: column)
+		default:    return start
+		}
+	}
+
+	/// Where a row's text area begins — the edge scrolled text is clipped at,
+	/// and the boundary between the numbers and the code for a press.
+	func textStart(ofRow index: Int, in column: Column = .only) -> CGFloat {
 		guard rows.indices.contains(index) else { return textX }
 		switch rows[index] {
 		case let .line(_, line, _, _):
@@ -145,7 +163,7 @@ extension DiffView {
 				: .text(row: index, column: .only)
 		}
 		let column: Column = point.x < pairMiddle ? .left : .right
-		return point.x < textOrigin(ofRow: index, in: column)
+		return point.x < textStart(ofRow: index, in: column)
 			? .numbers(row: index, column: column)
 			: .text(row: index, column: column)
 	}

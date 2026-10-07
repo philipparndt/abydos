@@ -267,7 +267,7 @@ extension DiffView {
 		if isSideBySide {
 			probes += [pairMiddle - 2, pairMiddle + 2]
 			for column in [Column.left, .right] {
-				let origin = textOrigin(ofRow: row, in: column)
+				let origin = textStart(ofRow: row, in: column)
 				probes += [pairMinX(column) + 2, origin - 2, origin + 2]
 			}
 		}
