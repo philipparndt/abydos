@@ -81,7 +81,8 @@ fi
 # to *that* one — which is how a driver came to rename a file in somebody's real
 # ~/.config while its author believed it was looking at a corpus.
 say "opening it"
-LOG="${LOG:-$(mktemp -t abydos-scale)}"
+tmp="${TMPDIR:-/tmp}"
+LOG="${LOG:-$(mktemp "${tmp%/}/abydos-scale.XXXXXX")}"
 # `--close-window` and not `--stop-after`: the second stops a *run
 # configuration*, which this has none of, so the app sat there until something
 # killed it and nothing was ever flushed. Closing the last window terminates the

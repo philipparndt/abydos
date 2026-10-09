@@ -31,8 +31,9 @@ set -eu
 timeout=$1
 shift
 
-log=$(mktemp -t abydos-tests)
-status=$(mktemp -t abydos-tests-status)
+tmp="${TMPDIR:-/tmp}"
+log=$(mktemp "${tmp%/}/abydos-tests.XXXXXX")
+status=$(mktemp "${tmp%/}/abydos-tests-status.XXXXXX")
 trap 'rm -f "$log" "$status"' EXIT
 
 # `set -m` puts the child in a process group of its own, so the negative pid

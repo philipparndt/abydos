@@ -13,8 +13,9 @@
 # Anything that is not a PNG is converted with `sips`, which every Mac has.
 #
 # Inside tmux the escape has to be wrapped so tmux hands it through rather than
-# eating it, and tmux needs `allow-passthrough on` — which this says, once,
-# when it is not set.
+# eating it, and tmux needs to be 3.3 or later, with `allow-passthrough on` and
+# 24-bit colour to the terminal outside it — and each of those, when it is
+# missing, is said in a sentence naming the line to add.
 #
 # A terminal without the protocol is told so in a sentence rather than shown
 # fourteen kilobytes of base64: the terminal is asked first, and what it answers
@@ -39,25 +40,40 @@ USAGE
 # One word out, and nothing but its arguments in: no terminal is asked, no
 # environment is read, nothing is written. That is deliberate. This is the part
 # with all the cases in it, and the cases are the part that gets a person sent
-# to fix the wrong thing — so it is a function of five answers, and the tests
+# to fix the wrong thing — so it is a function of six answers, and the tests
 # put it through every combination of them without needing a terminal to do it
 # on.
 #
 #   $1  whether standard output is a terminal      yes | no
 #   $2  what TERM says
 #   $3  whether tmux is in the way                 yes | no
-#   $4  whether tmux is passing escapes through    yes | no
+#   $4  whether tmux is passing escapes through    yes | no | cannot
 #   $5  whether the terminal answered the query    yes | no
+#   $6  whether tmux draws 24-bit colour           yes | no
 #
 # The order is cheapest first, and each one rules out the next: there is no
 # point asking a pipe what it can draw, and no point believing the silence of a
 # terminal whose answer tmux was never going to carry.
+#
+# `cannot` is a tmux older than 3.3, which has no `allow-passthrough` to turn
+# on — telling somebody to set it sends them to an "invalid option".
+#
+# The colour is the last question because it only matters once everything else
+# has worked. The placeholder cells name their picture by their foreground
+# colour, and a tmux that thinks the terminal outside it has 256 colours rounds
+# that to the nearest of them on the way out: the picture arrives, the cells
+# name a different one, and nothing is drawn — with nothing said, since every
+# byte was delivered.
 support_decision() {
 	[ "$1" = "yes" ] || { echo not-a-terminal; return 0; }
 	case "$2" in
 		"") echo no-terminal-type; return 0 ;;
 		dumb|unknown) echo text-only-terminal; return 0 ;;
 	esac
+	if [ "$3" = "yes" ] && [ "$4" = "cannot" ]; then
+		echo tmux-too-old
+		return 0
+	fi
 	if [ "$3" = "yes" ] && [ "$4" != "yes" ]; then
 		echo tmux-in-the-way
 		return 0
@@ -70,6 +86,10 @@ support_decision() {
 		if [ "$3" = "yes" ]; then echo terminal-behind-tmux-silent; else echo terminal-silent; fi
 		return 0
 	}
+	if [ "$3" = "yes" ] && [ "$6" = "no" ]; then
+		echo tmux-without-colour
+		return 0
+	fi
 	echo supported
 }
 
@@ -86,9 +106,21 @@ support_message() {
 		text-only-terminal)
 			echo "abydos-icat: TERM is $3, which is a terminal that has said it draws nothing" \
 				"but text; run it in Abydos's terminal, or kitty, Ghostty or WezTerm." ;;
+		tmux-too-old)
+			echo "abydos-icat: this tmux is older than 3.3, which is the first that can pass" \
+				"a picture through to $2; upgrade it ('brew upgrade tmux'), or run this" \
+				"outside tmux." ;;
 		tmux-in-the-way)
 			echo "abydos-icat: tmux is not passing escapes through, so the picture would never" \
-				"reach $2; run 'tmux set -g allow-passthrough on', or put it in ~/.tmux.conf." ;;
+				"reach $2; run 'tmux set -g allow-passthrough on', and put" \
+				"'set -g allow-passthrough on' in ~/.tmux.conf to keep it — a line already" \
+				"there is only read by a server started after it, or by" \
+				"'tmux source-file ~/.tmux.conf'." ;;
+		tmux-without-colour)
+			echo "abydos-icat: tmux is passing the picture through, but drawing to $2 in" \
+				"256 colours, and the cells that place a picture need 24-bit colour; put" \
+				"\"set -as terminal-features ',*:RGB'\" in ~/.tmux.conf, source it, then" \
+				"detach and attach again — or attach with COLORTERM=truecolor set." ;;
 		terminal-behind-tmux-silent)
 			echo "abydos-icat: tmux is passing escapes through, but $2 behind it did not answer" \
 				"the graphics query — so it is the terminal rather than tmux that cannot draw" \
@@ -102,11 +134,12 @@ support_message() {
 }
 
 # Not in the usage above: this is how the tests ask the decision what it would
-# do, since a test can bring every one of its five answers and none of them can
-# bring a terminal.
+# do, since a test can bring every one of its six answers and none of them can
+# bring a terminal. The colour comes after the name, so that leaving it out
+# means a tmux that has it.
 if [ "${1:-}" = "--explain-support" ]; then
 	shift
-	decision=$(support_decision "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}")
+	decision=$(support_decision "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${7:-yes}")
 	echo "$decision"
 	support_message "$decision" "${6:-this terminal}" "${2:-}"
 	exit 0
@@ -404,10 +437,27 @@ stdout_is_terminal=no
 tmux_present=no
 in_tmux && tmux_present=yes
 
+# An error rather than a value is a tmux that has never heard of the option:
+# it arrived in 3.3, and before that nothing could be passed through at all.
 tmux_passthrough=no
+tmux_colour=yes
 if [ "$tmux_present" = yes ]; then
-	case "$(tmux show -Apv allow-passthrough 2>/dev/null || echo off)" in
-		on|all) tmux_passthrough=yes ;;
+	if passthrough=$(tmux show -Apv allow-passthrough 2>/dev/null); then
+		case "$passthrough" in
+			on|all) tmux_passthrough=yes ;;
+		esac
+	else
+		tmux_passthrough=cannot
+	fi
+
+	# What tmux has decided the terminal outside it can do. `RGB` is 24-bit
+	# colour; without it every colour is rounded to the 256 on the way out. An
+	# empty answer is a tmux too old to say, which is not taken as a no.
+	features=$(tmux display -p '#{client_termfeatures}' 2>/dev/null || true)
+	case ",${features}," in
+		,,) ;;
+		*,RGB,*) ;;
+		*) tmux_colour=no ;;
 	esac
 fi
 
@@ -415,7 +465,8 @@ fi
 # if it is never asked. Only the two decisions that turn on the answer are worth
 # a query — there is nothing to learn by interrogating a pipe, and a query tmux
 # is about to eat would answer "no" for a reason that is not the terminal's.
-support=$(support_decision "$stdout_is_terminal" "${TERM:-}" "$tmux_present" "$tmux_passthrough" no)
+support=$(support_decision \
+	"$stdout_is_terminal" "${TERM:-}" "$tmux_present" "$tmux_passthrough" no "$tmux_colour")
 case "$support" in
 	terminal-silent|terminal-behind-tmux-silent)
 		if in_tmux; then
@@ -426,14 +477,14 @@ case "$support" in
 		fi
 		answered=no
 		ask_terminal "$query" && answered=yes
-		support=$(support_decision \
-			"$stdout_is_terminal" "${TERM:-}" "$tmux_present" "$tmux_passthrough" "$answered")
+		support=$(support_decision "$stdout_is_terminal" "${TERM:-}" \
+			"$tmux_present" "$tmux_passthrough" "$answered" "$tmux_colour")
 		;;
 esac
 
 [ -z "${ABYDOS_ICAT_DEBUG:-}" ] || echo "abydos-icat: support ${support}" \
 	"(tty=${stdout_is_terminal} TERM=${TERM:-unset} tmux=${tmux_present}" \
-	"passthrough=${tmux_passthrough})" >&2
+	"passthrough=${tmux_passthrough} colour=${tmux_colour})" >&2
 
 if [ "$support" != supported ]; then
 	support_message "$support" "$(terminal_name)" "${TERM:-}" >&2
@@ -462,24 +513,26 @@ print_image() {
 
 	# PNG straight through; anything else converted, since the protocol's
 	# direct format is PNG and `sips` is on every Mac.
+	#
+	# Into a directory of its own, because `sips` wants the `.png` at the end
+	# of the name and the only `mktemp` template both the BSD and the GNU one
+	# accept ends in its X's. `-t` is no way round that: the BSD one takes a
+	# prefix there and the GNU one a template, and refuses anything without
+	# three X's — which is the `mktemp` on a PATH with coreutils first.
+	converted=""
 	case "$source_file" in
 		*.png|*.PNG) file="$source_file" ;;
 		*)
-			file="$(mktemp -t abydos-icat).png"
+			tmp="${TMPDIR:-/tmp}"
+			converted="$(mktemp -d "${tmp%/}/abydos-icat.XXXXXX")"
+			file="$converted/picture.png"
 			sips -s format png "$source_file" --out "$file" >/dev/null 2>&1 || {
 				echo "abydos-icat: cannot read $source_file" >&2
+				rm -rf "$converted"
 				return 1
 			}
 			;;
 	esac
-
-	# The payload, already split into the 4096-character pieces the protocol
-	# asks for. Split once by `fold` rather than by taking a slice of a shell
-	# variable per piece: `cut -c` re-scans the whole string every time, so a
-	# five-megabyte picture — seven megabytes of base64, eighteen hundred
-	# pieces — spent five minutes re-reading itself.
-	chunks="$(mktemp -t abydos-icat-chunks)"
-	base64 < "$file" | tr -d '\n' | fold -w 4096 > "$chunks"
 
 	pixels=$(sips -g pixelWidth -g pixelHeight "$file" 2>/dev/null |
 		awk '/pixelWidth/ {w=$2} /pixelHeight/ {h=$2} END {print w" "h}')
@@ -487,12 +540,6 @@ print_image() {
 	image_height=${pixels##* }
 	[ "${image_width:-0}" -gt 0 ] 2>/dev/null || image_width=0
 	[ "${image_height:-0}" -gt 0 ] 2>/dev/null || image_height=0
-
-	# The converted copy goes now, and not before the line above: its size is
-	# what decides how many columns the picture takes, and asking a file that
-	# has just been deleted answers nothing — which quietly turned every JPEG
-	# into a picture the width of the window.
-	[ "$file" = "$source_file" ] || rm -f "$file"
 
 	# How large to draw it, in cells — both dimensions, worked out here.
 	#
@@ -613,13 +660,25 @@ print_image() {
 	# — so every picture arrived missing its last few kilobytes and no terminal
 	# could decode it. It went unnoticed because the one image this was tried on
 	# encoded to exactly fifty-seven whole chunks.
-	held=""
-	while IFS= read -r piece || [ -n "$piece" ]; do
-		[ -z "$held" ] || send_chunk "$held" 1
-		held="$piece"
-	done < "$chunks"
-	[ -z "$held" ] || send_chunk "$held" 0
-	rm -f "$chunks"
+	#
+	# The pieces are split once by `fold` rather than by taking a slice of a
+	# shell variable per piece: `cut -c` re-scans the whole string every time,
+	# so a five-megabyte picture — seven megabytes of base64, eighteen hundred
+	# pieces — spent five minutes re-reading itself. They come straight down
+	# the pipe; the loop runs in a subshell, which is fine, since nothing it
+	# sets is wanted after it.
+	base64 < "$file" | tr -d '\n' | fold -w 4096 | {
+		held=""
+		while IFS= read -r piece || [ -n "$piece" ]; do
+			[ -z "$held" ] || send_chunk "$held" 1
+			held="$piece"
+		done
+		[ -z "$held" ] || send_chunk "$held" 0
+	}
+
+	# The converted copy goes only now: its size decided how many columns the
+	# picture takes, and its bytes were what was just sent.
+	[ -z "$converted" ] || rm -rf "$converted"
 
 	# The picture itself: rows of placeholder cells.
 	#

@@ -77,7 +77,8 @@ done
 Scripts/file-size.sh
 SIZES=$?
 
-LOG="$(mktemp -t abydos-warnings)"
+tmp="${TMPDIR:-/tmp}"
+LOG="$(mktemp "${tmp%/}/abydos-warnings.XXXXXX")"
 trap 'rm -f "$LOG"' EXIT
 
 # Everything this repository compiles, and nothing anybody else's.

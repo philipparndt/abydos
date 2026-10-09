@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 /// What `abydos-icat` decides before it draws anything.
 ///
 /// "Given a terminal or a pipe, a TERM, a tmux, and an answer or silence, what
-/// should happen" is a function of those five things and nothing else, and the
-/// script keeps it that way — `--explain-support` hands it its five answers and
+/// should happen" is a function of those six things and nothing else, and the
+/// script keeps it that way — `--explain-support` hands it its six answers and
 /// prints what it decided, so every combination can be put to the real code
 /// rather than to a copy of it. The cases are the point: telling somebody their
 /// tmux needs configuring when it is their terminal that cannot draw pictures
@@ -26,15 +26,17 @@ struct IcatSupportDecisionTests {
 		tmux: Bool,
 		passthrough: Bool,
 		answered: Bool,
-		name: String = "Terminal.app"
+		name: String = "Terminal.app",
+		tmuxTooOld: Bool = false,
+		colour: Bool = true
 	) throws -> (decision: String, message: String) {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: "/bin/sh")
 		process.arguments = [
 			script.path, "--explain-support",
 			tty ? "yes" : "no", term,
-			tmux ? "yes" : "no", passthrough ? "yes" : "no",
-			answered ? "yes" : "no", name,
+			tmux ? "yes" : "no", tmuxTooOld ? "cannot" : passthrough ? "yes" : "no",
+			answered ? "yes" : "no", name, colour ? "yes" : "no",
 		]
 		let out = Pipe(), err = Pipe()
 		process.standardOutput = out
@@ -93,6 +95,54 @@ struct IcatSupportDecisionTests {
 		)
 		#expect(result.decision == "tmux-in-the-way")
 		#expect(result.message.contains("allow-passthrough on"))
+		// The line that is already in somebody's config and still not working
+		// is the server not having read it.
+		#expect(result.message.contains("source-file"))
+	}
+
+	/// A tmux older than 3.3 has no `allow-passthrough` to set, and being told
+	/// to set it is an "invalid option" and an evening.
+	@Test func aTmuxTooOldToPassAnythingThroughIsToldToUpgrade() throws {
+		let result = try decide(
+			tty: true, term: "screen-256color", tmux: true, passthrough: false,
+			answered: false, tmuxTooOld: true
+		)
+		#expect(result.decision == "tmux-too-old")
+		#expect(result.message.contains("3.3"))
+		#expect(!result.message.contains("allow-passthrough"))
+	}
+
+	/// The picture names itself by the foreground colour of its cells, and a
+	/// tmux drawing in 256 colours rounds that to a different picture — which
+	/// draws nothing and says nothing, since every byte arrived.
+	@Test func aTmuxWithoutTrueColourIsToldHowToGetIt() throws {
+		let result = try decide(
+			tty: true, term: "screen-256color", tmux: true, passthrough: true,
+			answered: true, colour: false
+		)
+		#expect(result.decision == "tmux-without-colour")
+		#expect(result.message.contains("terminal-features ',*:RGB'"))
+		#expect(result.message.contains("attach"))
+	}
+
+	/// Colour is the last question: a terminal that cannot draw at all is the
+	/// thing to say, and without tmux there is nothing rounding the colour.
+	@Test func colourIsOnlyAskedOfATmuxEverythingElseWorkedThrough() throws {
+		let silent = try decide(
+			tty: true, term: "screen-256color", tmux: true, passthrough: true,
+			answered: false, colour: false
+		)
+		#expect(silent.decision == "terminal-behind-tmux-silent")
+		let blocked = try decide(
+			tty: true, term: "screen-256color", tmux: true, passthrough: false,
+			answered: true, colour: false
+		)
+		#expect(blocked.decision == "tmux-in-the-way")
+		let noTmux = try decide(
+			tty: true, term: "xterm-256color", tmux: false, passthrough: false,
+			answered: true, colour: false
+		)
+		#expect(noTmux.decision == "supported")
 	}
 
 	/// tmux out of the way and still silence means the terminal, and must not
@@ -139,15 +189,20 @@ struct IcatSupportDecisionTests {
 				for tmux in [true, false] {
 					for passthrough in [true, false] {
 						for answered in [true, false] {
-							let result = try decide(
-								tty: tty, term: term, tmux: tmux,
-								passthrough: passthrough, answered: answered
-							)
-							#expect(!result.decision.isEmpty)
-							#expect(result.message.hasPrefix("abydos-icat: "))
-							// One sentence, not a paragraph.
-							#expect(!result.message.contains("\n"))
-							seen.insert(result.decision)
+							for tooOld in [true, false] {
+								for colour in [true, false] {
+									let result = try decide(
+										tty: tty, term: term, tmux: tmux,
+										passthrough: passthrough, answered: answered,
+										tmuxTooOld: tooOld, colour: colour
+									)
+									#expect(!result.decision.isEmpty)
+									#expect(result.message.hasPrefix("abydos-icat: "))
+									// One sentence, not a paragraph.
+									#expect(!result.message.contains("\n"))
+									seen.insert(result.decision)
+								}
+							}
 						}
 					}
 				}
@@ -155,8 +210,8 @@ struct IcatSupportDecisionTests {
 		}
 		#expect(seen == [
 			"not-a-terminal", "no-terminal-type", "text-only-terminal",
-			"tmux-in-the-way", "terminal-behind-tmux-silent", "terminal-silent",
-			"supported",
+			"tmux-too-old", "tmux-in-the-way", "terminal-behind-tmux-silent",
+			"terminal-silent", "tmux-without-colour", "supported",
 		])
 	}
 }
@@ -405,6 +460,37 @@ struct AbydosIcatTests {
 		#expect(placeholders == columns * rows)
 	}
 
+	/// The same refusal on a real pty, from what tmux itself reports: a client
+	/// whose features have no `RGB` gets the sentence and no picture.
+	@Test func aTmuxThatRoundsColoursIsToldSoInsteadOfDrawnAt() async throws {
+		let tmux = try FakeTmux(
+			cell: (width: 8, height: 16), window: (columns: 100, rows: 40),
+			pane: (columns: 100, rows: 40), features: "bpaste,clipboard,focus,title"
+		)
+		defer { tmux.remove() }
+		let file = try temporaryImage(bytes: Data([UInt8](repeating: 0x7A, count: 5_000)))
+		defer { try? FileManager.default.removeItem(at: file) }
+
+		let text = String(decoding: try await run(on: file, tmux: tmux), as: UTF8.self)
+		#expect(text.contains("terminal-features ',*:RGB'"))
+		#expect(!text.contains("f=100,a=T"), "it drew the picture anyway")
+	}
+
+	/// And a tmux that does not know `allow-passthrough` is not asked to set it.
+	@Test func aTmuxWithoutPassthroughIsToldToUpgrade() async throws {
+		let tmux = try FakeTmux(
+			cell: (width: 8, height: 16), window: (columns: 100, rows: 40),
+			pane: (columns: 100, rows: 40), knowsPassthrough: false
+		)
+		defer { tmux.remove() }
+		let file = try temporaryImage(bytes: Data([UInt8](repeating: 0x7A, count: 5_000)))
+		defer { try? FileManager.default.removeItem(at: file) }
+
+		let text = String(decoding: try await run(on: file, tmux: tmux), as: UTF8.self)
+		#expect(text.contains("older than 3.3"))
+		#expect(!text.contains("a=q"), "asked a terminal tmux was never going to reach")
+	}
+
 	/// The keys of the transmit command — the first `_G` that is not the query.
 	private func transmitKeys(in text: String) -> String? {
 		var rest = Substring(text)
@@ -429,7 +515,7 @@ struct AbydosIcatTests {
 	}
 }
 
-/// A tmux that is not tmux, answering the three things the script asks it.
+/// A tmux that is not tmux, answering the four things the script asks it.
 ///
 /// A real one would need a server, a client on a pty and a split — and then the
 /// sizes would be whatever that machine's window happened to be. This is a
@@ -438,7 +524,13 @@ struct AbydosIcatTests {
 private struct FakeTmux {
 	let directory: URL
 
-	init(cell: (width: Int, height: Int), window: (columns: Int, rows: Int), pane: (columns: Int, rows: Int)) throws {
+	/// `features` is what tmux says the terminal outside it can do, and
+	/// `knowsPassthrough` false is a tmux older than 3.3, which answers the
+	/// question about the option with an error.
+	init(
+		cell: (width: Int, height: Int), window: (columns: Int, rows: Int), pane: (columns: Int, rows: Int),
+		features: String = "bpaste,clipboard,focus,RGB,title", knowsPassthrough: Bool = true
+	) throws {
 		directory = FileManager.default.temporaryDirectory
 			.appendingPathComponent("icat-tmux-\(UUID().uuidString)")
 		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -447,7 +539,7 @@ private struct FakeTmux {
 		#!/bin/sh
 		# `show -Apv allow-passthrough`, and `display -p <format>`.
 		case "$1" in
-			show) echo on ;;
+			show) \(knowsPassthrough ? "echo on" : "echo 'invalid option: allow-passthrough' >&2; exit 1") ;;
 			display)
 				printf '%s\\n' "$3" \\
 					| sed -e 's/#{client_cell_width}/\(cell.width)/g' \\
@@ -456,7 +548,8 @@ private struct FakeTmux {
 						-e 's/#{window_height}/\(window.rows)/g' \\
 						-e 's/#{pane_width}/\(pane.columns)/g' \\
 						-e 's/#{pane_height}/\(pane.rows)/g' \\
-						-e 's/#{client_termname}/xterm-256color/g'
+						-e 's/#{client_termname}/xterm-256color/g' \\
+						-e 's/#{client_termfeatures}/\(features)/g'
 				;;
 		esac
 		exit 0
