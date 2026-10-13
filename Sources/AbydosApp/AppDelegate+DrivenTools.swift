@@ -112,6 +112,11 @@ extension AppDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
 				controller?.notify("Saved 3 files", kind: .information)
 			}
+			// Said again while it is up, so the shot shows it folded and counted
+			// rather than stacked twice.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.notify("Saved 3 files", kind: .information)
+			}
 		}
 
 		if let path = options.projectPath {

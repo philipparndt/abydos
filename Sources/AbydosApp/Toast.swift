@@ -258,12 +258,27 @@ final class ToastPresenter: ScaleFollowing {
 			return created
 		}()
 
+		// **The same news twice is said once, counted.** Two subagents of one
+		// session handing back a second apart stacked two identical lines in the
+		// corner, which reads as a glitch rather than as two things. The one
+		// already there takes the newer offer, a count and a fresh eight seconds;
+		// a question is never folded, since each is its own decision.
+		if toast.lifetime == .passing, toast.answers.isEmpty,
+		   let same = shown.first(where: { $0.saysTheSame(as: toast) }) {
+			same.repeated(by: toast)
+			expire(same)
+			return
+		}
+
 		let view = ToastView(toast: toast)
 		view.onDismiss = { [weak self, weak view] in
 			guard let view else { return }
 			self?.dismiss(view)
 		}
-		view.onOpen = { [weak self] in
+		view.onOpen = { [weak self, weak view] in
+			// The view's toast rather than this one: a toast said again carries
+			// the newest offer.
+			guard let toast = view?.toast else { return }
 			guard let action = toast.action else {
 				self?.present(toast)
 				return
@@ -297,8 +312,15 @@ final class ToastPresenter: ScaleFollowing {
 		}
 
 		guard toast.lifetime == .passing else { return }
+		expire(view)
+	}
+
+	/// Takes a passing toast away after its eight seconds — the last eight, when
+	/// it has been said again since.
+	private func expire(_ view: ToastView) {
+		let saying = view.repeats
 		DispatchQueue.main.asyncAfter(deadline: .now() + Self.lifetime) { [weak self, weak view] in
-			guard let view, view.isPointedAt == false else { return }
+			guard let view, view.repeats == saying, view.isPointedAt == false else { return }
 			self?.dismiss(view)
 		}
 	}
@@ -337,6 +359,7 @@ final class ToastPresenter: ScaleFollowing {
 			let answers = view.answerTitlesForTesting
 			let detail = view.detailForTesting ?? ""
 			return "[\(view.titleForTesting)"
+				+ (view.repeats > 1 ? " ×\(view.repeats)" : "")
 				+ (detail.isEmpty ? "" : ": \(detail)")
 				+ (view.expires ? "" : " (stays)")
 				+ (answers.isEmpty ? "" : " {\(answers.joined(separator: " | "))}")
@@ -431,7 +454,9 @@ private final class ToastView: NSView {
 	var onAnswered: ((Toast.Answer) -> Void)?
 	private(set) var isPointedAt = false
 
-	private let toast: Toast
+	private(set) var toast: Toast
+	/// How many times this has been said while it was up.
+	private(set) var repeats = 1
 	private var trackingArea: NSTrackingArea?
 	/// Every number this view was built with, by its design value, so a zoom
 	/// while it is up can take them again. The drawing reads the theme as it
@@ -453,6 +478,24 @@ private final class ToastView: NSView {
 	}
 
 	func toldItWasWithdrawn() { toast.onWithdrawn?() }
+
+	/// Whether a new toast is this one again: the same words, the same kind, the
+	/// same offer. News, not a question.
+	func saysTheSame(as other: Toast) -> Bool {
+		expires && toast.answers.isEmpty
+			&& toast.kind == other.kind
+			&& toast.title == other.title
+			&& toast.detail == other.detail
+			&& toast.actionTitle == other.actionTitle
+	}
+
+	/// Said again: the newer one's offer, and one more on the count.
+	func repeated(by other: Toast) {
+		toast = other
+		repeats += 1
+		toolTip = other.detail ?? other.title
+		needsDisplay = true
+	}
 
 	init(toast: Toast) {
 		self.toast = toast
@@ -619,11 +662,28 @@ private final class ToastView: NSView {
 			.font: Theme.current.uiFont(12),
 			.foregroundColor: Theme.current.sidebarText,
 		])
+		// How many times it has been said, at the end of the line where the
+		// title gives way to it rather than running under it.
+		let count = repeats > 1
+			? NSAttributedString(string: "×\(repeats)", attributes: [
+				.font: Theme.current.uiFont(11),
+				.foregroundColor: Theme.current.gitIgnored,
+			])
+			: nil
+		let countWidth = count.map { $0.size().width + Theme.current.scaled(8) } ?? 0
+		let titleEnd = bounds.width - Theme.current.scaled(34) - countWidth
 		title.draw(in: NSRect(
 			x: textX, y: Theme.current.scaled(11),
-			width: max(0, bounds.width - textX - Theme.current.scaled(34)),
+			width: max(0, min(title.size().width, titleEnd - textX)),
 			height: title.size().height
 		))
+		if let count {
+			let titleWidth = min(title.size().width, max(0, titleEnd - textX))
+			count.draw(at: NSPoint(
+				x: textX + titleWidth + Theme.current.scaled(8),
+				y: Theme.current.scaled(11) + (title.size().height - count.size().height) / 2
+			))
+		}
 
 		// The paragraph and the buttons are subviews for a question; the cross and
 		// the "click for details" hint are for things a click can dismiss, and a
