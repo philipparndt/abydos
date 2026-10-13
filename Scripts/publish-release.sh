@@ -33,6 +33,21 @@ gh auth status >/dev/null 2>&1 || { echo "gh is not logged in — gh auth login"
 security find-identity -v -p codesigning | grep -q "Developer ID Application" \
 	|| { echo "no Developer ID Application certificate in the keychain"; exit 1; }
 
+# The Metal toolchain, asked for by compiling something rather than by asking
+# for a version. Without it the build carries on — the 3D viewer compiles its
+# shader at runtime instead — and `release.sh` refuses the result, but only
+# after the tag below has been made. A release is the one build that should
+# ship the shader compiled, so the question is asked here, before anything is
+# committed.
+PROBE=$(mktemp -d)
+printf 'kernel void probe() {}\n' > "$PROBE/probe.metal"
+if ! xcrun -sdk macosx metal -c "$PROBE/probe.metal" -o "$PROBE/probe.air" >/dev/null 2>&1; then
+	rm -rf "$PROBE"
+	echo "the Metal toolchain is not installed — xcodebuild -downloadComponent MetalToolchain"
+	exit 1
+fi
+rm -rf "$PROBE"
+
 # The chart the app ships is a copy of the one in DevPod/, and the build syncs
 # it. Synced *before* the clean check rather than during the build, so a chart
 # that has drifted is a change to commit rather than a working tree left dirty

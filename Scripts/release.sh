@@ -78,6 +78,19 @@ for binary in "$APP/Contents/MacOS/"* "$APP/Contents/Resources/bin/"*; do
 	done
 done
 
+# And that the 3D viewer's shader is compiled. Without the Metal toolchain the
+# build carries on and the viewer compiles `Shaders.metal` at runtime, which is
+# right for a local build and wrong for a download: the shipped app should not
+# depend on a fallback, and an app without any `default.metallib` at all died
+# one second into every launch once. Looked for anywhere in the bundle, because
+# SwiftPM puts it under `Contents/Resources` and `bundle.sh` at the root.
+GOSTL_BUNDLE="$APP/Contents/Resources/GoSTL_GoSTL.bundle"
+if [ -d "$GOSTL_BUNDLE" ] && [ -z "$(find "$GOSTL_BUNDLE" -name default.metallib -print -quit)" ]; then
+	echo "refusing to release: $(basename "$GOSTL_BUNDLE") carries no compiled default.metallib" >&2
+	echo "  install the Metal toolchain and rebuild: xcodebuild -downloadComponent MetalToolchain" >&2
+	exit 1
+fi
+
 # --- Sign ------------------------------------------------------------------
 #
 # Inside out, and without `--deep`: Apple deprecated it, and it signs nested
