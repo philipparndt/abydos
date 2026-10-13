@@ -176,23 +176,17 @@ struct ContainerImageStoreTests {
 			[.posixPermissions: 0o755], ofItemAtPath: script.path
 		)
 
+		// No race against a timer of its own. The store's deadline is already the
+		// bound on a hang: an input that never ends keeps the stand-in waiting
+		// until the store kills it and answers "did not answer", which is not
+		// `.present`. A ten-second race was tried here and measured the suite
+		// instead — under the full run a task waited thirteen seconds for a
+		// thread to start on, and the race reported a hang in a command that
+		// ran in a quarter of a second.
 		let store = ContainerImageStore()
-		let outcome = await withTaskGroup(of: ContainerImageStore.Outcome?.self) { group in
-			group.addTask { await store.ensure("a/b", using: .docker(script.path)) }
-			// The losing arm of a race, which is what a timeout is: whichever
-			// finishes first wins, so this sleeps for the whole ten seconds only
-			// when the thing under test has hung. It is a bound on a hang and
-			// not a wait for anything.
-			group.addTask {
-				try? await Task.sleep(nanoseconds: 10_000_000_000)
-				return nil
-			}
-			let first = await group.next() ?? nil
-			group.cancelAll()
-			return first
-		}
+		let outcome = await store.ensure("a/b", using: .docker(script.path))
 		// Present, because the stand-in exits 0 as an inspect that found it
-		// would — and above all, present rather than still waiting.
+		// would — and above all, present rather than killed at the deadline.
 		#expect(outcome == .present)
 	}
 
