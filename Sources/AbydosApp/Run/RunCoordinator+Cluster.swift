@@ -446,8 +446,11 @@ extension RunCoordinator {
 		context: String?,
 		kubeconfig: String?
 	) async {
+		// https: on a Traefik cluster the chart's route is an `IngressRoute` on
+		// `websecure` alone, so the http link this used to print answered
+		// nothing — and read as "no ingress was made" while the route served.
 		if !settings.ingressHost.isEmpty {
-			clusterLog("published at http://\(settings.ingressHost)")
+			clusterLog("published at https://\(settings.ingressHost)")
 		}
 
 		let port = settings.port > 0 ? settings.port : 8080
