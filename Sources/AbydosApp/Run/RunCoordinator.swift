@@ -554,7 +554,14 @@ final class RunCoordinator {
 	/// A project with nothing configured gets one written for it from what is
 	/// actually there, rather than a dialog asking a question nobody has the
 	/// information to answer before the first run.
-	/// Stops whichever of the two is running.
+	/// Stops everything that is running.
+	///
+	/// **All of it, not the first thing found.** This used to return after
+	/// whichever it met first — a cluster launch, a program in a pod, a run tab,
+	/// the debugger — and several are often alive at once: a run tab left over
+	/// beside a debug session, a pod still up from an earlier Run. Stop ended
+	/// the leftover, the strip said "Stopped", and the program being debugged
+	/// carried on until Stop was pressed a second time.
 	func stopRunning() {
 		// Every sound first, whatever else is running: see `OnePlayer.stopAll`.
 		OnePlayer.stopAll()
@@ -566,11 +573,9 @@ final class RunCoordinator {
 			stopDevPodForwards()
 			clusterLog("stopped")
 			runControl?.setStatus("Stopped")
-			return
 		}
 		if devPodClient != nil {
 			stopDevPod()
-			return
 		}
 		if let pane = runningPane {
 			runningPane = nil
@@ -579,9 +584,12 @@ final class RunCoordinator {
 			// one.
 			panel.refreshTabs()
 			runControl?.setStatus("Stopped")
-			return
 		}
-		debugStop(nil)
+		// Only a session still going: stopping one already over would put
+		// "Finished" back over whatever the lines above have just said.
+		if let session = debugSession, session.state != .terminated {
+			session.stop()
+		}
 	}
 
 	/// Derives a launch configuration from the gutter's arrow and prints it.
