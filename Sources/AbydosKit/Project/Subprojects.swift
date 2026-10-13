@@ -138,6 +138,19 @@ public enum Subprojects {
 		guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &directory),
 		      directory.boolValue
 		else { return nil }
-		return candidate
+
+		// **A project's own folder is not a project.** "Open as Subproject" is
+		// offered on every folder in the tree, and taken on `go-service/.abydos`
+		// it scoped the window to a folder whose run configurations would be in
+		// `.abydos/.abydos/run` — so the run strip said "No configuration" over
+		// a project that had two, and the session kept it that way. Whatever
+		// is chosen inside one belongs to the folder that holds it.
+		let components = String(path.dropFirst(base.count)).split(separator: "/")
+		guard let inside = components.firstIndex(where: {
+			$0 == AbydosFolder.name || $0 == AbydosFolder.previousName
+		}) else { return candidate }
+		guard inside > 0 else { return nil }
+		return root.appendingPathComponent(components[..<inside].joined(separator: "/"))
+			.standardizedFileURL
 	}
 }

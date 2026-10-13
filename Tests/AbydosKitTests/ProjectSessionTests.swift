@@ -345,6 +345,23 @@ struct SubprojectTests {
 		#expect(Subprojects.resolve("", in: root) == nil)
 	}
 
+	/// "Open as Subproject" on `go-service/.abydos` scoped the window to a
+	/// folder with no run configurations of its own, so the strip said "No
+	/// configuration" over a project that had two.
+	@Test func aProjectsOwnFolderBelongsToTheProject() throws {
+		let root = try make(["go-service": ["go.mod"], "go-service/.abydos/run": ["here.json"]])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let service = Subprojects.resolve("go-service", in: root)
+		#expect(service != nil)
+		#expect(Subprojects.resolve("go-service/.abydos", in: root) == service)
+		#expect(Subprojects.resolve("go-service/.abydos/run", in: root) == service)
+		try FileManager.default.createDirectory(
+			at: root.appendingPathComponent(".abydos"), withIntermediateDirectories: true
+		)
+		#expect(Subprojects.resolve(".abydos", in: root) == nil)
+	}
+
 	@Test func theSubprojectSurvivesBeingWrittenDown() throws {
 		let root = try make(["go-service": ["go.mod"]])
 		defer { try? FileManager.default.removeItem(at: root) }

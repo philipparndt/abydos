@@ -34,12 +34,14 @@ extension MainWindowController {
 	/// Works on part of the project instead of the whole of it.
 	func openSubproject(at url: URL) {
 		guard let project else { return }
-		guard Subprojects.resolve(Subprojects.relativePath(url, to: project.root), in: project.root) != nil
+		// The resolved one, not the one asked for: see `Subprojects.resolve` on
+		// a folder chosen inside a project's own `.abydos`.
+		guard let url = Subprojects.resolve(Subprojects.relativePath(url, to: project.root), in: project.root)
 		else { return }
 		guard url.path != subprojectRoot?.path else { return }
 
 		leftScope()
-		subprojectRoot = url.standardizedFileURL
+		subprojectRoot = url
 		applyScope()
 	}
 
