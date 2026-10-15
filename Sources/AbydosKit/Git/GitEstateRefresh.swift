@@ -35,6 +35,13 @@ public enum GitEstateRefresh {
 
 		public var isEmpty: Bool { !superproject && submodulePaths.isEmpty && !inventory }
 
+		/// Everything either made stale.
+		public mutating func merge(_ other: Work) {
+			superproject = superproject || other.superproject
+			inventory = inventory || other.inventory
+			submodulePaths = Array(Set(submodulePaths).union(other.submodulePaths)).sorted()
+		}
+
 		public init(
 			superproject: Bool = false,
 			submodulePaths: [String] = [],
@@ -133,6 +140,65 @@ public enum GitEstateRefresh {
 	/// The same question for the directories a `RepositoryWatcher` reports.
 	public static func work(forChangedDirectories directories: [URL], in estate: GitEstate) -> Work {
 		work(forChangedPaths: directories, in: estate)
+	}
+
+	/// What one batch from the work tree's watcher makes stale: the paths it
+	/// named, and the directories it could only say to scan again.
+	///
+	/// **A batch FSEvents could not enumerate is not a reason to read every
+	/// repository.** It still says *where*: a worktree added under `repos/` is
+	/// a scan of `repos/x-wt`, which lies in no submodule and holds none, so it
+	/// is the superproject's business alone — not a sweep of 190 repositories
+	/// for a directory none of them contains.
+	public static func work(for change: FileSystemChange, in estate: GitEstate) -> Work {
+		var stale = work(forChangedPaths: change.paths, in: estate)
+		guard !change.namesEveryPath else { return stale }
+		// Unnamed and with nowhere said: could be anything, so it is everything.
+		guard !change.rescanned.isEmpty else {
+			stale.inventory = true
+			return stale
+		}
+		stale.merge(work(forRescannedDirectories: change.rescanned, in: estate))
+		return stale
+	}
+
+	/// What directories FSEvents said to scan again make stale.
+	///
+	/// Different from a named path in one way: a directory can hold
+	/// repositories as well as sit inside one. So it makes stale the submodule
+	/// it is in — or the superproject — and every submodule underneath it, at
+	/// any depth. Only the project root itself is a question about everything.
+	public static func work(forRescannedDirectories directories: [URL], in estate: GitEstate) -> Work {
+		var work = Work()
+		var stale = Set<String>()
+		let bySuffix = gitDirectorySuffixes(in: estate)
+		let gitDirectory = estate.gitDirectoryOrDefault
+
+		for directory in directories {
+			if let inside = relativePath(of: directory, under: gitDirectory) {
+				attribute(insideGitDirectory: inside, bySuffix: bySuffix,
+					work: &work, stale: &stale)
+				continue
+			}
+			guard let relative = relativePath(of: directory, under: estate.root) else { continue }
+			guard !relative.isEmpty else {
+				work.inventory = true
+				continue
+			}
+
+			if let submodule = estate.submodule(containing: relative) {
+				stale.insert(submodule.path)
+			} else {
+				work.superproject = true
+			}
+			let below = relative + "/"
+			for submodule in estate.submodules where submodule.path.hasPrefix(below) {
+				stale.insert(submodule.path)
+			}
+		}
+
+		work.submodulePaths = stale.sorted()
+		return work
 	}
 
 	/// Submodule paths by where their git directory sits, relative to the

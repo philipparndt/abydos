@@ -177,4 +177,100 @@ struct GitEstateRefreshTests {
 		#expect(work.superproject)
 		#expect(work.submodulePaths.isEmpty)
 	}
+
+	// MARK: - A whole batch from the work tree's watcher
+
+	private func change(
+		paths: [String] = [],
+		rescanned: [String] = [],
+		namesEveryPath: Bool? = nil
+	) -> FileSystemChange {
+		FileSystemChange(
+			directories: [],
+			paths: paths.map(url),
+			namesEveryPath: namesEveryPath ?? rescanned.isEmpty,
+			rescanned: rescanned.map { $0.isEmpty ? root : url($0) }
+		)
+	}
+
+	/// The bug this pins read the flag the wrong way round: a batch whose
+	/// paths were all named — every saved file — swept every repository, and
+	/// the spec's own scenario for a write in one submodule never held.
+	@Test func aNamedBatchIsAttributedAndNotSwept() {
+		let work = GitEstateRefresh.work(
+			for: change(paths: ["svc-47/src/Main.java"]),
+			in: estate(["svc-3", "svc-47", "svc-99"])
+		)
+		#expect(work == GitEstateRefresh.Work(submodulePaths: ["svc-47"]))
+	}
+
+	/// The other half of the same bug: a batch FSEvents could not enumerate
+	/// has no paths, so attributing only those made it stale nothing at all.
+	@Test func aRescanOfADirectoryInsideASubmoduleMakesThatSubmoduleStale() {
+		let work = GitEstateRefresh.work(
+			for: change(rescanned: ["svc-47/build"]),
+			in: estate(["svc-3", "svc-47"])
+		)
+		#expect(work == GitEstateRefresh.Work(submodulePaths: ["svc-47"]))
+	}
+
+	/// The reproduction: a worktree added under `repos/` is in no submodule
+	/// and holds none, so it is the superproject's business and nobody else's.
+	@Test func aRescanBesideTheSubmodulesIsTheSuperprojectAlone() {
+		let work = GitEstateRefresh.work(
+			for: change(rescanned: ["repos/svc-3-wt-x"]),
+			in: estate(["repos/svc-3", "repos/svc-47"])
+		)
+		#expect(work == GitEstateRefresh.Work(superproject: true))
+	}
+
+	/// A directory can hold repositories as well as sit in one: every
+	/// submodule under it is stale, at any depth, and nothing beside it is.
+	@Test func aRescanOfADirectoryHoldingSubmodulesMakesThemStale() {
+		let work = GitEstateRefresh.work(
+			for: change(rescanned: ["repos"]),
+			in: estate(["repos/svc-3", "repos/svc-3/lib/leaf", "tools/gen"])
+		)
+		#expect(work == GitEstateRefresh.Work(
+			superproject: true,
+			submodulePaths: ["repos/svc-3", "repos/svc-3/lib/leaf"]
+		))
+	}
+
+	/// Nested the other way: a scan inside one submodule that holds another.
+	@Test func aRescanInsideASubmoduleReachesTheOneNestedBelowIt() {
+		let work = GitEstateRefresh.work(
+			for: change(rescanned: ["svc-3/lib"]),
+			in: estate(["svc-3", "svc-3/lib/leaf"])
+		)
+		#expect(work == GitEstateRefresh.Work(submodulePaths: ["svc-3", "svc-3/lib/leaf"]))
+	}
+
+	/// The root itself — a scan of everything, or the project moving — is the
+	/// one rescan that asks about every repository.
+	@Test func aRescanOfTheRootIsEverything() {
+		let work = GitEstateRefresh.work(
+			for: change(rescanned: [""]),
+			in: estate(["svc-3"])
+		)
+		#expect(work.inventory)
+	}
+
+	/// Unnamed and with nowhere said is a batch that could be anything.
+	@Test func anUnnamedBatchThatSaysNowhereIsEverything() {
+		let work = GitEstateRefresh.work(
+			for: change(namesEveryPath: false),
+			in: estate(["svc-3"])
+		)
+		#expect(work.inventory)
+	}
+
+	/// A batch can name some paths and only say "scan" for others; both count.
+	@Test func namedPathsAndRescansInOneBatchAreBothAttributed() {
+		let work = GitEstateRefresh.work(
+			for: change(paths: ["svc-3/a.swift"], rescanned: ["svc-47/build"]),
+			in: estate(["svc-3", "svc-47", "svc-99"])
+		)
+		#expect(work == GitEstateRefresh.Work(submodulePaths: ["svc-3", "svc-47"]))
+	}
 }

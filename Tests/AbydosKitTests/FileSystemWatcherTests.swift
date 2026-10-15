@@ -78,4 +78,65 @@ struct FileSystemWatcherTests {
 	@Test func aBatchOfNothingIsNotDelivered() {
 		#expect(batch([]) == nil)
 	}
+
+	/// The directories a scan was asked for are kept apart from the parents of
+	/// named files: only the first say "something under here".
+	@Test func aSubtreeScanSaysWhereToScan() throws {
+		let change = try #require(batch(
+			["/p/repos/wt", "/p/README.md"],
+			flags: [FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs), 0]
+		))
+		#expect(change.rescanned.map(\.path) == ["/p/repos/wt"])
+		#expect(Set(change.directories.map(\.path)) == ["/p/repos/wt", "/p"])
+	}
+
+	@Test func theRootMovingIsARescanOfTheRoot() throws {
+		let change = try #require(batch(
+			["/p"],
+			flags: [FSEventStreamEventFlags(kFSEventStreamEventFlagRootChanged)]
+		))
+		#expect(change.rescanned.map(\.path) == ["/p"])
+	}
+
+	// MARK: - Folding batches
+
+	@Test func mergingKeepsEveryPathOnce() throws {
+		var change = try #require(batch(["/p/a/one.swift", "/p/a/two.swift"]))
+		change.merge(try #require(batch(["/p/a/two.swift", "/p/b/three.swift"])))
+
+		#expect(Set(change.paths.map(\.path)) == ["/p/a/one.swift", "/p/a/two.swift", "/p/b/three.swift"])
+		#expect(change.paths.count == 3)
+		#expect(Set(change.directories.map(\.path)) == ["/p/a", "/p/b"])
+		#expect(change.namesEveryPath)
+	}
+
+	/// A merged batch that forgot it could not name its paths would let
+	/// everything filtering on `paths` trust a list missing the burst.
+	@Test func aBatchThatCouldNotNameItsPathsStaysThatWay() throws {
+		var change = try #require(batch(
+			["/p/build"], flags: [FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs)]
+		))
+		change.merge(try #require(batch(["/p/a.swift"])))
+		#expect(!change.namesEveryPath)
+		#expect(change.rescanned.map(\.path) == ["/p/build"])
+
+		var named = try #require(batch(["/p/a.swift"]))
+		named.merge(change)
+		#expect(!named.namesEveryPath)
+	}
+
+	/// What makes the watcher deliver once per main-thread turnaround and not
+	/// once per batch: the first offer schedules, the rest fold into it.
+	@Test func batchesWaitingForTheMainQueueAreDeliveredAsOne() throws {
+		let pending = PendingChange()
+		#expect(pending.offer(try #require(batch(["/p/a.swift"]))))
+		#expect(!pending.offer(try #require(batch(["/p/b.swift"]))))
+		#expect(!pending.offer(try #require(batch(["/p/c.swift"]))))
+
+		let delivered = try #require(pending.take())
+		#expect(Set(delivered.paths.map(\.path)) == ["/p/a.swift", "/p/b.swift", "/p/c.swift"])
+		#expect(pending.take() == nil)
+		// And the next batch after a delivery schedules again.
+		#expect(pending.offer(try #require(batch(["/p/d.swift"]))))
+	}
 }

@@ -30,11 +30,23 @@ extension ChangesPane {
 			wantsAnotherRefresh = true
 			return
 		}
+		guard !isReadingChanges else {
+			readAfterThis = readAfterThis?.merged(with: read) ?? read
+			return
+		}
+		isReadingChanges = true
 		// Outside the comparison below: a clean working copy produces the same
 		// status every time, and the branch can still have moved ahead of its
 		// remote since the last look.
 		refreshPushState()
 		Task { @MainActor in
+			defer {
+				isReadingChanges = false
+				if let next = readAfterThis {
+					readAfterThis = nil
+					refresh(next)
+				}
+			}
 			// **The count goes to the strip that is already up.** A cold sweep
 			// of an estate is minutes of waiting that used to look identical to
 			// a hung pane; this is the same wait with the number in it. Nil

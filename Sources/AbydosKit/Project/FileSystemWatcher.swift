@@ -24,10 +24,40 @@ public struct FileSystemChange {
 	/// Anything filtering on `paths` has to treat that as "could be anything".
 	public var namesEveryPath: Bool
 
-	public init(directories: [URL], paths: [URL], namesEveryPath: Bool) {
+	/// The directories FSEvents said to scan again, which is what it names in
+	/// place of the paths when `namesEveryPath` is false.
+	///
+	/// Kept apart from `directories` because only these say "something under
+	/// here, unknown what". The parent of a file that was named is also in
+	/// `directories`, and treating it as a scan would turn a file saved at the
+	/// project root into a question about the whole project.
+	public var rescanned: [URL]
+
+	public init(directories: [URL], paths: [URL], namesEveryPath: Bool, rescanned: [URL] = []) {
 		self.directories = directories
 		self.paths = paths
 		self.namesEveryPath = namesEveryPath
+		self.rescanned = rescanned
+	}
+
+	/// Folds a later batch into this one, losing nothing either said.
+	///
+	/// **A batch that could not name its paths keeps that through every merge.**
+	/// Lose it and whatever reads `paths` trusts a list that is missing the very
+	/// burst it was merged over.
+	public mutating func merge(_ other: FileSystemChange) {
+		directories = Self.union(directories, other.directories)
+		paths = Self.union(paths, other.paths)
+		rescanned = Self.union(rescanned, other.rescanned)
+		namesEveryPath = namesEveryPath && other.namesEveryPath
+	}
+
+	private static func union(_ first: [URL], _ second: [URL]) -> [URL] {
+		guard !second.isEmpty else { return first }
+		var seen = Set(first)
+		var result = first
+		for url in second where seen.insert(url).inserted { result.append(url) }
+		return result
 	}
 }
 
@@ -118,7 +148,14 @@ public final class FileSystemWatcher {
 		FSEventStreamInvalidate(stream)
 		FSEventStreamRelease(stream)
 		self.stream = nil
+		// A delivery already on its way to the main queue finds nothing.
+		queue.sync { _ = pending.take() }
 	}
+
+	/// What has arrived and not yet been handed to the main queue.
+	///
+	/// Only touched on `queue`.
+	private let pending = PendingChange()
 
 	private func handle(paths: [String], flags: [FSEventStreamEventFlags]) {
 		guard let change = Self.change(
@@ -127,7 +164,17 @@ public final class FileSystemWatcher {
 			root: root,
 			includesGitDirectory: includesGitDirectory
 		) else { return }
-		DispatchQueue.main.async { [onChange] in
+		// **At most one delivery waits on the main queue.** One per batch was
+		// four a second for as long as a burst lasted, and a main thread busy
+		// with the first fell further behind with each: a worktree added and
+		// removed in a superproject of 190 submodules queued a full round of
+		// tree, git and changes-pane work per batch, at 250–530 % processor.
+		// A batch that arrives while one waits is folded into it, so how
+		// often this delivers is set by how quickly the main thread comes back
+		// and not by FSEvents. A single save goes out as quickly as before.
+		guard pending.offer(change) else { return }
+		DispatchQueue.main.async { [weak self, pending, queue, onChange] in
+			guard self != nil, let change = queue.sync(execute: { pending.take() }) else { return }
 			onChange(change)
 		}
 	}
@@ -150,6 +197,7 @@ public final class FileSystemWatcher {
 		// what was written rather than where.
 		var directories = Set<URL>()
 		var named = Set<URL>()
+		var rescanned = Set<URL>()
 		var namesEveryPath = true
 		for (index, path) in paths.enumerated() {
 			let url = URL(fileURLWithPath: path)
@@ -164,6 +212,7 @@ public final class FileSystemWatcher {
 			// of what happened.
 			if flag & UInt32(kFSEventStreamEventFlagMustScanSubDirs) != 0 {
 				directories.insert(url.standardizedFileURL)
+				rescanned.insert(url.standardizedFileURL)
 				namesEveryPath = false
 				continue
 			}
@@ -171,6 +220,7 @@ public final class FileSystemWatcher {
 			// The project directory itself moved; the whole tree is suspect.
 			if flag & UInt32(kFSEventStreamEventFlagRootChanged) != 0 {
 				directories.insert(root)
+				rescanned.insert(root)
 				namesEveryPath = false
 				continue
 			}
@@ -183,7 +233,37 @@ public final class FileSystemWatcher {
 		return FileSystemChange(
 			directories: Array(directories),
 			paths: Array(named),
-			namesEveryPath: namesEveryPath
+			namesEveryPath: namesEveryPath,
+			rescanned: Array(rescanned)
 		)
+	}
+}
+
+/// The one change waiting to be delivered, with everything that arrived
+/// behind it folded in.
+///
+/// A value of its own, and not two lines in `handle`, so the folding can be
+/// tested without FSEvents or a main queue — the same reason `change(from:)`
+/// is separate. Not locked: the watcher only touches it on its own queue.
+final class PendingChange: @unchecked Sendable {
+	private var waiting: FileSystemChange?
+
+	/// Takes a batch in. True when nothing was waiting, so the caller has to
+	/// schedule the delivery; false when it was folded into one already
+	/// scheduled.
+	func offer(_ change: FileSystemChange) -> Bool {
+		guard waiting != nil else {
+			waiting = change
+			return true
+		}
+		waiting?.merge(change)
+		return false
+	}
+
+	/// Everything waiting, once. Nil when a stop took it first.
+	@discardableResult
+	func take() -> FileSystemChange? {
+		defer { waiting = nil }
+		return waiting
 	}
 }

@@ -43,22 +43,36 @@ final class EstateChanges {
 		case only([String])
 		/// The event was about somewhere else entirely.
 		case nothing
+
+		/// Both reads as one, for a read asked for while another runs.
+		func merged(with other: Read) -> Read {
+			switch (self, other) {
+			case (.everything, _), (_, .everything): return .everything
+			case (.nothing, let read), (let read, .nothing): return read
+			case let (.only(first), .only(second)):
+				return .only(Array(Set(first).union(second)).sorted())
+			}
+		}
 	}
 
 	/// Which repositories a filesystem event made stale.
 	///
 	/// The event that arrives dozens a minute is a file being written, and this
 	/// is what keeps it from costing the estate. `GitEstateRefresh` does the
-	/// attribution; a batch FSEvents could not enumerate — `namesEveryPath` —
-	/// is treated as "everything", because it is.
+	/// attribution, of the paths a batch named and of the directories it could
+	/// only say to scan again.
+	///
+	/// **This used to be the wrong way round.** It read "everything" for every
+	/// batch whose paths were all named — every saved file, in a superproject
+	/// of 190 submodules a sweep of all of them — and attributed the batches
+	/// FSEvents could not enumerate, whose path list is empty, to nothing at
+	/// all. Attribution works the same with no submodules: the estate is then
+	/// one repository, and the answer is the superproject or nothing.
 	func read(after change: FileSystemChange) -> Read {
-		guard !change.namesEveryPath else { return .everything }
-		// Attribution works the same with no submodules at all — the estate
-		// is then one repository, and the answer is the superproject or
-		// nothing. The old guard sent every plain repository to `.everything`,
-		// so the cheap path this type exists for never applied to the common
-		// case, and every saved file re-read the inventory too.
-		let work = GitEstateRefresh.work(forChangedPaths: change.paths, in: estate)
+		Self.read(GitEstateRefresh.work(for: change, in: estate))
+	}
+
+	static func read(_ work: GitEstateRefresh.Work) -> Read {
 		if work.inventory { return .everything }
 		if work.isEmpty { return .nothing }
 		return .only(work.submodulePaths)

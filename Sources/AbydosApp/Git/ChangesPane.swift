@@ -412,6 +412,13 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// `showDiff`, and a render that comes back to a different number is for
 	/// a row nobody is looking at any more — see `showDiff`.
 	var diffGeneration = 0
+	/// A read of the estate is under way. One at a time, as the navigator's
+	/// `git status` is: every refresh used to start its own, so a burst of
+	/// filesystem events stacked sweeps of every submodule on top of each other,
+	/// each with a dozen `git status` of its own.
+	var isReadingChanges = false
+	/// What was asked for while a read ran, folded into one read for after it.
+	var readAfterThis: EstateChanges.Read?
 
 	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
