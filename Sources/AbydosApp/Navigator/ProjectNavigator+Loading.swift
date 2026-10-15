@@ -320,6 +320,7 @@ extension ProjectNavigatorViewController {
 	func windowWillClose() {
 		watcher?.stop()
 		watcher = nil
+		stopSettling()
 		// Nothing here is a cycle — the registrations hold `undoTarget`, which
 		// holds this controller weakly. Emptied anyway, because a stack of paths
 		// outliving the window that could act on them is only clutter.

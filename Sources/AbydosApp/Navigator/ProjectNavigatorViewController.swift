@@ -244,6 +244,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// that cannot tell a Java source from a language server's `.classpath` has
 	/// to assume the worst on every event. 0446 is the bill for that assumption.
 	var onFilesChanged: ((FileSystemChange) -> Void)?
+	/// The same batches, folded together and delivered once a burst has
+	/// settled: for the listeners whose answer costs a `git status` or more.
+	/// See `gitSettler`.
+	var onFilesSettled: ((FileSystemChange) -> Void)?
 	/// How many files the working copy has changed, whenever that is read.
 	///
 	/// The tree reads `git status` already, on every watcher event; anything
@@ -300,6 +304,11 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// part of a repository the run button belongs to.
 	var subprojectRoot: URL?
 	var watcher: FileSystemWatcher?
+	/// Holds back the watcher's git work while a burst lasts. One for the tree
+	/// and the changes pane together, so they agree on when the burst ended.
+	var gitSettler: Settler?
+	/// What the watcher delivered since the settler last ran, folded into one.
+	var unsettledChange: FileSystemChange?
 	var outlineView: NavigatorOutlineView!
 	var headerView: NavigatorHeaderView!
 

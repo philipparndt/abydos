@@ -455,13 +455,18 @@ extension MainWindowController {
 		navigator.onFilesChanged = { [weak self] change in
 			// Something wrote inside the project — possibly a file that is open.
 			self?.editor.reloadExternallyChangedFiles()
-			// With the change, so a superproject re-reads the one submodule the
-			// write landed in — 0.01 s — rather than sweeping all of them.
-			self?.sidebar.changesPane?.refresh(after: change)
 			// A new main.go or Makefile target should get its play button
 			// without reopening the project — but only when what was written
 			// could be one. See `run.refreshRunConfigurations(because:)`.
 			self?.run.refreshRunConfigurations(because: change)
+		}
+		navigator.onFilesSettled = { [weak self] change in
+			// With the change, so a superproject re-reads the one submodule the
+			// write landed in — 0.01 s — rather than sweeping all of them. After
+			// the burst rather than per batch: a worktree added under a
+			// superproject is dozens of batches, and each read is a `git status`
+			// per repository it names.
+			self?.sidebar.changesPane?.refresh(after: change)
 		}
 		// Switching tabs moves the tree's selection to match.
 		editor.onTearOffTab = { [weak self] tab, screenPoint in

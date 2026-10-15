@@ -412,6 +412,13 @@ final class ChangesPane: NSView, ScaleFollowing {
 	/// `showDiff`, and a render that comes back to a different number is for
 	/// a row nobody is looking at any more — see `showDiff`.
 	var diffGeneration = 0
+	/// A read of the estate is under way. One at a time, as the navigator's
+	/// `git status` is: every refresh used to start its own, so a burst of
+	/// filesystem events stacked sweeps of every submodule on top of each other,
+	/// each with a dozen `git status` of its own.
+	var isReadingChanges = false
+	/// What was asked for while a read ran, folded into one read for after it.
+	var readAfterThis: EstateChanges.Read?
 
 	init(root: URL, layout: Layout = .sidebar) {
 		self.root = root
@@ -439,14 +446,24 @@ final class ChangesPane: NSView, ScaleFollowing {
 
 	deinit { NotificationCenter.default.removeObserver(self) }
 
-	@objc private func workingCopyMayHaveChanged() {
-		// No paths with it, so nothing here knows what moved. That is the right
-		// answer for what posts this: a commit, a checkout, a pull, a branch
-		// switch — every one of which can move every gitlink in the estate, and
-		// none of which happens per keystroke. The event that *does* arrive
-		// dozens a minute is a file being written, and that one comes through
-		// `refresh(after:)` with its paths.
-		refresh()
+	@objc private func workingCopyMayHaveChanged(_ note: Notification) {
+		// **With the directories, only the repositories they name.** The
+		// repository watcher sends which directories under the git directory
+		// moved, and those say whose they are: `modules/svc-47/refs` is
+		// `svc-47`, a ref of the superproject's is the superproject, and the
+		// index or the git directory itself is the inventory, which is
+		// everything. This used to be everything for every event, so a worktree
+		// added in one submodule read all two hundred each time its refs moved.
+		//
+		// Without them, everything. That is the right answer for what posts it
+		// bare: a commit, a checkout, a pull, a branch switch — every one of
+		// which can move every gitlink in the estate, and none of which happens
+		// per keystroke.
+		if let directories = note.userInfo?[Notification.changedGitDirectoriesKey] as? [URL] {
+			refresh(submodules.read(afterGitDirectoriesChanged: directories))
+		} else {
+			refresh()
+		}
 	}
 
 	/// Re-reads only the repositories the filesystem event named.

@@ -8,10 +8,34 @@ extension ProjectNavigatorViewController {
 
 	func startWatching(root: URL) {
 		watcher?.stop()
+		stopSettling()
+		gitSettler = Settler { [weak self] in self?.filesSettled() }
 		watcher = FileSystemWatcher(root: root) { [weak self] change in
 			self?.handleFilesystemChange(change)
 		}
 		watcher?.start()
+	}
+
+	/// Forgets the git work a burst was holding back: the window is closing,
+	/// or the project changed under it.
+	func stopSettling() {
+		gitSettler?.cancel()
+		unsettledChange = nil
+	}
+
+	/// The burst is over, or has gone on long enough: the work that costs a
+	/// `git status` or more, once, for everything it held back.
+	///
+	/// Settled rather than run per batch, and only this: the tree still shows a
+	/// new or deleted row as soon as the watcher says so, and only the colours
+	/// and the changes list catch up. Somebody asking — the header's refresh, a
+	/// commit, a checkout — calls `refreshGitStatus` directly and never waits.
+	private func filesSettled() {
+		guard let change = unsettledChange else { return }
+		unsettledChange = nil
+		refreshGitStatus()
+		if changeTouchesDependencies(change) { refreshDependencies() }
+		onFilesSettled?(change)
 	}
 
 	/// What the watcher has delivered and what the tree did about it, since the
@@ -54,9 +78,10 @@ extension ProjectNavigatorViewController {
 	/// "idle" is one nobody can act on, and most of the log was idle.
 	private func handleFilesystemChangeMarked(_ change: FileSystemChange) {
 		let directories = change.directories
-		// Reported before the early return below: the staging view cares about
-		// any edit, not only ones in a directory the tree happens to have
-		// expanded.
+		// Reported before the early return below: an open file and the run
+		// configurations care about any edit, not only ones in a directory the
+		// tree happens to have expanded. The staging view hears the same
+		// batches settled, through `onFilesSettled`.
 		onFilesChanged?(change)
 
 		// And so does the colouring, for a reason that is easy to miss: an edit
@@ -65,10 +90,27 @@ extension ProjectNavigatorViewController {
 		// folders elsewhere in the tree stop being ignored, and nothing about
 		// those folders was written. This used to be asked only when a directory
 		// somebody had expanded was re-read, so the answer depended on which
-		// parts of the tree happened to be open. The refresh coalesces — one
-		// `git status` at a time with at most one queued — which is what makes
-		// asking on every event affordable.
-		refreshGitStatus()
+		// parts of the tree happened to be open.
+		//
+		// **Settled, not per batch.** One `git status` at a time with one
+		// queued kept the navigator from stacking them, but during a burst it
+		// still ran them back to back for as long as the burst lasted — and the
+		// changes pane, which hears from `onFilesSettled`, read every
+		// repository the batch named each time. The first batch after a quiet
+		// spell runs at once, so a single save is as quick as it was; the rest
+		// of a burst waits for the burst to end, or for three seconds. Folded
+		// together, so what runs knows about every batch it stood in for.
+		//
+		// The dependency check goes with it: an unnamed batch reads manifests,
+		// and `filesSettled` asks it about the folded change. Before the early
+		// return below either way, because neither the colours nor the
+		// Dependencies section depend on what anybody has expanded.
+		if unsettledChange == nil {
+			unsettledChange = change
+		} else {
+			unsettledChange?.merge(change)
+		}
+		gitSettler?.poke()
 		// And the first file of a new kind should be offered as one, without the
 		// project being reopened. Marked rather than cleared: see
 		// `fileKindsAreStale`.
@@ -77,13 +119,6 @@ extension ProjectNavigatorViewController {
 		// palette: the palette is shut when the file somebody is about to look
 		// for is saved, and the watcher is the only thing awake to see it.
 		updateFileIndex(with: change)
-
-		// A lock file being written is the one event that changes the
-		// Dependencies section, and it is exactly what `swift package resolve`
-		// and `go get` produce. Before the early return below, because the
-		// section is not a directory anybody has expanded and would otherwise
-		// only be re-read when something else in the tree happened to move.
-		if changeTouchesDependencies(change) { refreshDependencies() }
 
 		guard let rootNode else { return }
 		guard !holdRebuildForRename() else { return }

@@ -9,14 +9,23 @@ import Foundation
 public final class RepositoryWatcher {
 	private var watcher: FileSystemWatcher?
 	private let gitDirectory: URL
-	private let onChange: () -> Void
+	private let onChange: ([URL]) -> Void
 	private var pending: DispatchWorkItem?
+	/// The directories that mattered since the last delivery.
+	private var waiting: Set<URL> = []
+	private var firstWaiting: Date?
 
 	/// A single git command writes several files; this waits for the burst to
 	/// finish rather than reloading once per file.
 	private let settle: TimeInterval = 0.4
+	/// But not for ever. Waiting only for quiet, a worktree added and removed
+	/// in a loop — or a long rebase — never delivered until it stopped.
+	private let cap: TimeInterval = 3
 
-	public init(gitDirectory: URL, onChange: @escaping () -> Void) {
+	/// - Parameter onChange: told which directories under the git directory
+	///   changed, folded over the burst, so a listener can say which
+	///   repositories that makes stale — see `GitEstateRefresh`.
+	public init(gitDirectory: URL, onChange: @escaping ([URL]) -> Void) {
 		self.gitDirectory = gitDirectory.standardizedFileURL
 		self.onChange = onChange
 	}
@@ -47,17 +56,40 @@ public final class RepositoryWatcher {
 	public func stop() {
 		pending?.cancel()
 		pending = nil
+		waiting = []
+		firstWaiting = nil
 		watcher?.stop()
 		watcher = nil
 	}
 
 	private func handle(_ directories: [URL]) {
-		guard directories.contains(where: Self.matters(directory:)) else { return }
+		let mattering = directories.filter(Self.matters(directory:))
+		guard !mattering.isEmpty else { return }
+
+		let now = Date()
+		let first = firstWaiting ?? now
+		firstWaiting = first
+		waiting.formUnion(mattering)
 
 		pending?.cancel()
-		let work = DispatchWorkItem { [onChange] in onChange() }
+		let work = DispatchWorkItem { [weak self] in self?.deliver() }
 		pending = work
-		DispatchQueue.main.asyncAfter(deadline: .now() + settle, execute: work)
+		let delay = Self.delay(now: now, firstWaiting: first, settle: settle, cap: cap)
+		DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+	}
+
+	private func deliver() {
+		let directories = Array(waiting)
+		waiting = []
+		firstWaiting = nil
+		pending = nil
+		onChange(directories)
+	}
+
+	/// How long until a delivery: `settle` after the latest change, but never
+	/// later than `cap` after the first one still waiting.
+	static func delay(now: Date, firstWaiting: Date, settle: TimeInterval, cap: TimeInterval) -> TimeInterval {
+		max(0, min(settle, firstWaiting.addingTimeInterval(cap).timeIntervalSince(now)))
 	}
 
 	/// Whether a change in this directory could have changed what is shown.

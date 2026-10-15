@@ -40,4 +40,20 @@ struct RepositoryWatcherTests {
 
 		#expect(await RepositoryWatcher.directory(forRepositoryAt: root) == nil)
 	}
+
+	/// A burst waits for quiet, but a burst that never goes quiet still
+	/// delivers: a worktree added and removed in a loop held every refresh
+	/// back for as long as the loop ran.
+	@Test func waitsForQuietButNotPastTheCap() {
+		let start = Date(timeIntervalSinceReferenceDate: 0)
+		func delay(at seconds: TimeInterval) -> TimeInterval {
+			RepositoryWatcher.delay(
+				now: start.addingTimeInterval(seconds), firstWaiting: start, settle: 0.4, cap: 3
+			)
+		}
+		#expect(delay(at: 0) == 0.4)
+		#expect(delay(at: 2) == 0.4)
+		#expect(abs(delay(at: 2.8) - 0.2) < 0.0001)
+		#expect(delay(at: 5) == 0)
+	}
 }
