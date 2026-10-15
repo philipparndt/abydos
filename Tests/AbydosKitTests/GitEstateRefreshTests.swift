@@ -273,4 +273,26 @@ struct GitEstateRefreshTests {
 		)
 		#expect(work == GitEstateRefresh.Work(submodulePaths: ["svc-3", "svc-47"]))
 	}
+
+	// MARK: - Directories the repository watcher reports
+
+	/// The reproduction's other half: a worktree of a submodule is bookkeeping
+	/// under that submodule's git directory, and its business alone.
+	@Test func aSubmodulesWorktreeIsThatSubmodulesBusiness() {
+		let work = GitEstateRefresh.work(
+			forChangedDirectories: [url(".git/modules/repos/svc-1/worktrees/svc-1-wt-x")],
+			in: estate(["repos/svc-1", "repos/svc-2"], names: ["repos/svc-1": "repos/svc-1"])
+		)
+		#expect(work == GitEstateRefresh.Work(submodulePaths: ["repos/svc-1"]))
+	}
+
+	/// A worktree of the superproject moves the superproject's refs, and says
+	/// nothing about which submodules exist.
+	@Test func aSuperprojectWorktreeIsTheSuperprojectAlone() {
+		let work = GitEstateRefresh.work(
+			forChangedDirectories: [url(".git/worktrees/wt"), url(".git/refs/heads")],
+			in: estate(["svc-3"])
+		)
+		#expect(work == GitEstateRefresh.Work(superproject: true))
+	}
 }

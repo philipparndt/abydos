@@ -72,6 +72,20 @@ final class EstateChanges {
 		Self.read(GitEstateRefresh.work(for: change, in: estate))
 	}
 
+	/// Which repositories a change under the git directory made stale.
+	///
+	/// **Nothing attributed is read as everything here**, unlike a work-tree
+	/// event. Every directory the repository watcher reports is inside the git
+	/// directory by construction, so one that attributes nowhere means the two
+	/// spell that directory differently — the estate assumes `root/.git` until
+	/// its first read, and the watcher has `rev-parse --absolute-git-dir`, which
+	/// resolves symlinks. A read too many is slow; one too few is a pane that
+	/// stays wrong after a commit.
+	func read(afterGitDirectoriesChanged directories: [URL]) -> Read {
+		let work = GitEstateRefresh.work(forChangedDirectories: directories, in: estate)
+		return work.isEmpty ? .everything : Self.read(work)
+	}
+
 	static func read(_ work: GitEstateRefresh.Work) -> Read {
 		if work.inventory { return .everything }
 		if work.isEmpty { return .nothing }

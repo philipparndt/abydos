@@ -37,10 +37,11 @@ not name:
 - The changes pane reads one estate at a time, folding what is asked for
   meanwhile into one read after it.
 
-## Not in this change
-
-The repository watcher (`.git`) still answers every event outside the object
-store with a sweep of every repository: `GitEstateRefresh.work(
-forChangedDirectories:)` exists and is tested but nothing in the app calls it.
-In the reproduction below it is what most of the remaining `git` processes are.
-Its own change.
+- The repository watcher, over the git directory, says which directories moved,
+  and the changes pane attributes them as the submodules spec already requires:
+  `modules/svc-47/…` is `svc-47`, a ref of the superproject's is the
+  superproject, the index or the git directory itself is everything. Until now
+  `GitEstateRefresh.work(forChangedDirectories:)` was tested and never called,
+  and every event outside the object store swept every repository. The
+  watcher's 0.4 s wait for quiet gains the same 3 s cap, so a loop that never
+  goes quiet still delivers.

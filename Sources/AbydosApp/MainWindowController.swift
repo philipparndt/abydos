@@ -476,10 +476,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			      self?.project?.root == root
 			else { return }
 
-			let watcher = RepositoryWatcher(gitDirectory: directory) { [weak self] in
+			let watcher = RepositoryWatcher(gitDirectory: directory) { [weak self] directories in
 				guard let self, let current = self.project else { return }
 				NotificationCenter.default.post(
-					name: .abydosRepositoryChanged, object: current.root
+					name: .abydosRepositoryChanged, object: current.root,
+					userInfo: [Notification.changedGitDirectoriesKey: directories]
 				)
 				self.navigator.refreshGitStatus()
 				// And what git can see of any covered file that is open: a line

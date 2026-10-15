@@ -32,7 +32,17 @@
 - [x] 3.4 Tests: a single event runs at once, a short burst once more after
       it, a long one at the cap, cancel forgets.
 
-## 4. Done
+## 4. The repository watcher
 
-- [x] 4.1 Measured before and after on a scratch superproject (design.md).
-- [x] 4.2 `make test` and `make warnings` clean.
+- [x] 4.1 `RepositoryWatcher` delivers the directories that mattered, folded over
+      the burst, and caps its 0.4 s wait at 3 s.
+- [x] 4.2 `abydosRepositoryChanged` carries them; the changes pane reads only the
+      repositories they name, and everything when posted bare or when nothing
+      attributes.
+- [x] 4.3 Tests: the cap, a submodule's worktree is that submodule, a
+      superproject worktree is the superproject alone.
+
+## 5. Done
+
+- [x] 5.1 Measured before and after on a scratch superproject (design.md).
+- [x] 5.2 `make test` and `make warnings` clean.

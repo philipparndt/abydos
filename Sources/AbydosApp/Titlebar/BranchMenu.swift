@@ -394,3 +394,15 @@ private final class BranchMenuTarget: NSObject {
 extension Notification.Name {
 	static let abydosRepositoryChanged = Notification.Name("abydos.repositoryChanged")
 }
+
+extension Notification {
+	/// `userInfo` key of `abydosRepositoryChanged`: the directories under the
+	/// git directory that moved, as `[URL]`, when the repository watcher is
+	/// what posted it.
+	///
+	/// Absent for everything else that posts it — a commit, a checkout, a pull —
+	/// which can move every gitlink at once and means "everything". Present, it
+	/// says which repositories: a ref written under `modules/svc-47` is
+	/// `svc-47`'s business, not a reason to read two hundred.
+	static let changedGitDirectoriesKey = "abydos.changedGitDirectories"
+}
