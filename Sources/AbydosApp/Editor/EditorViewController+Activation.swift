@@ -162,6 +162,14 @@ extension EditorViewController {
 		guard tabs.indices.contains(index) else { return }
 		let tab = tabs[index]
 
+		// A board asks its own questions — save, and whether to end the session
+		// for colleagues still on it — and ends the board before it goes.
+		if let board = tab.board {
+			guard board.close() else { return }
+			removeTab(at: index)
+			return
+		}
+
 		// With auto save on, closing must not interrogate the user — it just
 		// writes, which is the whole point of the setting.
 		if tab.isDirty, tab.document?.autoSaveIfNeeded() != true, !confirmDiscard(for: tab) {
@@ -262,6 +270,8 @@ extension EditorViewController {
 		(tab.contentView as? AudioFileView)?.tearDown()
 		// A song's pane is half of a split, so it is found rather than cast.
 		if let song: SongPreviewView = Self.pane(in: tab.contentView) { song.tearDown() }
+		// A board whose tab goes without being asked is ended in the background.
+		tab.board?.tearDown()
 		if let scrollView = tab.contentView as? NSScrollView {
 			NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
 		}
@@ -306,6 +316,16 @@ extension EditorViewController {
 			Task { @MainActor in
 				await pane.flush()
 				self.write(tab)
+			}
+			return
+		}
+		// A board's save is a round trip to its server: the export, then the
+		// rename. The dot goes when it comes back, and only as far as the board
+		// was when the save began.
+		if let board = tab.board {
+			Task { @MainActor in
+				if await board.save() { self.told(tab, wasSaved: true) }
+				self.refreshTabBar()
 			}
 			return
 		}

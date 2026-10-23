@@ -549,6 +549,7 @@ enum SettingsSections {
 					symbol: "text.book.closed",
 					rows: SettingsPaneController.languageServerRows
 				),
+				Section(title: "vboard", symbol: "rectangle.on.rectangle", rows: SettingsPaneController.vboardRows),
 			] + ToolImageCatalogue.tools.map { tool in
 				Section(
 					title: tool.title,

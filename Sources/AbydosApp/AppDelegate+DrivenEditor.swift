@@ -400,6 +400,12 @@ extension AppDelegate {
 			}
 		}
 
+		if let steps = options.boardSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.driveBoardForTesting(steps)
+			}
+		}
+
 		if let steps = options.songSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.driveSongForTesting(steps)

@@ -333,15 +333,23 @@ final class EditorViewController: NSViewController {
 		/// owns the view and every task behind it. A tab has one of
 		/// `document` and `hex`, never both.
 		var hex: HexEditorController?
+		/// The file as a board on a vboard server, when it is a `.vboard` and a
+		/// server is named. Like `hex`, never alongside a `document`.
+		var board: VboardPaneView?
 
 		var isDirty: Bool {
 			if let hex { return hex.isDirty }
+			if let board { return board.isDirty }
 			if let audio = contentView as? AudioFileView { return audio.isDirty }
 			return document?.isDirty ?? false
 		}
 	}
 
 	var tabs: [Tab] = []
+	/// True while a session is being put back. A `.vboard` restored then waits
+	/// to be asked before it goes to a server: relaunching the app must not
+	/// upload the files somebody had open yesterday.
+	var isRestoringSession = false
 	var activeIndex: Int?
 
 	var findBar: FindBar!

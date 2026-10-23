@@ -311,6 +311,24 @@ extension SettingsPaneController {
 	/// row reading "Java: jdtls, the only one Abydos has" answers the question
 	/// somebody opened this page with, and it is where a second one will appear
 	/// the day there is a second one.
+	/// Where a `.vboard` file is opened as a board. One row, and a sentence that
+	/// does not let anybody forget what opening a file there means.
+	static func vboardRows() -> [Row] {
+		[
+			.text(
+				title: "vboard server",
+				help: "A .vboard file opens as a board on this server, for example "
+					+ "https://boards.example.org. Opening a file uploads it there, as a private "
+					+ "temporary board encrypted with a key made for that tab: colleagues you give "
+					+ "the link to can work on it with you, and closing the tab removes it. The "
+					+ "server can read the board while somebody has it open. Leave empty and a "
+					+ ".vboard file opens as text.",
+				get: { Settings.shared.vboardServer },
+				set: { Settings.shared.vboardServer = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+			),
+		]
+	}
+
 	static func languageServerRows() -> [Row] {
 		LanguageServers.languageGroups().map { group in
 			let title = group.languageIds

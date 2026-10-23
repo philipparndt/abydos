@@ -186,6 +186,7 @@ public final class Settings {
 		static let languageServers = "languageServers"
 		static let serverCommands = "serverCommands"
 		static let containerRuntime = "containerRuntime"
+		static let vboardServer = "vboardServer"
 		static let devContainerConsent = "devContainerConsent"
 		static let devContainerChoice = "devContainerChoice"
 		static let appearance = "appearance"
@@ -560,6 +561,17 @@ public final class Settings {
 	public var containerRuntime: String {
 		get { defaults.string(forKey: Key.containerRuntime) ?? "automatic" }
 		set { set(newValue, Key.containerRuntime) }
+	}
+
+	/// The vboard server a `.vboard` file is opened on, as somebody typed it.
+	///
+	/// Empty unless somebody names one, and never given a default: every vboard
+	/// server there is is internal to somebody, and a default would put its
+	/// address in a public program and send everybody's files to it.
+	/// `VboardServerAddress` says what the tab can do with it.
+	public var vboardServer: String {
+		get { defaults.string(forKey: Key.vboardServer) ?? "" }
+		set { set(newValue, Key.vboardServer) }
 	}
 
 	public var toolImages: [String: String] {

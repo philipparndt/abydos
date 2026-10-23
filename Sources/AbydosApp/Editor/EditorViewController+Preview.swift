@@ -556,6 +556,7 @@ extension EditorViewController {
 		return "tab=\(tab.url.path) mode=\(tab.previewMode) "
 			+ "cadova=\(tab.cadova?.product ?? "none") \(open) "
 			+ "content=[\(Self.classes(in: tab.contentView).joined(separator: " "))]"
+			+ (tab.board.map { " " + $0.reportForTesting } ?? "")
 	}
 
 	/// The class names in a view tree, outermost first, for a driver's report.

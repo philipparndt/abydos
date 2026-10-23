@@ -274,6 +274,8 @@ extension EditorViewController {
 	/// Puts back what a project had open, without disturbing anything else.
 	func restore(_ session: ProjectSession) {
 		closeAllTabs()
+		isRestoringSession = true
+		defer { isRestoringSession = false }
 		for file in session.files {
 			let url = URL(fileURLWithPath: file.path)
 			guard FileManager.default.fileExists(atPath: file.path) else { continue }
@@ -746,6 +748,12 @@ extension EditorViewController {
 	/// without asking. Auto-save is on by default, so that window is short.
 	func reloadExternallyChangedFiles() {
 		for tab in tabs {
+			// A board is put back in step with its file by the board itself, or
+			// left alone while it has unsaved changes, as a dirty buffer is.
+			if let board = tab.board {
+				board.fileMayHaveChanged()
+				continue
+			}
 			// A decrypted buffer is skipped as a dirty one is: the file on disk
 			// is ciphertext, and putting it back over the plaintext would be a
 			// reload nobody asked for. A save over a moved file is refused.

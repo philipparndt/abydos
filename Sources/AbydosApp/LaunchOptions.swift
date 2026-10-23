@@ -749,6 +749,8 @@ struct LaunchOptions {
 	var audioReport = false
 	/// The HTML preview's own steps, comma separated: `report`, `press`.
 	var htmlSteps: String?
+	/// A `.vboard` tab's steps, comma separated: `report`.
+	var boardSteps: String?
 	var audioSeek: Double?
 	var audioView: String?
 	/// `--audio-zoom <start>:<end>`, `--audio-loop`, `--audio-play`, and

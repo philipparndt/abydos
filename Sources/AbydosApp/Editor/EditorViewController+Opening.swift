@@ -211,7 +211,11 @@ extension EditorViewController {
 
 		if let existing = indexOfTab(showing: fileURL) {
 			// Committing to a file that is currently provisional pins it.
-			if !preview { tabs[existing].isPreview = false }
+			if !preview {
+				tabs[existing].isPreview = false
+				// Committing to a waiting board is asking for it.
+				tabs[existing].board?.startIfWaiting()
+			}
 			activate(index: existing, focusEditor: focusEditor)
 			return
 		}
@@ -251,6 +255,7 @@ extension EditorViewController {
 		// A mesh has no source worth reading, so it opens rendered. Checked
 		// before the size and binary tests, both of which an STL fails on its
 		// way to being useful.
+		if let board = makeBoardTab(for: fileURL, preview: preview) { return board }
 		if FilePreview.defaultMode(for: fileURL) == .preview, FilePreview.hasPreview(fileURL) {
 			// A picture opens as the picture; a mesh opens rendered. Both skip
 			// the size and binary tests below, which each of them fails on the
