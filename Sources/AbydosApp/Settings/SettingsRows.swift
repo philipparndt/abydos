@@ -326,7 +326,26 @@ extension SettingsPaneController {
 				get: { Settings.shared.vboardServer },
 				set: { Settings.shared.vboardServer = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 			),
+			// A server behind a login is signed in to once, in the system's sheet,
+			// and the token is kept in the Keychain. This is where it goes again.
+			.button(title: "vboard sign-in", label: "Sign Out", action: { signOutOfVboard() }),
 		]
+	}
+
+	/// Revokes the kept token on the server and forgets it here. Forgotten
+	/// even when the server cannot be reached: the next board asks again.
+	private static func signOutOfVboard() {
+		guard case .server(let server, _) = VboardServerAddress(Settings.shared.vboardServer) else { return }
+		let kept = KeychainVboardCredentials.shared
+		guard let credential = kept.credential(for: server) else {
+			Toast.post("Not signed in to \(server.host ?? "the vboard server")", kind: .information)
+			return
+		}
+		kept.forget(for: server)
+		Task { @MainActor in
+			_ = await VboardClient(server: server, token: credential.token).revoke(tokenID: credential.id)
+			Toast.post("Signed out of \(server.host ?? "the vboard server")", detail: "The next board asks you to sign in again.", kind: .information)
+		}
 	}
 
 	static func languageServerRows() -> [Row] {

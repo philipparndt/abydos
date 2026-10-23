@@ -19,23 +19,33 @@ public final class VboardDocument {
 	public let url: URL
 	public let client: VboardClient
 	/// The board this file is on. A new one when the file has to be opened
-	/// again, which is also when the key changes.
+	/// again.
 	public private(set) var boardID: String
-	public private(set) var key: VboardKey
+	/// The board's link key when it is encrypted; nil for a session board the
+	/// AI can work on, which is what a tab opens. An encrypted board shuts the
+	/// AI out — vboard will not let it read one — and that was the worse half
+	/// of the trade ("local boards are handled like normal encrypted boards
+	/// with no AI access", 2026-10-23).
+	public private(set) var key: VboardKey?
+
+	/// How long a lease runs, and who it says holds the session. Renewed by the
+	/// tab well before it runs out (`renewLease`).
+	public static let leaseSeconds = 900
+	public static let leaseHost = "Abydos"
 
 	private var changes = 0
 	private var savedChanges = 0
 	public var isDirty: Bool { changes != savedChanges }
 	public var onDirtyChanged: (() -> Void)?
 
-	public init(url: URL, client: VboardClient) {
+	public init(url: URL, client: VboardClient, encrypted: Bool = false) {
 		self.url = url
 		self.client = client
 		boardID = VboardBoardID.make()
-		key = VboardKey.make()
+		key = encrypted ? VboardKey.make() : nil
 	}
 
-	/// The board's private link, for colleagues and for the web view.
+	/// The board's link, for colleagues and for the web view.
 	public var link: URL { VboardLink.board(server: client.server, id: boardID, key: key) }
 
 	// MARK: Changes
@@ -90,6 +100,7 @@ public final class VboardDocument {
 				switch outcome {
 				case .created:
 					recordDiskState()
+					await settle()
 					return .onBoard
 				case .refused:
 					continue
@@ -127,11 +138,27 @@ public final class VboardDocument {
 		}
 		_ = await client.delete(id: boardID, key: key)
 		boardID = VboardBoardID.make()
-		key = VboardKey.make()
+		if key != nil { key = VboardKey.make() }
 		let opened = await open()
 		guard opened == .onBoard else { return .failed(opened) }
 		forgetChanges()
 		return .reopened
+	}
+
+	/// Makes a new board a session board and lets colleagues with the link in.
+	///
+	/// Both are asked for and neither is required: a server from before session
+	/// boards answers 404 to the lease and the board is then an ordinary
+	/// temporary one, and a server without a login has nobody to let in.
+	private func settle() async {
+		_ = await client.lease(id: boardID, seconds: Self.leaseSeconds, host: Self.leaseHost)
+		_ = await client.shareByLink(id: boardID)
+	}
+
+	/// Renews the lease, for as long as the tab is open.
+	@discardableResult
+	public func renewLease() async -> VboardClient.Outcome {
+		await client.lease(id: boardID, seconds: Self.leaseSeconds, host: Self.leaseHost)
 	}
 
 	/// Ends the board for everybody on it.

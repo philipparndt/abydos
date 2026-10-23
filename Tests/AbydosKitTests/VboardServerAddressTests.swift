@@ -57,10 +57,29 @@ struct VboardPageTests {
 		#expect(VboardPage.socketWatcher.contains(VboardPage.handlerName))
 	}
 
-	@Test func oneServerKeepsOneSessionAndAnotherGetsItsOwn() {
-		let a = VboardPage.dataStoreID(for: URL(string: "https://boards.example.org")!)
-		#expect(a == VboardPage.dataStoreID(for: URL(string: "HTTPS://Boards.Example.org/some/path")!))
-		#expect(a != VboardPage.dataStoreID(for: URL(string: "https://boards.example.org:8443")!))
-		#expect(a != VboardPage.dataStoreID(for: URL(string: "https://other.example.org")!))
+	@Test func oneServerKeepsOneStoreAndOnePortAndAnotherGetsItsOwn() {
+		let server = URL(string: "https://boards.example.org")!
+		let same = URL(string: "HTTPS://Boards.Example.org/some/path")!
+		let other = URL(string: "https://other.example.org")!
+		#expect(VboardPage.dataStoreID(for: server) == VboardPage.dataStoreID(for: same))
+		#expect(VboardPage.dataStoreID(for: server) != VboardPage.dataStoreID(for: URL(string: "https://boards.example.org:8443")!))
+		#expect(VboardPage.dataStoreID(for: server) != VboardPage.dataStoreID(for: other))
+		#expect(VboardPage.preferredPort(for: server) == VboardPage.preferredPort(for: same))
+		#expect((47_300..<47_700).contains(VboardPage.preferredPort(for: other)))
+	}
+
+	@Test func theThemeSetsVboardsColoursAheadOfItsOwnInBothThemes() {
+		let css = VboardPage.themeStyle(["--vb-canvas": "#1e1e1e", "--ring": "#ffb86c"])
+		#expect(css.contains(":root:root[data-theme='dark']"))
+		#expect(css.contains(":root:root[data-theme='light']"))
+		#expect(css.contains("--vb-canvas: #1e1e1e !important;"))
+		#expect(css.contains("--ring: #ffb86c !important;"))
+	}
+
+	@Test func aColourCannotCloseTheRuleItIsIn() {
+		let css = VboardPage.themeStyle(["--vb-canvas": "red; } body { display: none", "color": "red", "--ring": "#fff"])
+		#expect(!css.contains("display: none"))
+		#expect(!css.contains("  color:"))
+		#expect(css.contains("--ring: #fff"))
 	}
 }

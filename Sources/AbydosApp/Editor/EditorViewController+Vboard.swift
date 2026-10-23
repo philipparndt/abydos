@@ -27,6 +27,10 @@ extension EditorViewController {
 			if tab?.board?.isDirty == true { tab?.isPreview = false }
 			self?.refreshTabBar()
 		}
+		pane.onStatusChanged = { [weak self, weak tab] in
+			guard let self, let tab, self.activeTab === tab else { return }
+			self.onStatusChanged?(self)
+		}
 		pane.onOpenAsText = { [weak self, weak tab] in
 			guard let self, let tab, let index = self.tabs.firstIndex(where: { $0 === tab }) else { return }
 			Self.textInsteadOfBoard.insert(FilePath.canonical(fileURL))

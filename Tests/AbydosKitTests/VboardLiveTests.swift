@@ -4,7 +4,7 @@ import Testing
 import WebKit
 @testable import AbydosKit
 
-/// A `.vboard` file on a real `vboard-local`: put there as a private board,
+/// A `.vboard` file on a real `vboard-local`: put there as a session board,
 /// changed there, saved back, put back in place, and ended.
 ///
 /// What the stub in `VboardDocumentTests` cannot say: that the server this
@@ -155,7 +155,7 @@ struct VboardLiveTests {
 
 	// MARK: Opening
 
-	@Test func aBoardFileOpenedPrivatelyKeepsItsItemIdsAndCannotBeReadWithoutItsKey() async throws {
+	@Test func aBoardFileBecomesASessionBoardThatKeepsItsItemIdsAndIsListedNowhere() async throws {
 		guard let server = try await start() else { return }
 		defer { server.stop() }
 		let directory = try scratch()
@@ -165,11 +165,14 @@ struct VboardLiveTests {
 
 		#expect(await document.open() == .onBoard)
 		let board = "api/v1/boards/\(document.boardID)"
-		#expect(try await raw(server, board, key: nil).status == 404)
-		#expect(try await raw(server, board, key: VboardKey.make().encoded).status == 404)
-		#expect(try await raw(server, board, key: document.key.encoded).status == 200)
+		#expect(document.key == nil)
+		let lease = try await raw(server, board + "/lease", key: nil)
+		#expect(lease.status == 200, "a board opened from a file is a session board")
+		#expect(String(decoding: lease.body, as: UTF8.self).contains("Abydos"))
+		let listed = try await raw(server, "api/v1/boards", key: nil)
+		#expect(!String(decoding: listed.body, as: UTF8.self).contains(document.boardID))
 
-		let items = try await raw(server, board + "/items", key: document.key.encoded)
+		let items = try await raw(server, board + "/items", key: document.key?.encoded)
 		#expect(items.status == 200)
 		let said = String(decoding: items.body, as: UTF8.self)
 		for id in itemIDs(try json(url)) {
@@ -208,7 +211,7 @@ struct VboardLiveTests {
 		#expect(await document.open() == .onBoard)
 
 		let added = try await raw(
-			server, "api/v1/boards/\(document.boardID)/items", method: "POST", key: document.key.encoded,
+			server, "api/v1/boards/\(document.boardID)/items", method: "POST", key: document.key?.encoded,
 			body: ["items": [["type": "sticky", "x": 10, "y": 10, "data": ["text": "added live"]]]]
 		)
 		#expect((200..<300).contains(added.status))
@@ -258,7 +261,7 @@ struct VboardLiveTests {
 		#expect(await document.reload() == .replaced)
 		#expect(document.boardID == board)
 		#expect(document.key == key)
-		let shown = try await raw(server, "api/v1/boards/\(board)/items", key: key.encoded)
+		let shown = try await raw(server, "api/v1/boards/\(board)/items", key: key?.encoded)
 		#expect(String(decoding: shown.body, as: UTF8.self).contains("written beside the board"))
 		await document.end()
 	}
@@ -272,7 +275,7 @@ struct VboardLiveTests {
 		let document = VboardDocument(url: url, client: VboardClient(server: server.base))
 		#expect(await document.open() == .onBoard)
 		let oldBoard = document.boardID
-		let oldKey = document.key.encoded
+		let oldKey = document.key?.encoded
 
 		// The board moves on past the file, which then comes back unchanged:
 		// a checkout of the version that was opened.
@@ -285,7 +288,7 @@ struct VboardLiveTests {
 		#expect(await document.reload() == .reopened)
 		#expect(document.boardID != oldBoard)
 		#expect(try await raw(server, "api/v1/boards/\(oldBoard)", key: oldKey).status == 404)
-		#expect(try await raw(server, "api/v1/boards/\(document.boardID)", key: document.key.encoded).status == 200)
+		#expect(try await raw(server, "api/v1/boards/\(document.boardID)", key: document.key?.encoded).status == 200)
 		await document.end()
 	}
 
@@ -301,7 +304,7 @@ struct VboardLiveTests {
 		#expect(await document.open() == .onBoard)
 
 		#expect(await document.end() == .done)
-		#expect(try await raw(server, "api/v1/boards/\(document.boardID)", key: document.key.encoded).status == 404)
+		#expect(try await raw(server, "api/v1/boards/\(document.boardID)", key: document.key?.encoded).status == 404)
 		#expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["retro.vboard"])
 	}
 }
@@ -349,9 +352,6 @@ extension VboardLiveTests {
 		configuration.userContentController.addUserScript(WKUserScript(
 			source: VboardPage.socketWatcher, injectionTime: .atDocumentStart, forMainFrameOnly: true
 		))
-		configuration.userContentController.addUserScript(WKUserScript(
-			source: VboardPage.slotRefusal, injectionTime: .atDocumentStart, forMainFrameOnly: true
-		))
 		configuration.userContentController.add(listener, name: VboardPage.handlerName)
 		let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 1200, height: 800), configuration: configuration)
 		defer { configuration.userContentController.removeScriptMessageHandler(forName: VboardPage.handlerName) }
@@ -366,13 +366,7 @@ extension VboardLiveTests {
 			#expect(people == 1, "the page's own person, and nobody else")
 		}
 
-		// The page cannot keep the board in an account: its own call to do so is
-		// refused in the page, and nothing else it asks for is.
-		let slot = try await web.callAsyncJavaScript(
-			"const r = await fetch('/api/v1/boards/' + board + '/my-slot', { method: 'POST', body: '{}' }); return r.status",
-			arguments: ["board": document.boardID], contentWorld: .page
-		) as? Int
-		#expect(slot == 403)
+		// Everything else the page asks for goes through untouched.
 		let other = try await web.callAsyncJavaScript(
 			"const r = await fetch('/healthz'); return r.status", arguments: [:], contentWorld: .page
 		) as? Int
@@ -380,7 +374,7 @@ extension VboardLiveTests {
 
 		// A colleague adds a sticky, over the API the board's page uses.
 		let added = try await raw(
-			server, "api/v1/boards/\(document.boardID)/items", method: "POST", key: document.key.encoded,
+			server, "api/v1/boards/\(document.boardID)/items", method: "POST", key: document.key?.encoded,
 			body: ["items": [["type": "sticky", "x": 40, "y": 40, "data": ["text": "from a colleague"]]]]
 		)
 		#expect((200..<300).contains(added.status))
@@ -398,6 +392,6 @@ extension VboardLiveTests {
 		withKnownIssue("the page was between two connections when the board was deleted", isIntermittent: true) {
 			#expect(heard, "no deletion heard: \(listener.messages) — \(MachineLoad.said)")
 		}
-		#expect(try await raw(server, "api/v1/boards/\(document.boardID)", key: document.key.encoded).status == 404)
+		#expect(try await raw(server, "api/v1/boards/\(document.boardID)", key: document.key?.encoded).status == 404)
 	}
 }

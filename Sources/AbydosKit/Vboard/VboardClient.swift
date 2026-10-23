@@ -55,6 +55,10 @@ public final class VboardClient {
 	}
 
 	public let server: URL
+	/// A personal access token from the system's sign-in sheet, for a server
+	/// whose login an embedded web view cannot pass. Sent as a bearer token on
+	/// every call; nil on a server without a login.
+	public let token: String?
 	private let session: URLSession
 	private let cookies: () async -> [HTTPCookie]
 
@@ -66,10 +70,12 @@ public final class VboardClient {
 	///     network. The app passes nothing.
 	public init(
 		server: URL,
+		token: String? = nil,
 		cookies: @escaping () async -> [HTTPCookie] = { [] },
 		protocolClasses: [AnyClass]? = nil
 	) {
 		self.server = server
+		self.token = token
 		self.cookies = cookies
 		let configuration = URLSessionConfiguration.ephemeral
 		configuration.urlCache = nil
@@ -113,7 +119,7 @@ public final class VboardClient {
 	public func importBoard(
 		file: URL,
 		id: String,
-		key: VboardKey,
+		key: VboardKey? = nil,
 		progress: ((Double) -> Void)? = nil
 	) async -> Outcome {
 		var request = request(
@@ -140,7 +146,7 @@ public final class VboardClient {
 	/// vboard does this only when the file's marker is newer than the board's.
 	/// A hand-edited file or an older checkout is refused, and the tab opens the
 	/// file again as a new board instead.
-	public func replace(file: URL, id: String, key: VboardKey) async -> Outcome {
+	public func replace(file: URL, id: String, key: VboardKey? = nil) async -> Outcome {
 		await importBoard(file: file, id: id, key: key)
 	}
 
@@ -148,12 +154,15 @@ public final class VboardClient {
 	///
 	/// The key travels in the body here: that is where vboard's create call
 	/// takes it. It is still never in a URL.
-	public func create(id: String, name: String, key: VboardKey) async -> Outcome {
+	public func create(id: String, name: String, key: VboardKey? = nil) async -> Outcome {
 		var request = request(path: "api/v1/boards", method: "POST")
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-		request.httpBody = try? JSONSerialization.data(withJSONObject: [
-			"id": id, "name": name, "temporary": true, "private": true, "key": key.encoded,
-		])
+		var body: [String: Any] = ["id": id, "name": name, "temporary": true]
+		if let key {
+			body["private"] = true
+			body["key"] = key.encoded
+		}
+		request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 		return await send(request) { status, _ in
 			switch status {
 			case 201: return .created
@@ -170,7 +179,7 @@ public final class VboardClient {
 	///
 	/// Into a directory the caller names — beside the file it will replace — so
 	/// the rename that puts it in place never crosses a volume and is atomic.
-	public func export(id: String, key: VboardKey, into directory: URL) async -> Result<Export, ExportFailure> {
+	public func export(id: String, key: VboardKey? = nil, into directory: URL) async -> Result<Export, ExportFailure> {
 		let request = await signed(request(path: "api/v1/boards/\(id)/export.vboard", method: "GET", key: key))
 		do {
 			let (temporary, response) = try await session.download(for: request)
@@ -200,13 +209,45 @@ public final class VboardClient {
 	}
 
 	/// Removes the board for everybody on it.
-	public func delete(id: String, key: VboardKey) async -> Outcome {
+	public func delete(id: String, key: VboardKey? = nil) async -> Outcome {
 		await send(request(path: "api/v1/boards/\(id)", method: "DELETE", key: key)) { status, _ in
 			switch status {
 			case 204, 200: return .done
 			default: return nil
 			}
 		}
+	}
+
+	/// Takes or renews the board's lease, which makes it a session board.
+	///
+	/// A session board is vboard's own answer to "a host product hands a board
+	/// over for a while": it is listed nowhere — not in the board list, the
+	/// MCP tools, recent boards or the template gallery — it cannot be made
+	/// permanent, it is created only through this API and never in vboard's own
+	/// interface, and it is deleted two hours after its lease ends rather than
+	/// after the week a plain temporary board waits. The lease is renewed well
+	/// before it runs out for as long as the tab is open.
+	public func lease(id: String, seconds: Int, host: String) async -> Outcome {
+		var request = request(path: "api/v1/boards/\(id)/lease", method: "PUT")
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.httpBody = try? JSONSerialization.data(withJSONObject: ["ttlSeconds": seconds, "host": host])
+		return await send(request)
+	}
+
+	/// Lets everybody signed in who has the board's link open it: how
+	/// colleagues join. vboard's own connector does the same for a session
+	/// board; the board's data classification may refuse it.
+	public func shareByLink(id: String) async -> Outcome {
+		var request = request(path: "api/v1/boards/\(id)/access/visibility", method: "PUT")
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.httpBody = try? JSONSerialization.data(withJSONObject: ["visibility": "link"])
+		return await send(request)
+	}
+
+	/// Revokes a token this app was given, on sign-out. A token may revoke
+	/// itself, which is the call vboard's iPad app makes for the same reason.
+	public func revoke(tokenID: String) async -> Outcome {
+		await send(request(path: "api/v1/me/tokens/\(tokenID)", method: "DELETE"))
 	}
 
 	// MARK: Plumbing
@@ -221,6 +262,7 @@ public final class VboardClient {
 		request.httpMethod = method
 		request.setValue("application/json", forHTTPHeaderField: "Accept")
 		if let key { request.setValue(key.encoded, forHTTPHeaderField: "X-Board-Key") }
+		if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
 		return request
 	}
 

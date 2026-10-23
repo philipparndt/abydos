@@ -68,12 +68,12 @@ public enum VboardLink {
 	/// The fragment because a browser never sends it: the key reaches the server
 	/// only in the `X-Board-Key` header the page sends itself, and never lands in
 	/// a request line or an access log. vboard refuses a key in a query string.
-	public static func board(server: URL, id: String, key: VboardKey) -> URL {
+	public static func board(server: URL, id: String, key: VboardKey? = nil) -> URL {
 		var components = URLComponents(url: server, resolvingAgainstBaseURL: false)!
 		components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path)
 			+ "/b/" + id
 		components.query = nil
-		components.fragment = "k=" + key.encoded
+		components.fragment = key.map { "k=" + $0.encoded }
 		return components.url!
 	}
 }

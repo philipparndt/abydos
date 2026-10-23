@@ -48,7 +48,7 @@ extension EditorViewController {
 		])
 
 		// A binary tab has no language to report.
-		statusLanguage = tab.document?.displayLanguageName
+		statusLanguage = tab.document?.displayLanguageName ?? (tab.board != nil ? "vboard" : nil)
 		// Nor a caret. The indicator is one control shared by the whole group,
 		// so a tab arriving without saying where its caret is leaves the line
 		// the *previous* tab was on next to the new tab's language. Easiest to

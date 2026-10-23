@@ -32,14 +32,39 @@ struct VboardDocumentTests {
 
 	// MARK: Opening
 
-	@Test func aBoardFileIsImportedUnderTheDocumentsIdAndKey() async throws {
+	@Test func aBoardFileBecomesASessionBoardColleaguesWithTheLinkCanOpen() async throws {
 		let (document, stub) = document(try copy("retro")) { _ in (201, "{}", [:]) }
 		#expect(await document.open() == .onBoard)
+		let paths = stub.requests.map { "\($0.method) \($0.url.path)" }
+		#expect(paths == [
+			"POST /api/v1/boards/import",
+			"PUT /api/v1/boards/\(document.boardID)/lease",
+			"PUT /api/v1/boards/\(document.boardID)/access/visibility",
+		])
 		let request = try #require(stub.requests.first)
-		#expect(request.url.path == "/api/v1/boards/import")
 		#expect(request.url.query?.contains("id=\(document.boardID)") == true)
-		#expect(request.headers["X-Board-Key"] == document.key.encoded)
+		#expect(request.headers["X-Board-Key"] == nil, "a session board carries no key, so the AI can read it")
+		let lease = try JSONSerialization.jsonObject(with: stub.requests[1].body) as? [String: Any]
+		#expect(lease?["host"] as? String == "Abydos")
+		#expect(lease?["ttlSeconds"] as? Int == VboardDocument.leaseSeconds)
+		let visibility = try JSONSerialization.jsonObject(with: stub.requests[2].body) as? [String: Any]
+		#expect(visibility?["visibility"] as? String == "link")
+		#expect(document.link.fragment == nil)
 		#expect(!document.isDirty)
+	}
+
+	@Test func aServerWithoutLeasesStillGetsTheBoard() async throws {
+		let (document, _) = document(try copy("retro")) { request in
+			request.url.path.hasSuffix("/import") ? (201, "{}", [:]) : (404, #"{"error":"not found"}"#, [:])
+		}
+		#expect(await document.open() == .onBoard)
+	}
+
+	@Test func theLeaseIsRenewedForTheSameBoard() async throws {
+		let (document, stub) = document(try copy("retro")) { _ in (200, "{}", [:]) }
+		#expect(await document.renewLease() == .done)
+		#expect(stub.requests.last?.method == "PUT")
+		#expect(stub.requests.last?.url.path == "/api/v1/boards/\(document.boardID)/lease")
 	}
 
 	@Test func anEmptyFileIsCreatedAndNamedAfterItself() async throws {
@@ -56,7 +81,8 @@ struct VboardDocumentTests {
 
 	@Test func aTakenIdIsTriedOnceMoreWithAnother() async throws {
 		var answered = 0
-		let (document, stub) = document(try copy("retro")) { _ in
+		let (document, stub) = document(try copy("retro")) { request in
+			guard request.method == "POST" else { return (200, "{}", [:]) }
 			answered += 1
 			return answered == 1 ? (409, #"{"error":"taken"}"#, [:]) : (201, "{}", [:])
 		}
@@ -150,7 +176,8 @@ struct VboardDocumentTests {
 
 	@Test func aNewerFileReplacesTheBoardInPlace() async throws {
 		var imports = 0
-		let (document, _) = document(try copy("retro")) { _ in
+		let (document, _) = document(try copy("retro")) { request in
+			guard request.method == "POST" else { return (200, "{}", [:]) }
 			imports += 1
 			return imports == 1 ? (201, "{}", [:]) : (200, #"{"replaced":true}"#, [:])
 		}
@@ -166,6 +193,7 @@ struct VboardDocumentTests {
 		let (document, stub) = document(try copy("retro")) { request in
 			switch request.method {
 			case "DELETE": return (204, "", [:])
+			case "PUT": return (200, "{}", [:])
 			default:
 				imports += 1
 				// The first import opens; the replace is refused as not newer.
@@ -173,10 +201,10 @@ struct VboardDocumentTests {
 			}
 		}
 		_ = await document.open()
-		let id = document.boardID, key = document.key
+		let id = document.boardID
 		#expect(await document.reload() == .reopened)
 		#expect(document.boardID != id)
-		#expect(document.key != key)
+		#expect(document.key == nil)
 		#expect(stub.requests.contains { $0.method == "DELETE" && $0.url.path.hasSuffix(id) })
 	}
 }

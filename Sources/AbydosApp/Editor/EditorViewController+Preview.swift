@@ -943,7 +943,7 @@ extension EditorViewController {
 	}
 
 	/// What the status bar shows in place of line and column for a hex tab.
-	var statusPositionText: String? { activeTab?.hex?.statusText }
+	var statusPositionText: String? { activeTab?.hex?.statusText ?? activeTab?.board?.statusText }
 
 	/// The driver: opens the front tab as hex when it is not, then performs
 	/// the steps and returns the report.

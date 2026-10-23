@@ -57,43 +57,150 @@ public enum VboardPage {
 	})();
 	"""#
 
-	/// Keeps vboard's page from keeping the board in the signed-in person's
-	/// account.
+	/// Puts the server's address back into the links vboard's page shows and
+	/// copies, in place of the proxy's.
 	///
-	/// With a login, opening a private link makes the page "keep" it: it
-	/// wraps the board's key to the person's own key pair with
-	/// `POST /api/v1/boards/{id}/my-slot`, and when they have none, it offers to
-	/// set one up — with a passkey, which an embedded web view cannot use. Seen
-	/// on 2026-10-23: "it was asking for a passkey which is not possible in our
-	/// integration but should also not be necessary for ephemeral/local
-	/// boards". A board that ends when its tab closes has nothing to keep, so
-	/// that one call, for the one board this page shows, is answered here with
-	/// a refusal. The page takes a refusal other than 409 as "not kept" and
-	/// says nothing; no slot is left in the account for a board that is gone.
+	/// The page builds every share link from its own address — the share
+	/// dialog, a card's or an item's link, the private-board list — and through
+	/// the proxy that address is `http://127.0.0.1:<port>`, which opens nothing
+	/// on a colleague's machine. Seen on 2026-10-23: "the board now shows a
+	/// local link only". So the proxy's origin is swapped for the server's in
+	/// what a person reads and copies: text on the page, the value of a field,
+	/// and the clipboard, by the copy event the page fills and by the
+	/// clipboard API it falls back to. Links the page *follows* — an `href`, a
+	/// request — are left alone, because those have to go through the proxy.
 	///
-	/// The board is read from the page's own address at document start, so a
-	/// page that moves to a new board — the file opened again — is a new
-	/// document with a new answer. Every other request goes through untouched.
-	public static let slotRefusal = #"""
+	/// A QR code is a picture and keeps the proxy's address. That and the rest
+	/// of this are better fixed in vboard, by building share links from the
+	/// address the embedding app gives; this stays until every server does.
+	public static func linkRewrite(proxy: URL, server: URL) -> String {
+		let encode = { (url: URL) -> String in
+			let origin = (url.scheme ?? "http") + "://" + (url.host ?? "") + (url.port.map { ":\($0)" } ?? "")
+			let data = try? JSONSerialization.data(withJSONObject: [origin], options: [.withoutEscapingSlashes])
+			return data.flatMap { String(data: $0, encoding: .utf8) }.map { String($0.dropFirst().dropLast()) } ?? "\"\""
+		}
+		return """
+		(() => {
+			const local = \(encode(proxy)), remote = \(encode(server));
+			if (!local || local === remote || window.__abydosLinks) return;
+			window.__abydosLinks = true;
+			const swap = (text) => typeof text === "string" && text.includes(local) ? text.split(local).join(remote) : text;
+			for (const proto of [HTMLInputElement.prototype, HTMLTextAreaElement.prototype]) {
+				const own = Object.getOwnPropertyDescriptor(proto, "value");
+				if (!own || !own.set) continue;
+				Object.defineProperty(proto, "value", {
+					configurable: true, enumerable: own.enumerable,
+					get() { return own.get.call(this); },
+					set(value) { own.set.call(this, swap(value)); },
+				});
+			}
+			const setData = DataTransfer.prototype.setData;
+			DataTransfer.prototype.setData = function (format, data) { return setData.call(this, format, swap(data)); };
+			if (navigator.clipboard && navigator.clipboard.writeText) {
+				const writeText = navigator.clipboard.writeText.bind(navigator.clipboard);
+				navigator.clipboard.writeText = (text) => writeText(swap(text));
+			}
+			const fix = (node) => {
+				if (node.nodeType === Node.TEXT_NODE) {
+					const swapped = swap(node.nodeValue);
+					if (swapped !== node.nodeValue) node.nodeValue = swapped;
+				} else if (node.nodeType === Node.ELEMENT_NODE) {
+					const walk = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+					for (let text = walk.nextNode(); text; text = walk.nextNode()) fix(text);
+				}
+			};
+			new MutationObserver((records) => {
+				for (const record of records) {
+					if (record.type === "characterData") fix(record.target);
+					else record.addedNodes.forEach(fix);
+				}
+			}).observe(document, { subtree: true, childList: true, characterData: true });
+		})();
+		"""
+	}
+
+	/// Tells vboard's page it is shown by an app, and which server it is on.
+	///
+	/// vboard's web app already knows `window.vboardApp`: its iPad app puts it
+	/// there for the same reason this one does — the page is served from a
+	/// proxy on this machine, so `location.origin` is not the server. In
+	/// "server" mode it carries the server's address, which a vboard that builds
+	/// share links from it uses instead of the page's own (with older ones the
+	/// link rewrite above does the work). Its settings button opens this app's
+	/// settings. No `signOut`: the page's own log out then goes to the server as
+	/// in a browser, and signing this app out is in its settings.
+	public static func appBridge(server: URL, version: String) -> String {
+		let encode = { (value: String) -> String in
+			let data = try? JSONSerialization.data(withJSONObject: [value], options: [.withoutEscapingSlashes])
+			return data.flatMap { String(data: $0, encoding: .utf8) }.map { String($0.dropFirst().dropLast()) } ?? "\"\""
+		}
+		let origin = MemoryVboardCredentials.origin(of: server)
+		return """
+		(() => {
+			if (window.vboardApp) return;
+			window.vboardApp = {
+				platform: "abydos", version: \(encode(version)), mode: "server", serverURL: \(encode(origin)),
+				openSettings() {
+					try { window.webkit.messageHandlers.\(handlerName).postMessage({ app: "openSettings" }); } catch (_) {}
+				},
+			};
+		})();
+		"""
+	}
+
+	/// vboard's colours, set to this app's.
+	///
+	/// vboard draws its dark theme in navy — a navy canvas, navy frames, a navy
+	/// banner — and accents in Vector's brand blue, which sat badly in a
+	/// neutral grey editor with an orange accent ("the blue colors do not match
+	/// nicely", 2026-10-23). Its colours are CSS custom properties: the design
+	/// system's (`--background`, `--ring`, …) and its own board's (`--vb-…`).
+	/// These rules set them for both of its themes, ahead of its own, so a
+	/// change of this app's theme is a change of one stylesheet's text.
+	public static func themeStyle(_ tokens: [String: String]) -> String {
+		let body = tokens.sorted { $0.key < $1.key }
+			.filter { $0.key.hasPrefix("--") && !$0.value.contains(";") && !$0.value.contains("}") }
+			.map { "  \($0.key): \($0.value) !important;" }
+			.joined(separator: "\n")
+		return ":root:root, :root:root[data-theme='light'], :root:root[data-theme='dark'] {\n\(body)\n}"
+	}
+
+	/// Puts `themeStyle` into the page, and replaces it when called again.
+	public static func themeScript(_ style: String) -> String {
+		let data = try? JSONSerialization.data(withJSONObject: [style], options: [.withoutEscapingSlashes])
+		let literal = data.flatMap { String(data: $0, encoding: .utf8) }.map { String($0.dropFirst().dropLast()) } ?? "\"\""
+		return """
+		(() => {
+			const id = "abydos-theme";
+			let sheet = document.getElementById(id);
+			if (!sheet) {
+				sheet = document.createElement("style");
+				sheet.id = id;
+				(document.head || document.documentElement).appendChild(sheet);
+			}
+			sheet.textContent = \(literal);
+		})();
+		"""
+	}
+
+	/// Keeps vboard's page from installing its service worker.
+	///
+	/// The worker is vboard's offline mode: on its first visit it fetches the
+	/// whole web app ahead of time. In a board tab nothing needs it — the board
+	/// lives on the server for the session and the file is the copy that stays
+	/// — and it cost the first board on 2026-10-23 five of its 7.7 seconds: the
+	/// page asked for its own board as request 543 of 568, queued behind the
+	/// worker's downloads on the six connections WebKit opens to one plain-http
+	/// address. vboard registers it in one place and only warns when that fails;
+	/// a worker an earlier tab installed is removed. The page's files are still
+	/// kept by the store's ordinary cache, which is what makes a second board
+	/// quick.
+	public static let noServiceWorker = #"""
 	(() => {
-		const shown = /^\/b\/(b_[0-9a-f]{16})\/?$/.exec(location.pathname);
-		const native = window.fetch;
-		if (!shown || !native || native.__abydosSlot) return;
-		const slot = "/api/v1/boards/" + shown[1] + "/my-slot";
-		const refused = () => new Response(
-			JSON.stringify({ error: "A board opened from a file is not kept in the account.", code: "abydos.sessionBoard" }),
-			{ status: 403, headers: { "Content-Type": "application/json" } }
-		);
-		const wrapped = function (input, init) {
-			let url = typeof input === "string" ? input : input instanceof URL ? input.href : (input && input.url) || "";
-			let method = (init && init.method) || (input && typeof input === "object" && input.method) || "GET";
-			let path = url;
-			try { path = decodeURIComponent(new URL(url, location.href).pathname); } catch (_) {}
-			if (String(method).toUpperCase() === "POST" && path === slot) return Promise.resolve(refused());
-			return native.apply(this, arguments);
-		};
-		wrapped.__abydosSlot = true;
-		window.fetch = wrapped;
+		const workers = navigator.serviceWorker;
+		if (!workers) return;
+		workers.getRegistrations().then((all) => all.forEach((one) => one.unregister())).catch(() => {});
+		workers.register = () => Promise.reject(new Error("A board in Abydos keeps no offline copy."));
 	})();
 	"""#
 
@@ -135,16 +242,13 @@ public enum VboardPage {
 	/// The web data store a server's board tabs share, by an id made from the
 	/// server's origin.
 	///
-	/// Per origin so a sign-in to one server is kept for the next tab on it and
-	/// never offered to another; persistent so somebody signs in once rather
-	/// than every time a file is opened. The same origin always gives the same
-	/// id, which is what makes it the same store.
+	/// Persistent, so the page's scripts and its service worker are kept from
+	/// one board to the next: a fresh store fetched the whole web app for every
+	/// board, part of the thirteen seconds a board took to open on 2026-10-23.
+	/// Per origin so one server's page never sees another's storage. The same
+	/// origin always gives the same id, which is what makes it the same store.
 	public static func dataStoreID(for server: URL) -> UUID {
-		var components = URLComponents()
-		components.scheme = server.scheme?.lowercased()
-		components.host = server.host?.lowercased()
-		components.port = server.port
-		let origin = components.string ?? server.absoluteString
+		let origin = MemoryVboardCredentials.origin(of: server)
 		var bytes = Array(SHA256.hash(data: Data("abydos.vboard:\(origin)".utf8)).prefix(16))
 		// A name-based UUID's version and variant bits, so it reads as one.
 		bytes[6] = (bytes[6] & 0x0F) | 0x50
@@ -153,5 +257,19 @@ public enum VboardPage {
 			bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
 			bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
 		))
+	}
+
+	/// The loopback port a server's proxy asks for first.
+	///
+	/// The same one every time, because the port is part of the page's origin:
+	/// a new port is a new origin, with an empty cache and no service worker.
+	/// Spread over a range by the server's origin so two servers rarely ask for
+	/// the same one; a port that is taken falls back to any free one.
+	public static func preferredPort(for server: URL) -> UInt16 {
+		var hash: UInt32 = 2_166_136_261
+		for byte in MemoryVboardCredentials.origin(of: server).utf8 {
+			hash = (hash ^ UInt32(byte)) &* 16_777_619
+		}
+		return 47_300 + UInt16(hash % 400)
 	}
 }

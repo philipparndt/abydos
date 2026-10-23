@@ -124,6 +124,23 @@ struct VboardClientTests {
 		#expect(await open.signedIn() == .done)
 	}
 
+	@Test func aTokenFromTheSignInSheetGoesOnEveryCall() async throws {
+		let stub = StubServer(plain: { _ in (201, "{}") })
+		let client = VboardClient(server: stub.base, token: "vbp_secret", protocolClasses: [StubProtocol.self])
+		_ = await client.importBoard(file: try fixture("retro"), id: VboardBoardID.make(), key: .make())
+		_ = await client.signedIn()
+		#expect(stub.requests.count == 2)
+		#expect(stub.requests.allSatisfy { $0.headers["Authorization"] == "Bearer vbp_secret" })
+		#expect(stub.requests.allSatisfy { !$0.url.absoluteString.contains("vbp_secret") })
+	}
+
+	@Test func aTokenIsRevokedByItsId() async throws {
+		let (client, stub) = client { _ in (204, "") }
+		#expect(await client.revoke(tokenID: "t_123") == .done)
+		#expect(stub.requests.first?.method == "DELETE")
+		#expect(stub.requests.first?.url.path == "/api/v1/me/tokens/t_123")
+	}
+
 	@Test func aTakenIdIsRefusedRatherThanFailed() async throws {
 		let (client, _) = client { _ in (409, #"{"error":"exists","code":"board.idTaken"}"#) }
 		#expect(await client.importBoard(file: try fixture("retro"), id: VboardBoardID.make(), key: .make()) == .refused)
