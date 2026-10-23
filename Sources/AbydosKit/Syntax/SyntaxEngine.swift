@@ -423,7 +423,7 @@ public final class SyntaxEngine {
 		let startLine = rope.line(atByteOffset: Int(node.byteRange.lowerBound))
 		let endLine = rope.line(atByteOffset: Int(node.byteRange.upperBound))
 
-		if endLine > startLine, node.childCount > 0 {
+		if endLine > startLine, node.childCount > 0, !isListStartingAtItsFirstItem(node) {
 			ranges.append(FoldRange(startLine: startLine, endLine: endLine))
 		}
 
@@ -433,6 +433,23 @@ public final class SyntaxEngine {
 			guard let child = node.child(at: index) else { continue }
 			collectStructural(node: child, rope: rope, into: &ranges)
 		}
+	}
+
+	/// Whether a node is a run of like items with nothing of its own before
+	/// the first one — a YAML sequence or mapping.
+	///
+	/// Its line belongs to that first item. Offered as a fold, it was the
+	/// widest on the line and won, so folding the first item of a list folded
+	/// the whole list. The key above it already folds the list.
+	private func isListStartingAtItsFirstItem(_ node: Node) -> Bool {
+		let items = (0..<node.namedChildCount)
+			.compactMap { node.namedChild(at: $0) }
+			.filter { !$0.isExtra }
+		guard let first = items.first,
+		      first.byteRange.lowerBound == node.byteRange.lowerBound,
+		      let type = first.nodeType
+		else { return false }
+		return items.allSatisfy { $0.nodeType == type }
 	}
 }
 

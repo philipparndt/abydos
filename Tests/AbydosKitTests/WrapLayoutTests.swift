@@ -411,6 +411,23 @@ struct WrapLayoutCurrencyTests {
 		))
 	}
 
+	/// Expanding the only collapsed fold took the early return in `rebuild`,
+	/// which did not bump the revision, so the layout kept hiding the lines
+	/// and the fold could not be opened again.
+	@Test func expandingTheLastFoldIsNotCurrent() {
+		var collapsed = FoldingState()
+		collapsed.setAvailable([FoldRange(startLine: 10, endLine: 20)])
+		collapsed.toggle(line: 10)
+		let (layout, _) = built(folding: collapsed)
+
+		var expanded = collapsed
+		expanded.toggle(line: 10)
+		#expect(expanded.revision != collapsed.revision, "folding says it moved")
+		#expect(!layout.isCurrent(
+			documentLineCount: 100, columns: 40, folding: expanded, documentRevision: 1
+		))
+	}
+
 	@Test func wrapBeingTurnedOffIsNotCurrent() {
 		let (layout, _) = built(folding: folding)
 		#expect(!layout.isCurrent(

@@ -94,6 +94,9 @@ public struct FoldingState {
 	/// lines separately would double-count the inner ones and skew every
 	/// subsequent line lookup.
 	private mutating func rebuild() {
+		// First, so expanding the last fold counts as a move: `WrapLayout`
+		// otherwise keeps the lines hidden and the fold cannot be opened again.
+		revision &+= 1
 		guard !collapsed.isEmpty else {
 			hidden = []
 			hiddenBefore = []
@@ -127,7 +130,6 @@ public struct FoldingState {
 			running += interval.end - interval.start + 1
 		}
 		totalHidden = running
-		revision &+= 1
 	}
 
 	public func isHidden(line: Int) -> Bool {

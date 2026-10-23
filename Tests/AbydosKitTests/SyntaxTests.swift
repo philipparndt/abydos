@@ -197,6 +197,47 @@ struct SyntaxTests {
 		#expect(Set(folds.map(\.startLine)).count == folds.count)
 	}
 
+	/// A YAML list starts at the same byte as its first item, so the widest
+	/// node on that line was the whole list, and folding the first item folded
+	/// every item after it.
+	@Test func aYamlListItemFoldsOnlyItself() throws {
+		let source = """
+		sites:
+		  - domain: 7pass.de
+		    title: Joyn
+		    status: changed
+		  - domain: adac.de
+		    title: ADAC
+		  - domain: aqara.com
+		"""
+		let engine = try #require(SyntaxEngine(languageId: "yaml"))
+		let rope = Rope(source)
+		engine.parse(rope: rope)
+
+		let folds = engine.foldRanges(rope: rope)
+		#expect(folds.contains(FoldRange(startLine: 0, endLine: 6)), "the key folds its whole list")
+		#expect(folds.contains(FoldRange(startLine: 1, endLine: 3)), "the first item folds itself")
+		#expect(folds.contains(FoldRange(startLine: 4, endLine: 5)))
+	}
+
+	/// The same for a mapping: its first pair is one line, and that line is
+	/// not a handle for the pairs below it.
+	@Test func aYamlMappingsFirstPairIsNotAFold() throws {
+		let source = """
+		a:
+		  b: 1
+		  c:
+		    d: 2
+		  e: 3
+		"""
+		let engine = try #require(SyntaxEngine(languageId: "yaml"))
+		let rope = Rope(source)
+		engine.parse(rope: rope)
+
+		let folds = engine.foldRanges(rope: rope)
+		#expect(folds.map(\.startLine) == [0, 2])
+	}
+
 	// MARK: - Detection
 
 	@Test func detectsLanguagesFromFilenames() {
