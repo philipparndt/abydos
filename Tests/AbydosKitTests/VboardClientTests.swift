@@ -167,6 +167,37 @@ struct VboardClientTests {
 		#expect(outcome == .failed(status: 413, message: "Die Datei ist zu groß"))
 	}
 
+	@Test func theBoardListAsksTheServersPickerLookup() async throws {
+		let (client, stub) = client { _ in (200, #"{"boards":[]}"#) }
+		_ = await client.boards(matching: "retro", limit: 50)
+		let request = try #require(stub.requests.first)
+		#expect(request.method == "GET")
+		#expect(request.url.path == "/api/v1/boards")
+		#expect(request.url.query?.contains("q=retro") == true)
+		#expect(request.url.query?.contains("limit=50") == true)
+	}
+
+	@Test func theBoardListLeavesOutPrivateBoardsAndReadsTheUpdate() async throws {
+		let (client, _) = client { _ in
+			(200, #"""
+			{"boards":[
+			  {"id":"b_1111111111111111","name":"Sprint 42 retro","updatedAt":"2026-10-24T09:34:59.579Z"},
+			  {"id":"b_2222222222222222","name":"","private":true,"updatedAt":"2026-10-24T09:00:00Z"},
+			  {"id":"b_3333333333333333","name":"","updatedAt":"2026-10-23T08:00:00Z"}
+			]}
+			"""#)
+		}
+		let boards = try await client.boards(matching: "").get()
+		#expect(boards.map(\.id) == ["b_1111111111111111", "b_3333333333333333"])
+		#expect(boards.map(\.name) == ["Sprint 42 retro", "b_3333333333333333"])
+		#expect(boards.first?.updated == Date(timeIntervalSince1970: 1_792_834_499.579))
+	}
+
+	@Test func aBoardListWhileSignedOutSaysSo() async throws {
+		let (client, _) = client { _ in (401, #"{"error":"Please log in"}"#) }
+		#expect(await client.boards(matching: "") == .failure(VboardClient.ListFailure(outcome: .signedOut)))
+	}
+
 	@Test func anEmptyFileIsCreatedWithTheKeyInTheBodyNotTheURL() async throws {
 		let (client, stub) = client { _ in (201, #"{"id":"b_0123456789abcdef"}"#) }
 		let key = VboardKey.make()

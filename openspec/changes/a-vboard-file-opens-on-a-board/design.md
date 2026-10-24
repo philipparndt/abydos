@@ -70,7 +70,8 @@ repository.
 **Non-Goals:**
 
 - **Opening a board that lives on the server**, with no file. The file is the
-  document. The server is where it is worked on for a while.
+  document. The server is where it is worked on for a while. Asked for the next
+  day and taken up in `a-server-board-opens-live-in-a-tab`.
 - **Encrypted board files.** A file exported with "keep encrypted" needs the
   key of the board it came from to import. The tab says it cannot open one and
   offers the text.

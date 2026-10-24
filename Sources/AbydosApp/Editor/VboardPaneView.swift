@@ -1,6 +1,5 @@
 import AbydosKit
 import AppKit
-import AuthenticationServices
 import WebKit
 
 /// A `.vboard` file open as a board, in vboard's own page, on the server named
@@ -23,6 +22,11 @@ import WebKit
 ///    session as cookies.
 ///  * `VboardPage` — the script that watches the page's own socket, so the tab
 ///    knows about changes and people without being a participant itself.
+///
+/// Or a board that already lives on the server, chosen from its list
+/// (`serverBoard`). Then the file half is skipped: no document, no upload, no
+/// lease, nothing to save and nothing ended on close. The tab is the board
+/// everybody else sees, as a browser would show it.
 @MainActor
 final class VboardPaneView: NSView {
 	/// The tab's edited dot has something to say.
@@ -36,9 +40,23 @@ final class VboardPaneView: NSView {
 	/// status bar in place of a line and column. Nil while there is no board.
 	private(set) var statusText: String?
 
+	/// The file, or for a server's board the name its page tab goes by.
 	let fileURL: URL
+	/// The board on the server this tab shows as it is, when it was opened from
+	/// the server's list rather than from a file.
+	let serverBoard: VboardBoardSummary?
 	private(set) var document: VboardDocument?
 	var isDirty: Bool { document?.isDirty ?? false }
+	/// The live board, if there is one to talk to.
+	private var liveClient: VboardClient?
+
+	/// The board the page is on, whichever kind it is.
+	private var boardID: String? { document?.boardID ?? serverBoard?.id }
+	private var boardLink: URL? {
+		if let document { return document.link }
+		guard let server, let serverBoard else { return nil }
+		return VboardLink.board(server: server, id: serverBoard.id)
+	}
 
 	private enum State: Equatable {
 		/// A provisional or restored tab: nothing sent until somebody asks.
@@ -68,7 +86,7 @@ final class VboardPaneView: NSView {
 	private var web: WKWebView?
 	private var relay: Relay?
 	private var proxy: VboardProxy?
-	private var signIn: ASWebAuthenticationSession?
+	private let signIn = VboardSignInSheet()
 	/// `ABYDOS_VBOARD_TRACE=1`: when each step of opening a board happened, and
 	/// every request the proxy forwards, on standard error. For "this page takes
 	/// long" (2026-10-23), which a guess could not answer.
@@ -95,11 +113,25 @@ final class VboardPaneView: NSView {
 	///   nobody asked to open.
 	init(url: URL, start: Bool) {
 		fileURL = url
+		serverBoard = nil
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
 		build()
 		decide(start: start)
+	}
+
+	/// A board that lives on the server, opened as it is. `page` is the name of
+	/// the tab it is shown in.
+	init(board: VboardBoardSummary, page: URL) {
+		fileURL = page
+		serverBoard = board
+		super.init(frame: .zero)
+		wantsLayer = true
+		layer?.backgroundColor = Theme.current.editorBackground.cgColor
+		build()
+		// Chosen from the list on purpose, so it goes straight to the server.
+		decide(start: true)
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -133,6 +165,10 @@ final class VboardPaneView: NSView {
 			server = url
 			isPlainOverNetwork = plain
 			let host = url.host ?? url.absoluteString
+			if serverBoard != nil {
+				connect()
+				return
+			}
 			switch VboardFile.inspect(fileURL) {
 			case .encrypted:
 				show(
@@ -274,6 +310,11 @@ final class VboardPaneView: NSView {
 		// the cache when the board is ready. Reported on 2026-10-23 as "a bit
 		// slow to open the document".
 		web.load(URLRequest(url: page(server)))
+		if serverBoard != nil {
+			liveClient = client
+			showBoard()
+			return
+		}
 		let document = VboardDocument(url: fileURL, client: client)
 		document.onDirtyChanged = { [weak self] in self?.onDirtyChanged?() }
 		self.document = document
@@ -304,12 +345,8 @@ final class VboardPaneView: NSView {
 
 	// MARK: Signing in
 
-	/// The server's login, in the system's sign-in sheet rather than the tab.
-	///
-	/// Entra ID with Conditional Access wants a compliant device, and the proof
-	/// of one comes from Apple's Enterprise SSO extension, which answers for the
-	/// system's sheet and not for a web view inside an app. Seen on 2026-10-23
-	/// as "Set up your device to get access" in place of the board.
+	/// The server's login, in the system's sign-in sheet rather than the tab
+	/// (`VboardSignInSheet` says why).
 	private func askToSignIn() {
 		guard let server else { return }
 		state = .signingIn
@@ -325,36 +362,21 @@ final class VboardPaneView: NSView {
 	}
 
 	private func presentSignIn() {
-		guard let server, signIn == nil else { return }
-		let device = "Abydos on \(Host.current().localizedName ?? "this Mac")"
-		let session = ASWebAuthenticationSession(
-			url: VboardSignIn.url(server: server, device: device),
-			callbackURLScheme: VboardSignIn.callbackScheme
-		) { [weak self] callback, error in
-			DispatchQueue.main.async { self?.signInEnded(callback: callback, error: error) }
+		guard let server, !signIn.isRunning else { return }
+		let opened = signIn.start(server: server, over: window) { [weak self] ending in
+			self?.signInEnded(ending)
 		}
-		session.presentationContextProvider = self
-		// Not ephemeral: the sheet shares Safari's sign-in, so somebody already
-		// signed in there is not asked again.
-		session.prefersEphemeralWebBrowserSession = false
-		signIn = session
-		if !session.start() {
-			signIn = nil
-			show("The sign-in window would not open", detail: "", text: true)
-		}
+		if !opened { show("The sign-in window would not open", detail: "", text: true) }
 	}
 
-	private func signInEnded(callback: URL?, error: Error?) {
-		signIn = nil
+	private func signInEnded(_ ending: VboardSignInSheet.Ending) {
 		guard let server, state == .signingIn else { return }
-		if let callback, let credential = VboardSignIn.credential(from: callback) {
-			credentials.keep(credential, for: server)
+		switch ending {
+		case .signedIn(let credential):
 			state = .connecting
 			show("Signed in. Connecting…", detail: "", text: false, keepState: true)
 			Task { await beginThroughProxy(with: VboardClient(server: server, token: credential.token)) }
-			return
-		}
-		if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+		case .cancelled:
 			show(
 				"Sign-in was cancelled",
 				detail: "The board opens once you have signed in to \(server.host ?? "the server").",
@@ -362,9 +384,9 @@ final class VboardPaneView: NSView {
 				text: true,
 				keepState: true
 			)
-			return
+		case .failed(let why):
+			show("Signing in did not work", detail: why, text: true)
 		}
-		show("Signing in did not work", detail: error?.localizedDescription ?? "No token came back.", text: true)
 	}
 
 	/// Loads the board, and shows it once the page says its board has loaded.
@@ -376,23 +398,25 @@ final class VboardPaneView: NSView {
 	/// socket that cannot connect is a page with its own error on it rather
 	/// than a notice that never goes.
 	private func showBoard() {
-		guard let web, let document else { return }
+		guard let web, let link = boardLink, let shown = boardID else { return }
 		state = .onBoard
 		show("Opening the board…", detail: "", text: false, keepState: true)
-		web.load(URLRequest(url: page(document.link)))
+		web.load(URLRequest(url: page(link)))
 		say("")
 		leaseTimer?.invalidate()
-		leaseTimer = Timer.scheduledTimer(
-			withTimeInterval: TimeInterval(VboardDocument.leaseSeconds) / 3, repeats: true
-		) { [weak self] _ in
-			MainActor.assumeIsolated {
-				guard let document = self?.document else { return }
-				Task { await document.renewLease() }
+		// A server's own board is nobody's session: it has no lease to keep.
+		if document != nil {
+			leaseTimer = Timer.scheduledTimer(
+				withTimeInterval: TimeInterval(VboardDocument.leaseSeconds) / 3, repeats: true
+			) { [weak self] _ in
+				MainActor.assumeIsolated {
+					guard let document = self?.document else { return }
+					Task { await document.renewLease() }
+				}
 			}
 		}
-		let shown = document.boardID
 		DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-			guard let self, self.document?.boardID == shown else { return }
+			guard let self, self.boardID == shown else { return }
 			self.reveal()
 		}
 	}
@@ -483,7 +507,7 @@ final class VboardPaneView: NSView {
 			SettingsWindowController.shared.show()
 			return
 		}
-		guard let document, let message = VboardPage.Message(body, board: document.boardID) else { return }
+		guard let boardID, let message = VboardPage.Message(body, board: boardID) else { return }
 		switch message {
 		case .snapshot(let count):
 			trace("the page's board loaded (\(count) on it)")
@@ -494,7 +518,7 @@ final class VboardPaneView: NSView {
 			people = count
 			refreshStatus()
 		case .changed:
-			document.noteChange()
+			document?.noteChange()
 		case .deleted(let reason):
 			heardDeleted = true
 			guard !settled else { return }
@@ -544,6 +568,8 @@ final class VboardPaneView: NSView {
 	/// save began counts as saved.
 	@discardableResult
 	func save() async -> Bool {
+		// A server's board has nothing to write: every edit is already on it.
+		guard serverBoard == nil else { return false }
 		guard let document, state == .onBoard else { return !isDirty }
 		say("Saving…")
 		do {
@@ -560,6 +586,32 @@ final class VboardPaneView: NSView {
 			}
 			Toast.post("Could not save \(fileURL.lastPathComponent)", detail: why)
 			return false
+		}
+	}
+
+	/// Whether this tab is a server's board that a copy can be taken of now.
+	var canSaveCopy: Bool { serverBoard != nil && liveClient != nil && state == .onBoard }
+
+	/// Writes a server's board to `destination` as a `.vboard`: the server's
+	/// export into a temporary beside it, then a rename, so a copy that fails
+	/// halfway never leaves half a file. Nil when it worked, or why not.
+	func saveCopy(to destination: URL) async -> String? {
+		guard let liveClient, let serverBoard else { return "This tab is not a board on the server." }
+		switch await liveClient.export(id: serverBoard.id, into: destination.deletingLastPathComponent()) {
+		case .success(let export):
+			do {
+				if FileManager.default.fileExists(atPath: destination.path) {
+					_ = try FileManager.default.replaceItemAt(destination, withItemAt: export.file)
+				} else {
+					try FileManager.default.moveItem(at: export.file, to: destination)
+				}
+				return nil
+			} catch {
+				try? FileManager.default.removeItem(at: export.file)
+				return error.localizedDescription
+			}
+		case .failure(let failure):
+			return describe(failure.outcome)
 		}
 	}
 
@@ -710,8 +762,7 @@ final class VboardPaneView: NSView {
 	private func detachPage() {
 		leaseTimer?.invalidate()
 		leaseTimer = nil
-		signIn?.cancel()
-		signIn = nil
+		signIn.cancel()
 		if let proxy { VboardProxies.shared.release(proxy) }
 		proxy = nil
 		if let watchingSettings { NotificationCenter.default.removeObserver(watchingSettings) }
@@ -789,9 +840,10 @@ final class VboardPaneView: NSView {
 			button.onClick = action
 			return button
 		}
-		// Offered only where the text can be shown: the editor's own limit.
+		// Offered only where the text can be shown: the editor's own limit, and
+		// only for a file.
 		let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-		if text, size <= 64 * 1024 * 1024 {
+		if text, serverBoard == nil, size <= 64 * 1024 * 1024 {
 			let button = NoticeButton(title: "Open as Text", symbol: "doc.plaintext")
 			button.onClick = { [weak self] in self?.onOpenAsText?() }
 			made.append(button)
@@ -830,7 +882,10 @@ final class VboardPaneView: NSView {
 	private func refreshStatus() {
 		var said: String?
 		if state == .onBoard, let server {
-			var parts = ["On \(server.host ?? server.absoluteString)", "kept there for this session only"]
+			var parts = [
+				"On \(server.host ?? server.absoluteString)",
+				serverBoard == nil ? "kept there for this session only" : "the live board: changes are everyone's",
+			]
 			if isPlainOverNetwork { parts.append("plain http: the board crosses the network unencrypted") }
 			let others = max(0, people - 1)
 			if people > 0 { parts.append(others == 0 ? "only you" : others == 1 ? "1 other here" : "\(others) others here") }
@@ -914,33 +969,8 @@ extension VboardPaneView: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate
 	}
 
 	func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-		guard state == .onBoard, let document else { return }
-		webView.load(URLRequest(url: page(document.link)))
-	}
-
-	/// Downloads the page offers — its own `.vboard` download, an export —
-	/// go where a browser puts them, never into the project.
-	func download(
-		_ download: WKDownload,
-		decideDestinationUsing response: URLResponse,
-		suggestedFilename: String,
-		completionHandler: @escaping @MainActor (URL?) -> Void
-	) {
-		let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-			?? FileManager.default.temporaryDirectory
-		var candidate = folder.appendingPathComponent(suggestedFilename)
-		let stem = candidate.deletingPathExtension().lastPathComponent
-		let ext = candidate.pathExtension
-		var number = 2
-		while FileManager.default.fileExists(atPath: candidate.path) {
-			candidate = folder.appendingPathComponent(ext.isEmpty ? "\(stem) \(number)" : "\(stem) \(number).\(ext)")
-			number += 1
-		}
-		completionHandler(candidate)
-	}
-
-	func downloadDidFinish(_ download: WKDownload) {
-		Toast.post("Downloaded from the board", detail: "In your Downloads folder.", kind: .information)
+		guard state == .onBoard, let link = boardLink else { return }
+		webView.load(URLRequest(url: page(link)))
 	}
 
 	/// A link that opens a new window: the server's own pages stay in the tab,
@@ -955,69 +985,5 @@ extension VboardPaneView: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate
 			if isServer(url) { webView.load(action.request) } else { LinkOpener.open(url) }
 		}
 		return nil
-	}
-
-	func webView(
-		_ webView: WKWebView,
-		runJavaScriptAlertPanelWithMessage message: String,
-		initiatedByFrame frame: WKFrameInfo,
-		completionHandler: @escaping @MainActor () -> Void
-	) {
-		let alert = NSAlert()
-		alert.messageText = message
-		alert.runModal()
-		completionHandler()
-	}
-
-	func webView(
-		_ webView: WKWebView,
-		runJavaScriptConfirmPanelWithMessage message: String,
-		initiatedByFrame frame: WKFrameInfo,
-		completionHandler: @escaping @MainActor (Bool) -> Void
-	) {
-		let alert = NSAlert()
-		alert.messageText = message
-		alert.addButton(withTitle: "OK")
-		alert.addButton(withTitle: "Cancel")
-		completionHandler(alert.runModal() == .alertFirstButtonReturn)
-	}
-
-	func webView(
-		_ webView: WKWebView,
-		runJavaScriptTextInputPanelWithPrompt prompt: String,
-		defaultText: String?,
-		initiatedByFrame frame: WKFrameInfo,
-		completionHandler: @escaping @MainActor (String?) -> Void
-	) {
-		let alert = NSAlert()
-		alert.messageText = prompt
-		let field = NSTextField(string: defaultText ?? "")
-		field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
-		alert.accessoryView = field
-		alert.addButton(withTitle: "OK")
-		alert.addButton(withTitle: "Cancel")
-		completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
-	}
-
-	/// A picture or a PDF added to the board from disk.
-	func webView(
-		_ webView: WKWebView,
-		runOpenPanelWith parameters: WKOpenPanelParameters,
-		initiatedByFrame frame: WKFrameInfo,
-		completionHandler: @escaping @MainActor ([URL]?) -> Void
-	) {
-		let panel = NSOpenPanel()
-		panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-		panel.canChooseDirectories = parameters.allowsDirectories
-		panel.canChooseFiles = true
-		completionHandler(panel.runModal() == .OK ? panel.urls : nil)
-	}
-}
-
-// MARK: - The sign-in sheet
-
-extension VboardPaneView: ASWebAuthenticationPresentationContextProviding {
-	func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-		window ?? NSApp.keyWindow ?? NSWindow()
 	}
 }

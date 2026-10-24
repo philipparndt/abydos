@@ -183,6 +183,12 @@ extension MainWindowController {
 		if item.action == #selector(goToOffset(_:)) {
 			return editor.activeTabIsHex
 		}
+		if item.action == #selector(openServerBoard(_:)) {
+			return usableVboardServer != nil
+		}
+		if item.action == #selector(saveCopyOfBoard(_:)) {
+			return editor.activeGroup?.activeBoard?.canSaveCopy == true
+		}
 
 		if item.action == #selector(newProjectFile(_:))
 			|| item.action == #selector(newProjectFolder(_:)) {

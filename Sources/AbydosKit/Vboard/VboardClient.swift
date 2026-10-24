@@ -208,6 +208,28 @@ public final class VboardClient {
 		public let outcome: Outcome
 	}
 
+	/// The boards the server lists to this account whose name contains `text`,
+	/// names starting with it first, then the newest.
+	///
+	/// The server's own lookup for pickers, filtered there so a large
+	/// installation is never fetched whole. Private boards are left out: their
+	/// names are sealed and they open only with a key the server does not hand
+	/// out.
+	public func boards(matching text: String, limit: Int = 100) async -> Result<[VboardBoardSummary], ListFailure> {
+		var found: [VboardBoardSummary] = []
+		let query = [URLQueryItem(name: "q", value: text), URLQueryItem(name: "limit", value: "\(limit)")]
+		let outcome = await send(request(path: "api/v1/boards", query: query, method: "GET")) { status, json in
+			guard status == 200, let json else { return nil }
+			found = VboardBoardSummary.listed(in: json)
+			return .done
+		}
+		return outcome == .done ? .success(found) : .failure(ListFailure(outcome: outcome))
+	}
+
+	public struct ListFailure: Error, Equatable {
+		public let outcome: Outcome
+	}
+
 	/// Removes the board for everybody on it.
 	public func delete(id: String, key: VboardKey? = nil) async -> Outcome {
 		await send(request(path: "api/v1/boards/\(id)", method: "DELETE", key: key)) { status, _ in

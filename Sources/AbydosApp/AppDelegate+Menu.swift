@@ -109,6 +109,15 @@ extension AppDelegate {
 		fileMenu.addItem(withTitle: "Open as Hex", action: #selector(MainWindowController.openAsHex(_:)), keyEquivalent: "")
 		fileMenu.addItem(withTitle: "Open as Text", action: #selector(MainWindowController.openAsText(_:)), keyEquivalent: "")
 		fileMenu.addItem(.separator())
+		// A board that lives on the server rather than in a file: enabled only
+		// with a server named in Settings ▸ Tools ▸ vboard.
+		fileMenu.addItem(
+			withTitle: "Open vboard Board…", action: #selector(MainWindowController.openServerBoard(_:)), keyEquivalent: ""
+		)
+		fileMenu.addItem(
+			withTitle: "Save a Copy of the Board…", action: #selector(MainWindowController.saveCopyOfBoard(_:)), keyEquivalent: ""
+		)
+		fileMenu.addItem(.separator())
 		fileMenu.addItem(withTitle: "Close Tab", action: #selector(MainWindowController.closeTab(_:)), keyEquivalent: "w")
 		let closeWindow = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 		closeWindow.keyEquivalentModifierMask = [.command, .shift]

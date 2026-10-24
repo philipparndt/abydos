@@ -40,6 +40,29 @@ extension EditorViewController {
 		return tab
 	}
 
+	/// A board that lives on the server, in a page tab named by it: choosing the
+	/// same board again brings that tab back rather than making another.
+	///
+	/// Looked for before the pane is made, because the pane goes to the server
+	/// the moment it exists.
+	func openServerBoard(_ board: VboardBoardSummary, server: URL) {
+		let identifier = "vboard/\(server.host ?? "server")/\(board.id)"
+		let page = URL(fileURLWithPath: "/ideai/page/" + identifier)
+		if let index = tabs.firstIndex(where: { $0.pageTitle != nil && $0.url == page }) {
+			activeIndex = nil
+			activate(index: index, focusEditor: false)
+			return
+		}
+		let pane = VboardPaneView(board: board, page: page)
+		openPage(pane, title: board.name, identifier: identifier, symbol: "rectangle.on.rectangle")
+		guard let tab = tabs.first(where: { $0.contentView === pane }) else { return }
+		tab.board = pane
+		pane.onStatusChanged = { [weak self, weak tab] in
+			guard let self, let tab, self.activeTab === tab else { return }
+			self.onStatusChanged?(self)
+		}
+	}
+
 	/// The board tab in front, for a driven run's report.
 	var activeBoard: VboardPaneView? { activeTab?.board }
 }
