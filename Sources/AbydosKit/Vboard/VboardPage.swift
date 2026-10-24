@@ -154,7 +154,8 @@ public enum VboardPage {
 	/// banner — and accents in Vector's brand blue, which sat badly in a
 	/// neutral grey editor with an orange accent ("the blue colors do not match
 	/// nicely", 2026-10-23). Its colours are CSS custom properties: the design
-	/// system's (`--background`, `--ring`, …) and its own board's (`--vb-…`).
+	/// system's (`--background`, `--ring`, …) and its own board's (`--vb-…`),
+	/// or in its classic design a palette of its own (`--bg`, `--indigo`, …).
 	/// These rules set them for both of its themes, ahead of its own, so a
 	/// change of this app's theme is a change of one stylesheet's text.
 	public static func themeStyle(_ tokens: [String: String]) -> String {
