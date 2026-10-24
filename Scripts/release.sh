@@ -33,6 +33,17 @@ APP="build/Abydos.app"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 forget() { [ -x "$LSREGISTER" ] && "$LSREGISTER" -u "$1" >/dev/null 2>&1 || true; }
 
+# Unmounts a disk image, waiting for whatever is still looking at it and
+# forcing it in the end. A plain detach answered "Resource busy" for fifteen
+# seconds on 2026-10-24 and a forced one went through at once.
+detach() {
+	for _ in 1 2 3 4 5; do
+		hdiutil detach -quiet "$1" 2>/dev/null && return 0
+		sleep 2
+	done
+	hdiutil detach -quiet -force "$1"
+}
+
 PROFILE="${NOTARY_PROFILE:-notarytool}"
 IDENTITY="${SIGN_IDENTITY:-Developer ID Application}"
 
@@ -202,30 +213,27 @@ xcrun stapler staple "$APP"
 # the network, and it needs a ticket of its own for Gatekeeper to admit it
 # before anything has been copied out of it.
 echo "==> Making $DMG"
+# Built by hand rather than with `hdiutil create -srcfolder`: an empty
+# read-write image, mounted out of sight, the app copied in, then compressed.
+# `-srcfolder` mounts and unmounts a volume of its own, and on this machine the
+# unmount fails with "Resource busy" while the system is still looking at the
+# freshly copied app — five tries in a row on 2026-10-24, and 0.23.8 stopped
+# here twice with nothing said, -quiet having swallowed the reason. Done by
+# hand, the one unmount can be retried and then forced.
+WORK=$(mktemp -d)
+RW="$WORK/Abydos-rw.dmg"
+SIZE_MB=$(( $(du -sm "$APP" | cut -f1) + 64 ))
+hdiutil create -quiet -size "${SIZE_MB}m" -fs HFS+ -volname "Abydos" -layout NONE "$RW"
+VOLUME="$WORK/volume"
+mkdir "$VOLUME"
+hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$VOLUME" "$RW"
+ditto "$APP" "$VOLUME/Abydos.app"
+ln -s /Applications "$VOLUME/Applications"
+forget "$VOLUME/Abydos.app"
+detach "$VOLUME" || { echo "could not unmount $VOLUME" >&2; exit 1; }
 rm -f "$DMG"
-STAGE=$(mktemp -d)
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
-# Tried up to five times. `hdiutil create` fails now and then with "Resource
-# busy" while something else holds the image it is building, and succeeds a
-# few seconds later. -quiet hid that, so 0.23.8 stopped here twice with
-# nothing said after "Making"; the last attempt's reason is printed now.
-made=0
-for attempt in 1 2 3 4 5; do
-	if why=$(hdiutil create -quiet -volname "Abydos" -srcfolder "$STAGE" -ov -format UDZO "$DMG" 2>&1); then
-		made=1
-		break
-	fi
-	echo "    hdiutil, attempt $attempt: ${why:-failed}"
-	sleep 5
-done
-if [ "$made" != 1 ]; then
-	rm -rf "$STAGE"
-	echo "could not make $DMG" >&2
-	exit 1
-fi
-forget "$STAGE/Abydos.app"
-rm -rf "$STAGE"
+hdiutil convert -quiet "$RW" -format UDZO -o "$DMG"
+rm -rf "$WORK"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
 # --- Notarise the image ----------------------------------------------------
@@ -254,7 +262,7 @@ MOUNT=$(mktemp -d)
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
 if xcrun stapler validate "$MOUNT/Abydos.app"; then STAPLED=0; else STAPLED=1; fi
 forget "$MOUNT/Abydos.app"
-hdiutil detach -quiet "$MOUNT" || true
+detach "$MOUNT" || true
 rmdir "$MOUNT" 2>/dev/null || true
 if [ "$STAPLED" -ne 0 ]; then
 	echo "Stopping: the app inside $DMG carries no ticket, so it will ask Apple"
