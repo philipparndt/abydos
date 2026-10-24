@@ -206,7 +206,24 @@ rm -f "$DMG"
 STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "Abydos" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+# Tried up to five times. `hdiutil create` fails now and then with "Resource
+# busy" while something else holds the image it is building, and succeeds a
+# few seconds later. -quiet hid that, so 0.23.8 stopped here twice with
+# nothing said after "Making"; the last attempt's reason is printed now.
+made=0
+for attempt in 1 2 3 4 5; do
+	if why=$(hdiutil create -quiet -volname "Abydos" -srcfolder "$STAGE" -ov -format UDZO "$DMG" 2>&1); then
+		made=1
+		break
+	fi
+	echo "    hdiutil, attempt $attempt: ${why:-failed}"
+	sleep 5
+done
+if [ "$made" != 1 ]; then
+	rm -rf "$STAGE"
+	echo "could not make $DMG" >&2
+	exit 1
+fi
 forget "$STAGE/Abydos.app"
 rm -rf "$STAGE"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
