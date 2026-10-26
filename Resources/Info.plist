@@ -64,6 +64,18 @@
 				<string>de.rnd7.abydos.xml-dialect</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>vboard board</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>de.rnd7.vboard.board</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
 	<string>Abydos</string>
@@ -444,6 +456,23 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>cts</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>vboard board</string>
+			<key>UTTypeIdentifier</key>
+			<string>de.rnd7.vboard.board</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>vboard</string>
 				</array>
 			</dict>
 		</dict>

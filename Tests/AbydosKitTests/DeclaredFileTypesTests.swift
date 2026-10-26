@@ -56,6 +56,11 @@ struct DeclaredFileTypesTests {
 	/// decision somebody can read rather than a hole somebody has to rediscover.
 	static let systemCallsThemSomethingElse: Set<String> = ["ts", "mts"]
 
+	/// Extensions read as something other than a language. **A `.vboard` is a
+	/// board**: it opens on a vboard server when one is named in Settings, and as
+	/// the JSON it is when not — so the registry has no entry for it and needs none.
+	static let readAsSomethingElse: Set<String> = ["vboard"]
+
 	/// Whether the Finder would offer this app for a file with this extension.
 	///
 	/// **The system's own type wins**, which is the order this asks in: an
@@ -103,7 +108,7 @@ struct DeclaredFileTypesTests {
 	/// promise this editor cannot keep, and the rank being *Alternate* does not
 	/// make an unreadable file readable.
 	@Test func nothingIsDeclaredThatTheEditorCannotRead() {
-		let known = Set(LanguageRegistry.extensionMap.keys)
+		let known = Set(LanguageRegistry.extensionMap.keys).union(Self.readAsSomethingElse)
 		let claimed = Set(Self.importedExtensions.keys)
 		#expect(claimed.subtracting(known).isEmpty,
 		        "declared and unknown to the registry: \(claimed.subtracting(known).sorted())")
@@ -116,6 +121,12 @@ struct DeclaredFileTypesTests {
 		#expect(!documents.isEmpty)
 		for entry in documents {
 			#expect(entry["LSHandlerRank"] as? String == "Alternate")
+		}
+	}
+
+	@Test func aBoardIsOffered() {
+		for name in Self.readAsSomethingElse {
+			#expect(isOffered(name), "not offered under Open With: \(name)")
 		}
 	}
 
