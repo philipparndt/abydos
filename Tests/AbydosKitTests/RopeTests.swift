@@ -33,6 +33,21 @@ struct RopeTests {
 		#expect(r.lineCount == 5_001)
 	}
 
+	@Test func buildsBytesThatAreNotUTF8() {
+		// A long run of continuation bytes has no boundary to bisect on; it used
+		// to bisect the same range forever and overflow the stack (0.23.7).
+		let runs: [[UInt8]] = [
+			Array(repeating: 0x80, count: 10_000),
+			[0x41] + Array(repeating: 0xBF, count: 10_000),
+			(0..<50_000).map { UInt8(truncatingIfNeeded: $0 &* 2_654_435_761 >> 13) },
+		]
+		for bytes in runs {
+			let r = Rope(data: Data(bytes))
+			#expect(r.byteCount == bytes.count)
+			#expect(Array(r.bytes(in: 0..<r.byteCount)) == bytes)
+		}
+	}
+
 	// MARK: - Unicode
 
 	@Test func countsUTF16ForNonASCII() {

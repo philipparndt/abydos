@@ -95,9 +95,14 @@ public struct Rope: Sendable {
 		if length <= maxChunk {
 			return makeLeaf(Array(bytes[lo..<hi]))
 		}
-		// Bisect on a UTF-8 boundary so no chunk ever splits a codepoint.
-		var mid = lo + length / 2
-		while mid > lo && isContinuation(bytes[mid]) { mid -= 1 }
+		// Bisect on a UTF-8 boundary so no chunk ever splits a codepoint. A
+		// sequence has at most three continuation bytes, so a longer run is not
+		// UTF-8 (a binary file) and the midpoint stands: walking all the way
+		// back to `lo` would rebuild the same range until the stack runs out.
+		let half = lo + length / 2
+		var mid = half
+		while mid > half - 3 && isContinuation(bytes[mid]) { mid -= 1 }
+		if isContinuation(bytes[mid]) { mid = half }
 		return join(build(bytes: bytes, from: lo, to: mid),
 		            build(bytes: bytes, from: mid, to: hi))
 	}
