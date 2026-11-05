@@ -267,6 +267,15 @@ public enum ToolImageCatalogue {
 			choices: [],
 			requirement: languageServerRequirement("openscad-lsp --stdio")
 		),
+		// No published image either, for openscad-lsp's reason: a Rust
+		// toolchain and a C++ compiler to get one binary. `ToolImages/
+		// opensolve-scad-lsp` builds it from a tag the first time it is wanted.
+		Tool(
+			key: "opensolve-scad-lsp",
+			title: "OpenSCAD — opensolve-scad-lsp",
+			choices: [],
+			requirement: languageServerRequirement("opensolve-scad-lsp")
+		),
 	]
 
 	/// What every language server image has to do, which is the same for all of

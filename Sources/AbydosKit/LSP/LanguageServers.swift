@@ -176,6 +176,32 @@ public enum LanguageServers {
 			installHint: "go install github.com/ptdewey/plantuml-lsp@latest",
 			rootMarkers: []
 		),
+		// The OpenSCAD server, and the one a `.scad` gets unless a project
+		// says otherwise. It is the language server of opensolve-scad, an
+		// interpreter of OpenSCAD's language in Rust, so its diagnostics come
+		// from *running* the file — an undefined variable, a wrong argument,
+		// an `echo`, an `assert` that fails, each where it happened — and its
+		// names from the files it includes and uses, BOSL2's among them.
+		// It speaks over standard input and output with no flag at all;
+		// `--stdio` is accepted and not needed.
+		LanguageServerDefinition(
+			languageIds: ["openscad"],
+			command: "opensolve-scad-lsp",
+			installHint: "cargo install --git https://github.com/cadscribe/opensolve-scad "
+				+ "--tag v0.1.3 --locked opensolve-scad-lsp",
+			// OpenSCAD has no manifest to look for — a model is a file, and a
+			// project is a directory of them. Anywhere a `.scad` is opened is a
+			// place this server can answer.
+			rootMarkers: [],
+			trade: "runs the file. Diagnostics are what OpenSCAD would say on rendering it — "
+				+ "errors, warnings and echoes where they happen — completion knows what the "
+				+ "file includes and uses, BOSL2 too, and it has signature help. Each change "
+				+ "is evaluated again, so a model that takes seconds to evaluate takes as long "
+				+ "to be marked."
+		),
+		// The server a `.scad` had before opensolve-scad-lsp, kept as the
+		// second opinion a project can ask for. It reads the syntax with
+		// tree-sitter and never evaluates anything.
 		LanguageServerDefinition(
 			languageIds: ["openscad"],
 			command: "openscad-lsp",
@@ -185,10 +211,10 @@ public enum LanguageServers {
 			// waits for a handshake that never comes.
 			arguments: ["--stdio"],
 			installHint: "cargo install openscad-lsp",
-			// OpenSCAD has no manifest to look for — a model is a file, and a
-			// project is a directory of them. Anywhere a `.scad` is opened is a
-			// place this server can answer.
-			rootMarkers: []
+			rootMarkers: [],
+			trade: "syntax only. It parses and never runs the file, so it marks syntax errors "
+				+ "and nothing an evaluation would find, and it has no signature help; its "
+				+ "documentation of the built-ins is the wiki's."
 		),
 		LanguageServerDefinition(
 			languageIds: ["song"],
