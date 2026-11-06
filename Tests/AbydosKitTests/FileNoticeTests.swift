@@ -172,4 +172,32 @@ struct FileNoticeTests {
 			#expect(sentence?.contains("MiB") == false)
 		}
 	}
+
+	/// The file that opened as one sixteen-megabyte line: an opaque RGBA dump
+	/// with no NUL and no newline in it.
+	@Test func anRGBADumpWithoutANulIsBinary() {
+		let pixels = [UInt8](repeating: 0, count: 8_000).indices.map { i -> UInt8 in
+			[0x1E, 0x1E, 0x20, 0xFF][i % 4]
+		}
+		#expect(!pixels.contains(0))
+		#expect(FileNotice.looksBinary(pixels))
+	}
+
+	@Test func aNulIsStillBinary() {
+		#expect(FileNotice.looksBinary(Array("text\0more".utf8)))
+	}
+
+	@Test func textWithTabsNewlinesAndEscapesIsText() {
+		let text = String(repeating: "\tlet x = 1\r\n\u{1B}[31mred\u{1B}[0m\u{0C}\n", count: 200)
+		#expect(!FileNotice.looksBinary(Array(text.utf8)))
+	}
+
+	@Test func latin1AndUTF8AreText() {
+		#expect(!FileNotice.looksBinary([0x47, 0x72, 0xFC, 0xDF, 0x65, 0x0A]))
+		#expect(!FileNotice.looksBinary(Array("Grüße, 世界\n".utf8)))
+	}
+
+	@Test func anEmptyFileIsText() {
+		#expect(!FileNotice.looksBinary([UInt8]()))
+	}
 }

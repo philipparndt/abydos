@@ -22,10 +22,7 @@ enum FileInspector {
 	static func isProbablyBinary(url: URL) -> Bool {
 		guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
 		defer { try? handle.close() }
-		guard let sample = try? handle.read(upToCount: 8_000), !sample.isEmpty else { return false }
-
-		// A NUL byte in the first few KB is the standard heuristic — it is what
-		// git itself uses to decide a file is binary.
-		return sample.contains(0)
+		guard let sample = try? handle.read(upToCount: 8_000) else { return false }
+		return FileNotice.looksBinary(sample)
 	}
 }

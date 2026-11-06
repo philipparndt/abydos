@@ -71,6 +71,31 @@ public enum FileNotice {
 		return nil
 	}
 
+	/// Whether the head of a file says it is not text.
+	///
+	/// **A NUL byte is not enough.** It is what git asks, and a raw RGBA dump
+	/// of an opaque picture has none: `1e 1e 20 ff`, four million times over,
+	/// with no newline in it either. It passed, and opened as one line sixteen
+	/// megabytes long, which made the whole window crawl while it was selected.
+	///
+	/// So control characters count too. Text has tabs, newlines, carriage
+	/// returns and the odd form feed, backspace or escape; anything else below
+	/// a space, or DEL, is one in every few hundred bytes of the strangest
+	/// text, and was half the bytes of that picture. A tenth is the line.
+	public static func looksBinary(_ sample: some Collection<UInt8>) -> Bool {
+		guard !sample.isEmpty else { return false }
+		var control = 0
+		for byte in sample {
+			switch byte {
+			case 0: return true
+			case 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x1B: continue
+			case ..<0x20, 0x7F: control += 1
+			default: continue
+			}
+		}
+		return control * 10 > sample.count
+	}
+
 	/// Whether Quick Look is worth offering for a name.
 	///
 	/// **Not "always".** Quick Look opens for anything and shows a generic icon
