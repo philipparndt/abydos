@@ -2,18 +2,32 @@ import Foundation
 import Testing
 @testable import AbydosKit
 
-/// Against the real OpenSCAD language server, when the machine has one.
+/// Against the real OpenSCAD language servers, when the machine has them.
 ///
-/// Skipped where `openscad-lsp` is not installed, the way the Swift and Java
+/// Each skipped where it is not installed, the way the Swift and Java
 /// integration tests are. When it is there, this is what proves the entry in
 /// the table is right — and the part most likely to be wrong is not the
-/// protocol but the command line: this server listens on a TCP port unless
+/// protocol but the command line: openscad-lsp listens on a TCP port unless
 /// given `--stdio`, so a definition missing that flag produces a server that
 /// starts, waits on 127.0.0.1:3245 for a client that never comes, and an
 /// editor that waits for a handshake that never arrives. Nothing about that
 /// failure looks like a missing flag.
 struct OpenSCADLiveTests {
+	/// The default, which a project that says nothing gets.
+	@Test func opensolveScadLSPAnswersOverStandardIO() async throws {
+		try await answersOverStandardIO(choosing: .none, expecting: "opensolve-scad-lsp")
+	}
+
 	@Test func openscadLSPAnswersOverStandardIO() async throws {
+		let asked = LanguageServerChoices(
+			byLanguage: ["openscad": .init(name: "openscad-lsp", source: .project)]
+		)
+		try await answersOverStandardIO(choosing: asked, expecting: "openscad-lsp")
+	}
+
+	private func answersOverStandardIO(
+		choosing choices: LanguageServerChoices, expecting name: String
+	) async throws {
 		let root = try JavaTestDirectory.make()
 		defer { try? FileManager.default.removeItem(at: root) }
 
@@ -31,11 +45,11 @@ struct OpenSCADLiveTests {
 		plate(width, thickness, 2);
 		""", to: file)
 
-		guard let server = LanguageServers.resolve(languageId: "openscad", root: root, choosing: .none) else { return }
+		guard let server = LanguageServers.resolve(languageId: "openscad", root: root, choosing: choices) else { return }
+		#expect(server.definition.name == name)
 		// No manifest exists for OpenSCAD, so the server is rooted at the
 		// project itself rather than at a directory holding a marker.
 		#expect(FilePath.canonical(server.root) == FilePath.canonical(root))
-		#expect(server.definition.arguments.contains("--stdio"))
 
 		let client = LSPClient()
 		defer { client.stop() }

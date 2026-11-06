@@ -322,6 +322,32 @@ struct LanguageServerChoiceTests {
 		)
 	}
 
+	/// OpenSCAD's two: opensolve-scad-lsp, which runs the file, is what a
+	/// `.scad` gets, and openscad-lsp — the server it had before — is still
+	/// there for a project that names it.
+	@Test func openscadHasTwoServersAndTheOneThatRunsTheFileIsTheDefault() {
+		#expect(
+			LanguageServers.candidates(forLanguage: "openscad").map(\.name)
+				== ["opensolve-scad-lsp", "openscad-lsp"]
+		)
+		#expect(
+			LanguageServers.definition(forLanguage: "openscad", choosing: .none)?.name
+				== "opensolve-scad-lsp"
+		)
+		// No flag: it speaks over standard input and output by default, where
+		// openscad-lsp without `--stdio` waits on a TCP port for ever.
+		#expect(LanguageServers.server(named: "opensolve-scad-lsp")?.arguments == [])
+		#expect(LanguageServers.server(named: "openscad-lsp")?.arguments == ["--stdio"])
+
+		let asked = LanguageServerChoices(
+			byLanguage: ["openscad": .init(name: "openscad-lsp", source: .project)]
+		)
+		#expect(
+			LanguageServers.definition(forLanguage: "openscad", choosing: asked)?.name
+				== "openscad-lsp"
+		)
+	}
+
 	/// The debug bundle goes into jdtls and nothing else, so `setup == .java` is
 	/// exactly the servers it can be offered to.
 	///

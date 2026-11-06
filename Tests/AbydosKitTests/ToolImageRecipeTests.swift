@@ -18,6 +18,18 @@ struct ToolImageRecipeTests {
 		))
 	}
 
+	@Test func opensolveScadLSPHasOneBuiltFromATag() throws {
+		let recipe = try #require(ToolImageRecipes.recipe(forTool: "opensolve-scad-lsp"))
+		#expect(recipe.image.hasPrefix("abydos-built/opensolve-scad-lsp:"))
+		let dockerfile = try String(
+			contentsOf: recipe.context.appendingPathComponent("Dockerfile"), encoding: .utf8
+		)
+		// A tag, so that the image is the same server whichever day it was built.
+		#expect(dockerfile.contains("--tag ${OPENSOLVE_SCAD_TAG}"))
+		#expect(dockerfile.contains("ENTRYPOINT [\"opensolve-scad-lsp\"]"))
+		#expect(ToolImageCatalogue.tool(forKey: "opensolve-scad-lsp") != nil)
+	}
+
 	@Test func goplsHasOneToo() throws {
 		// The recipe route is not a special case for one tool: gopls has both a
 		// published image and a Dockerfile, and this is what says the two
@@ -235,10 +247,10 @@ struct ToolImageRecipeTests {
 		defer { try? FileManager.default.removeItem(at: root) }
 		try JavaTestDirectory.write("cube(10);\n", to: root.appendingPathComponent("part.scad"))
 		try JavaTestDirectory.write(
-			"{\"openscad-lsp\": \"build\"}\n", to: ToolImages.url(in: root)
+			"{\"opensolve-scad-lsp\": \"build\"}\n", to: ToolImages.url(in: root)
 		)
 
-		let asked = try #require(ToolImages.inProject(root).image(for: "openscad-lsp"))
+		let asked = try #require(ToolImages.inProject(root).image(for: "opensolve-scad-lsp"))
 		#expect(asked == "build")
 
 		let runtime = ContainerRuntime.docker("/usr/bin/docker")
@@ -246,14 +258,15 @@ struct ToolImageRecipeTests {
 			languageId: "openscad", project: root, image: asked, runtime: runtime,
 			choosing: .none
 		))
-		let recipe = try #require(ToolImageRecipes.recipe(forTool: "openscad-lsp"))
+		let recipe = try #require(ToolImageRecipes.recipe(forTool: "opensolve-scad-lsp"))
 		let image = try #require(resolved.launch.image)
 		#expect(image.name == recipe.image)
 
 		let run = resolved.launch.invocation
 		#expect(run.arguments.last == recipe.image)
-		// Nothing after the image: `--stdio` is on the entry point, because an
-		// argument from this side would arrive after the image's own.
+		// Nothing after the image: what the server needs is on the entry point,
+		// because an argument from this side would arrive after the image's own.
+		// The server a `.scad` gets by default, so it is its recipe that is built.
 		#expect(!run.arguments.contains("--stdio"))
 		let paths = try #require(resolved.launch.paths)
 		#expect(paths.container == "/workspace")
