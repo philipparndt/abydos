@@ -699,6 +699,53 @@ workflow is five workflows within a month. Running it again is safe: files the
 project owns are left alone, and a file it already had keeps everything outside
 the fenced section.
 
+## Several windows
+
+One window per project, and as many projects as you have monitors: an agent
+at work in one window while you carry on in another, each window on its own.
+
+**File ▸ New Window** (⌘N) asks what to open. It lists your projects, and the
+tmux sessions on the server with how many windows each has, whether an agent in
+it is working or waiting, and which window is on it. A session opens on the
+folder it was started in, with its terminal attached.
+
+**A project is open in one window at most.** Choosing a project that is
+already open — from the switcher, the recent list, ⌘N, or by `cd`-ing into it
+in a terminal that follows its directory — brings that window forward instead.
+
+**The terminals share tmux without moving each other.** A tmux session has one
+current window, so two terminals on it would each drag the other along. When a
+window's terminal arrives at a session somebody else is on — another window,
+another copy of Abydos, iTerm — Abydos gives it a grouped session of its own,
+`<session>~2`. It holds the same tmux windows, keeps its own current one, and
+removes itself when its window closes. You never manage it; `C-b s` shows it
+beside its session.
+
+**A tmux window is in front in one Abydos window at a time.**
+
+```
+  window 1                       window 2
+  AbydosDev: Claude ◀──────┐     AbydosDev~2: Tests
+                           │
+                           └──── C-b w → Claude
+                                 window 1 comes forward,
+                                 window 2 stays on Tests
+```
+
+- Choosing the tmux window the other Abydos window shows — by its tab, or with
+  `C-b w`, `C-b n`, `C-b 1` — brings that window forward, and this one stays on
+  what it showed. `C-b n` therefore stops at the other window's tmux window.
+- Closing a tmux window (`C-b x`, `C-b &`, a tab's ×) never leaves you on the other
+  window's: the terminal moves to a window nobody has in front, and if there is
+  none it leaves tmux and says why. No window is made and no session is
+  switched for you, so closing windows ends when they are gone.
+- Closing a whole session ends it for every terminal on it, as tmux always
+  does; a terminal on its grouped session keeps the windows.
+
+Use tmux 3.8 or later: 3.7c draws an empty `C-b w` list while a grouped session
+is the newest on the server. `make windows` drives two windows through all of
+this on a scratch tmux server.
+
 ## Licence
 
 The bundled font and every dependency permit redistribution in an open-source
