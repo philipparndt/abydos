@@ -83,7 +83,7 @@ extension SwitcherViewController: NSTableViewDataSource, NSTableViewDelegate {
 		case let .header(title):
 			return SwitcherHeaderCell(title: title)
 		case let .project(entry, isOpen):
-			return SwitcherProjectCell(entry: entry, isOpen: isOpen, filter: filterText)
+			return SwitcherProjectCell(entry: entry, isOpen: isOpen, filter: filterText, note: projectNote(for: entry))
 		case let .branch(name, isCurrent):
 			return SwitcherBranchCell(name: name, isCurrent: isCurrent, filter: filterText)
 		case let .file(path):

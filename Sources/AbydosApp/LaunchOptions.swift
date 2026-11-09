@@ -1031,4 +1031,27 @@ struct LaunchOptions {
 	/// app. That is a thing only `ps` can say, and only if something closes a
 	/// window without a hand on the mouse.
 	var closeLastWindowAt: Double?
+
+	/// A second project window, opened the way File ▸ New Window's list opens
+	/// one: `--second-window <dir>`.
+	var secondWindow: String?
+	/// The tmux session that second window's terminal is to attach to, as a
+	/// session chosen in File ▸ New Window's list: `--second-window-session`.
+	var secondWindowSession: String?
+	/// The last window's terminal reporting it has walked into a directory, as
+	/// a shell's report would: `--walk-into <dir>`. Says where every window is
+	/// afterwards, and what the walking one said.
+	var walkInto: String?
+	/// File ▸ New Window chosen, and its list printed: `--new-window-picker`.
+	var newWindowPicker = false
+	/// The last window's tmux client sent to a session, or a window in one, the
+	/// way `C-b s` or `C-b w` sends it: `--switch-client AbydosDev:2`. Then what
+	/// every window's terminal is on is printed.
+	var switchClient: String?
+	/// The panel's tabs made tmux's windows before anything opens, in this
+	/// run's own settings: `--tmux-tabs`.
+	var tmuxTabs = false
+	/// A tmux session chosen as File ▸ New Window's list chooses one, then
+	/// every window printed: `--open-session <name>`.
+	var openSession: String?
 }

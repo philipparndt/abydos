@@ -179,6 +179,17 @@ extension BottomPanel {
 				return
 			}
 			if attached != nil { self.hasAttachedOnce = true }
+			// Arrived — by `C-b s`, `C-b w`, anything tmux does — at a session
+			// another window's terminal is on. From here the two would move
+			// each other, so this one is moved on to a session of its own in
+			// the same group, showing what it was showing. Only the one that
+			// arrived: the window already there has not changed session.
+			if let tty, attached != nil, session != self.mirroredSession,
+			   await self.isSharedOnArrival(session, tty: tty),
+			   await self.moveToGroupedSession(from: session, tty: tty) {
+				self.mirrorRefreshWanted = true
+				return
+			}
 			if session != self.mirroredSession {
 				self.runningSessions.forgetSeeded(inTmuxSession: self.mirroredSession)
 				self.mirroredSession = session
@@ -187,9 +198,28 @@ extension BottomPanel {
 			await self.applyStatusBarWish(to: session)
 
 			let windows = await TmuxMirror.windows(inSession: session)
+			let active = windows.first(where: \.isActive)
+			// Moved here by tmux's own keys onto the window another Abydos window
+			// has in front: that one is raised and this one goes back, as a tab
+			// click would. Only the window that moved — and on its first reading
+			// it is moved beside the other rather than away.
+			//
+			// Only once the client is there: before it, `session` is the one the
+			// panel was configured for, not the grouped one it is joining, and a
+			// window chosen there moves the other window instead.
+			let firstReading = self.shownWindowLog.isEmpty
+			let movedByTmux = self.shownWindowLog.last.map { $0.windowID != active?.windowID } ?? false
+			if attached != nil { self.noteShownWindow(active?.windowID, in: session, byThisWindow: false) }
+			if attached != nil, let active, !active.windowID.isEmpty {
+				if firstReading, await self.arriveBesideTheOtherWindow(active.windowID, in: session) { return }
+				if movedByTmux, let other = self.panelShowing(active) {
+					await self.stepAway(from: active.windowID, in: session, tty: tty, raising: other)
+					return
+				}
+			}
 			// The badges tmux already carries stand in for sessions the hook
 			// has not spoken for in this process.
-			self.runningSessions.seed(windows: windows, inTmuxSession: session)
+			self.runningSessions.seed(windows: windows, inTmuxSession: session, group: self.groupMates(of: session))
 			// Nothing at all usually means tmux is still starting, and the
 			// strip keeps what it had rather than blinking empty — but not
 			// when the terminal itself has exited. Then the session really is
@@ -383,6 +413,7 @@ extension BottomPanel {
 		strip.onSelect = { [weak self] index in
 			guard let self, self.tmuxWindows.indices.contains(index) else { return }
 			let window = self.tmuxWindows[index]
+			if self.raiseWindowShowing(window) { return }
 			self.markMirroredWindowActive(window.index)
 			Task {
 				await TmuxMirror.select(

@@ -234,6 +234,13 @@ extension LaunchOptions {
 					.split(separator: ",").compactMap { Double($0) }
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
+			case "--second-window": options.secondWindow = next()
+			case "--second-window-session": options.secondWindowSession = next()
+			case "--walk-into": options.walkInto = next()
+			case "--new-window-picker": options.newWindowPicker = true
+			case "--switch-client": options.switchClient = next()
+			case "--tmux-tabs": options.tmuxTabs = true
+			case "--open-session": options.openSession = next()
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--terminal-link":
 				let parts = (next() ?? "").split(separator: ":").map(String.init)

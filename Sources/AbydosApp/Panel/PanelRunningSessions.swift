@@ -128,9 +128,9 @@ final class PanelRunningSessions {
 	/// launched, sitting at a prompt. Filed under each pane's own directory,
 	/// which tmux knows, and under this window's project only for a pane that
 	/// has none.
-	func seed(windows: [TmuxMirror.Window], inTmuxSession session: String) {
+	func seed(windows: [TmuxMirror.Window], inTmuxSession session: String, group: Set<String> = []) {
 		guard let root = projectRoot() else { return }
-		if RunningSessions.shared.seed(windows: windows, inTmuxSession: session, cwd: root.path) {
+		if RunningSessions.shared.seed(windows: windows, inTmuxSession: session, group: group, cwd: root.path) {
 			sync()
 		}
 	}

@@ -242,6 +242,10 @@ extension MainWindowController {
 	/// The tmux session the panel's tabs are showing, if they are showing one.
 	var mirroredTmuxSession: String? { bottomPanel.mirroredTmuxSession }
 
+	/// Whether this window's tabs are `session`, or a grouped session of this
+	/// window's own made from it: news about a window in it is news for here.
+	func showsTmuxSession(_ session: String) -> Bool { bottomPanel.isShowing(tmuxSession: session) }
+
 	/// Which of those windows is the active one.
 	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
 

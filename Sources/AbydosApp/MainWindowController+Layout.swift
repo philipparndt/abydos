@@ -804,7 +804,15 @@ extension MainWindowController {
 			self?.editor.activeGroup?.page(identifier: identifier)
 		}
 		reviewing.rememberSession = { [weak self] in self?.rememberOpenEditors() }
-		reviewing.openCheckout = { [weak self] path in self?.switchProject(to: path) }
+		reviewing.openCheckout = { [weak self] path in
+			// A checkout another window has open is raised there, not opened here
+			// as well: see `ProjectWindows`.
+			if let other = (NSApp.delegate as? AppDelegate)?.window(showing: path), other !== self {
+				other.showWindow(nil)
+				return
+			}
+			self?.switchProject(to: path)
+		}
 		reviewing.notify = { title, body in Toast.post(title, detail: body) }
 		reviewing.openPage = { [weak self] page, title, identifier, symbol in
 			guard let self, let group = self.editor.activeGroup else { return }

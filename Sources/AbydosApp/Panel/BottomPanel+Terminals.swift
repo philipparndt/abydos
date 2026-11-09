@@ -30,7 +30,7 @@ extension BottomPanel {
 			if appTerminals.contains(terminal) { return .anotherWindow }
 		}
 		if let tmux = running.tmuxSession {
-			return mirroredTmuxSession == tmux ? .tmuxHere : .tmuxSession(tmux)
+			return isShowing(tmuxSession: tmux) ? .tmuxHere : .tmuxSession(tmux)
 		}
 		return .elsewhere
 	}
@@ -59,10 +59,21 @@ extension BottomPanel {
 			self?.refreshTmuxWindows()
 		}
 
-		if mirroredTmuxSession == tmux {
+		if isShowing(tmuxSession: tmux), let here = mirroredTmuxSession {
 			if let index = running.window { markMirroredWindowActive(index) }
 			if let terminal = mirroredTerminal { activate(terminal, focus: true) }
-			Task { await select() }
+			// Through a grouped session of ours, by index in ours. A pane id
+			// names the window, not which session it is chosen in, and tmux
+			// could choose it in the session another window is on — pulling
+			// that window along, which is what the group is there to stop.
+			if here != tmux, let index = running.window {
+				Task {
+					await TmuxMirror.select(window: index, inSession: here)
+					self.refreshTmuxWindows()
+				}
+			} else {
+				Task { await select() }
+			}
 			return true
 		}
 		if mirrorsTmux, let tty = tmuxClientTTY, mirroredTerminal?.hasExited != true {
@@ -144,7 +155,8 @@ extension BottomPanel {
 	/// click that did not land — and it is the one thing here that can be known
 	/// without asking, since we are the ones who asked for the switch.
 	func markMirroredWindowActive(_ index: Int) {
-		guard tmuxWindows.contains(where: { $0.index == index }) else { return }
+		guard let chosen = tmuxWindows.first(where: { $0.index == index }) else { return }
+		noteShownWindow(chosen.windowID, in: mirroredTmuxSession ?? "", byThisWindow: true)
 		mirrorChangedLocally()
 		// Everything except which one is active is carried over. Rebuilding
 		// these from four fields dropped each window's Claude status, so every
@@ -166,10 +178,12 @@ extension BottomPanel {
 	}
 
 	/// The command that attaches to one particular session, making it if it is
-	/// not there — which is what `new -A` means.
+	/// not there — which is what `new -A` means — or, when another window's
+	/// terminal is on it, joining its group as a session of this window's own.
+	/// See `TmuxGroups`.
 	private func attachCommand(to session: String) -> (executable: String, arguments: [String])? {
 		guard let tmux = Executables.locate("tmux") else { return nil }
-		return (executable: tmux, arguments: TmuxMirror.attachArguments(to: session))
+		return (executable: tmux, arguments: TmuxMirror.attachArguments(for: attachDecision(for: session)))
 	}
 
 	/// What the first terminal runs instead of a plain shell.
@@ -191,8 +205,10 @@ extension BottomPanel {
 		let tty = tmuxClientTTY ?? ""
 
 		Task { @MainActor in
-			let all = await TmuxMirror.sessions()
-			let current = self.mirroredSession
+			// A group as one row: a grouped session another window made is
+			// that window's view of the session, not a place of its own.
+			let all = TmuxGroups.shownAsOne(await TmuxMirror.sessions())
+			let current = self.rememberedTmuxSession
 			let menu = NSMenu()
 
 			// Names in one column and counts in another, on a tab stop: the
@@ -269,8 +285,18 @@ extension BottomPanel {
 			reattachTmux(to: parts[0])
 			return
 		}
+		let (target, tty) = (parts[0], parts[1])
+		guard !isShowing(tmuxSession: target) else { return }
 		Task {
-			await TmuxMirror.switchClient(onTTY: parts[1], to: parts[0])
+			// Straight to a session of our own when another window is on it,
+			// rather than arriving there and being moved on half a second
+			// later.
+			if self.sessionsHeldElsewhere.contains(target),
+			   await self.moveToGroupedSession(from: target, tty: tty) {
+				self.refreshTmuxWindows()
+				return
+			}
+			await TmuxMirror.switchClient(onTTY: tty, to: target)
 			self.refreshTmuxWindows()
 		}
 	}
@@ -338,7 +364,7 @@ extension BottomPanel {
 	func offerToCloseSessions() {
 		Task { @MainActor in
 			let offers = TmuxSessionClosing.offers(
-				await TmuxMirror.sessions(), showing: self.mirroredTmuxSession
+				TmuxGroups.shownAsOne(await TmuxMirror.sessions()), showing: self.rememberedTmuxSession
 			)
 			self.offerToCloseSessions(offers)
 		}
@@ -358,6 +384,11 @@ extension BottomPanel {
 	func closeSessions(named names: [String]) {
 		guard !names.isEmpty else { return }
 		Task { @MainActor in
+			// A row is a group when it is one, and closing it closes every
+			// session in it: a grouped session left behind would hold the
+			// same windows the row said were going.
+			let all = await TmuxMirror.sessions()
+			let names = names.flatMap { [$0] + TmuxGroups.groupMates(of: $0, in: all).sorted() }
 			var closed = 0
 			for name in names {
 				if await TmuxMirror.killSession(named: name) {

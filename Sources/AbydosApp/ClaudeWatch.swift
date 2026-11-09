@@ -110,7 +110,7 @@ final class ClaudeWatch {
 		// that can do something about it. Failing that, whichever window is in
 		// front, so news from a session nobody is mirroring is not simply lost.
 		let target = session.flatMap { name in
-			controllers.first { $0.mirroredTmuxSession == name }
+			controllers.first { $0.showsTmuxSession(name) }
 		} ?? controllers.first { $0.window?.isKeyWindow == true } ?? controllers.first
 		guard let target else { return }
 
@@ -118,7 +118,7 @@ final class ClaudeWatch {
 		// can see it happen.
 		if isAlreadyInView(session: session, window: index, in: target) { return }
 
-		let canReveal = index != nil && target.mirroredTmuxSession == session
+		let canReveal = index != nil && session.map(target.showsTmuxSession) == true
 		target.notify(
 			line,
 			detail: payload["message"],
@@ -143,7 +143,7 @@ final class ClaudeWatch {
 		in controller: MainWindowController
 	) -> Bool {
 		guard NSApp.isActive, controller.window?.isKeyWindow == true else { return false }
-		guard let session, controller.mirroredTmuxSession == session, let index else { return false }
+		guard let session, controller.showsTmuxSession(session), let index else { return false }
 		return controller.activeTmuxWindow == index
 	}
 }

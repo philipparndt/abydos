@@ -343,11 +343,15 @@ final class SwitcherProjectCell: NSView {
 	let entry: RecentProject
 	let isOpen: Bool
 	let filter: String
+	/// A few words after the name — File ▸ New Window's "open", "tmux · 3
+	/// windows" — in the path's colour, so the name still leads.
+	let note: String?
 
-	init(entry: RecentProject, isOpen: Bool, filter: String) {
+	init(entry: RecentProject, isOpen: Bool, filter: String, note: String? = nil) {
 		self.entry = entry
 		self.isOpen = isOpen
 		self.filter = filter
+		self.note = note
 		super.init(frame: .zero)
 	}
 
@@ -375,6 +379,13 @@ final class SwitcherProjectCell: NSView {
 				value: Theme.current.gitModified,
 				range: NSRange(range, in: entry.name)
 			)
+		}
+
+		if let note {
+			name.append(NSAttributedString(string: "  \(note)", attributes: [
+				.font: Theme.current.uiFont(11),
+				.foregroundColor: Theme.current.gitIgnored,
+			]))
 		}
 
 		let nameSize = name.size()

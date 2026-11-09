@@ -18,6 +18,10 @@ extension SwitcherViewController {
 			buildRunRows()
 			return
 		}
+		if case .newWindow = focus {
+			buildNewWindowRows()
+			return
+		}
 
 		let delegate = NSApp.delegate as? AppDelegate
 		RecentProjects.shared.pruneMissing()

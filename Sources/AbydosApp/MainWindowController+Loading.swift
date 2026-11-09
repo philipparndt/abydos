@@ -294,9 +294,13 @@ extension MainWindowController {
 		//
 		// Asked only with tmux switched on: the check is a subprocess, and a
 		// window that will never start tmux has no business starting one.
+		// A session chosen in File ▸ New Window counts as the one remembered:
+		// it is what this window was opened for.
+		let chosen = pendingTmuxSession
+		pendingTmuxSession = nil
 		bottomPanel.tmuxSession = ProjectSession.sessionToAttach(
 			projectNamed: TmuxSessionName.of(project.root),
-			remembered: Settings.shared.startsTmux ? remembered?.tmuxSession : nil,
+			remembered: Settings.shared.startsTmux ? (chosen ?? remembered?.tmuxSession) : nil,
 			stillThere: TmuxMirror.sessionExistsNow
 		)
 

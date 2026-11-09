@@ -454,10 +454,11 @@ struct RunningSessionsTests {
 
 	private func window(
 		_ index: Int, _ name: String, status: TmuxMirror.AIStatus?, silent: TimeInterval = 0,
-		directory: String = "/Users/x/dev/probe"
+		directory: String = "/Users/x/dev/probe", id: String = ""
 	) -> TmuxMirror.Window {
 		TmuxMirror.Window(
-			index: index, name: name, isActive: false, aiStatus: status, silentFor: silent, directory: directory
+			index: index, windowID: id, name: name, isActive: false, aiStatus: status, silentFor: silent,
+			directory: directory
 		)
 	}
 
@@ -535,5 +536,57 @@ struct RunningSessionsTests {
 		let dropped = running.seed(windows: [window(1, "abydos", status: nil)], inTmuxSession: "abydos", cwd: "/Users/x/dev/probe", now: t0)
 		#expect(dropped)
 		#expect(running.isEmpty)
+	}
+
+	// MARK: - A group of sessions sharing its windows
+
+	/// Two Abydos windows on one tmux session are given a session each, grouped,
+	/// and both read the same windows. Keyed by session, the agent in `Claude`
+	/// was two records and the pill said two.
+	@Test func aWindowTwoSessionsShowIsCountedOnce() {
+		var running = RunningSessions()
+		let claude = window(1, "Claude", status: .working, id: "@7")
+		running.seed(windows: [claude], inTmuxSession: "AbydosDev", group: ["AbydosDev~2"], cwd: "/Users/x/dev/probe", now: t0)
+		running.seed(windows: [claude], inTmuxSession: "AbydosDev~2", group: ["AbydosDev"], cwd: "/Users/x/dev/probe", now: t0)
+		#expect(running.counts(at: t0).working == 1)
+	}
+
+	/// The second window leaves the group; the first still shows the agent.
+	@Test func aWindowStaysCountedWhileAnySessionShowsIt() {
+		var running = RunningSessions()
+		let claude = window(1, "Claude", status: .working, id: "@7")
+		running.seed(windows: [claude], inTmuxSession: "AbydosDev", cwd: "/Users/x/dev/probe", now: t0)
+		running.seed(windows: [claude], inTmuxSession: "AbydosDev~2", cwd: "/Users/x/dev/probe", now: t0)
+
+		let firstWent = running.forgetSeeded(inTmuxSession: "AbydosDev~2")
+		#expect(!firstWent)
+		#expect(running.counts(at: t0).working == 1)
+		#expect(running.grouped(firstSlugs: slugs, at: t0).first?.sessions.first?.tmuxSession == "AbydosDev")
+
+		let lastWent = running.forgetSeeded(inTmuxSession: "AbydosDev")
+		#expect(lastWent)
+		#expect(running.isEmpty)
+	}
+
+	/// A record read through the grouped session is revealed through a session
+	/// that is still there when that one goes.
+	@Test func aRecordIsRevealedThroughASessionThatIsStillThere() {
+		var running = RunningSessions()
+		let claude = window(1, "Claude", status: .working, id: "@7")
+		running.seed(windows: [claude], inTmuxSession: "AbydosDev~2", cwd: "/Users/x/dev/probe", now: t0)
+		running.seed(windows: [claude], inTmuxSession: "AbydosDev", cwd: "/Users/x/dev/probe", now: t0)
+		running.forgetSeeded(inTmuxSession: "AbydosDev~2")
+		#expect(running.grouped(firstSlugs: slugs, at: t0).first?.sessions.first?.tmuxSession == "AbydosDev")
+	}
+
+	/// The hook ran in the base session; the window was read through the
+	/// grouped one. The hook has spoken for it all the same.
+	@Test func aHookInAnySessionOfTheGroupSpeaksForTheWindow() {
+		var running = RunningSessions()
+		let claude = window(1, "Claude", status: .working, id: "@7")
+		running.note(payload("PreToolUse", session: "real", status: "working", tmux: ("AbydosDev", 1, "Claude")), now: t0)
+		running.seed(windows: [claude], inTmuxSession: "AbydosDev~2", group: ["AbydosDev"], cwd: "/Users/x/dev/probe", now: t0)
+		#expect(running.counts(at: t0).working == 1)
+		#expect(running.ids(forSlugs: slugs) == ["real"])
 	}
 }
