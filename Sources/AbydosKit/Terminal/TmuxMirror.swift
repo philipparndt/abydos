@@ -265,20 +265,26 @@ public enum TmuxMirror {
 	/// starts it, and which session it joins depends on what else is attached
 	/// where. One round trip to the socket, as `sessionExistsNow` is.
 	public static func sessionsNow() -> [SessionSummary] {
-		guard let tmux = Executables.locate("tmux") else { return [] }
+		guard let result = runNow(["list-sessions", "-F", sessionFormat]), result.exitCode == 0 else { return [] }
+		return parseSessions(result.output)
+	}
+
+	/// Runs tmux and waits for it, for the callers above that cannot wait
+	/// asynchronously. Nil when there is no tmux or it would not start.
+	private static func runNow(_ arguments: [String]) -> (exitCode: Int32, output: String)? {
+		guard let tmux = Executables.locate("tmux") else { return nil }
 		let process = Process()
 		let output = Pipe()
 		process.executableURL = URL(fileURLWithPath: tmux)
-		process.arguments = ["list-sessions", "-F", sessionFormat]
+		process.arguments = arguments
 		// Rather than inheriting it, for the reason in `TmuxSocketPath`.
 		process.environment = TmuxSocketPath.environment
 		process.standardOutput = output
 		process.standardError = FileHandle.nullDevice
-		do { try process.run() } catch { return [] }
+		do { try process.run() } catch { return nil }
 		let data = output.fileHandleForReading.readDataToEndOfFile()
 		process.waitUntilExit()
-		guard process.terminationStatus == 0 else { return [] }
-		return parseSessions(String(decoding: data, as: UTF8.self))
+		return (process.terminationStatus, String(decoding: data, as: UTF8.self))
 	}
 
 	/// The group goes before the name, marked — `g` and the group's name, or
@@ -663,17 +669,7 @@ public enum TmuxMirror {
 	/// or two with a server up, and an immediate refusal without one — which is
 	/// the same price `TmuxConfig` already pays at launch for `show-environment`.
 	public static func sessionExistsNow(_ name: String) -> Bool {
-		guard let tmux = Executables.locate("tmux") else { return false }
-		let process = Process()
-		process.executableURL = URL(fileURLWithPath: tmux)
-		process.arguments = ["has-session", "-t", "=\(name)"]
-		// Rather than inheriting it, for the reason in `TmuxSocketPath`.
-		process.environment = TmuxSocketPath.environment
-		process.standardOutput = FileHandle.nullDevice
-		process.standardError = FileHandle.nullDevice
-		do { try process.run() } catch { return false }
-		process.waitUntilExit()
-		return process.terminationStatus == 0
+		runNow(["has-session", "-t", "=\(name)"])?.exitCode == 0
 	}
 
 	/// Ends a session, taking every window in it and whatever was running

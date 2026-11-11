@@ -82,6 +82,13 @@ id, an unpinned UUID and a scratch copy of a project — see `CLAUDE.md`.
       leaves tmux with a toast; three cases in `make windows`, checked to fail
       before.
 
+- [x] 5.6 Review of #35: entering a session from another lands beside the other
+      window's tmux window (two cases in `make windows`, one more for nothing
+      beside); per-client state is dropped when the client goes; another
+      window's grouped session counts as the same session for agents' news; the
+      attach decision is made once per terminal; the client watch follows the
+      tmux setting.
+
 ## 6. Finishing
 
 - [x] 6.1 `make test` and `make warnings`, both clean, by their exit codes.

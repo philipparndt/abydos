@@ -9,8 +9,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	var windowControllers: [MainWindowController] = [] {
 		didSet { MainActor.assumeIsolated { tmuxClientWatch.update() } }
 	}
-	/// Where each window's tmux client is, while there is more than one window:
-	/// see `TmuxClientWatch`.
+	/// Where each window's tmux client is, while there is a window and tmux is
+	/// switched on: see `TmuxClientWatch`.
 	@MainActor private lazy var tmuxClientWatch = TmuxClientWatch { [weak self] in
 		self?.windowControllers.map(\.bottomPanel) ?? []
 	}

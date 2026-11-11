@@ -220,10 +220,27 @@ sizes for one of them only.
 - **THEN** window 1 is raised, window 2 shows `Claude` again, and window 1 still
   shows `Tests`
 
-#### Scenario: arriving from another session onto it
+### Requirement: Entering a session lands beside the other window's tmux window
+
+A terminal arriving from another session — `C-b s`, the session menu, or a
+`C-b w` into another session — lands on that session's current window, which
+nobody chose; tmux cannot tell the two apart. Arriving so on the window another
+Abydos window has in front, it SHALL move to a window of the session nobody has
+in front, raising nothing; only with none left SHALL it raise that window and go
+back.
+
+#### Scenario: entering the session from another one
 
 - **GIVEN** window 1 showing `Tests` of `AbydosDev`, window 2 on `website`
-- **WHEN** `AbydosDev`'s `Tests` is chosen with `C-b w` in window 2
+- **WHEN** `AbydosDev` is chosen with `C-b s` in window 2
+- **THEN** window 2 is on `AbydosDev~2` showing a window that is not `Tests`,
+  and window 1 is not raised and still shows `Tests`
+
+#### Scenario: entering it with nothing beside
+
+- **GIVEN** window 1 showing `Tests`, the only window of `AbydosDev`, and window
+  2 on `website`
+- **WHEN** `AbydosDev` is chosen with `C-b s` in window 2
 - **THEN** window 1 is raised, window 2 is back on `website`, and no grouped
   session is left behind
 
@@ -261,7 +278,8 @@ through a grouped session of its own in that session's group.
 #### Scenario: it came from a grouped session of its own
 
 - **GIVEN** a terminal in another program on `AbydosDev`, window 1 on a grouped
-  session of `AbydosDev` showing `Tests`, window 2 showing `Usermanual`'s `Docs`
+  session of `AbydosDev` showing `Tests`, window 2 showing `Usermanual`'s `Docs`,
+  its only window
 - **WHEN** `Docs` is chosen with `C-b w` in window 1
 - **THEN** window 2 is raised, window 1 shows `Tests` of `AbydosDev` again on a
   grouped session, and the other terminal still shows what it showed

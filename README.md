@@ -735,6 +735,9 @@ beside its session.
 - Choosing the tmux window the other Abydos window shows — by its tab, or with
   `C-b w`, `C-b n`, `C-b 1` — brings that window forward, and this one stays on
   what it showed. `C-b n` therefore stops at the other window's tmux window.
+- Entering the session from another one (`C-b s`, the session menu) lands on a
+  tmux window nobody else has in front. Only when there is none does it bring
+  the other window forward instead.
 - Closing a tmux window (`C-b x`, `C-b &`, a tab's ×) never leaves you on the other
   window's: the terminal moves to a window nobody has in front, and if there is
   none it leaves tmux and says why. No window is made and no session is

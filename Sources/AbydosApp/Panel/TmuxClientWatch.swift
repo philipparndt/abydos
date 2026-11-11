@@ -1,8 +1,8 @@
 import AppKit
 import AbydosKit
 
-/// Where every window's tmux client is, read twice a second while there is more
-/// than one window.
+/// Where every window's tmux client is, read twice a second while there is a
+/// window and tmux is switched on.
 ///
 /// A panel mirroring tmux polls its own client and learns from that when `C-b s`
 /// or `C-b w` took it to a session another window is on. A panel whose tabs are
@@ -23,6 +23,7 @@ final class TmuxClientWatch {
 	private var timer: Timer?
 	private var reading = false
 	private let panels: () -> [BottomPanel]
+	private var settingsObserver: NSObjectProtocol?
 
 	/// What each client on the server had in front, by its terminal, newest
 	/// last: only changes, and only a few.
@@ -30,6 +31,13 @@ final class TmuxClientWatch {
 
 	init(panels: @escaping () -> [BottomPanel]) {
 		self.panels = panels
+		// Turning tmux on with windows already open starts it, not only a
+		// window opening or closing.
+		settingsObserver = NotificationCenter.default.addObserver(
+			forName: .abydosSettingsChanged, object: nil, queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.update() }
+		}
 	}
 
 	/// Starts or stops with the number of windows, and the setting.
@@ -57,7 +65,13 @@ final class TmuxClientWatch {
 			// The panels that mirror tmux ask for themselves.
 			let unmirrored = self.panels().filter { $0.mirroredTmuxSession == nil && $0.tmuxClientTTY != nil }
 			for panel in unmirrored {
-				guard let tty = panel.tmuxClientTTY, let client = clients.first(where: { $0.tty == tty }) else { continue }
+				guard let tty = panel.tmuxClientTTY else { continue }
+				// Its client has left — detached, or the terminal has: what the
+				// panel knew about it is about nothing now.
+				guard let client = clients.first(where: { $0.tty == tty }) else {
+					panel.forgetTmuxClient()
+					continue
+				}
 				let shared = clients.contains { $0.session == client.session && $0.tty != tty }
 				await panel.clientWasRead(session: client.session, windowID: client.windowID, sharedWithAnotherClient: shared)
 			}

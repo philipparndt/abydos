@@ -24,5 +24,6 @@ by `C-b s` or `C-b w` — gets a session of its own in the same group, named
 `<session>~2`, so each window keeps its own tmux window. It goes when its
 window does. Choosing a tmux window that is in front in another window —
 by its tab, or with `C-b w` or `C-b n` — raises that window, and this one
-stays where it was. Closing a window that leaves a terminal on another
+stays where it was. Entering a session from another with `C-b s` lands on a
+tmux window nobody else has in front. Closing a window that leaves a terminal on another
 window's moves it to a free one; with none left, it leaves tmux and says why.

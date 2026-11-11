@@ -109,8 +109,11 @@ final class ClaudeWatch {
 		// The window whose tabs are that tmux session gets it: it is the one
 		// that can do something about it. Failing that, whichever window is in
 		// front, so news from a session nobody is mirroring is not simply lost.
+		// The window on that very session first: with a group, every window
+		// on it shows the session, and the one the agent spoke from is the
+		// one it is in front in.
 		let target = session.flatMap { name in
-			controllers.first { $0.showsTmuxSession(name) }
+			controllers.first { $0.mirroredTmuxSession == name } ?? controllers.first { $0.showsTmuxSession(name) }
 		} ?? controllers.first { $0.window?.isKeyWindow == true } ?? controllers.first
 		guard let target else { return }
 

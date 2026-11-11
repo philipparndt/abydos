@@ -172,6 +172,7 @@ extension BottomPanel {
 				// ends this is a client appearing on this tty again.
 				self.runningSessions.forgetSeeded(inTmuxSession: self.mirroredSession)
 				self.mirroredSession = nil
+				self.forgetTmuxClient()
 				if !self.tmuxWindows.isEmpty {
 					self.tmuxWindows = []
 					self.rebuildColumns()
@@ -208,11 +209,16 @@ extension BottomPanel {
 			// panel was configured for, not the grouped one it is joining, and a
 			// window chosen there moves the other window instead.
 			let firstReading = self.shownWindowLog.isEmpty
-			let movedByTmux = self.shownWindowLog.last.map { $0.windowID != active?.windowID } ?? false
+			let previous = self.shownWindowLog.last
+			let movedByTmux = previous.map { $0.windowID != active?.windowID } ?? false
 			if attached != nil { self.noteShownWindow(active?.windowID, in: session, byThisWindow: false) }
 			if attached != nil, let active, !active.windowID.isEmpty {
 				if firstReading, await self.arriveBesideTheOtherWindow(active.windowID, in: session) { return }
 				if movedByTmux, let other = self.panelShowing(active) {
+					// Entered from another session, where nobody chose the
+					// window: beside it, as on arrival.
+					if await self.entersAnotherSession(session, from: previous?.session),
+					   await self.arriveBesideTheOtherWindow(active.windowID, in: session) { return }
 					await self.stepAway(from: active.windowID, in: session, tty: tty, raising: other)
 					return
 				}

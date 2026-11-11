@@ -181,6 +181,21 @@ continuum, so a scratch server without that flag is a copy of somebody's work.
   too: it is other work, and a plain shell surprises less.
 - **`display-message -t <window_id>` exits 0 for a window that has gone**, on
   tmux 3.8, so whether one exists is asked of `list-windows -a`.
+- **`C-b s` could never enter a session another window was on** (review of
+  #35). It lands on the session's current window — usually the other window's
+  — and was stepped back from like a chosen one. tmux does not say which key
+  moved a client, so arriving from another group is now treated as entering:
+  beside, on a window nobody has in front, as a joining window does. Within
+  the group a window was chosen, and stepping away stays. The price: a `C-b w`
+  from another session onto exactly the other window's tmux window lands
+  beside it rather than raising it.
+- **What a panel knew about its client outlived the client** (review of #35):
+  the windows it showed, its grouped sessions, the session it attached to. It
+  is dropped when the client is seen to leave and when a new one attaches. A
+  project switch keeps it, since the terminal and its client stay.
+- **Another window's grouped session is the same session** for news from an
+  agent in it: compared by the base each window knows it made, so a window on
+  `<base>` does not switch its client into the other's `<base>~2`.
 
 ## Decided while building it
 

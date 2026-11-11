@@ -21,17 +21,20 @@ extension SwitcherViewController {
 
 		rows = []
 		let openRoots = delegate?.openProjectRoots ?? []
-		let openPaths = Set(openRoots.map(\.path))
+		// Compared resolved: a project opened through a link — `/tmp` for
+		// `/private/tmp` — is the same project as its recent entry.
+		func key(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+		let openPaths = Set(openRoots.map { key($0.path) })
 		// The open ones as well as the recent and the discovered: a project can
 		// be open without being in either, and its row is how this list says a
 		// window has it.
 		let open = openRoots.map { root in
-			RecentProjects.shared.entries.first { $0.path == root.path } ?? RecentProject(path: root.path, lastOpened: Date())
+			RecentProjects.shared.entries.first { key($0.path) == key(root.path) } ?? RecentProject(path: root.path, lastOpened: Date())
 		}
 		var listed: Set<String> = []
 		var projects: [RecentProject] = []
-		for entry in RecentProjects.shared.entries + discoveredProjects(excluding: []) + open where !listed.contains(entry.path) {
-			listed.insert(entry.path)
+		for entry in RecentProjects.shared.entries + discoveredProjects(excluding: []) + open where !listed.contains(key(entry.path)) {
+			listed.insert(key(entry.path))
 			if matches(entry.name) { projects.append(entry) }
 		}
 		if !projects.isEmpty {
@@ -39,8 +42,8 @@ extension SwitcherViewController {
 			// Open ones last among the projects: choosing one raises its window
 			// rather than opening anything, which is not what this list is
 			// mostly for.
-			let closed = projects.filter { !openPaths.contains($0.path) }
-			let open = projects.filter { openPaths.contains($0.path) }
+			let closed = projects.filter { !openPaths.contains(key($0.path)) }
+			let open = projects.filter { openPaths.contains(key($0.path)) }
 			rows.append(contentsOf: closed.prefix(Self.projectLimit * 3).map { .project($0, isOpen: false) })
 			rows.append(contentsOf: open.map { .project($0, isOpen: true) })
 		}

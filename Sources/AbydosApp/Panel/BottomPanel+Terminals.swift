@@ -621,14 +621,16 @@ extension BottomPanel {
 		// another plain shell with no way back to an integrated one. A leftover
 		// pane of any kind — a search, a debugger, a shell for one command —
 		// was enough to make it permanent.
-		let attaches = command == nil
-			&& (session != nil
-				|| (joinsSession && !hasLiveTmuxTerminal && startupCommand() != nil))
+		//
+		// Decided once: deciding asks tmux, and remembers what it decided.
+		let startup = command == nil && session == nil && joinsSession && !hasLiveTmuxTerminal
+			? startupCommand() : nil
+		let attaches = command == nil && (session != nil || startup != nil)
 		let pane = TerminalPane(
 			workingDirectory: directory,
 			command: command
 				?? session.map(attachCommand(to:))
-				?? (attaches ? startupCommand() : nil)
+				?? startup
 		)
 		// The one attached to tmux is called `tmux`, in every project. It was
 		// called after the session — the project's name — which said nothing

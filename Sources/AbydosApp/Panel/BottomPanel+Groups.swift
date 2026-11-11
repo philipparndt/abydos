@@ -38,11 +38,48 @@ extension BottomPanel {
 		mirroredTmuxSession.map { groupedBases[$0] ?? $0 }
 	}
 
-	/// Whether the tabs are showing `session`, or a grouped session of ours made
-	/// from it — for news about a window in it, which is a window here too.
+	/// Whether the tabs are showing `session`, or another session of its group
+	/// — ours made from it, or one another window made — for news about a
+	/// window in it, which is a window here too.
+	///
+	/// By group and not by name: an agent in the other window's `<base>~2`
+	/// reports that session, and a window on `<base>` that took it for a session
+	/// of its own would switch its client into the other window's.
 	func isShowing(tmuxSession session: String) -> Bool {
 		guard let mirrored = mirroredTmuxSession else { return false }
-		return mirrored == session || groupedBases[mirrored] == session
+		return mirrored == session || knownBase(of: mirrored) == knownBase(of: session)
+	}
+
+	/// The session a grouped one was made from, as this app's windows know it:
+	/// each knows the ones it made. A session none of them made is its own.
+	func knownBase(of session: String) -> String {
+		groupedBases[session] ?? otherPanels().lazy.compactMap { $0.groupedBases[session] }.first ?? session
+	}
+
+	/// Forgets what this panel knew about its tmux client once the client has
+	/// gone — detached, or replaced by a new one: the windows it showed, the
+	/// grouped sessions it made and the session it was on. Kept, they made other
+	/// windows treat a session nobody is on as taken, and sent a step away back
+	/// to a session the terminal had long left.
+	func forgetTmuxClient() {
+		// Only a client that was seen: before a new one has attached, what
+		// `attachDecision` has just set is about it, not about one gone.
+		guard !shownWindowLog.isEmpty || clientWindowID != nil else { return }
+		Self.trace("forget client session=\(attachedTmuxSession ?? mirroredSession ?? "-")")
+		shownWindowLog = []
+		clientWindowID = nil
+		attachedTmuxSession = nil
+		groupedBases = [:]
+	}
+
+	/// Whether arriving at `session` from `previous` is entering another
+	/// session rather than choosing a window in this one: a different group. A
+	/// first reading has nowhere it came from, and enters.
+	func entersAnotherSession(_ session: String, from previous: String?) async -> Bool {
+		guard let previous else { return true }
+		let all = await TmuxMirror.sessions()
+		func base(_ name: String) -> String { groupedBases[name] ?? TmuxGroups.base(of: name, in: all) }
+		return base(previous) != base(session)
 	}
 
 	/// The other sessions known to share `session`'s windows: the one ours was
@@ -61,10 +98,14 @@ extension BottomPanel {
 
 	/// How a terminal starting now attaches to `session`.
 	///
-	/// Asked of the server synchronously — the command is decided in the pass
-	/// that starts the terminal — and only with another window open, since on
-	/// its own a window can only ever be told to attach to the session itself.
+	/// Asked of the server synchronously, since the command is decided in the
+	/// pass that starts the terminal; and with one window open too, since a
+	/// terminal in another program can be on the session. Once per terminal:
+	/// a new client, so what the panel knew about the one before is dropped.
 	func attachDecision(for session: String) -> TmuxGroups.Attach {
+		shownWindowLog = []
+		clientWindowID = nil
+		groupedBases = [:]
 		// Taken by another of this app's windows, or by any client at all: a
 		// terminal in another program — another copy of Abydos, iTerm — is a
 		// client of the session like ours, and shares its one current window
@@ -93,6 +134,7 @@ extension BottomPanel {
 	///
 	/// - Returns: whether the client was moved.
 	func moveToGroupedSession(from session: String, tty: String) async -> Bool {
+		let cameFrom = shownWindowLog.last?.session
 		let all = await TmuxMirror.sessions()
 		let base = TmuxGroups.base(of: session, in: all)
 		let name = TmuxGroups.freeName(for: base, among: Set(all.map(\.name)))
@@ -111,11 +153,16 @@ extension BottomPanel {
 			if let theirs = panel.anotherWindowPassedThrough(at: detected) { kept.append((panel, theirs)) }
 		}
 		if kept.isEmpty { await putBackOutsideClients(of: session, at: detected, besides: tty) }
-		// Arrived at the very window the other one keeps in front: that window
-		// is raised and this one goes back to where it came from, as a tab
-		// clicked for it would.
+		// Arrived at the very window the other one keeps in front. From another
+		// session — `C-b s`, the session menu — that is the session's current
+		// window and nobody chose it: this one lands beside, on a window nobody
+		// has in front, as a window joining the group does. Within the group it
+		// was chosen, and that window is raised and this one goes back, as a
+		// tab clicked for it would; so too when there is nothing beside it.
 		let arrived = await TmuxMirror.windows(inSession: name).first(where: \.isActive)?.windowID
 		if let arrived, let other = kept.first(where: { $0.windowID == arrived })?.panel {
+			let entered = cameFrom.map { (groupedBases[$0] ?? TmuxGroups.base(of: $0, in: all)) != base } ?? true
+			if entered, await arriveBesideTheOtherWindow(arrived, in: name) { return true }
 			await stepAway(from: arrived, in: name, tty: tty, raising: other)
 		} else {
 			// Judged here, so the next reading does not judge it again against
@@ -255,11 +302,13 @@ extension BottomPanel {
 		Self.trace("closed under session=\(session); nothing free beside \(windowID), leaves tmux")
 		await TmuxMirror.detachClient(onTTY: tty)
 		let name = windows.first(where: { $0.windowID == windowID })?.name ?? "The last window"
+		let base = knownBase(of: session)
+		forgetTmuxClient()
 		(window?.windowController as? MainWindowController)?.toasts.show(Toast(
 			kind: .information,
 			title: "\(name) is in front in another window",
 			detail: "The tmux window this terminal showed was closed, and every other window of "
-				+ "\(groupedBases[session] ?? session) is in front elsewhere, so it has left tmux.",
+				+ "\(base) is in front elsewhere, so it has left tmux.",
 			actionTitle: "Go there",
 			action: { [weak other] in other?.window?.makeKeyAndOrderFront(nil) }
 		))
@@ -308,6 +357,7 @@ extension BottomPanel {
 		else { return false }
 		Self.trace("arrive session=\(session) beside \(windowID), on \(free.windowID)")
 		await TmuxMirror.select(window: free.index, inSession: session)
+		noteShownWindow(free.windowID, in: session, byThisWindow: true)
 		if mirroredTmuxSession == nil { clientWindowID = free.windowID }
 		refreshTmuxWindows()
 		return true
@@ -375,12 +425,15 @@ extension BottomPanel {
 			attachedTmuxSession = session
 		}
 		let firstReading = shownWindowLog.isEmpty
-		let moved = shownWindowLog.last.map { $0.windowID != windowID } ?? false
+		let previous = shownWindowLog.last
+		let moved = previous.map { $0.windowID != windowID } ?? false
 		clientWindowID = windowID
 		noteShownWindow(windowID, in: session, byThisWindow: false)
 		if firstReading {
 			_ = await arriveBesideTheOtherWindow(windowID, in: session)
 		} else if moved, let other = otherPanels().first(where: { $0.shownWindowID == windowID }) {
+			if await entersAnotherSession(session, from: previous?.session),
+			   await arriveBesideTheOtherWindow(windowID, in: session) { return }
 			await stepAway(from: windowID, in: session, tty: tty, raising: other)
 		}
 	}

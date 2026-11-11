@@ -179,8 +179,31 @@ scenario_second_looks_elsewhere() {
 	expect_on "$W1" AbydosDev Claude "window 1"
 }
 
-# Window 2 chooses, from another session, the tmux window window 1 shows.
+# Window 2 arrives, from another session, on the tmux window window 1 shows —
+# which is what `C-b s` does, landing on the session's current window, and tmux
+# cannot tell it from choosing that window. It lands beside, raising nothing.
 scenario_onto_first_from_another_session() {
+	choose "$W2" AbydosDev:Claude
+	expect_not_logged "step away" "window 1 not raised"
+	expect_on "$W2" 'AbydosDev~*' Tests "window 2 beside"
+	expect_on "$W1" AbydosDev Claude "window 1"
+}
+
+# `C-b s` or the session menu: the session, no window. Review of #35: this
+# could never enter a session another window was on.
+scenario_enters_the_first_ones_session() {
+	choose "$W2" AbydosDev
+	expect_not_logged "step away" "window 1 not raised"
+	expect_on "$W2" 'AbydosDev~*' Tests "window 2 in the session, beside"
+	expect_on "$W1" AbydosDev Claude "window 1"
+}
+
+# The same with nothing beside: window 1 is raised and window 2 goes back.
+scenario_onto_first_from_another_session_nothing_free() {
+	t kill-window -t '=AbydosDev:Tests'
+	t kill-window -t '=AbydosDev:Infra'
+	sleep 2
+	MARK=$(wc -l < "$LOG" | tr -d ' ')
 	choose "$W2" AbydosDev:Claude
 	expect_logged "step away" "window 1 raised"
 	expect_on "$W2" website Site "window 2 back"
@@ -208,7 +231,9 @@ scenario_first_onto_second() {
 
 # A window whose group was a grouped session of its own goes back through a
 # new one: reported 2026-11-09, `abydos~2` was gone and the two stayed on one.
+# Usermanual is left one window, so arriving there has nothing beside.
 scenario_back_to_a_grouped_session_that_went() {
+	t kill-window -t '=Usermanual:Deployment'
 	choose "$W2" Usermanual:Docs
 	choose "$W1" Usermanual:Docs
 	expect_logged "step away" "window 2 raised"
@@ -261,6 +286,13 @@ scenario_closed_under_the_second_nothing_free() {
 	expect_left_tmux "$W2" "window 2"
 	expect_on "$W1" AbydosDev Claude "window 1"
 	expect_sessions '~' 0 "its grouped session went with it"
+	expect_logged "forget client" "window 2 forgot the client that left"
+	# Nobody is on it now: window 1 entering another session and coming back
+	# is not made a grouped session of its own for a client that has gone.
+	choose "$W1" website:Site
+	choose "$W1" AbydosDev:Claude
+	expect_on "$W1" AbydosDev Claude "window 1 back on the session itself"
+	expect_sessions '~' 0 "nothing grouped for a client that has gone"
 }
 
 # The other way round: window 1's window closes and tmux puts it on window 2's.
@@ -310,6 +342,8 @@ echo "windows-check: $APP against a scratch server in $WORK ($(sysctl -n vm.load
 for mode in plain mirrored; do
 	run second_looks_elsewhere "$mode"
 	run onto_first_from_another_session "$mode"
+	run enters_the_first_ones_session "$mode"
+	run onto_first_from_another_session_nothing_free "$mode"
 	run onto_first_within_the_group "$mode"
 	run first_onto_second "$mode"
 	run back_to_a_grouped_session_that_went "$mode" outside
