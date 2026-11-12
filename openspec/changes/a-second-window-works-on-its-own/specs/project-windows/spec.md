@@ -72,7 +72,17 @@ open it as the switcher would. Dismissing the picker SHALL open nothing.
 The picker SHALL say of each project whether a window has it and whether it has
 a tmux session yet, and of each session how many windows it has, whether an
 agent in it is working or waiting, and which window is attached to it. A session
-and those grouped with it SHALL be one row.
+and the grouped sessions Abydos made from it (`<base>~<n>`) SHALL be one row. A
+session somebody grouped themselves (`tmux new -t <base>`) SHALL keep a row of
+its own, and closing its neighbour's row SHALL NOT close it.
+
+#### Scenario: a group somebody made by hand
+
+- **GIVEN** `main`, `main-1` made with `tmux new -t main`, and `main~2` made for
+  a second Abydos window
+- **WHEN** the session list opens
+- **THEN** it has a row for `main` and a row for `main-1`, and closing `main`
+  closes `main` and `main~2` and leaves `main-1` and its windows running
 
 #### Scenario: a session with an agent at work
 
@@ -119,6 +129,31 @@ keep its own current window while sharing the list of tmux windows.
 - **GIVEN** windows 1 and 2 on `AbydosDev` and its grouped session
 - **WHEN** a tmux window is made from window 2
 - **THEN** it is a tab in both, and window 1's current window has not changed
+
+### Requirement: Abydos chooses a tmux window only in its own terminal's session
+
+Whenever Abydos itself chooses a tmux window — going back to the one a project
+was left in, or revealing the one an agent is in from a toast or the running
+sessions list — it SHALL choose it in the session its own terminal's client is
+on, once that client is attached, and never in a session another client is on.
+A window that is in front in another Abydos window SHALL be raised there
+instead.
+
+#### Scenario: a project reopened beside another program
+
+- **GIVEN** a terminal in another program on `AbydosDev` showing `Tests`, and
+  the project last left on `Infra`
+- **WHEN** the project is opened
+- **THEN** its terminal is on a grouped session showing `Infra`, and the other
+  terminal still shows `Tests`
+
+#### Scenario: an agent revealed from the other window's session
+
+- **GIVEN** window 1 on `AbydosDev`, window 2 on `AbydosDev~2`, and an agent
+  whose hook ran in `AbydosDev~2`, in a tmux window neither has in front
+- **WHEN** the agent is revealed from window 1
+- **THEN** window 1 shows the agent's tmux window, and window 2 shows what it
+  showed
 
 ### Requirement: A grouped session goes with the window that made it
 

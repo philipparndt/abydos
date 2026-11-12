@@ -70,6 +70,55 @@ extension BottomPanel {
 		clientWindowID = nil
 		attachedTmuxSession = nil
 		groupedBases = [:]
+		lastClientTTY = nil
+	}
+
+	/// Learns again, from the server, which session a grouped one of ours was
+	/// made from, when this panel no longer knows.
+	///
+	/// What `forgetTmuxClient` drops is dropped for good reason, and one poll
+	/// that found no client — tmux slow to answer, a detach and an attach by
+	/// hand — is enough to drop it. The client coming back on `<base>~2` was
+	/// then on a session with no base: the project remembered a session that
+	/// goes with its window, and news from `<base>` read as another session's.
+	/// The group's name is on the server for as long as the group is.
+	func relearnBase(of session: String) async {
+		guard groupedBases[session] == nil,
+		      let base = TmuxGroups.ownBase(of: session, in: await TmuxMirror.sessions())
+		else { return }
+		Self.trace("relearn session=\(session) base=\(base)")
+		groupedBases[session] = base
+	}
+
+	/// Goes back to the tmux window a project was left in, once this panel's
+	/// client is attached and `session` is the one it is on.
+	///
+	/// Not before, and not by the session the project remembers: that is the
+	/// group's own, and with another client on it — which is why this terminal
+	/// was given `<base>~2` — choosing a window there changes the window under
+	/// that client. And not onto a window that is in front somewhere else, which
+	/// is the rule every other way of choosing one keeps.
+	///
+	/// - Returns: whether a window was chosen, and this reading is spent.
+	func restorePendingWindow(in session: String) async -> Bool {
+		guard let pending = pendingWindowRestore else { return false }
+		pendingWindowRestore = nil
+		// Asked for while a project opened. A terminal attached long after is
+		// somebody starting one, not the project coming back.
+		guard Date().timeIntervalSince(pending.asked) < 30 else { return false }
+		let windowID = pending.windowID
+		guard !otherPanels().contains(where: { $0.shownWindowID == windowID }) else { return false }
+		let others = await TmuxMirror.clients().filter { $0.tty != tmuxClientTTY }
+		guard !others.contains(where: { $0.session == session || $0.windowID == windowID }),
+		      let window = await TmuxMirror.windows(inSession: session).first(where: { $0.windowID == windowID }),
+		      !window.isActive
+		else { return false }
+		Self.trace("restore session=\(session) window=\(windowID)")
+		await TmuxMirror.select(window: window.index, inSession: session)
+		noteShownWindow(windowID, in: session, byThisWindow: true)
+		if mirroredTmuxSession == nil { clientWindowID = windowID }
+		refreshTmuxWindows()
+		return true
 	}
 
 	/// Whether arriving at `session` from `previous` is entering another
@@ -111,15 +160,30 @@ extension BottomPanel {
 		// client of the session like ours, and shares its one current window
 		// and its one size just the same. Reported 2026-10-26: the installed app
 		// attached to `firefly` all morning, and a test copy's window attached
-		// beside it. Ours is not attached yet, so every attached session is
-		// somebody else's.
+		// beside it.
+		//
+		// Any client but this panel's own. The new one is not attached yet, but
+		// the one it replaces may still be: a window changing to a project that
+		// remembers the same session closes its terminal and starts the next in
+		// one pass, before the server has let the old client go. Counted as
+		// somebody else, it sent the window to `<session>~2` and left `<session>`
+		// to nobody.
 		let sessions = TmuxMirror.sessionsNow()
-		let elsewhere = sessionsHeldElsewhere.union(sessions.filter(\.isAttached).map(\.name))
+		let ours = Set([lastClientTTY, tmuxClientTTY].compactMap { $0 })
+		lastClientTTY = nil
+		let attached = TmuxMirror.clientsNow().map { clients in
+			Set(clients.filter { !ours.contains($0.tty) }.map(\.session))
+		} ?? Set(sessions.filter(\.isAttached).map(\.name))
+		let elsewhere = sessionsHeldElsewhere.union(attached)
 		let decision = TmuxGroups.attach(to: session, sessions: sessions, heldElsewhere: elsewhere)
 		switch decision {
-		case let .session(name): attachedTmuxSession = name
-		case let .grouped(joining: base, as: name):
-			groupedBases[name] = base
+		case let .session(name):
+			// One of ours that outlived the session it was a view of: the
+			// project still remembers that one.
+			if let base = TmuxGroups.ownBase(of: name, in: sessions) { groupedBases[name] = base }
+			attachedTmuxSession = name
+		case let .grouped(joining: joined, as: name):
+			groupedBases[name] = TmuxGroups.ownBase(of: joined, in: sessions) ?? joined
 			attachedTmuxSession = name
 		case let .rejoined(member: _, as: name): attachedTmuxSession = name
 		}
@@ -320,7 +384,7 @@ extension BottomPanel {
 	///
 	/// - Returns: the session the client is on now, or nil when it could not be
 	///   moved.
-	private func goBack(to session: String, showing windowID: String, tty: String) async -> String? {
+	func goBack(to session: String, showing windowID: String, tty: String) async -> String? {
 		let all = await TmuxMirror.sessions()
 		let taken = sessionsHeldElsewhere.union(all.filter(\.isAttached).map(\.name))
 		if all.contains(where: { $0.name == session }), !taken.contains(session) {
@@ -414,6 +478,7 @@ extension BottomPanel {
 	/// from its own poll and is passed over.
 	func clientWasRead(session: String, windowID: String, sharedWithAnotherClient: Bool) async {
 		guard mirroredTmuxSession == nil, Settings.shared.startsTmux, let tty = tmuxClientTTY else { return }
+		lastClientTTY = tty
 		// Moved to a session of its own first, and only then noted: the log is
 		// what a step away goes back to, and the session it arrived at is not
 		// somewhere to go back to.
@@ -423,7 +488,9 @@ extension BottomPanel {
 				return
 			}
 			attachedTmuxSession = session
+			await relearnBase(of: session)
 		}
+		if await restorePendingWindow(in: session) { return }
 		let firstReading = shownWindowLog.isEmpty
 		let previous = shownWindowLog.last
 		let moved = previous.map { $0.windowID != windowID } ?? false

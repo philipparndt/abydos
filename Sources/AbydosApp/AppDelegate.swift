@@ -426,6 +426,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if options.tmuxTabs {
 			Settings.shared.startsTmux = true
 			Settings.shared.strictTmux = true
+		} else if options.ownTabs {
+			Settings.shared.startsTmux = true
+			Settings.shared.strictTmux = false
 		}
 
 		let controller: MainWindowController?

@@ -71,6 +71,59 @@ struct TmuxGroupsTests {
 		#expect(TmuxGroups.groupMates(of: "notes", in: sessions).isEmpty)
 	}
 
+	/// Joining a view of a session is another view of that session, named
+	/// after it: `AbydosDev~2~2` would be read as a view of a session that goes
+	/// with its window.
+	@Test func joiningOneOfOurViewsIsNamedAfterTheSessionItIsAViewOf() {
+		let sessions = [session("AbydosDev~2", group: "AbydosDev", attached: true)]
+		let attach = TmuxGroups.attach(to: "AbydosDev~2", sessions: sessions, heldElsewhere: ["AbydosDev~2"])
+		#expect(attach == .grouped(joining: "AbydosDev~2", as: "AbydosDev~3"))
+	}
+
+	@Test func onlyTheNamesThisAppGivesAreItsOwn() {
+		#expect(TmuxGroups.isOurs("main~2", inGroup: "main"))
+		#expect(TmuxGroups.isOurs("main~12", inGroup: "main"))
+		#expect(!TmuxGroups.isOurs("main-1", inGroup: "main"))
+		#expect(!TmuxGroups.isOurs("main~", inGroup: "main"))
+		#expect(!TmuxGroups.isOurs("main~x", inGroup: "main"))
+		#expect(!TmuxGroups.isOurs("main", inGroup: "main"))
+
+		let sessions = [session("main", group: "main"), session("main-1", group: "main"), session("main~2", group: "main"), session("notes")]
+		#expect(TmuxGroups.ownBase(of: "main~2", in: sessions) == "main")
+		#expect(TmuxGroups.ownBase(of: "main-1", in: sessions) == nil)
+		#expect(TmuxGroups.ownBase(of: "main", in: sessions) == nil)
+		#expect(TmuxGroups.ownBase(of: "notes", in: sessions) == nil)
+	}
+
+	/// `tmux new -t main` is somebody's own second view, and theirs to switch
+	/// to and to close: it keeps its row, and closing `main` does not close it.
+	@Test func aSessionSomebodyGroupedThemselvesKeepsItsRow() {
+		let sessions = [
+			session("main", group: "main", created: 100),
+			session("main-1", group: "main", attached: true, created: 200),
+			session("main~2", group: "main", created: 300),
+		]
+		let shown = TmuxGroups.shownAsOne(sessions)
+		#expect(shown.map(\.name) == ["main", "main-1"])
+		#expect(!shown[0].isAttached, "not attached through somebody's own session")
+		#expect(shown[1].isAttached)
+		#expect(TmuxGroups.foldedMates(of: "main", in: sessions) == ["main~2"])
+		#expect(TmuxGroups.foldedMates(of: "main-1", in: sessions).isEmpty)
+	}
+
+	/// With the namesake gone, our views go under the oldest session somebody
+	/// made, not under one of themselves.
+	@Test func ourViewsFoldIntoSomebodysSessionWhenTheNamesakeIsGone() {
+		let sessions = [
+			session("main~2", group: "main", attached: true, created: 100),
+			session("main-1", group: "main", created: 200),
+		]
+		let shown = TmuxGroups.shownAsOne(sessions)
+		#expect(shown.map(\.name) == ["main-1"])
+		#expect(shown[0].isAttached)
+		#expect(TmuxGroups.foldedMates(of: "main-1", in: sessions) == ["main~2"])
+	}
+
 	// MARK: - Reading the list
 
 	@Test func theListSaysWhichGroupASessionIsIn() {

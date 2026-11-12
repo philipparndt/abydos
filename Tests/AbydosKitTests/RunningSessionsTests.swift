@@ -452,6 +452,20 @@ struct RunningSessionsTests {
 
 	// MARK: - Seeding from the mirrored tmux session
 
+	/// A window keeps its id and not its place: close the one before it and its
+	/// index moves down. A record that kept the index it was first read at
+	/// revealed whatever had slid into the gap.
+	@Test func aSeededRecordFollowsItsWindowToANewIndex() {
+		var running = RunningSessions()
+		let t0 = Date(timeIntervalSince1970: 1_000_000)
+		running.seed(windows: [window(3, "agent", status: .needsInput, id: "@7")], inTmuxSession: "abydos", cwd: "/Users/x/dev/probe", now: t0)
+		running.seed(windows: [window(2, "agent", status: .needsInput, id: "@7")], inTmuxSession: "abydos", cwd: "/Users/x/dev/probe", now: t0.addingTimeInterval(1))
+		let records = running.grouped(firstSlugs: [], at: t0.addingTimeInterval(1)).flatMap(\.sessions)
+		#expect(records.count == 1)
+		#expect(records.first?.window == 2)
+		#expect(records.first?.windowID == "@7")
+	}
+
 	private func window(
 		_ index: Int, _ name: String, status: TmuxMirror.AIStatus?, silent: TimeInterval = 0,
 		directory: String = "/Users/x/dev/probe", id: String = ""

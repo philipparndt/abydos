@@ -179,7 +179,10 @@ extension BottomPanel {
 				}
 				return
 			}
-			if attached != nil { self.hasAttachedOnce = true }
+			if attached != nil {
+				self.hasAttachedOnce = true
+				self.lastClientTTY = tty
+			}
 			// Arrived — by `C-b s`, `C-b w`, anything tmux does — at a session
 			// another window's terminal is on. From here the two would move
 			// each other, so this one is moved on to a session of its own in
@@ -195,6 +198,11 @@ extension BottomPanel {
 				self.runningSessions.forgetSeeded(inTmuxSession: self.mirroredSession)
 				self.mirroredSession = session
 				self.tmuxWindows = []
+				if attached != nil { await self.relearnBase(of: session) }
+			}
+			if attached != nil, await self.restorePendingWindow(in: session) {
+				self.mirrorRefreshWanted = true
+				return
 			}
 			await self.applyStatusBarWish(to: session)
 

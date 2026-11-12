@@ -1051,6 +1051,11 @@ struct LaunchOptions {
 	/// The panel's tabs made tmux's windows before anything opens, in this
 	/// run's own settings: `--tmux-tabs`.
 	var tmuxTabs = false
+	/// The opposite, said as plainly: tmux started, and the panel's tabs this
+	/// app's own — `--own-tabs`. A run's settings begin as a copy of somebody's,
+	/// so a check that only ever asked for `--tmux-tabs` ran its other half in
+	/// whichever mode that person happens to use.
+	var ownTabs = false
 	/// A tmux session chosen as File ▸ New Window's list chooses one, then
 	/// every window printed: `--open-session <name>`.
 	var openSession: String?

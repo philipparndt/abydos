@@ -117,6 +117,14 @@ final class BottomPanel: NSView {
 	/// can be put back once that window has moved to a session of its own:
 	/// see `anotherWindowPassedThrough`.
 	var shownWindowLog: [(windowID: String, session: String, at: Date, byThisWindow: Bool)] = []
+	/// The tty this panel's tmux client was last seen on. A terminal that has
+	/// just been closed is still a client for a moment, and the one started in
+	/// its place must not take it for somebody else: see `attachDecision`.
+	var lastClientTTY: String?
+	/// The tmux window a project was left in, to go back to once this panel's
+	/// client is attached and it is known which session it is on: see
+	/// `restoreTmuxWindow`.
+	var pendingWindowRestore: (windowID: String, asked: Date)?
 
 	// Kept in the body because a stored property cannot live in an
 	// extension; what each is for is said where it is used.

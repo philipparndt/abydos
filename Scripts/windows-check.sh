@@ -19,7 +19,6 @@ APP=${1:-build/Abydos.app/Contents/MacOS/Abydos}
 shift $(( $# > 0 ? 1 : 0 ))
 ONLY=("$@")
 REAL_TMUX=${REAL_TMUX:-/opt/homebrew/bin/tmux}
-LOG=~/Library/Logs/Abydos/tmux.log
 
 [ -x "$APP" ] || { echo "no app at $APP (make build BUNDLE_ID=... PIN_UUID=0)"; exit 2; }
 [ -x "$REAL_TMUX" ] || { echo "no tmux at $REAL_TMUX"; exit 2; }
@@ -28,7 +27,11 @@ WORK=$(cd "$(mktemp -d /private/tmp/abydos-windows.XXXXXX)" && pwd -P)
 SOCK=$WORK/s
 OUTER=$WORK/o
 P=$WORK/p
-mkdir -p "$WORK/bin" "$P"
+mkdir -p "$WORK/bin" "$P" "$WORK/logs"
+# The driven app's own log, not the one the installed app writes to: a line
+# somebody's Abydos wrote in the same three seconds is not this run's.
+LOG=$WORK/logs/tmux.log
+: > "$LOG"
 cat > "$WORK/bin/tmux" <<EOF
 #!/bin/sh
 exec "$REAL_TMUX" -f /dev/null -S "$SOCK" "\$@"
@@ -79,6 +82,9 @@ outside_client() {
 	OUTSIDE=$(t list-clients -F '#{client_tty}' | head -1)
 }
 
+# From here on is what the next expectation about the log reads.
+mark() { MARK=$(wc -l < "$LOG" | tr -d ' '); }
+
 wait_for() {
 	local what=$1 condition=$2
 	for _ in $(seq 1 40); do eval "$condition" && return 0; sleep 0.5; done
@@ -92,9 +98,11 @@ launch() {
 	local mode=$1 second=${2:-website} before
 	before=$(t list-clients | wc -l | tr -d ' ')
 	local extra=(--second-window "$P/$second")
-	[ "$mode" = mirrored ] && extra+=(--tmux-tabs)
+	# Said both ways: the run's settings start as a copy of somebody's, and a
+	# plain pass left unsaid ran in whichever mode they use.
+	if [ "$mode" = mirrored ]; then extra+=(--tmux-tabs); else extra+=(--own-tabs); fi
 	extra+=(${LAUNCH_EXTRA[@]+"${LAUNCH_EXTRA[@]}"})
-	env -u TMUX PATH="$WORK/bin:$PATH" "$APP" --open "$P/AbydosDev" "${extra[@]}" \
+	env -u TMUX PATH="$WORK/bin:$PATH" ABYDOS_LOG_DIRECTORY="$WORK/logs" "$APP" --open "$P/AbydosDev" "${extra[@]}" \
 		> "$WORK/out" 2> "$WORK/err" &
 	PID=$!
 	wait_for "two windows attached" "[ \$(t list-clients | wc -l) -ge $((before + 2)) ]" || return 1
@@ -128,7 +136,7 @@ stop_app() {
 
 # `C-b w` in the window whose client is `$1`, choosing `$2` (session:window).
 choose() {
-	MARK=$(wc -l < "$LOG" | tr -d ' ')
+	mark
 	t switch-client -c "$1" -t "=$2"
 	sleep 3
 }
@@ -203,7 +211,7 @@ scenario_onto_first_from_another_session_nothing_free() {
 	t kill-window -t '=AbydosDev:Tests'
 	t kill-window -t '=AbydosDev:Infra'
 	sleep 2
-	MARK=$(wc -l < "$LOG" | tr -d ' ')
+	mark
 	choose "$W2" AbydosDev:Claude
 	expect_logged "step away" "window 1 raised"
 	expect_on "$W2" website Site "window 2 back"
@@ -266,7 +274,7 @@ scenario_grouped_session_goes() {
 # typing went to both. It moves to a free window instead, raising nothing.
 scenario_closed_under_the_second() {
 	choose "$W2" AbydosDev:Tests
-	MARK=$(wc -l < "$LOG" | tr -d ' ')
+	mark
 	t kill-window -t '=AbydosDev:Tests'
 	sleep 3
 	expect_not_logged "step away" "window 1 not raised"
@@ -279,7 +287,7 @@ scenario_closed_under_the_second_nothing_free() {
 	choose "$W2" AbydosDev:Tests
 	t kill-window -t '=AbydosDev:Infra'
 	sleep 3
-	MARK=$(wc -l < "$LOG" | tr -d ' ')
+	mark
 	t kill-window -t '=AbydosDev:Tests'
 	sleep 3
 	expect_not_logged "step away" "window 1 not raised"
@@ -300,7 +308,7 @@ scenario_closed_under_the_first_nothing_free() {
 	choose "$W2" AbydosDev:Tests
 	t kill-window -t '=AbydosDev:Infra'
 	sleep 3
-	MARK=$(wc -l < "$LOG" | tr -d ' ')
+	mark
 	t kill-window -t '=AbydosDev:Claude'
 	sleep 3
 	expect_not_logged "step away" "window 2 not raised"
@@ -331,7 +339,7 @@ run() {
 	esac
 	if launch "$mode" "$second"; then
 		FIRST_SHOWN=$(where "$W1"); FIRST_SHOWN=${FIRST_SHOWN##* }
-		MARK=$(wc -l < "$LOG" | tr -d ' ')
+		mark
 		"scenario_$name"
 	fi
 	stop_app

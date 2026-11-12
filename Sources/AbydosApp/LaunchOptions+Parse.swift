@@ -240,6 +240,7 @@ extension LaunchOptions {
 			case "--new-window-picker": options.newWindowPicker = true
 			case "--switch-client": options.switchClient = next()
 			case "--tmux-tabs": options.tmuxTabs = true
+			case "--own-tabs": options.ownTabs = true
 			case "--open-session": options.openSession = next()
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--terminal-link":

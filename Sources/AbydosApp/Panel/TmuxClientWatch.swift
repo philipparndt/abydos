@@ -56,6 +56,13 @@ final class TmuxClientWatch {
 	}
 
 	private func read() {
+		// A panel whose last terminal was closed has no client to read, and so
+		// was never told its client had gone: it went on saying the tmux window
+		// it last showed was in front there, and a tab clicked for that window
+		// anywhere else raised a window with no terminal in it.
+		for panel in panels() where panel.mirroredTmuxSession == nil && panel.tmuxClientTTY == nil {
+			panel.forgetTmuxClient()
+		}
 		guard !reading, panels().contains(where: { $0.tmuxClientTTY != nil }) else { return }
 		reading = true
 		Task { @MainActor in

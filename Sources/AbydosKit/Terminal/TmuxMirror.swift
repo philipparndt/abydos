@@ -269,6 +269,17 @@ public enum TmuxMirror {
 		return parseSessions(result.output)
 	}
 
+	/// Every client, answered before returning, for the same caller: which
+	/// sessions are attached does not say by whom, and a client of this app's
+	/// own that is on its way out is not somebody else. Nil when tmux could not
+	/// be asked, which is not the same as no clients.
+	public static func clientsNow() -> [Client]? {
+		guard let result = runNow(["list-clients", "-F", "#{client_tty};#{window_id};#{client_session}"]),
+		      result.exitCode == 0
+		else { return nil }
+		return parseClients(result.output)
+	}
+
 	/// Runs tmux and waits for it, for the callers above that cannot wait
 	/// asynchronously. Nil when there is no tmux or it would not start.
 	private static func runNow(_ arguments: [String]) -> (exitCode: Int32, output: String)? {
@@ -472,7 +483,31 @@ public enum TmuxMirror {
 		guard windowID.hasPrefix("@") else { return false }
 		let windows = await windows(inSession: session)
 		guard windows.contains(where: { $0.windowID == windowID }) else { return false }
-		return await succeeds(["select-window", "-t", windowID])
+		// In the session named, and not by the id alone: a window in a group is
+		// in every session of it, and tmux, left to choose, can choose the one
+		// another client is on — whose window then changes under it.
+		return await succeeds(["select-window", "-t", "\(session):\(windowID)"])
+	}
+
+	/// The window a pane is in, by tmux's own id for it, or nil when the pane
+	/// has gone.
+	///
+	/// So that a pane can be gone to in one particular session. `select-window
+	/// -t %7` names no session, and for a window several grouped sessions hold
+	/// tmux picks one of them itself.
+	public static func windowID(ofPane pane: String) async -> String? {
+		guard pane.hasPrefix("%"), let tmux = Executables.locate("tmux") else { return nil }
+		let result = await run(tmux, ["display-message", "-p", "-t", pane, "#{window_id}"])
+		guard let result, result.exitCode == 0 else { return nil }
+		let id = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+		return id.hasPrefix("@") ? id : nil
+	}
+
+	/// Makes a pane the active one of its window, without bringing the window
+	/// forward anywhere: which window a session shows is not this call's to say.
+	public static func activate(pane: String) async {
+		guard pane.hasPrefix("%") else { return }
+		await command(["select-pane", "-t", pane])
 	}
 
 	/// Makes a window in a session, saying whether it could.

@@ -501,6 +501,11 @@ public struct RunningSessions: Equatable, Sendable {
 			if var seeded = records[key] {
 				let before = seeded.shown(at: now)
 				seeded.status = window.aiStatus
+				// Where the window is now. The key is the window's own id, which
+				// does not move; the index does, whenever a window before it is
+				// closed or this one is dragged, and revealing by the index it
+				// was first read at went to whatever had slid into its place.
+				seeded.window = window.index
 				seeded.windowName = window.name
 				seeded.lastEvent = lastEvent
 				seeded.seededBy.insert(session)

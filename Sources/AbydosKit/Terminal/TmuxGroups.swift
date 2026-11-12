@@ -48,7 +48,11 @@ public enum TmuxGroups {
 		let names = Set(sessions.map(\.name))
 		if names.contains(session) {
 			guard heldElsewhere.contains(session) else { return .session(session) }
-			return .grouped(joining: session, as: freeName(for: session, among: names))
+			// Named after the group's own session, not after the one joined: joining
+			// `<base>~2` is another view of `<base>`, and `<base>~2~2` would be read
+			// everywhere else here as a view of a session that goes with its window.
+			let base = ownBase(of: session, in: sessions) ?? session
+			return .grouped(joining: session, as: freeName(for: base, among: names))
 		}
 		// The group of a session that has gone is still named after it.
 		if let member = sessions.first(where: { $0.group == session }) {
@@ -69,6 +73,31 @@ public enum TmuxGroups {
 		return "\(base)~\(number)"
 	}
 
+	/// Whether `name` is a session this app made in `group`: `<group>~<n>`, the
+	/// only names `freeName` gives.
+	///
+	/// A group is tmux's, and somebody can make one by hand — `tmux new -t main`
+	/// is `main-1`, or whatever they called it. Those are theirs: two sessions
+	/// they chose to have, each to be listed, switched to and closed on its own.
+	/// Only ours are views that stand for the session they were made from.
+	public static func isOurs(_ name: String, inGroup group: String) -> Bool {
+		guard name.hasPrefix(group + "~") else { return false }
+		let number = name.dropFirst(group.count + 1)
+		return !number.isEmpty && number.allSatisfy(\.isNumber)
+	}
+
+	/// The session a grouped one of ours was made from, as the server has it:
+	/// its group's name. Nil for a session that is not one of ours.
+	///
+	/// Asked of the server and not remembered, so it is still true after
+	/// whatever was remembered has been dropped.
+	public static func ownBase(of session: String, in sessions: [TmuxMirror.SessionSummary]) -> String? {
+		guard let group = sessions.first(where: { $0.name == session })?.group,
+		      isOurs(session, inGroup: group)
+		else { return nil }
+		return group
+	}
+
 	/// The session a project remembers for one a terminal is on: the group's,
 	/// for a session in one, since a grouped session of our own goes with the
 	/// window and would be nothing to come back to.
@@ -76,31 +105,56 @@ public enum TmuxGroups {
 		sessions.first(where: { $0.name == session })?.group ?? session
 	}
 
-	/// The sessions as somebody choosing between them should see them: a group
-	/// as one row, under the session the group is named after when it is still
-	/// there and under its oldest member when it is not, attached if any member
-	/// is. In the order given.
+	/// The sessions as somebody choosing between them should see them: the ones
+	/// this app made in a group folded into one row with the session they are
+	/// views of — the one the group is named after when it is still there, and
+	/// the group's oldest member when it is not — attached if any of them is. A
+	/// session somebody grouped themselves keeps a row of its own. In the order
+	/// given.
 	public static func shownAsOne(_ sessions: [TmuxMirror.SessionSummary]) -> [TmuxMirror.SessionSummary] {
 		var shown: [TmuxMirror.SessionSummary] = []
-		var seenGroups: Set<String> = []
 		for session in sessions {
 			guard let group = session.group else {
 				shown.append(session)
 				continue
 			}
-			guard !seenGroups.contains(group) else { continue }
-			seenGroups.insert(group)
-			let members = sessions.filter { $0.group == group }
-			let named = members.first(where: { $0.name == group }) ?? members.min(by: { $0.created < $1.created }) ?? session
+			let row = rowName(forGroup: group, in: sessions)
+			let isFolded = isOurs(session.name, inGroup: group) && session.name != row
+			guard !isFolded else { continue }
+			guard session.name == row else {
+				shown.append(session)
+				continue
+			}
+			let folded = foldedMates(of: session.name, in: sessions)
 			shown.append(TmuxMirror.SessionSummary(
-				name: named.name,
-				windowCount: named.windowCount,
-				isAttached: members.contains(where: \.isAttached),
-				created: named.created,
+				name: session.name,
+				windowCount: session.windowCount,
+				isAttached: session.isAttached
+					|| sessions.contains(where: { folded.contains($0.name) && $0.isAttached }),
+				created: session.created,
 				group: group
 			))
 		}
 		return shown
+	}
+
+	/// The session a group's own views are shown under: the one the group is
+	/// named after, else its oldest member somebody made, else its oldest.
+	private static func rowName(forGroup group: String, in sessions: [TmuxMirror.SessionSummary]) -> String? {
+		let members = sessions.filter { $0.group == group }
+		if members.contains(where: { $0.name == group }) { return group }
+		let theirs = members.filter { !isOurs($0.name, inGroup: group) }
+		return (theirs.isEmpty ? members : theirs).min(by: { $0.created < $1.created })?.name
+	}
+
+	/// The sessions `shownAsOne` folded into `session`'s row: this app's own
+	/// views in its group, and nothing somebody made. Closing the row closes
+	/// these with it, since nothing else lists them.
+	public static func foldedMates(of session: String, in sessions: [TmuxMirror.SessionSummary]) -> Set<String> {
+		guard let group = sessions.first(where: { $0.name == session })?.group,
+		      rowName(forGroup: group, in: sessions) == session
+		else { return [] }
+		return Set(sessions.filter { $0.group == group && $0.name != session && isOurs($0.name, inGroup: group) }.map(\.name))
 	}
 
 	/// The other sessions in the group `session` is in.

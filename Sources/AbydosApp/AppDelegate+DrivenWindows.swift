@@ -57,6 +57,19 @@ extension AppDelegate {
 			}
 		}
 
+		if let name = options.openSession {
+			// As choosing the session's row in File ▸ New Window does, through
+			// the same call.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+				self.openInNewWindow(tmuxSession: name)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+					print("OPEN SESSION \(name); \(self.windowsForTesting)")
+					self.reportTmuxForTesting("after opening \(name)")
+					fflush(stdout)
+				}
+			}
+		}
+
 		if options.newWindowPicker {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				self.newWindow(nil)

@@ -18,8 +18,22 @@ public enum DiagnosticLog {
 		"~/Library/Logs/Abydos/\(name).log"
 	}
 
+	/// The environment variable a driven run names another directory with.
+	public static let directoryVariable = "ABYDOS_LOG_DIRECTORY"
+
+	/// Somebody's own logs, unless this is a driven run that was given a
+	/// directory for its own.
+	///
+	/// A check that reads a log to learn what a driven app did cannot share the
+	/// file with the app somebody is using: a line the installed one wrote in
+	/// the same three seconds passed for the driven one's, or failed it. Only a
+	/// driven run reads the variable, so nothing a person starts can be pointed
+	/// away from where they will look.
 	public static func directory() -> URL {
-		FileManager.default.homeDirectoryForCurrentUser
+		if DrivenRun.isActive, let path = ProcessInfo.processInfo.environment[directoryVariable], !path.isEmpty {
+			return URL(fileURLWithPath: path, isDirectory: true)
+		}
+		return FileManager.default.homeDirectoryForCurrentUser
 			.appendingPathComponent("Library/Logs/Abydos", isDirectory: true)
 	}
 
