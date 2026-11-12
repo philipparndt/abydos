@@ -19,6 +19,9 @@ enum ProjectSwitcherPopover {
 		/// What the project can run, with the goals of a reactor folded — what
 		/// the run control opens.
 		case runs
+		/// Projects and the tmux server's sessions, either opened in a window
+		/// of its own — what File ▸ New Window opens. See `project-windows`.
+		case newWindow
 	}
 
 	/// Everything the run list needs, handed over by the window that knows it.
@@ -362,6 +365,9 @@ final class SwitcherViewController: NSViewController {
 	let runs: ProjectSwitcherPopover.RunList?
 	/// The goal whose modules are being shown, when one has been opened.
 	var openGoal: RunPicker.Goal?
+	/// The tmux server's sessions, when this is File ▸ New Window's list. Read
+	/// once when it opens; nothing polls while it is up.
+	var tmuxSessions: [TmuxMirror.SessionSummary] = []
 
 	/// The files matching what has been typed, and the query they answer.
 	///
@@ -424,6 +430,7 @@ final class SwitcherViewController: NSViewController {
 
 	override func loadView() {
 		buildRows()
+		if case .newWindow = focus { readTmuxSessions() }
 		readRepository()
 		prepareFiles()
 
@@ -465,6 +472,7 @@ final class SwitcherViewController: NSViewController {
 		case .branches: "Filter branches"
 		case .runs: "Filter runs  ·  module/goal"
 		case .everything: "Search  ·  > actions  ·  : line"
+		case .newWindow: "Open in a new window  ·  project or tmux session"
 		}
 		field.font = Theme.current.uiFont(12)
 		field.delegate = self

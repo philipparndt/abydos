@@ -95,6 +95,10 @@ test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
 # recompiles all of this repository's code and none of anybody else's, and which
 # fails only on warnings that are ours. Run it before finishing a backlog item.
 .PHONY: warnings
+.PHONY: windows
+windows: ## Drive two windows of the built app through every tmux case of project-windows, on a scratch server (SCENARIOS="a b" for some)
+	@Scripts/windows-check.sh build/Abydos.app/Contents/MacOS/Abydos $(SCENARIOS)
+
 warnings: ## Every warning in this repository's own code, and every file over the length ceiling (JOBS=N)
 	@JOBS="$(JOBS)" Scripts/warnings.sh
 

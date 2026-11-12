@@ -302,6 +302,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// slider.
 	var lastKnownFollowSetting = Settings.shared.followsTerminalProject
 
+	/// The project the terminal last walked into that another window has open.
+	///
+	/// Said once per walk: a shell sitting in that project reports its
+	/// directory again on every pane brought forward, and the corner filling
+	/// with the same sentence is not saying anything new.
+	var followRefusedFor: URL?
+
+	/// The tmux session the next project loaded here attaches to, instead of the
+	/// one it remembers: a session chosen in File ▸ New Window. Taken once.
+	var pendingTmuxSession: String?
+
 	/// True for a window made by dragging a tab out of another one.
 	///
 	/// Such a window exists only to hold what was dragged into it, so it closes

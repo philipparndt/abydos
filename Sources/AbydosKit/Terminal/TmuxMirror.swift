@@ -198,6 +198,39 @@ public enum TmuxMirror {
 		return (name?.isEmpty ?? true) ? nil : name
 	}
 
+	/// One client of the server: the terminal it is on, the session it is
+	/// attached to, and the window in front there.
+	public struct Client: Equatable, Sendable {
+		public let tty: String
+		public let session: String
+		public let windowID: String
+
+		public init(tty: String, session: String, windowID: String) {
+			self.tty = tty
+			self.session = session
+			self.windowID = windowID
+		}
+	}
+
+	/// Every client the server has, in one question — so that several windows
+	/// can each learn where their terminal is for the price of one process.
+	public static func clients() async -> [Client] {
+		guard let tmux = Executables.locate("tmux") else { return [] }
+		let result = await run(tmux, ["list-clients", "-F", "#{client_tty};#{window_id};#{client_session}"])
+		guard let result, result.exitCode == 0 else { return [] }
+		return parseClients(result.output)
+	}
+
+	/// Reads `list-clients` output. The session comes last, since a session
+	/// can be called anything.
+	static func parseClients(_ output: String) -> [Client] {
+		output.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
+			let fields = line.split(separator: ";", maxSplits: 2, omittingEmptySubsequences: false)
+			guard fields.count == 3, !fields[0].isEmpty else { return nil }
+			return Client(tty: String(fields[0]), session: String(fields[2]), windowID: String(fields[1]))
+		}
+	}
+
 	/// One session of the server.
 	public struct SessionSummary: Equatable, Sendable {
 		public let name: String
@@ -205,23 +238,72 @@ public enum TmuxMirror {
 		public let isAttached: Bool
 		/// When tmux made it, which is the order it cycles through them in.
 		public let created: Int
+		/// The group it shares its windows with, by the group's name — which is
+		/// the name of the session the group was made from, and stays so after
+		/// that session has gone. Nil for a session in no group.
+		public let group: String?
 
-		public init(name: String, windowCount: Int, isAttached: Bool, created: Int = 0) {
+		public init(name: String, windowCount: Int, isAttached: Bool, created: Int = 0, group: String? = nil) {
 			self.name = name
 			self.windowCount = windowCount
 			self.isAttached = isAttached
 			self.created = created
+			self.group = group
 		}
 	}
 
 	/// Every session the server has, for choosing another one.
 	public static func sessions() async -> [SessionSummary] {
 		guard let tmux = Executables.locate("tmux") else { return [] }
-		let format = "#{session_windows};#{?session_attached,1,0};#{session_created};#{session_name}"
-		let result = await run(tmux, ["list-sessions", "-F", format])
+		let result = await run(tmux, ["list-sessions", "-F", sessionFormat])
 		guard let result, result.exitCode == 0 else { return [] }
 		return parseSessions(result.output)
 	}
+
+	/// The same, answered before returning, for the one caller that cannot
+	/// wait: the command a terminal starts with is decided in the pass that
+	/// starts it, and which session it joins depends on what else is attached
+	/// where. One round trip to the socket, as `sessionExistsNow` is.
+	public static func sessionsNow() -> [SessionSummary] {
+		guard let result = runNow(["list-sessions", "-F", sessionFormat]), result.exitCode == 0 else { return [] }
+		return parseSessions(result.output)
+	}
+
+	/// Every client, answered before returning, for the same caller: which
+	/// sessions are attached does not say by whom, and a client of this app's
+	/// own that is on its way out is not somebody else. Nil when tmux could not
+	/// be asked, which is not the same as no clients.
+	public static func clientsNow() -> [Client]? {
+		guard let result = runNow(["list-clients", "-F", "#{client_tty};#{window_id};#{client_session}"]),
+		      result.exitCode == 0
+		else { return nil }
+		return parseClients(result.output)
+	}
+
+	/// Runs tmux and waits for it, for the callers above that cannot wait
+	/// asynchronously. Nil when there is no tmux or it would not start.
+	private static func runNow(_ arguments: [String]) -> (exitCode: Int32, output: String)? {
+		guard let tmux = Executables.locate("tmux") else { return nil }
+		let process = Process()
+		let output = Pipe()
+		process.executableURL = URL(fileURLWithPath: tmux)
+		process.arguments = arguments
+		// Rather than inheriting it, for the reason in `TmuxSocketPath`.
+		process.environment = TmuxSocketPath.environment
+		process.standardOutput = output
+		process.standardError = FileHandle.nullDevice
+		do { try process.run() } catch { return nil }
+		let data = output.fileHandleForReading.readDataToEndOfFile()
+		process.waitUntilExit()
+		return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+	}
+
+	/// The group goes before the name, marked — `g` and the group's name, or
+	/// `-` for none — so a line can be told from the older shape without the
+	/// name, which can hold anything, being split.
+	private static let sessionFormat =
+		"#{session_windows};#{?session_attached,1,0};#{session_created}"
+			+ ";#{?session_grouped,g#{session_group},-};#{session_name}"
 
 	/// Reads `list-sessions` output. The name comes last, since a session can
 	/// be called anything.
@@ -230,24 +312,75 @@ public enum TmuxMirror {
 	static func parseSessions(_ output: String) -> [SessionSummary] {
 		var sessions: [SessionSummary] = []
 		for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-			let fields = line.split(separator: ";", maxSplits: 3, omittingEmptySubsequences: false)
+			var fields = line.split(separator: ";", maxSplits: 3, omittingEmptySubsequences: false)
 			// Three fields is the older format, kept so a fixture without a
 			// creation time still reads.
 			guard fields.count >= 3, let windows = Int(fields[0]) else { continue }
 			let hasCreated = fields.count == 4
+			// The group, when the line has one: a fourth field marked `g` or
+			// `-` with something after it. A group's name is a session's name
+			// and could hold a semicolon too, which this reads wrongly; a
+			// session named with a semicolon *and* grouped is a price worth
+			// paying for not asking tmux twice.
+			var group: String?
+			if hasCreated, let marked = Self.groupField(fields[3]) {
+				group = marked.group
+				fields[3] = marked.name
+			}
 			sessions.append(SessionSummary(
 				name: String(fields[hasCreated ? 3 : 2]),
 				windowCount: windows,
 				isAttached: fields[1] == "1",
-				created: hasCreated ? Int(fields[2]) ?? 0 : 0
+				created: hasCreated ? Int(fields[2]) ?? 0 : 0,
+				group: group
 			))
 		}
 		return sessions.sorted { $0.created < $1.created }
 	}
 
+
+	/// Splits `g<group>;<name>` or `-;<name>` — what follows the creation time
+	/// in the current format — into its two halves. Nil for anything else,
+	/// which is the older format's bare name.
+	private static func groupField(_ field: Substring) -> (group: String?, name: Substring)? {
+		guard let separator = field.firstIndex(of: ";") else { return nil }
+		let marker = field[..<separator]
+		let name = field[field.index(after: separator)...]
+		if marker == "-" { return (nil, name) }
+		guard marker.hasPrefix("g"), marker.count > 1 else { return nil }
+		return (String(marker.dropFirst()), name)
+	}
+
+	/// The directory a session was started in, `session_path`: where a window
+	/// opened on the session should look. Nil when there is no such session.
+	public static func startingDirectory(ofSession session: String) async -> URL? {
+		guard let tmux = Executables.locate("tmux") else { return nil }
+		let result = await run(tmux, ["display-message", "-p", "-t", "=\(session):", "#{session_path}"])
+		guard let result, result.exitCode == 0 else { return nil }
+		let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+		return path.isEmpty ? nil : URL(fileURLWithPath: path, isDirectory: true)
+	}
+
 	/// Points this terminal's client at another session.
 	public static func switchClient(onTTY tty: String, to session: String) async {
 		await command(["switch-client", "-c", tty, "-t", "=\(session)"])
+	}
+
+	/// Takes the client on `tty` out of tmux, leaving the shell it was started
+	/// from — what tmux itself does when a session's last window closes.
+	public static func detachClient(onTTY tty: String) async {
+		await command(["detach-client", "-t", tty])
+	}
+
+	/// Whether a window with this `#{window_id}` is anywhere on the server.
+	///
+	/// Listed rather than targeted: `display-message -t` with a window that has
+	/// gone still exits 0 on tmux 3.8.
+	public static func windowExists(_ windowID: String) async -> Bool {
+		guard let tmux = Executables.locate("tmux") else { return false }
+		let result = await run(tmux, ["list-windows", "-a", "-F", "#{window_id}"])
+		guard let result, result.exitCode == 0 else { return false }
+		return result.output.split(separator: "\n").contains { $0 == windowID }
 	}
 
 	/// Makes a session and leaves it running, for switching to afterwards.
@@ -350,7 +483,31 @@ public enum TmuxMirror {
 		guard windowID.hasPrefix("@") else { return false }
 		let windows = await windows(inSession: session)
 		guard windows.contains(where: { $0.windowID == windowID }) else { return false }
-		return await succeeds(["select-window", "-t", windowID])
+		// In the session named, and not by the id alone: a window in a group is
+		// in every session of it, and tmux, left to choose, can choose the one
+		// another client is on — whose window then changes under it.
+		return await succeeds(["select-window", "-t", "\(session):\(windowID)"])
+	}
+
+	/// The window a pane is in, by tmux's own id for it, or nil when the pane
+	/// has gone.
+	///
+	/// So that a pane can be gone to in one particular session. `select-window
+	/// -t %7` names no session, and for a window several grouped sessions hold
+	/// tmux picks one of them itself.
+	public static func windowID(ofPane pane: String) async -> String? {
+		guard pane.hasPrefix("%"), let tmux = Executables.locate("tmux") else { return nil }
+		let result = await run(tmux, ["display-message", "-p", "-t", pane, "#{window_id}"])
+		guard let result, result.exitCode == 0 else { return nil }
+		let id = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+		return id.hasPrefix("@") ? id : nil
+	}
+
+	/// Makes a pane the active one of its window, without bringing the window
+	/// forward anywhere: which window a session shows is not this call's to say.
+	public static func activate(pane: String) async {
+		guard pane.hasPrefix("%") else { return }
+		await command(["select-pane", "-t", pane])
 	}
 
 	/// Makes a window in a session, saying whether it could.
@@ -455,6 +612,65 @@ public enum TmuxMirror {
 		["-T", "RGB,hyperlinks", "new", "-A", "-s", session, ";", "set-option", "-q", "-t", session, "allow-passthrough", "on"]
 	}
 
+	/// The client's arguments for attaching as `TmuxGroups` decided: the session
+	/// itself, a grouped one of our own, or the session put back into its group.
+	///
+	/// The client is told the same about its terminal whichever it is — see
+	/// `attachArguments(to:)` — and the session it lands in carries
+	/// `allow-passthrough` the same, for the same reasons.
+	///
+	/// **A grouped one is set to go with its last client in the same breath as
+	/// it is made**, while the client making it is attached: set on a session
+	/// with no client, `destroy-unattached` ends it there and then, which a probe
+	/// on tmux 3.7c showed. It goes when that client detaches and when it is
+	/// switched to another session, both checked on the same probe.
+	///
+	/// **`set-option` is given the bare name**, not `=name` as the commands
+	/// beside it are: tmux 3.7c answers "no such session" to `-t =name` there,
+	/// and `-q` makes that silence — the option was simply never set.
+	public static func attachArguments(for attach: TmuxGroups.Attach) -> [String] {
+		switch attach {
+		case let .session(session):
+			return attachArguments(to: session)
+		case let .grouped(joining: base, as: name):
+			return ["-T", "RGB,hyperlinks", "new", "-t", "=\(base)", "-s", name,
+				";", "set-option", "-q", "-t", name, "allow-passthrough", "on",
+				";", "set-option", "-q", "-t", name, "destroy-unattached", "on"]
+		case let .rejoined(member: member, as: name):
+			return ["-T", "RGB,hyperlinks", "new", "-t", "=\(member)", "-s", name,
+				";", "set-option", "-q", "-t", name, "allow-passthrough", "on"]
+		}
+	}
+
+	/// Moves a client off a session another window is on, to a grouped one of
+	/// its own showing the same window.
+	///
+	/// For a client that got there by `C-b s` or `C-b w`, which Abydos hears of
+	/// only afterwards. Made detached, pointed at the window the client was
+	/// showing — a grouped session starts on its group's first window, not on
+	/// the current one — and only then is the client moved and the session set
+	/// to go with it, in that order for the reason in `attachArguments(for:)`.
+	///
+	/// - Returns: whether the client was moved.
+	public static func moveClient(
+		onTTY tty: String,
+		toGroupedSession name: String,
+		joining base: String,
+		showing windowIndex: Int?
+	) async -> Bool {
+		guard await succeeds(["new-session", "-d", "-t", "=\(base)", "-s", name]) else { return false }
+		if let windowIndex {
+			await command(["select-window", "-t", "=\(name):\(windowIndex)"])
+		}
+		await command(["set-option", "-q", "-t", name, "allow-passthrough", "on"])
+		guard await succeeds(["switch-client", "-c", tty, "-t", "=\(name)"]) else {
+			_ = await killSession(named: name)
+			return false
+		}
+		await command(["set-option", "-q", "-t", name, "destroy-unattached", "on"])
+		return true
+	}
+
 	/// Hides — or gives back — tmux's own status bar, for one session only.
 	///
 	/// A session option, set at runtime: nothing is written to anybody's
@@ -502,17 +718,7 @@ public enum TmuxMirror {
 	/// or two with a server up, and an immediate refusal without one — which is
 	/// the same price `TmuxConfig` already pays at launch for `show-environment`.
 	public static func sessionExistsNow(_ name: String) -> Bool {
-		guard let tmux = Executables.locate("tmux") else { return false }
-		let process = Process()
-		process.executableURL = URL(fileURLWithPath: tmux)
-		process.arguments = ["has-session", "-t", "=\(name)"]
-		// Rather than inheriting it, for the reason in `TmuxSocketPath`.
-		process.environment = TmuxSocketPath.environment
-		process.standardOutput = FileHandle.nullDevice
-		process.standardError = FileHandle.nullDevice
-		do { try process.run() } catch { return false }
-		process.waitUntilExit()
-		return process.terminationStatus == 0
+		runNow(["has-session", "-t", "=\(name)"])?.exitCode == 0
 	}
 
 	/// Ends a session, taking every window in it and whatever was running

@@ -358,12 +358,40 @@ extension MainWindowController {
 			intoLooseFolders: Settings.shared.followsLooseFolders
 		) {
 		case .stay:
+			followRefusedFor = nil
 			return
 		case let .project(root):
+			if let other = (NSApp.delegate as? AppDelegate)?.window(showing: root), other !== self {
+				refuseToFollow(into: root, openIn: other)
+				return
+			}
+			followRefusedFor = nil
 			switchProject(to: root, followingTerminal: true)
 		case let .looseFolder(folder):
+			followRefusedFor = nil
 			switchProject(to: folder, followingTerminal: true, asLooseFolder: true)
 		}
+	}
+
+	/// Stays put when the terminal walks into a project another window has.
+	///
+	/// A project is shown in one window at most (`ProjectWindows`), and following
+	/// was the one way into a project that never asked: a `cd` — or a `C-b s` to
+	/// a session whose pane is somewhere else — took this window to a project
+	/// the window beside it was already on, and the two then wrote one session
+	/// file between them. The shell is left where it was put; it is somebody's.
+	private func refuseToFollow(into root: URL, openIn other: MainWindowController) {
+		let root = root.standardizedFileURL
+		guard followRefusedFor != root else { return }
+		followRefusedFor = root
+		toasts.show(Toast(
+			kind: .information,
+			title: "\(root.lastPathComponent) is open in another window",
+			detail: "This window stays on \(project?.name ?? "its project"). "
+				+ "A project is shown in one window at a time.",
+			actionTitle: "Go there",
+			action: { [weak other] in other?.showWindow(nil) }
+		))
 	}
 
 	/// What this window is showing, in the terms the follow rule is written in.
@@ -441,7 +469,7 @@ extension MainWindowController {
 			// hazard here: a shell that moved checkout moved *within* the
 			// session, so the session showing is the one both projects were
 			// left in, and attaching to it again selects nothing.
-			session.tmuxSession = bottomPanel.mirroredTmuxSession
+			session.tmuxSession = bottomPanel.rememberedTmuxSession
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			session.selectedConfiguration = run.selectedConfigurationName
 			session.xcodeDestinations = run.xcodeDestinations
@@ -545,7 +573,7 @@ extension MainWindowController {
 		session.terminals = bottomPanel.captureTerminals()
 		session.isPanelVisible = isPanelVisible
 		session.tmuxWindow = bottomPanel.currentTmuxWindowID
-		session.tmuxSession = bottomPanel.mirroredTmuxSession
+		session.tmuxSession = bottomPanel.rememberedTmuxSession
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
 		session.selectedConfiguration = run.selectedConfigurationName
 		session.xcodeDestinations = run.xcodeDestinations

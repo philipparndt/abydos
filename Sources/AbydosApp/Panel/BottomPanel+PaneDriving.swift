@@ -226,12 +226,18 @@ extension BottomPanel {
 	/// closed, and neither is something the person did wrong. tmux's own choice
 	/// stands in that case, which is the same as what happened before any of
 	/// this was remembered.
+	///
+	/// **Asked for here and done once the client is attached**, in the session
+	/// it turns out to be on. This runs before the terminal has started, when
+	/// the only session known is the one the project remembers — and with
+	/// another window or another program on that one, this terminal is about to
+	/// be given a grouped session of its own. Selecting in the remembered one
+	/// moved the window under the other client, which is what the group is for
+	/// preventing. See `restorePendingWindow`.
 	func restoreTmuxWindow(_ windowID: String) {
-		guard let session = mirroredSession ?? tmuxSession, !windowID.isEmpty else { return }
-		Task { @MainActor in
-			guard await TmuxMirror.select(windowID: windowID, inSession: session) else { return }
-			self.refreshTmuxWindows()
-		}
+		guard !windowID.isEmpty else { return }
+		pendingWindowRestore = (windowID, Date())
+		refreshTmuxWindows()
 	}
 
 	/// Whether any plain terminal is open.

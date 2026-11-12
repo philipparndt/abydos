@@ -64,6 +64,11 @@ public struct RunningSessions: Equatable, Sendable {
 		/// When the hook last spoke for this session — or, for a seeded record,
 		/// when tmux last saw the window produce anything.
 		public var lastEvent: Date
+		/// tmux's own name for the window a seeded record was read from, `@7`.
+		public var windowID: String?
+		/// The tmux sessions a seeded record has been read through. Several when
+		/// a group of sessions shares the window; the record goes with the last.
+		public var seededBy: Set<String> = []
 
 		public var isSeeded: Bool { id.isEmpty }
 
@@ -82,7 +87,9 @@ public struct RunningSessions: Equatable, Sendable {
 		/// The window is the identity while nothing has spoken for it, and it
 		/// is exactly what the register keys the record by.
 		public var identity: String {
-			isSeeded ? "@\(tmuxSession ?? ""):\(window ?? -1)" : id
+			guard isSeeded else { return id }
+			if let windowID { return RunningSessions.seededKey(windowID: windowID) }
+			return RunningSessions.seededKey(session: tmuxSession ?? "", window: window ?? -1)
 		}
 
 		/// What a pill or a row shows for a session, given the time.
@@ -293,8 +300,15 @@ public struct RunningSessions: Equatable, Sendable {
 
 		// The session now speaks for itself, so a record seeded from its window
 		// has nothing left to stand in for.
+		// Found by session and index, which is all the hook knows: through the
+		// session it ran in, or any session the record was read through, since a
+		// group shares its windows' indexes.
 		if let session = record.tmuxSession, let window = record.window {
-			records.removeValue(forKey: Self.seededKey(session: session, window: window))
+			let seeded = records.filter {
+				$0.value.isSeeded && $0.value.window == window
+					&& ($0.value.tmuxSession == session || $0.value.seededBy.contains(session))
+			}.keys
+			for key in seeded { records.removeValue(forKey: key) }
 		}
 
 		let isNew = known == nil
@@ -438,44 +452,63 @@ public struct RunningSessions: Equatable, Sendable {
 	/// tmux session is somebody's workspace and its windows sit in many
 	/// projects; the first afternoon listed `screencasts` under `~/dev/oss`.
 	///
+	/// **Keyed by the window, not by the session it was read through.** Two
+	/// sessions in one tmux group — the second made for a second Abydos window,
+	/// see `project-windows` — list the same windows under two names, and keyed
+	/// by name one agent was two records and the pill counted it twice. tmux's
+	/// `window_id` names a window once on the whole server. Each record holds the
+	/// sessions it was read through, and is dropped when the last lets it go.
+	///
+	/// - Parameter group: the other sessions sharing this one's windows. A hook
+	///   that ran in any of them has spoken for the window as much as one that
+	///   ran in this session: the windows, and their indexes, are the same.
 	/// - Returns: whether anything a pill shows changed.
 	@discardableResult
 	public mutating func seed(
-		windows: [TmuxMirror.Window], inTmuxSession session: String, cwd: String, now: Date = Date()
+		windows: [TmuxMirror.Window],
+		inTmuxSession session: String,
+		group: Set<String> = [],
+		cwd: String,
+		now: Date = Date()
 	) -> Bool {
 		func home(of window: TmuxMirror.Window) -> String {
 			window.directory.isEmpty ? cwd : window.directory
 		}
 		var changed = false
 
-		let live = Dictionary(
-			windows.filter { $0.aiStatus != nil }.map { ($0.index, $0) },
-			uniquingKeysWith: { first, _ in first }
-		)
+		let sessions = group.union([session])
 		let spokenFor = Set(
 			records.values
-				.filter { !$0.isSeeded && $0.tmuxSession == session }
+				.filter { !$0.isSeeded && $0.tmuxSession.map(sessions.contains) == true }
 				.compactMap(\.window)
 		)
+		let wanted = Dictionary(
+			windows
+				.filter { $0.aiStatus != nil && !spokenFor.contains($0.index) }
+				.map { (Self.seededKey(for: $0, inTmuxSession: session), $0) },
+			uniquingKeysWith: { first, _ in first }
+		)
 
-		// Seeded records whose window is gone, has no badge any more, or now
-		// has a session speaking for itself.
-		for (key, record) in records where record.isSeeded && record.tmuxSession == session {
-			guard let window = record.window, live[window] != nil, !spokenFor.contains(window) else {
-				records.removeValue(forKey: key)
-				changed = true
-				continue
-			}
+		// This session's claim on windows that are gone, have no badge any more,
+		// or now have a session speaking for itself.
+		for (key, record) in records where record.isSeeded && record.seededBy.contains(session) {
+			guard wanted[key] == nil else { continue }
+			if release(key, from: session) { changed = true }
 		}
 
-		for (index, window) in live where !spokenFor.contains(index) {
-			let key = Self.seededKey(session: session, window: index)
+		for (key, window) in wanted {
 			let lastEvent = now.addingTimeInterval(-window.silentFor)
 			if var seeded = records[key] {
 				let before = seeded.shown(at: now)
 				seeded.status = window.aiStatus
+				// Where the window is now. The key is the window's own id, which
+				// does not move; the index does, whenever a window before it is
+				// closed or this one is dragged, and revealing by the index it
+				// was first read at went to whatever had slid into its place.
+				seeded.window = window.index
 				seeded.windowName = window.name
 				seeded.lastEvent = lastEvent
+				seeded.seededBy.insert(session)
 				records[key] = seeded
 				if seeded.shown(at: now) != before { changed = true }
 				continue
@@ -483,26 +516,56 @@ public struct RunningSessions: Equatable, Sendable {
 			let directory = home(of: window)
 			records[key] = Session(
 				id: "", slug: AgentSessions.slug(ofPath: directory), cwd: directory, status: window.aiStatus,
-				tmuxSession: session, window: index, windowName: window.name,
-				line: nil, message: nil, lastEvent: lastEvent
+				tmuxSession: session, window: window.index, windowName: window.name,
+				line: nil, message: nil, lastEvent: lastEvent,
+				windowID: window.windowID.isEmpty ? nil : window.windowID,
+				seededBy: [session]
 			)
 			changed = true
 		}
 		return changed
 	}
 
-	/// Drops what was seeded from a tmux session the panel has stopped
-	/// mirroring: nothing will read those windows again, so nothing would ever
-	/// take the records away.
+	/// Lets go of what was seeded through a tmux session the panel has stopped
+	/// mirroring: nothing will read those windows through it again, so nothing
+	/// would ever take the records away. A record another session still shows
+	/// is kept for that one.
 	@discardableResult
 	public mutating func forgetSeeded(inTmuxSession session: String?) -> Bool {
 		guard let session else { return false }
-		let keys = records.filter { $0.value.isSeeded && $0.value.tmuxSession == session }.keys
-		for key in keys { records.removeValue(forKey: key) }
-		return !keys.isEmpty
+		var changed = false
+		for (key, record) in records where record.isSeeded && record.seededBy.contains(session) {
+			if release(key, from: session) { changed = true }
+		}
+		return changed
 	}
 
-	private static func seededKey(session: String, window: Int) -> String {
+	/// Takes one session's claim off a seeded record, dropping the record when it
+	/// was the last. Returns whether the record went.
+	private mutating func release(_ key: String, from session: String) -> Bool {
+		guard var record = records[key] else { return false }
+		record.seededBy.remove(session)
+		guard let other = record.seededBy.sorted().first else {
+			records.removeValue(forKey: key)
+			return true
+		}
+		// Revealed through a session that is still there.
+		if record.tmuxSession == session { record.tmuxSession = other }
+		records[key] = record
+		return false
+	}
+
+	/// What a seeded record is filed under: tmux's `window_id` when it gave one,
+	/// and the session and index only for a reading that has none.
+	static func seededKey(for window: TmuxMirror.Window, inTmuxSession session: String) -> String {
+		window.windowID.isEmpty ? seededKey(session: session, window: window.index) : seededKey(windowID: window.windowID)
+	}
+
+	static func seededKey(windowID: String) -> String {
+		"window\(windowID)"
+	}
+
+	static func seededKey(session: String, window: Int) -> String {
 		"@\(session):\(window)"
 	}
 

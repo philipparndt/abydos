@@ -6,7 +6,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	/// built from the same sources — can make one.
 	public override init() { super.init() }
 
-	var windowControllers: [MainWindowController] = []
+	var windowControllers: [MainWindowController] = [] {
+		didSet { MainActor.assumeIsolated { tmuxClientWatch.update() } }
+	}
+	/// Where each window's tmux client is, while there is a window and tmux is
+	/// switched on: see `TmuxClientWatch`.
+	@MainActor private lazy var tmuxClientWatch = TmuxClientWatch { [weak self] in
+		self?.windowControllers.map(\.bottomPanel) ?? []
+	}
 	/// Claude sessions announcing themselves, from the hook this binary also is.
 	private var claudeWatch: ClaudeWatch?
 
@@ -414,6 +421,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// Before any window exists, so the first terminal starts as the mode
+		// says. A driven run's settings are its own: see `DrivenRun`.
+		if options.tmuxTabs {
+			Settings.shared.startsTmux = true
+			Settings.shared.strictTmux = true
+		} else if options.ownTabs {
+			Settings.shared.startsTmux = true
+			Settings.shared.strictTmux = false
+		}
+
 		let controller: MainWindowController?
 		if DrivenRun.isActive {
 			controller = openForDrivenRun(options)
@@ -435,6 +452,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		driveTheEditor(options, in: controller)
 		driveTheTools(options, in: controller)
 		driveThePanel(options, in: controller)
+		driveTheWindows(options)
 	}
 
 	/// Captures the window after async work (git status, parsing, folds) settles,
@@ -467,6 +485,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	// MARK: - Testing
+
+	/// What each window's terminal is on in tmux, and what the server has.
+	@MainActor
+	func reportTmuxForTesting(_ stage: String) {
+		for controller in windowControllers {
+			let panel = controller.bottomPanel
+			let shown = panel.tmuxWindows.first(where: \.isActive)
+			print("TMUX \(stage) \(controller.project?.name ?? "nothing"): "
+				+ "on=\(panel.tmuxSessionInUse ?? "-") mirrored=\(panel.mirroredTmuxSession ?? "-") "
+				+ "shows=\(shown.map { "\($0.index):\($0.name)" } ?? "-") remembers=\(panel.rememberedTmuxSession ?? "-") "
+				+ "said=\(controller.toasts.saidForTesting.last ?? "-")")
+		}
+		Task { @MainActor in
+			for session in await TmuxMirror.sessions() {
+				let shown = await TmuxMirror.windows(inSession: session.name).first(where: \.isActive)
+				print("TMUX \(stage) server: \(session.name) group=\(session.group ?? "-") "
+					+ "attached=\(session.isAttached) current=\(shown.map { "\($0.index):\($0.name)" } ?? "-")")
+			}
+			fflush(stdout)
+		}
+	}
+
+	/// Every window and what it is on, in one line, for a run about windows.
+	var windowsForTesting: String {
+		"windows=\(windowControllers.count) ["
+			+ windowControllers.map { $0.project?.name ?? "nothing" }.joined(separator: " | ") + "]"
+	}
 
 	func reportWindowsForTesting(_ stage: String) {
 		let described = windowControllers.map { controller in
@@ -617,23 +662,54 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 	// MARK: - Opening projects
 
-	/// Opens a project, in this window or another.
+	/// File ▸ New Window: asks what the new window is for.
 	///
-	/// - `from`: the window the choice was made in. Unless the setting says
-	///   otherwise, that window changes project rather than a second one
-	///   appearing — the window is where you were working, and a new one for
-	///   the same task is a window to close later.
-	/// Another window, on whatever the front one has open.
-	///
-	/// The same project rather than an empty window: a second window is
-	/// nearly always wanted for the work already in progress, and the project
-	/// switcher is one click away for the other case.
+	/// It used to open the front window's project again, which put one project
+	/// in two windows and their terminals on one tmux session, where a tab
+	/// chosen in either switched both. A project is shown in one window at most
+	/// now, so the list offers projects and the server's tmux sessions instead;
+	/// dismissing it opens nothing. See `SwitcherNewWindow`.
 	@objc func newWindow(_ sender: Any?) {
-		let controller = makeWindow()
-		if let project = frontmostController?.project {
-			controller.load(project: Project(root: project.root))
+		guard let front = frontmostController else {
+			openProjectPanel(sender)
+			return
 		}
+		ProjectSwitcherPopover.showCentred(
+			over: front.window,
+			currentProject: front.project,
+			owner: front,
+			focus: .newWindow
+		)
+	}
+
+	/// A project in a window of its own, whatever the setting says about the
+	/// switcher — that is what File ▸ New Window is called — unless a window
+	/// has it already, which is raised instead.
+	@discardableResult
+	func openInNewWindow(projectAt url: URL, attachingTo tmuxSession: String? = nil) -> MainWindowController {
+		if let existing = window(showing: url) {
+			existing.showWindow(nil)
+			return existing
+		}
+		let controller = makeWindow()
+		controller.pendingTmuxSession = tmuxSession
+		controller.switchProject(to: url)
 		controller.showWindow(nil)
+		RecentProjects.shared.record(url: url)
+		return controller
+	}
+
+	/// A window on the project a tmux session was started in, its terminal on
+	/// that session — or, when a window has that project already, that window
+	/// raised and nothing opened: one project, one window, and that rule wins.
+	func openInNewWindow(tmuxSession name: String) {
+		Task { @MainActor in
+			guard let folder = await TmuxMirror.startingDirectory(ofSession: name) else {
+				Toast.post("tmux has no session \(name) any more", kind: .warning)
+				return
+			}
+			self.openInNewWindow(projectAt: Project.root(containing: folder), attachingTo: name)
+		}
 	}
 
 	/// The window a menu command belongs to.
@@ -698,14 +774,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		return controller
 	}
 
+	/// Opens a project, in this window or another.
+	///
+	/// - `from`: the window the choice was made in. Unless the setting says
+	///   otherwise, that window changes project rather than a second one
+	///   appearing — the window is where you were working, and a new one for
+	///   the same task is a window to close later.
 	@discardableResult
 	func open(projectAt url: URL, from source: MainWindowController? = nil) -> MainWindowController {
 		// Focus an existing window rather than opening the same project twice.
-		// Torn-off windows are skipped: opening a project should raise the window
-		// it was opened in, not one someone happened to drag a tab into.
-		if let existing = windowControllers.first(where: {
-			!$0.isTornOff && $0.project?.root.standardizedFileURL == url.standardizedFileURL
-		}) {
+		if let existing = window(showing: url) {
 			existing.showWindow(nil)
 			return existing
 		}
@@ -739,6 +817,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		return controller
 	}
 
+	/// The project window showing `root`, if one is.
+	///
+	/// Asked by every way into a project: a project is shown in one window at
+	/// most, and the one showing it is raised rather than a second made. See
+	/// `ProjectWindows`. Torn-off windows are never the answer — they hold a
+	/// file somebody dragged out, not the project, and raising one for "open
+	/// abydos" would raise the wrong thing.
+	func window(showing root: URL) -> MainWindowController? {
+		let projectWindows = windowControllers.filter { !$0.isTornOff }
+		return ProjectWindows.index(showing: root, among: projectWindows.map { $0.project?.root })
+			.map { projectWindows[$0] }
+	}
+
 	private func makeWindow() -> MainWindowController {
 		let controller = MainWindowController()
 		controller.onClose = { [weak self, weak controller] in
@@ -747,6 +838,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 		controller.onTearOffTab = { [weak self] tab, screenPoint, source in
 			self?.tearOff(tab: tab, at: screenPoint, from: source)
+		}
+		// Which tmux sessions the other windows' terminals are on, so this one's
+		// never shares one with them: see `TmuxGroups`. Torn-off windows count —
+		// a terminal in one is a client like any other.
+		controller.bottomPanel.otherPanels = { [weak self, weak controller] in
+			(self?.windowControllers ?? []).filter { $0 !== controller }.map(\.bottomPanel)
 		}
 		windowControllers.append(controller)
 		return controller

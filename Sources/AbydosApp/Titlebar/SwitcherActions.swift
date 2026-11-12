@@ -19,6 +19,10 @@ extension SwitcherViewController {
 			break
 		case let .project(entry, _):
 			onDismiss?()
+			if case .newWindow = focus {
+				(NSApp.delegate as? AppDelegate)?.openInNewWindow(projectAt: entry.url)
+				return
+			}
 			(NSApp.delegate as? AppDelegate)?.open(projectAt: entry.url, from: owner)
 		case let .branch(branch, isCurrent):
 			onDismiss?()

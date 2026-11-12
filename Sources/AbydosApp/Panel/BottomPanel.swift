@@ -96,6 +96,35 @@ final class BottomPanel: NSView {
 	/// Polls since the bar was last checked against tmux rather than against
 	/// what we believe we told it.
 	var statusBarPollsSinceCheck = 0
+	/// The panels of the app's other windows, for which tmux sessions they are
+	/// on: a terminal arriving at one of those is given a grouped session of its
+	/// own. See `TmuxGroups`.
+	var otherPanels: () -> [BottomPanel] = { [] }
+	/// The grouped sessions this panel made, by name, and the session each was
+	/// made from — which is the one a project remembers, the grouped one going
+	/// with this window.
+	var groupedBases: [String: String] = [:]
+	/// The session this panel's terminal was last attached to, as decided —
+	/// which is the only way to know it while the tabs are this app's own
+	/// rather than tmux's, since nothing polls the client then.
+	var attachedTmuxSession: String?
+	/// The tmux window in front for this panel's client, by id, as the last
+	/// reading of the server's clients said — for a panel that does not mirror
+	/// tmux and so has no tabs to say it.
+	var clientWindowID: String?
+	/// Which tmux window was in front here, and when it came there, newest
+	/// last. Kept so that a window another Abydos window's `C-b w` pulled away
+	/// can be put back once that window has moved to a session of its own:
+	/// see `anotherWindowPassedThrough`.
+	var shownWindowLog: [(windowID: String, session: String, at: Date, byThisWindow: Bool)] = []
+	/// The tty this panel's tmux client was last seen on. A terminal that has
+	/// just been closed is still a client for a moment, and the one started in
+	/// its place must not take it for somebody else: see `attachDecision`.
+	var lastClientTTY: String?
+	/// The tmux window a project was left in, to go back to once this panel's
+	/// client is attached and it is known which session it is on: see
+	/// `restoreTmuxWindow`.
+	var pendingWindowRestore: (windowID: String, asked: Date)?
 
 	// Kept in the body because a stored property cannot live in an
 	// extension; what each is for is said where it is used.
@@ -486,6 +515,7 @@ final class BottomPanel: NSView {
 				return
 			}
 			if let window = self.mirroredWindow(at: index, in: column) {
+				if self.raiseWindowShowing(window) { return }
 				self.markMirroredWindowActive(window.index)
 				Task {
 					await TmuxMirror.select(window: window.index, inSession: self.mirroredSession ?? self.tmuxSession ?? "")
